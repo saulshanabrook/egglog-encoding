@@ -94,6 +94,7 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert profile_args.command == "profile"
     assert profile_args.file == "file.egg"
     assert profile_args.treatment == "proofs"
+    assert profile_args.disequality_encoding == "nee"
     assert profile_args.top == 15
     assert not profile_args.no_summary
     assert profile_args.format == "rich"
@@ -145,6 +146,89 @@ def test_profile_accepts_explicit_proof_extraction(tmp_path: Path) -> None:
     request = profile_runner.resolve_profile_request(args, ROOT)
 
     assert request.treatment == "proof-extraction"
+
+
+def test_profile_rejects_unknown_disequality_encoding() -> None:
+    with pytest.raises(SystemExit):
+        profile_runner.parse_profile_args(["file.egg", "--disequality-encoding", "unknown"])
+
+
+@pytest.mark.parametrize("treatment", ["egg", "egg-de", "egg-ee", "egg-nee", "egg-oee"])
+def test_profile_rejects_non_egglog_ee_before_building(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, treatment: str
+) -> None:
+    file = tmp_path / "input.in"
+    file.write_text("1\n2\n")
+    if treatment == "egg":
+        file = ROOT / "egglog-experimental/tests/math-microbenchmark-rational.egg"
+    args = profile_runner.parse_profile_args([str(file), "--treatment", treatment, "--disequality-encoding", "ee"])
+    monkeypatch.setattr(
+        profile_runner, "resolve_profile_target", lambda *args: pytest.fail("invalid request must not build")
+    )
+
+    with pytest.raises(ValueError, match="disequality encoding selection is only supported by egglog treatments"):
+        profile_runner.run_profile(args, Console(stderr=True), ROOT, ROOT)
+
+
+def test_profile_encodings_are_recorded_and_cached_separately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    file = stable_file_spec(tmp_path)
+    binary = ROOT / "target/profiling/egglog-experimental"
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=binary)
+    calibrated: list[list[str]] = []
+    recorded: list[dict[str, Any]] = []
+
+    def calibrate(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+        calibrated.append(command)
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=2.0), None)
+
+    def record(**kwargs: Any) -> dict[str, Any]:
+        recorded.append(kwargs)
+        data = make_profile_data()
+        write_profile(kwargs["artifact"], data)
+        return data
+
+    monkeypatch.setattr(profile_runner, "resolve_profile_target", lambda *args: target)
+    monkeypatch.setattr(profile_runner, "run_command", calibrate)
+    monkeypatch.setattr(profile_runner, "run_samply_record", record)
+    monkeypatch.setattr(profile_runner.sys, "platform", "linux")
+
+    for index, encoding in enumerate(("nee", "ee", "nee", "ee")):
+        args = profile_runner.parse_profile_args(
+            [
+                str(file.absolute_path),
+                "--treatment",
+                "off",
+                "--disequality-encoding",
+                encoding,
+                "--profiles-dir",
+                str(tmp_path / "profiles"),
+                "--profile-seconds",
+                "10",
+                "--format",
+                "markdown",
+            ]
+        )
+        profile_runner.run_profile(args, Console(stderr=True), ROOT, ROOT)
+
+        assert len(calibrated) == len(recorded) == min(index + 1, 2)
+        captured = capsys.readouterr()
+        assert f"| Treatment | off ({encoding}) |" in captured.out
+        if index < 2:
+            assert f"off ({encoding}) for 10s" in " ".join(captured.err.split())
+        else:
+            assert "Profile cache hit" in captured.err
+
+    assert recorded[0]["artifact"] != recorded[1]["artifact"]
+    for index, encoding in enumerate(("nee", "ee")):
+        expected = [str(binary), "--mode", "no-messages", "-j", "1"]
+        if encoding == "ee":
+            expected.extend(("--disequality-encoding", "ee"))
+        expected.append(str(file.absolute_path))
+        assert calibrated[index] == recorded[index]["workload"] == expected
+        assert recorded[index]["iterations"] == 6
+        assert f"off ({encoding})" in recorded[index]["name"]
 
 
 def test_profile_egg_treatment_uses_egg_binary_for_execution_identity_and_summary(
@@ -312,8 +396,8 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
     )
 
     base = Path(".profiles") / "v4" / ("a" * 64) / ("b" * 64) / "no-facts"
-    assert explicit == base / "proofs-i5.json.gz"
-    assert automatic == base / "proofs-auto10s.json.gz"
+    assert explicit == base / "proofs-nee-i5.json.gz"
+    assert automatic == base / "proofs-nee-auto10s.json.gz"
 
     data_hash = "sha256:" + "c" * 64
     with_facts = profile_runner.profile_cache_path(
@@ -324,7 +408,7 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
         profile_runner.ProfileMode(5, None),
         data_hash,
     )
-    assert with_facts == base.parent / ("c" * 64) / "proofs-i5.json.gz"
+    assert with_facts == base.parent / ("c" * 64) / "proofs-nee-i5.json.gz"
 
 
 def test_profile_display_path_is_relative_inside_invocation_directory(tmp_path: Path) -> None:
