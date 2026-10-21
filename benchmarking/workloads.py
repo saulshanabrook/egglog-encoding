@@ -144,7 +144,7 @@ def _egglog_tokens(source: str) -> Iterator[str | None]:
 
 
 def file_contains_executable_prove_command(path: Path) -> bool:
-    """Return whether a workload contains a top-level ``prove`` command."""
+    """Return whether a workload contains a top-level proof extraction command."""
 
     depth = 0
     expecting_command = False
@@ -160,7 +160,7 @@ def file_contains_executable_prove_command(path: Path) -> bool:
                 expecting_command = False
             depth = max(0, depth - 1)
         elif depth == 1 and expecting_command:
-            if token == "prove":
+            if token in ("prove", "prove-extract"):
                 return True
             expecting_command = False
     return False
@@ -191,5 +191,5 @@ def validate_workloads(files: Sequence[FileSpec]) -> None:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
                 f"{file_spec.display_path} contains an explicit prove command; "
-                "benchmark files should use check so the selected treatment controls proof extraction"
+                "benchmark files should use check or extract so the selected treatment controls proof extraction"
             )

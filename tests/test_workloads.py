@@ -31,10 +31,11 @@ def test_same_file_with_different_fact_contents_is_a_distinct_workload(tmp_path:
     workloads.validate_workloads((first, second))
 
 
-def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command", ("prove", "prove-extract"))
+def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path, command: str) -> None:
     prove_file = tmp_path / "prove.egg"
     prove_file.write_text(
-        "; comments may mention (prove ...)\n(datatype Expr)\n(prove (Fact))\n",
+        f"; comments may mention (prove ...)\n(datatype Expr)\n({command} (Fact))\n",
         encoding="utf-8",
     )
 
@@ -187,9 +188,11 @@ def test_egg_workload_command_uses_the_fixed_math_driver_contract() -> None:
     ]
 
 
-def test_egg_treatments_reject_other_workloads_and_fact_directories() -> None:
-    other = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
-    with pytest.raises(ValueError, match="only supports egglog-experimental/tests/math-microbenchmark-rational.egg"):
+def test_egg_treatments_reject_other_workloads_and_fact_directories(tmp_path: Path) -> None:
+    other_path = tmp_path / "other.egg"
+    other_path.write_text("(check (= 1 1))")
+    other = models.FileSpec("other.egg", other_path, targets.sha256_file(other_path))
+    with pytest.raises(ValueError, match="only supports the fixed Math11 workload"):
         validate_engine_workload(other, "egg")
 
     math = models.FileSpec(
