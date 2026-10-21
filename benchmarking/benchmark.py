@@ -69,8 +69,8 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--treatment",
         choices=TREATMENTS,
-        default="proofs",
-        help="candidate treatment (default: proofs)",
+        default="proof-testing",
+        help="candidate treatment (default: proof-testing)",
     )
     parser.add_argument(
         "--compare-target",
