@@ -141,3 +141,54 @@ figures/parameter-analysis.png: figures/parameter-analysis.vl.json .reports-grou
 
 figures-parameter-test:
 	cd figures && $(VEGA) node --test parameter.test.mjs
+
+# Regeneration and strict diagnostics are explicit, separate from collection.
+REPRODUCE_ARGS ?=
+EXPANDED_ROUNDS ?= 5
+EXPANDED_TIMEOUT_SEC ?= 300
+EXPANDED_ARGS = --rounds $(EXPANDED_ROUNDS) --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+.PHONY: reproduce-benchmarks validate-benchmarks expanded-bench-recording expanded-bench
+reproduce-benchmarks:
+	uv run --locked python -m benchmarks.reproduction.suite_reproduction $(REPRODUCE_ARGS)
+
+validate-benchmarks:
+	uv run --locked python -m benchmarks.reproduction.validate_benchmarks --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+# One dependency chain keeps collectors serial under make -j; off rows are reused.
+expanded-bench-recording:
+	uv run --locked python -m benchmarks.paper collect --comparison recording $(EXPANDED_ARGS)
+
+expanded-bench: expanded-bench-recording
+	uv run --locked python -m benchmarks.paper collect --comparison checked $(EXPANDED_ARGS)
+	uv run --locked python -m benchmarks.paper collect --comparison math $(EXPANDED_ARGS)
+
+EXPANDED_SPECS := figures/expanded/math-cutoff-11.vl.json figures/expanded/proof-overhead-cdf.vl.json
+EXPANDED_IMAGES := $(EXPANDED_SPECS:.vl.json=.svg) $(EXPANDED_SPECS:.vl.json=.png)
+.PHONY: figures figures-all figures-all-cached figures-bench figures-data figures-expanded figures-expanded-data figures-expanded-cached figures-expanded-test figure-inventory
+figures: figures-all
+figures-all: figures-expanded
+figures-all-cached: figures-expanded-cached
+figures-bench: expanded-bench
+figures-data: figures-expanded-data
+figures-expanded-data: expanded-bench
+	$(MAKE) figure-inventory
+
+# Recursive Make observes final write-if-changed metadata and snapshot mtimes.
+figures-expanded: figures-expanded-data
+figures-expanded-cached: figure-inventory
+figures-expanded figures-expanded-cached:
+	$(MAKE) $(EXPANDED_IMAGES)
+	@printf '%s\n' $(foreach image,$(EXPANDED_IMAGES),"$(abspath $(image))")
+
+figure-inventory:
+	uv run --locked python -m benchmarks.paper inventory --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+figures/expanded/%.svg: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2svg $(notdir $<) $(notdir $@)
+
+figures/expanded/%.png: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2png $(notdir $<) $(notdir $@) -s 3
+
+figures-expanded-test:
+	cd figures && $(VEGA) node --test expanded.test.mjs

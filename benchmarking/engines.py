@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -60,6 +61,7 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
 TREATMENTS = tuple(TREATMENT_SPECS)
 
 MATH_WORKLOAD_PATH = Path("egglog-experimental/tests/math-microbenchmark-rational.egg")
+MATH_WORKLOAD_SHA256 = "sha256:29e120079c588d0bf079891b393ae041ec4e1a45d369114cde3754e5c6b7878f"
 PARAMETER_WORKLOAD_PATH = Path("benchmarks/disequality/parameter-analysis.egg")
 
 
@@ -75,8 +77,9 @@ def validate_engine_workload(file_spec: WorkloadFile, treatment: Treatment) -> N
         if file_spec.absolute_path.suffix != ".in":
             raise ValueError(f"treatment {treatment} requires a native .in workload")
         return
-    project_fixture = Path(__file__).resolve().parents[1] / MATH_WORKLOAD_PATH
-    if file_spec.absolute_path != project_fixture.resolve():
+    actual = "sha256:" + hashlib.sha256(file_spec.absolute_path.read_bytes()).hexdigest()
+    if actual != MATH_WORKLOAD_SHA256:
         raise ValueError(
-            f"treatment {treatment} only supports {MATH_WORKLOAD_PATH.as_posix()}; cannot run {file_spec.display_path}"
+            f"treatment {treatment} only supports the fixed Math11 workload ({MATH_WORKLOAD_PATH}); "
+            f"cannot run {file_spec.display_path}"
         )
