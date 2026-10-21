@@ -22,6 +22,8 @@ from typing import Any, Literal, cast
 from rich.console import Console
 from rich.text import Text
 
+from native_memory import native_memory_command
+
 from . import samply_analysis
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
 from .models import DisequalityEncoding, FileSpec, TargetRequest
@@ -264,14 +266,17 @@ def run_samply_record(
     workload: Sequence[str],
     checkout_path: Path,
     timeout_sec: int,
+    native_limit: bool = False,
 ) -> dict[str, Any]:
     temp_artifact = profile_temp_path(artifact)
     temp_artifact.parent.mkdir(parents=True, exist_ok=True)
     with suppress(FileNotFoundError):
         temp_artifact.unlink()
-    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
+    if native_limit:
+        workload, env = native_memory_command(workload, env)
+    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
     try:
         process = subprocess.Popen(
             command,
@@ -356,6 +361,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
     if binary_path is None:
         raise ValueError(f"target {target.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
+    native_limit = TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg")
     workload = workload_command(binary_path, request.file, request.treatment, request.disequality_encoding)
     treatment_label = (
         f"{request.treatment} ({request.disequality_encoding})"
@@ -394,7 +400,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
                     f" {treatment_label} for {request.mode.profile_seconds}s",
                 )
             )
-            calibration = run_command(workload, checkout_path, request.timeout_sec)
+            calibration = run_command(workload, checkout_path, request.timeout_sec, native_limit=native_limit)
             if calibration.status != "success" or calibration.timing.wall_sec is None:
                 detail = calibration.error.message if calibration.error is not None else calibration.status
                 raise ValueError(f"profile calibration failed: {detail}")
@@ -428,6 +434,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
             workload=workload,
             checkout_path=checkout_path,
             timeout_sec=request.timeout_sec,
+            native_limit=native_limit,
         )
         console.print(Text.assemble(("Profile written", "bold"), " ", str(artifact)))
 

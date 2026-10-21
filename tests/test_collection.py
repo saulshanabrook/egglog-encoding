@@ -500,7 +500,10 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     with pytest.raises(ValueError, match=r"preflight failed.*--proof-extraction"):
         collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
-    assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
+    assert calls == [
+        ("--timing-summary", "--memory-limit-bytes"),
+        ("--timing-summary", "--memory-limit-bytes", "--proof-extraction"),
+    ]
 
 
 def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -541,8 +544,8 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
     collection.preflight_collection(plan, 120)
 
     assert calls == [
-        (egglog_binary, ("--timing-summary", "--proof-testing")),
-        (egg_binary, ("--timing-summary",)),
+        (egglog_binary, ("--timing-summary", "--memory-limit-bytes", "--proof-testing")),
+        (egg_binary, ("--timing-summary", "--memory-limit-bytes")),
     ]
 
 
@@ -603,7 +606,10 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
+        assert native_limit
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(
             json.dumps({"schema_version": 1, "rulesets": []}),
@@ -633,7 +639,10 @@ def test_run_process_passes_treatment_flags(
     commands: list[list[str]] = []
     file_spec = stable_file_spec(tmp_path)
 
-    def fake_run_command(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+    def fake_run_command(
+        command: list[str], checkout_path: Path, timeout_sec: int, *, native_limit: bool
+    ) -> processes.TimingResult:
+        assert native_limit
         commands.append(command)
         assert checkout_path == ROOT
         assert timeout_sec == 120
@@ -698,7 +707,7 @@ def test_run_process_rejects_success_without_timing_summary(
     monkeypatch.setattr(
         collection,
         "run_command",
-        lambda *_args: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
+        lambda *_args, **_kwargs: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
     )
 
     with pytest.raises(ValueError, match="did not produce --timing-summary"):
@@ -711,7 +720,7 @@ def test_run_process_does_not_require_summary_after_failure(
 ) -> None:
     file_spec = stable_file_spec(tmp_path)
     failure = processes.TimingResult("failure", processes.TimingRow(wall_sec=1.0), processes.ErrorRow("failed"))
-    monkeypatch.setattr(collection, "run_command", lambda *_args: failure)
+    monkeypatch.setattr(collection, "run_command", lambda *_args, **_kwargs: failure)
 
     observation = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "off", 120)
 
@@ -745,7 +754,10 @@ def test_collect_rows_rejects_mutated_workload_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
+        assert native_limit
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(json.dumps(make_timing_summary()), encoding="utf-8")
         if mutated_input == "file":
