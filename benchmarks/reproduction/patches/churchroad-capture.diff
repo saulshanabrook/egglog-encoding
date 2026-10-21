@@ -1,0 +1,135 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -7,4 +7,5 @@
+
+ [dependencies]
++serde_json = "1.0"
+ egglog = { git = "https://github.com/egraphs-good/egglog", rev = "757c52f6dcf8fe5b7b5eefb4bdc872ef70a5433a" }
+ log = "0.4.20"
+@@ -17,2 +18,4 @@
+ rpds = "1.1.0"
+ ordered-float = "3"
++
++[workspace]
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
++use churchroad::{reproduction_capture, ReproductionRun};
+ use std::collections::HashMap;
+ use std::fmt::Display;
+@@ -157,5 +158,5 @@
+     info!("Running rewrites.");
+     egraph
+-        .parse_and_run_program(
++        .reproduction_run_program(
+             None,
+             r#"
+@@ -214,9 +215,18 @@
+         .unwrap();
+     egraph
+-        .parse_and_run_program(
++        .reproduction_run_program(
+             None,
+             "(run-schedule (saturate (seq typing transform mapping)))",
+         )
+         .unwrap();
++
++    // Capture the complete persistent mapping computation. Output extraction is
++    // performed by the standalone replay, without Lakeroad or hardware codegen.
++    if std::env::var_os("EGGLOG_REPRO_CAPTURE_DIR").is_some() {
++        reproduction_capture("mapping-complete", serde_json::json!({
++            "outputs": outputs.iter().map(|(_, name)| name).collect::<Vec<_>>()
++        }));
++        return;
++    }
+
+     // egraph_interact(&mut egraph);
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,65 @@
+ pub mod global_greedy_dag;
++// Publish only fully written events, so a later interruption preserves completed calls.
++pub fn reproduction_capture(kind: &str, payload: serde_json::Value) {
++    use std::io::Write;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
++    if let Some(directory) = std::env::var_os("EGGLOG_REPRO_CAPTURE_DIR") {
++        let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
++        let path = std::path::Path::new(&directory).join(format!("event-{sequence:06}.json"));
++        let pending = path.with_extension("json.pending");
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(&pending)
++            .unwrap();
++        let event = serde_json::json!({"version": 1, "sequence": sequence,
++            "kind": kind, "payload": payload});
++        serde_json::to_writer(&mut file, &event).unwrap();
++        file.write_all(b"\n").unwrap();
++        file.sync_all().unwrap();
++        std::fs::rename(pending, path).unwrap();
++    }
++}
++pub trait ReproductionRun {
++    fn reproduction_run_program(
++        &mut self,
++        filename: Option<String>,
++        source: &str,
++    ) -> Result<Vec<String>, egglog::Error>;
++}
++impl ReproductionRun for egglog::EGraph {
++    fn reproduction_run_program(
++        &mut self,
++        filename: Option<String>,
++        source: &str,
++    ) -> Result<Vec<String>, egglog::Error> {
++        // All instrumented native callsites use None. Retain the actual included
++        // bytes while executing the original include, with its original context.
++        let included = source
++            .trim()
++            .strip_prefix("(include ")
++            .and_then(|s| s.strip_suffix(')'));
++        let (program, include_path) = if let Some(argument) = included {
++            let path: String = serde_json::from_str(argument.trim()).unwrap();
++            (std::fs::read_to_string(&path).unwrap(), Some(path))
++        } else {
++            (source.to_owned(), None)
++        };
++        reproduction_capture(
++            "commands",
++            serde_json::json!({
++            "program": program, "include_path": include_path, "original": source}),
++        );
++        let result = self.parse_and_run_program(filename, source);
++        reproduction_capture(
++            "commands-result",
++            serde_json::json!({
++            "success": result.is_ok(), "output": format!("{:?}", &result)}),
++        );
++        result
++    }
++}
++
+
+ use egraph_serialize::{ClassId, Node, NodeId};
+@@ -767,5 +829,5 @@
+     import_churchroad(&mut egraph);
+     egraph
+-        .parse_and_run_program(
++        .reproduction_run_program(
+             None,
+             &commands_from_verilog_file(
+@@ -2244,5 +2306,5 @@
+     // STEP 1: import primary language definitions.
+     egraph
+-        .parse_and_run_program(
++        .reproduction_run_program(
+             None,
+             &format!(
+@@ -2261,5 +2323,5 @@
+     // `debruijnify` primitive.
+     egraph
+-        .parse_and_run_program(
++        .reproduction_run_program(
+             None,
+             &format!(

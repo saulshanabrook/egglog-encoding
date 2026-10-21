@@ -1,0 +1,870 @@
+{
+  "math-growth": {
+    "artifact": "https://doi.org/10.5281/zenodo.7709794",
+    "repository": "https://github.com/pldi23-eqlog-ae/micro-benchmarks",
+    "revision": "5360490242ec846d3323f3a8e83e3df78cb81f2f",
+    "iterations": 11,
+    "input": "egglog-experimental/tests/math-microbenchmark-rational.egg"
+  },
+  "luminal": {
+    "repository": "https://github.com/saulshanabrook/egglog_repro",
+    "revision": "7fb0194812b5b11e41a286d8b55e48e3b0bfcd66",
+    "inputs": [
+      "gemma.egg",
+      "gemma4_moe.egg",
+      "llama.egg",
+      "paged_llama.egg",
+      "qwen.egg",
+      "qwen3_moe.egg",
+      "whisper.egg"
+    ]
+  },
+  "eggcc": {
+    "repository": "https://github.com/egraphs-good/eggcc",
+    "revision": "16be0063133ef0b8ba21cd75ee377002dc3ecbed",
+    "paper": "https://ztatlock.net/pubs/2026-oopsla-eggcc/2026-oopsla-eggcc.pdf",
+    "programs": [
+      "benchmarks/passing/bril/core/ackermann.bril",
+      "benchmarks/passing/bril/core/armstrong.bril",
+      "benchmarks/passing/bril/core/binary-fmt.bril",
+      "benchmarks/passing/bril/core/birthday.bril",
+      "benchmarks/passing/bril/core/bitshift.bril",
+      "benchmarks/passing/bril/core/bitwise-ops.bril",
+      "benchmarks/passing/bril/core/catalan.bril",
+      "benchmarks/passing/bril/core/check-primes.bril",
+      "benchmarks/passing/bril/core/collatz.bril",
+      "benchmarks/passing/bril/core/digital-root.bril",
+      "benchmarks/passing/bril/core/dot-product.bril",
+      "benchmarks/passing/bril/core/euclid.bril",
+      "benchmarks/passing/bril/core/fact.bril",
+      "benchmarks/passing/bril/core/factors.bril",
+      "benchmarks/passing/bril/core/fitsinside.bril",
+      "benchmarks/passing/bril/core/fizz-buzz.bril",
+      "benchmarks/passing/bril/core/gcd.bril",
+      "benchmarks/passing/bril/core/hanoi.bril",
+      "benchmarks/passing/bril/core/is-decreasing.bril",
+      "benchmarks/passing/bril/core/lcm.bril",
+      "benchmarks/passing/bril/core/loopfact.bril",
+      "benchmarks/passing/bril/core/mod_inv.bril",
+      "benchmarks/passing/bril/core/orders.bril",
+      "benchmarks/passing/bril/core/palindrome.bril",
+      "benchmarks/passing/bril/core/pascals-row.bril",
+      "benchmarks/passing/bril/core/perfect.bril",
+      "benchmarks/passing/bril/core/primes-between.bril",
+      "benchmarks/passing/bril/core/pythagorean_triple.bril",
+      "benchmarks/passing/bril/core/quadratic.bril",
+      "benchmarks/passing/bril/core/recfact.bril",
+      "benchmarks/passing/bril/core/relative-primes.bril",
+      "benchmarks/passing/bril/core/reverse.bril",
+      "benchmarks/passing/bril/core/sum-bits.bril",
+      "benchmarks/passing/bril/core/sum-check.bril",
+      "benchmarks/passing/bril/core/sum-divisors.bril",
+      "benchmarks/passing/bril/core/sum-sq-diff.bril",
+      "benchmarks/passing/bril/core/totient.bril",
+      "benchmarks/passing/bril/core/up-arrow.bril",
+      "benchmarks/passing/bril/float/conjugate-gradient.bril",
+      "benchmarks/passing/bril/float/cordic.bril",
+      "benchmarks/passing/bril/float/euler.bril",
+      "benchmarks/passing/bril/float/leibniz.bril",
+      "benchmarks/passing/bril/float/mandelbrot.bril",
+      "benchmarks/passing/bril/float/n_root.bril",
+      "benchmarks/passing/bril/float/newton.bril",
+      "benchmarks/passing/bril/float/norm.bril",
+      "benchmarks/passing/bril/float/ray-sphere-intersection.bril",
+      "benchmarks/passing/bril/float/riemann.bril",
+      "benchmarks/passing/bril/float/sqrt.bril",
+      "benchmarks/passing/bril/long/dead-branch.bril",
+      "benchmarks/passing/bril/mem/adj2csr.bril",
+      "benchmarks/passing/bril/mem/adler32.bril",
+      "benchmarks/passing/bril/mem/binary-search.bril",
+      "benchmarks/passing/bril/mem/bubblesort.bril",
+      "benchmarks/passing/bril/mem/csrmv.bril",
+      "benchmarks/passing/bril/mem/fib.bril",
+      "benchmarks/passing/bril/mem/major-elm.bril",
+      "benchmarks/passing/bril/mem/mat-mul.bril",
+      "benchmarks/passing/bril/mem/max-subarray.bril",
+      "benchmarks/passing/bril/mem/quickselect.bril",
+      "benchmarks/passing/bril/mem/quicksort.bril",
+      "benchmarks/passing/bril/mem/vsmul.bril",
+      "benchmarks/passing/bril/mixed/cholesky_decomp.bril",
+      "benchmarks/passing/bril/mixed/mat-inv.bril",
+      "benchmarks/passing/fenwick/fenwick_tree.rs",
+      "benchmarks/passing/polybench/datamining/correlation.rs",
+      "benchmarks/passing/polybench/datamining/covariance.rs",
+      "benchmarks/passing/polybench/linear-algebra/blas/gemm.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/gemver.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/gesummv.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/symm.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/syr2k.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/syrk.bril",
+      "benchmarks/passing/polybench/linear-algebra/blas/trmm.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/2mm.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/3mm.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/atax.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/bicg.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/doitgen.bril",
+      "benchmarks/passing/polybench/linear-algebra/kernels/mvt.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/cholesky.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/durbin.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/gramschmidt.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/lu.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/ludcmp.bril",
+      "benchmarks/passing/polybench/linear-algebra/solvers/trisolv.bril",
+      "benchmarks/passing/polybench/medley/deriche.rs",
+      "benchmarks/passing/polybench/medley/floyd-warshall.rs",
+      "benchmarks/passing/polybench/medley/nussinov.rs",
+      "benchmarks/passing/polybench/stencils/adi.rs",
+      "benchmarks/passing/polybench/stencils/fdtd-2d.rs",
+      "benchmarks/passing/polybench/stencils/heat-3d.rs",
+      "benchmarks/passing/polybench/stencils/jacobi-1d.rs",
+      "benchmarks/passing/polybench/stencils/jacobi-2d.rs",
+      "benchmarks/passing/polybench/stencils/seidel-2d.rs",
+      "benchmarks/passing/raytrace/raytrace.rs"
+    ],
+    "configurations": [
+      {
+        "id": "statewalk",
+        "scope": "all",
+        "native_options": [],
+        "basis": "Sections 8.1-8.3; default full optimization, with-context for Fenwick per infra/profile.py"
+      },
+      {
+        "id": "gurobi",
+        "scope": "bril-polybench",
+        "native_options": [
+          "--tiger-ilp",
+          "--ilp-solver",
+          "gurobi"
+        ],
+        "basis": "Section 8.2, Figures 10-11; selected output feeds later passes"
+      },
+      {
+        "id": "no-hacker",
+        "scope": "fenwick",
+        "native_options": [
+          "--with-context",
+          "--no-hacker-rules"
+        ],
+        "basis": "Section 8.3, Figure 12"
+      }
+    ],
+    "prerequisites": [
+      "Apple Silicon macOS",
+      "LLVM 18.1.8 with development libraries",
+      "Rust 1.88.0",
+      "CMake",
+      "clang"
+    ],
+    "blockers": {
+      "gurobi": "gurobi_cl and a usable Gurobi license are required; no extractor substitution."
+    }
+  },
+  "hardboiled": {
+    "input_kind": "author-published-egglog",
+    "repository": "https://github.com/yihozhang/egglog-benchmarks",
+    "scope": "The 42 author-published Egglog inputs, preserving original extractions; not all-paper coverage.",
+    "inputs": [
+      {
+        "id": "hardboiled-published-conv1d_104",
+        "file": "conv1d_104.egg",
+        "git_blob": "73ba8bae15484719962fdb19a34b81017a840770",
+        "sha256": "d2d407a080fb807204e713bc73212c2cd8bf1f07a9f4b2748020c6ca65b85d5b",
+        "size_bytes": 100868,
+        "extracts": 30
+      },
+      {
+        "id": "hardboiled-published-conv1d_112",
+        "file": "conv1d_112.egg",
+        "git_blob": "ece3bb26688577b0a67d3970bd3f7b4c61dd01bb",
+        "sha256": "c474b23715ad372d086ecd760344d83d1386b037eea11c54c19a46df2be09597",
+        "size_bytes": 103126,
+        "extracts": 32
+      },
+      {
+        "id": "hardboiled-published-conv1d_120",
+        "file": "conv1d_120.egg",
+        "git_blob": "e1560bdf945d18ed7d5e932e04562c883c38a546",
+        "sha256": "e030f1c42284a327d9b2ecef3e04b0fab48c44026dcc9b32b667b2413784f95f",
+        "size_bytes": 105384,
+        "extracts": 34
+      },
+      {
+        "id": "hardboiled-published-conv1d_128",
+        "file": "conv1d_128.egg",
+        "git_blob": "2c512c0e6140e9d0cb75f0e57025ed197d3b01a0",
+        "sha256": "82cb11e1f0fca4433c5ee1daa978c567086ab239758616b29cad711fca8581d2",
+        "size_bytes": 107642,
+        "extracts": 36
+      },
+      {
+        "id": "hardboiled-published-conv1d_136",
+        "file": "conv1d_136.egg",
+        "git_blob": "b01f33c5c8300c29fcaaa58164df73a01cbc08ad",
+        "sha256": "b843984dedf24ea486339826fa684dd473d8116f9eeda86db968ab67006dd2e7",
+        "size_bytes": 109900,
+        "extracts": 38
+      },
+      {
+        "id": "hardboiled-published-conv1d_144",
+        "file": "conv1d_144.egg",
+        "git_blob": "3e69ef846f1f3ef9e5040e4992a5883b9b88289d",
+        "sha256": "d0f38d9f199ffc1c344f27045244bb17cf43e96001fc3d4c057df82d1f48958d",
+        "size_bytes": 112158,
+        "extracts": 40
+      },
+      {
+        "id": "hardboiled-published-conv1d_152",
+        "file": "conv1d_152.egg",
+        "git_blob": "384fa28cd83b54ae7854a094590c202a95329fa6",
+        "sha256": "d6633b7290fc391af9b4a7beae22b7b2e37dd25c24c8aaebaa2271ede9163ea4",
+        "size_bytes": 114416,
+        "extracts": 42
+      },
+      {
+        "id": "hardboiled-published-conv1d_16",
+        "file": "conv1d_16.egg",
+        "git_blob": "b35655902cd70d764ec539be0cb37fd00995710f",
+        "sha256": "26f86e32dca7f87b10530cb4c21d1f3a64011e92bb1900993b517c5dddd676c5",
+        "size_bytes": 76082,
+        "extracts": 8
+      },
+      {
+        "id": "hardboiled-published-conv1d_160",
+        "file": "conv1d_160.egg",
+        "git_blob": "a294371223fe15474fc76fddff6a9d370e87cb4e",
+        "sha256": "ae2500a2ed5129c1313cfc7ef652b5738def1c2307a0e6d8d9f43a2972bbefd7",
+        "size_bytes": 116674,
+        "extracts": 44
+      },
+      {
+        "id": "hardboiled-published-conv1d_168",
+        "file": "conv1d_168.egg",
+        "git_blob": "84fc5fa3411880779fa3aa8aeea9fcadcf788d7f",
+        "sha256": "029764b65d23e758f30fcfdbb616feeb00ea0d9518e99969d85dd59b0fe99e48",
+        "size_bytes": 118932,
+        "extracts": 46
+      },
+      {
+        "id": "hardboiled-published-conv1d_176",
+        "file": "conv1d_176.egg",
+        "git_blob": "86d2a4670766220f0b2f78f0aecfe7d431a40cd4",
+        "sha256": "777c36925181fa55b631c9c06a82189af45f6ae44ad94ebb5f37f94d5bd3d91a",
+        "size_bytes": 121190,
+        "extracts": 48
+      },
+      {
+        "id": "hardboiled-published-conv1d_184",
+        "file": "conv1d_184.egg",
+        "git_blob": "a5996b3f560f3523754b964772da98789314ab54",
+        "sha256": "3cf03cb715a11a2a431cc7da15e47d0ef2526019c0100353383948299953b0d8",
+        "size_bytes": 123448,
+        "extracts": 50
+      },
+      {
+        "id": "hardboiled-published-conv1d_192",
+        "file": "conv1d_192.egg",
+        "git_blob": "1c5f1698daa3bec6848f29f2ac6ff0d712560884",
+        "sha256": "1add7c4d8043cace72d67739aa152d5ec8f00d30f1be70d90aa8dba8df81b082",
+        "size_bytes": 125706,
+        "extracts": 52
+      },
+      {
+        "id": "hardboiled-published-conv1d_200",
+        "file": "conv1d_200.egg",
+        "git_blob": "7db774ce2bd0ceb1dc208a1703a51ce93b0b2d31",
+        "sha256": "ce2ba5b9b80304993b6ac5ea56bd399e67ae4ab88e47000a7c9b9f5abf8255cd",
+        "size_bytes": 127964,
+        "extracts": 54
+      },
+      {
+        "id": "hardboiled-published-conv1d_208",
+        "file": "conv1d_208.egg",
+        "git_blob": "87c92e9e840982eba679753c99281e60f164e2af",
+        "sha256": "454affdd543f2b56dee69cd566ed310bc7f6853f6186ad74c0a891861edf6634",
+        "size_bytes": 130222,
+        "extracts": 56
+      },
+      {
+        "id": "hardboiled-published-conv1d_216",
+        "file": "conv1d_216.egg",
+        "git_blob": "a3b185396edf7e0ac21958f2c2d6f12f2c3738ab",
+        "sha256": "4dbdb7e2bdc1a2e4708532900f480f02bb868b03c99a8a5957c04bff80dc4f6c",
+        "size_bytes": 132480,
+        "extracts": 58
+      },
+      {
+        "id": "hardboiled-published-conv1d_224",
+        "file": "conv1d_224.egg",
+        "git_blob": "58e6e7cbd58dba82fb8f29bd0d988331e44552de",
+        "sha256": "919597ffe35b6c2beb90b5aef0b077a9d67aa972ad5070ab94eba91e77f2e819",
+        "size_bytes": 134738,
+        "extracts": 60
+      },
+      {
+        "id": "hardboiled-published-conv1d_232",
+        "file": "conv1d_232.egg",
+        "git_blob": "48d91f815f10e4986eea664134efe07dd2e34f0e",
+        "sha256": "23c8a477a2bec02ae70c0820a844cb3908c983c0a3e62f304823461d3303222e",
+        "size_bytes": 136996,
+        "extracts": 62
+      },
+      {
+        "id": "hardboiled-published-conv1d_24",
+        "file": "conv1d_24.egg",
+        "git_blob": "6e2a8a6fede5b3d8fda8e185d8e82f8883e94430",
+        "sha256": "67d3798bcf1ab94da1ea9c4aa15ae798435758d22ee12492ffee7a7089a5d5d3",
+        "size_bytes": 78328,
+        "extracts": 10
+      },
+      {
+        "id": "hardboiled-published-conv1d_240",
+        "file": "conv1d_240.egg",
+        "git_blob": "ac1fbb779dbb31656880f4dcc4545f5d7c02103d",
+        "sha256": "0930f26150c3f8d836cb0df18f5659495539060867722598b9fe347d0ae73649",
+        "size_bytes": 139254,
+        "extracts": 64
+      },
+      {
+        "id": "hardboiled-published-conv1d_248",
+        "file": "conv1d_248.egg",
+        "git_blob": "35213bca78a50bd0b6dfb8ec96479d2c2cabbb3c",
+        "sha256": "015b204e4534cdf8381abe4382c9819d7d5b6978daee7b4e58c7d33944af6a3b",
+        "size_bytes": 141512,
+        "extracts": 66
+      },
+      {
+        "id": "hardboiled-published-conv1d_256",
+        "file": "conv1d_256.egg",
+        "git_blob": "27203c4ae1617e30b8c6e0decdbf3b04d35c7fc4",
+        "sha256": "be325d08bd1687c016e3b779be5c92adb9113124e8bcb16168f1608e2c8bf28a",
+        "size_bytes": 143770,
+        "extracts": 68
+      },
+      {
+        "id": "hardboiled-published-conv1d_32",
+        "file": "conv1d_32.egg",
+        "git_blob": "935e70d23bd55e02d33719fa434bae9305205e96",
+        "sha256": "d04efea54f9258fc6c5a119b9d22b1d871ca4a037dbe6dc5774137cd16d8a712",
+        "size_bytes": 80582,
+        "extracts": 12
+      },
+      {
+        "id": "hardboiled-published-conv1d_40",
+        "file": "conv1d_40.egg",
+        "git_blob": "abc1107644c5a0c6848154dd2a40a898280e77e4",
+        "sha256": "053684df21ba5a104ac10bd96ac32b21bcfe1eadddad6307bda2b2b1deaabeda",
+        "size_bytes": 82836,
+        "extracts": 14
+      },
+      {
+        "id": "hardboiled-published-conv1d_48",
+        "file": "conv1d_48.egg",
+        "git_blob": "ce4947667ca1f4905389a4f6e1eac4d2936a3592",
+        "sha256": "5c6bb6785b7ff54653f994137bb2b71769355fec6bb440922195ff4c7b47004d",
+        "size_bytes": 85090,
+        "extracts": 16
+      },
+      {
+        "id": "hardboiled-published-conv1d_56",
+        "file": "conv1d_56.egg",
+        "git_blob": "c65a815b22d4c4b7174bcc81ee6f22c51270a0ca",
+        "sha256": "4ff59d720354325ae91327b264cf23a4636ce362af7bde572ec2bf22e2099703",
+        "size_bytes": 87344,
+        "extracts": 18
+      },
+      {
+        "id": "hardboiled-published-conv1d_64",
+        "file": "conv1d_64.egg",
+        "git_blob": "22b7a740a4a90f1bf1c10533e73b347290545452",
+        "sha256": "d4f6bd99bf7d727d29e70af0f6499cb1b9c7faa93222fdecd549307021053c86",
+        "size_bytes": 89598,
+        "extracts": 20
+      },
+      {
+        "id": "hardboiled-published-conv1d_72",
+        "file": "conv1d_72.egg",
+        "git_blob": "e06f98079dc62c30104bb54acd3856ce78718fbc",
+        "sha256": "a53f45773b3972cc2f17977ae7ddf338d95c9030f3e3da9b177ecf29425fc3cc",
+        "size_bytes": 91852,
+        "extracts": 22
+      },
+      {
+        "id": "hardboiled-published-conv1d_8",
+        "file": "conv1d_8.egg",
+        "git_blob": "ac39c5c572c757805ac7b703f6c7f3143b09dfb8",
+        "sha256": "6942176d49c12389f6925a77fe5eb6055e9e19aae187f72b1760f53efb3fb0a4",
+        "size_bytes": 73840,
+        "extracts": 6
+      },
+      {
+        "id": "hardboiled-published-conv1d_80",
+        "file": "conv1d_80.egg",
+        "git_blob": "aba55e6d73b2c0f7ba3516a972609ad50e5b119c",
+        "sha256": "e10bf193d9a18af8ad91b5a3c3791e8ce41ef17ae7c79f812411d1028865a316",
+        "size_bytes": 94106,
+        "extracts": 24
+      },
+      {
+        "id": "hardboiled-published-conv1d_88",
+        "file": "conv1d_88.egg",
+        "git_blob": "fe51ff7d635f8ce9b4722673c67bd68e37db26d5",
+        "sha256": "d69873126bddd5173619d6ab6af9d835df552443d26c4a7947994a9d4136c03d",
+        "size_bytes": 96360,
+        "extracts": 26
+      },
+      {
+        "id": "hardboiled-published-conv1d_96",
+        "file": "conv1d_96.egg",
+        "git_blob": "ce80477bfa7bf331af3e19cfae32932752b624ec",
+        "sha256": "5e14fb101450c52fceba2285a29e710f340b9793ead67598452635be161c2187",
+        "size_bytes": 98614,
+        "extracts": 28
+      },
+      {
+        "id": "hardboiled-published-conv2d_16",
+        "file": "conv2d_16.egg",
+        "git_blob": "1d953816264bd69eb69e76805c745a686c900bbb",
+        "sha256": "858636a953dcf53237c35965be9eb12cff6a6c1b2eacf62eb9c0deac5d5ea915",
+        "size_bytes": 83282,
+        "extracts": 16
+      },
+      {
+        "id": "hardboiled-published-conv2d_32",
+        "file": "conv2d_32.egg",
+        "git_blob": "d31b96a82d8c6eb322e90d37391821279913d5df",
+        "sha256": "ecba73160277e08ed6f5dff12b34d68bea1a4c110f0dfdb07af642ab5a24075f",
+        "size_bytes": 93374,
+        "extracts": 24
+      },
+      {
+        "id": "hardboiled-published-denoise",
+        "file": "denoise.egg",
+        "git_blob": "99fe6d6cb3d7590a61bedecc9395031854682fb8",
+        "sha256": "cf31aef6041763f6e65ac26875237fd6de9f584cd5800e4ee1f912eef85b3d76",
+        "size_bytes": 128483,
+        "extracts": 81
+      },
+      {
+        "id": "hardboiled-published-downsample_16",
+        "file": "downsample_16.egg",
+        "git_blob": "1a19efbfadc6a59b940a8b0f6d4f715378eee687",
+        "sha256": "e7f047e59cc558dc91f69fe4d9a295a698c55b062366628bcbaf4a26c5e4f0ef",
+        "size_bytes": 76792,
+        "extracts": 12
+      },
+      {
+        "id": "hardboiled-published-downsample_32",
+        "file": "downsample_32.egg",
+        "git_blob": "015bdac97ffc514c0481d6b31a665e488b410905",
+        "sha256": "cfb985d67b0726dce8515879161291b4d5428f31b09a4a18d0ee915c86fe47e2",
+        "size_bytes": 80986,
+        "extracts": 16
+      },
+      {
+        "id": "hardboiled-published-matmul",
+        "file": "matmul.egg",
+        "git_blob": "38af2179fd7bb23194eb000f522589f731d3a240",
+        "sha256": "42477d3a6756e5f044596b5b6955edc96c95bc7b1fd893fe09a3b309e7f23e09",
+        "size_bytes": 159578,
+        "extracts": 96
+      },
+      {
+        "id": "hardboiled-published-rec_filter",
+        "file": "rec_filter.egg",
+        "git_blob": "ca2b316b77806f63b6a4b030aafc674908bee5dd",
+        "sha256": "5fc5f8c3d1c74f92ea30791b343216ef361db181297e47e7ccbd450ec7cacdbb",
+        "size_bytes": 288088,
+        "extracts": 83
+      },
+      {
+        "id": "hardboiled-published-resize",
+        "file": "resize.egg",
+        "git_blob": "40ec3c52fdf85492d0dc426e01530b38d0e8b39b",
+        "sha256": "5c3bdf2c85b149a0c0e621d253753e82c1ff939df42241cacdd673a48f25af66",
+        "size_bytes": 130782,
+        "extracts": 40
+      },
+      {
+        "id": "hardboiled-published-upsample_16",
+        "file": "upsample_16.egg",
+        "git_blob": "ae633a877c1a2ea88cb6a764ad837a85a2dde4a4",
+        "sha256": "aeec7b66734aca321643ae962088eec16e496a48f2983f8e0ddc600c81c7b663",
+        "size_bytes": 182647,
+        "extracts": 141
+      },
+      {
+        "id": "hardboiled-published-upsample_32",
+        "file": "upsample_32.egg",
+        "git_blob": "fed9d8d06af3d863ae8d44b05cff4b7487fc44a3",
+        "sha256": "7389082988a784a2a1e2f1d61759b526cdc3e9c79f5624fe0a02cd68f363e351",
+        "size_bytes": 416387,
+        "extracts": 381
+      }
+    ],
+    "revision": "da432767a04c1803dc7edb5a9f653d90c0fbe623"
+  },
+  "misaal": {
+    "repository": "https://github.com/RafaeNoor/MISAAL",
+    "revision": "44ff893445d664cd87f52b08a138260ed2015ba8",
+    "paper": "https://hydride.cs.illinois.edu/files/2025/04/MISAAL-PLDI-Camera-Ready-3.pdf",
+    "paper_revision": "c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4",
+    "programs": {
+      "arm": [
+        "matmul_256_32bit_bias_add",
+        "matmul_256_32bit_bias_add_add",
+        "matmul_256_32bit_bias_add_relu",
+        "matmul_256_32bit_bias_add_gelu",
+        "matmul_bias_relu_matmul",
+        "matmul_bias_gelu_matmul",
+        "batched_matmul_256_32bit",
+        "median3x3",
+        "max_pool",
+        "dilate3x3",
+        "dilate5x5",
+        "dilate7x7",
+        "max_pool_add",
+        "average_pool",
+        "average_pool_add",
+        "softmax",
+        "blur3x3",
+        "blur5x5",
+        "blur7x7",
+        "depthwise_conv",
+        "conv3x3a16",
+        "conv_nn",
+        "fully_connected",
+        "mul",
+        "sobel3x3",
+        "sobel5x5",
+        "add",
+        "gaussian3x3",
+        "gaussian5x5",
+        "gaussian7x7",
+        "l2norm"
+      ],
+      "hexagon": [
+        "tensor_add",
+        "tensor_rounding_halving_add",
+        "tensor_mul",
+        "tensor_shr",
+        "tensor_shr_sat",
+        "tensor_shl",
+        "max_pool",
+        "blur3x3",
+        "blur5x5",
+        "blur7x7",
+        "median3x3",
+        "dilate3x3",
+        "dilate5x5",
+        "dilate7x7",
+        "average_pool",
+        "sobel3x3",
+        "sobel5x5",
+        "batched_matmul_256_32bit",
+        "average_pool_add",
+        "max_pool_add",
+        "gaussian3x3",
+        "gaussian5x5",
+        "gaussian7x7",
+        "conv3x3a16",
+        "softmax",
+        "add",
+        "mul",
+        "tensor_rounding_mul_shift_right",
+        "tensor_sat",
+        "l2norm",
+        "matmul_256_32bit_bias_add",
+        "matmul_256_32bit_bias_add_relu",
+        "matmul_256_32bit_bias_add_gelu",
+        "matmul_bias_relu_matmul",
+        "matmul_bias_gelu_matmul",
+        "matmul_256_32bit_bias_add_add",
+        "conv_nn",
+        "depthwise_conv",
+        "fully_connected"
+      ],
+      "x86": [
+        "gaussian3x3",
+        "dilate3x3",
+        "dilate5x5",
+        "dilate7x7",
+        "max_pool",
+        "sobel3x3",
+        "sobel5x5",
+        "blur3x3",
+        "blur5x5",
+        "blur7x7",
+        "gaussian5x5",
+        "gaussian7x7",
+        "median3x3",
+        "batched_matmul_256_32bit",
+        "max_pool_add",
+        "average_pool",
+        "average_pool_add",
+        "l2norm",
+        "add",
+        "matmul_bias_relu_matmul",
+        "matmul_bias_gelu_matmul",
+        "matmul_256_32bit_bias_add_relu",
+        "matmul_256_32bit_bias_add_gelu",
+        "matmul_256_32bit_bias_add",
+        "matmul_256_32bit_bias_add_add",
+        "mul",
+        "softmax",
+        "fully_connected",
+        "depthwise_conv",
+        "tensor_shr",
+        "conv_nn",
+        "conv3x3a16"
+      ]
+    },
+    "prerequisites": [
+      "Apple Silicon macOS",
+      "LLVM 12 development libraries",
+      "clang",
+      "Rust",
+      "Racket 9.2",
+      "uv"
+    ],
+    "paper_rows": [
+      {
+        "paper": "sobel3x3",
+        "source_generator": "sobel3x3"
+      },
+      {
+        "paper": "sobel5x5",
+        "source_generator": "sobel5x5"
+      },
+      {
+        "paper": "dilate3x3",
+        "source_generator": "dilate3x3"
+      },
+      {
+        "paper": "dilate5x5",
+        "source_generator": "dilate5x5"
+      },
+      {
+        "paper": "dilate7x7",
+        "source_generator": "dilate7x7"
+      },
+      {
+        "paper": "blur3x3",
+        "source_generator": "blur3x3"
+      },
+      {
+        "paper": "blur5x5",
+        "source_generator": "blur5x5"
+      },
+      {
+        "paper": "blur7x7",
+        "source_generator": "blur7x7"
+      },
+      {
+        "paper": "median3x3",
+        "source_generator": "median3x3"
+      },
+      {
+        "paper": "gaussian3x3",
+        "source_generator": "gaussian3x3"
+      },
+      {
+        "paper": "gaussian5x5",
+        "source_generator": "gaussian5x5"
+      },
+      {
+        "paper": "gaussian7x7",
+        "source_generator": "gaussian7x7"
+      },
+      {
+        "paper": "l2norm",
+        "source_generator": "l2norm"
+      },
+      {
+        "paper": "conv_nn",
+        "source_generator": "conv_nn"
+      },
+      {
+        "paper": "conv3x3a16",
+        "source_generator": "conv3x3a16"
+      },
+      {
+        "paper": "depthwise_conv",
+        "source_generator": "depthwise_conv"
+      },
+      {
+        "paper": "avgpool",
+        "source_generator": "average_pool"
+      },
+      {
+        "paper": "maxpool",
+        "source_generator": "max_pool"
+      },
+      {
+        "paper": "fullyconnected",
+        "source_generator": "fully_connected"
+      },
+      {
+        "paper": "add",
+        "source_generator": "add"
+      },
+      {
+        "paper": "mul",
+        "source_generator": "mul"
+      },
+      {
+        "paper": "softmax",
+        "source_generator": "softmax"
+      },
+      {
+        "paper": "matmul[b=1]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "matmul[b=2]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "matmul[b=4]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "avgpool+add",
+        "source_generator": "average_pool_add"
+      },
+      {
+        "paper": "maxpool+add",
+        "source_generator": "max_pool_add"
+      },
+      {
+        "paper": "M+B",
+        "source_generator": "matmul_256_32bit_bias_add"
+      },
+      {
+        "paper": "M+B+R",
+        "source_generator": "matmul_256_32bit_bias_add_relu"
+      },
+      {
+        "paper": "M+B+G",
+        "source_generator": "matmul_256_32bit_bias_add_gelu"
+      },
+      {
+        "paper": "M+B+E",
+        "source_generator": "matmul_256_32bit_bias_add_add"
+      },
+      {
+        "paper": "M+B+R+M",
+        "source_generator": "matmul_bias_relu_matmul"
+      },
+      {
+        "paper": "M+B+G+M",
+        "source_generator": "matmul_bias_gelu_matmul"
+      }
+    ]
+  },
+  "churchroad": {
+    "repository": "https://github.com/gussmith23/churchroad",
+    "revision": "9f82ca23b273a5a500cc6a1ca60b30d3c33c5721",
+    "paper": "https://woset-workshop.github.io/PDFs/2024/7_Scaling_Program_Synthesis_Ba.pdf",
+    "inputs": [
+      "tests/integration_tests/simple_mul.v",
+      "tests/integration_tests/wide_mul.v"
+    ],
+    "later_evaluation": {
+      "repository": "https://github.com/gussmith23/churchroad-evaluation",
+      "revision": "af615fa460667a08228a7e8f7e3d345b310e39ac",
+      "reason": "README dates environment to June 2025; separate from WOSET 2024 population.",
+      "sources": [
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_8_8_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_8_16_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_16_16_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_32_32_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_32_48_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_18_18_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_18_36_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_25_43_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_32_32_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_32_64_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_48_80_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_64_96_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_64_64_64_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_64_64_128_bit.sv",
+        "benchmarks/mul/1_stage/mul_1_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/2_stage/mul_2_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/3_stage/mul_3_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/muladd/muladd_unsigned_0stage_16_16_32_32.v",
+        "benchmarks/muladd/muladd_0_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_1_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_2_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_0_stage_signed_32_32_32_32_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_8_8_16_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_16_16_32_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_32_32_64_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_64_64_128_bit.sv"
+      ]
+    },
+    "prerequisites": [
+      "git",
+      "make",
+      "pkg-config",
+      "bison",
+      "flex",
+      "Racket >=8.1",
+      "rustup",
+      "clang",
+      "GMP/readline/libffi/zlib headers"
+    ]
+  },
+  "dialegg": {
+    "repository": "https://github.com/AzizZayed/dialegg-cgo-artifact",
+    "revision": "4d0d522e98c15becdc5e7d711348cb0891ff0d44",
+    "paper": "https://azizzayed.com/publications/dialegg/zayedcgo24.pdf",
+    "runtime_programs": [
+      "image_conversion",
+      "vector_norm",
+      "polynomial",
+      "2mm",
+      "3mm"
+    ],
+    "runtime_passes": {
+      "eqsat": [
+        "--eq-sat"
+      ],
+      "canonicalize-eqsat": [
+        "--canonicalize",
+        "--eq-sat"
+      ],
+      "eqsat-canonicalize": [
+        "--eq-sat",
+        "--canonicalize"
+      ]
+    },
+    "timer_nmm": [
+      2,
+      3,
+      10,
+      20,
+      40,
+      80
+    ],
+    "artifact_extra_nmm": [
+      160
+    ],
+    "prerequisites": [
+      "Apple Silicon macOS",
+      "LLVM 18.1.8 with MLIR development libraries",
+      "Rust 1.88.0",
+      "clang"
+    ],
+    "timer_programs": [
+      "image_conversion",
+      "vector_norm",
+      "polynomial"
+    ]
+  },
+  "speq": {
+    "paper": "https://www.paramathic.com/wp-content/uploads/2024/04/REV_PLDI_rev2.pdf",
+    "artifact": "https://zenodo.org/records/10963236",
+    "excluded": "The retained reference-oriented compiler inputs do not represent the complete, standalone optimization workloads selected for this comparison."
+  }
+}

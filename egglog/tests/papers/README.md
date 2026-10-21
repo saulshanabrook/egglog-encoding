@@ -54,7 +54,7 @@ git -C /tmp/lleq checkout 00bd6254b3832d94558b7c38a394ea03d01a2763
 MISAAL can then be regenerated directly:
 
 ```bash
-uv run python scripts/paper_benchmarks/materialize.py misaal \
+uv run python -m benchmarks.reproduction.materialize misaal \
   --checkout /tmp/MISAAL \
   --output egglog/tests/papers/misaal-hvx-dot-product.egg \
   --check
@@ -74,7 +74,7 @@ make -C /tmp/yosys -j8 ENABLE_ABC=0
 CPLUS_INCLUDE_PATH=/tmp/yosys /tmp/yosys/yosys-config --build \
   /tmp/churchroad.so /tmp/churchroad/yosys-plugin/churchroad.cc
 
-uv run python scripts/paper_benchmarks/materialize.py churchroad-wide-multiply \
+uv run python -m benchmarks.reproduction.materialize churchroad-wide-multiply \
   --checkout /tmp/churchroad \
   --yosys /tmp/yosys/yosys \
   --plugin /tmp/churchroad.so \
@@ -95,7 +95,7 @@ cd /tmp/dialegg
   bench/nmm/40mm.mlir -egg bench/nmm/nmm.egg -o /tmp/dialegg-nmm40.mlir
 cd -
 
-uv run python scripts/paper_benchmarks/materialize.py dialegg-nmm --size 40 \
+uv run python -m benchmarks.reproduction.materialize dialegg-nmm --size 40 \
   --checkout /tmp/dialegg \
   --generated /tmp/dialegg/bench/nmm/nmm.ops.egg \
   --output egglog-experimental/tests/papers/dialegg-nmm40.egg \
@@ -128,7 +128,7 @@ uv venv --python 3.12 /tmp/speq-recorder
 uv pip install --python /tmp/speq-recorder/bin/python \
   egglog==13.2.0 lark==1.1.7 z3-solver==4.12.2.0 'setuptools<81'
 
-/tmp/speq-recorder/bin/python scripts/paper_benchmarks/record_speq.py \
+/tmp/speq-recorder/bin/python -m benchmarks.reproduction.record_speq \
   --artifact /tmp/speq/lleq-artifact \
   --rev-tests /tmp/lleq/llvm/unittests/Transforms/REV/REVTest.cpp \
   --lleq /tmp/lleq \

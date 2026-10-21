@@ -1,0 +1,51 @@
+
+        #lang rosette
+        (require rosette/lib/synthax)
+        (require rosette/lib/angelic)
+        (require racket/pretty)
+        (require rosette/lib/destruct)
+        (require hydride)
+        (require misaal)
+        (require rosette/solver/smt/boolector)
+        (require rosette/solver/smt/z3)
+
+        ;; Uncomment the line below to enable verbose logging
+        (enable-debug)
+        (custodian-limit-memory (current-custodian) (* 10000 1024 1024))
+        (current-bitwidth 16)
+        
+(define param-test-cases (list 
+(TESTS 2 (vector 16 1 1 32 16 1 1 32 1 2 8 32 16 1 1 32 0 1 2 8 32 8 16))
+(TESTS 2 (vector 16 1 1 32 16 1 1 32 1 2 8 32 16 1 1 32 0 1 2 8 32 8 16))
+(TESTS 64 (vector 16 1 32 32 16 1 32 32 1 64 8 1024 16 1 32 32 0 1 64 8 1024 8 512))
+(TESTS 64 (vector 16 1 32 32 16 1 32 32 1 64 8 1024 16 1 32 32 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 16 1 64 32 16 1 64 32 1 128 8 2048 16 1 64 32 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 32 1 16 64 32 1 16 64 1 64 8 1024 32 1 16 64 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 32 1 32 64 32 1 32 64 1 128 8 2048 32 1 32 64 0 1 128 8 2048 8 1024))
+(TESTS 128 (vector 32 1 32 64 32 1 32 64 1 128 8 2048 32 1 32 64 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 32 1 16 64 32 1 16 64 1 64 8 1024 32 1 16 64 0 1 64 8 1024 8 512))
+(TESTS 2 (vector 8 1 2 16 8 1 2 16 1 2 8 32 8 1 2 16 0 1 2 8 32 8 16))
+(TESTS 128 (vector 32 1 32 64 32 1 32 64 1 128 8 2048 32 1 32 64 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 32 1 16 64 32 1 16 64 1 64 8 1024 32 1 16 64 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 32 1 32 64 32 1 32 64 1 128 8 2048 32 1 32 64 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 32 1 16 64 32 1 16 64 1 64 8 1024 32 1 16 64 0 1 64 8 1024 8 512))
+(TESTS 64 (vector 16 1 32 32 16 1 32 32 1 64 8 1024 16 1 32 32 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 16 1 64 32 16 1 64 32 1 128 8 2048 16 1 64 32 0 1 128 8 2048 8 1024))
+(TESTS 128 (vector 16 1 64 32 16 1 64 32 1 128 8 2048 16 1 64 32 0 1 128 8 2048 8 1024))
+(TESTS 2 (vector 8 1 2 16 8 1 2 16 1 2 8 32 8 1 2 16 0 1 2 8 32 8 16))
+(TESTS 64 (vector 8 1 64 16 8 1 64 16 1 64 8 1024 8 1 64 16 0 1 64 8 1024 8 512))
+(TESTS 64 (vector 16 1 32 32 16 1 32 32 1 64 8 1024 16 1 32 32 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 16 1 64 32 16 1 64 32 1 128 8 2048 16 1 64 32 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 8 1 64 16 8 1 64 16 1 64 8 1024 8 1 64 16 0 1 64 8 1024 8 512))
+(TESTS 64 (vector 8 1 64 16 8 1 64 16 1 64 8 1024 8 1 64 16 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 8 1 128 16 8 1 128 16 1 128 8 2048 8 1 128 16 0 1 128 8 2048 8 1024))
+(TESTS 64 (vector 8 1 64 16 8 1 64 16 1 64 8 1024 8 1 64 16 0 1 64 8 1024 8 512))
+(TESTS 128 (vector 8 1 128 16 8 1 128 16 1 128 8 2048 8 1 128 16 0 1 128 8 2048 8 1024))
+(TESTS 128 (vector 8 1 128 16 8 1 128 16 1 128 8 2048 8 1 128 16 0 1 128 8 2048 8 1024))
+(TESTS 128 (vector 8 1 128 16 8 1 128 16 1 128 8 2048 8 1 128 16 0 1 128 8 2048 8 1024))
+))
+(define-values (sat? expr) (synthesize-param-expression param-test-cases 2 3 (list ) #f))
+(cond
+[sat? (write-str-to-file (~v expr) "6lt2r1zf.temp") (exit 0)]
+[else (exit 1)]
+)
