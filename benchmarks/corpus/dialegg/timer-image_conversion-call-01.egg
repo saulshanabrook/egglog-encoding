@@ -1,0 +1,139 @@
+(sort IntVec (Vec i64))
+(sort FloatVec (Vec f64))
+
+;; Types
+(sort Type)
+(sort TypeVec (Vec Type))
+
+;; Attrs
+(sort Attr)
+(sort AttrDict (Map String Attr))
+(sort AttrVec (Vec Attr))
+(datatype AttrPair (NamedAttr String Attr) (ValueAttr Attr))
+
+;; Op
+;; Usage:
+;; (<op_variant> <operand1> <operand2> ... <operandN> <attr1> <attr2> ... <attrM> <region1> <region2> ... <regionR> <type>)
+(datatype Op 
+    (Value i64 Type)
+    (OpaqueOp i64 TypeVec)
+    (NoOp)
+)
+(sort OpVec (Vec Op))
+(datatype Block (Blk OpVec))
+(sort BlockVec (Vec Block))
+(datatype Region (Reg BlockVec))
+(sort RegionVec (Vec Region))
+
+;; helper functions
+(function type-of (Op) Type :merge old)
+(function dims (Type) IntVec :merge old)
+
+;;;; builtin dialect ;;;;
+
+;; Types
+
+(constructor F16 () Type)
+(constructor F32 () Type)
+(constructor F64 () Type)
+(constructor F80 () Type)
+(constructor F128 () Type)
+(constructor I1 () Type)
+(constructor I4 () Type)
+(constructor I8 () Type)
+(constructor I16 () Type)
+(constructor I32 () Type)
+(constructor I64 () Type)
+(constructor Int (i64) Type)
+(constructor SInt (i64) Type)
+(constructor UInt (i64) Type)
+(constructor OtherInt (String) Type)
+(constructor Index () Type)
+(constructor None () Type)
+(constructor Complex (Type) Type)
+(constructor Tuple (TypeVec) Type)
+(constructor Function (TypeVec TypeVec) Type)
+
+(constructor Vector (IntVec Type) Type)
+(constructor RankedTensor (IntVec Type) Type)
+(constructor UnrankedTensor (Type) Type)
+
+(constructor OpaqueType (String String) Type)
+
+; Dynamic RankedTensor type
+; (datatype Dimension
+;     (Dyn)
+;     (D i64)
+; )
+; (sort DimVec (Vec Dimension))
+; (function DynRankedTensor (DimVec Type) Type)
+
+; (rule ((= ?t (RankedTensor ?dims ?tp))) ((set (dims ?t) ?dims)))
+
+;; Attrs
+
+(constructor NoAttr () Attr)
+(constructor IntegerAttr (i64 Type) Attr)
+(constructor FloatAttr (f64 Type) Attr)
+(constructor StringAttr (String) Attr)
+(constructor UnitAttr () Attr)
+(constructor TypeAttr (Type) Attr)
+
+(constructor ArrayAttr (AttrVec) Attr)
+(constructor DenseIntArrayAttr (i64 IntVec Type) Attr)
+(constructor DenseFloatArrayAttr (f64 FloatVec Type) Attr)
+(constructor DenseIntElementsAttr (FloatVec Type) Attr)
+(constructor DenseFPElementsAttr (FloatVec Type) Attr)
+(constructor SymbolRefAttr (String) Attr)
+
+(constructor OpaqueAttr (String String) Attr) ; (<attr> <type-name>)
+
+; DenseResourceElementsAttr
+; DenseStringElementsAttr
+; DictionaryAttr
+; IntegerSetAttr
+; OpaqueAttr
+; SparseElementsAttr
+; SymbolRefAttr
+; StridedLayoutAttr
+
+;;;; arith dialect ;;;;
+(constructor arith_constant (AttrPair Type) Op)
+(constructor arith_divsi (Op Op Type) Op :cost 2)
+(constructor arith_shrsi (Op Op Type) Op)
+
+;; OPS HERE ;;
+; image_conversion_func.func
+(let $op0 (Value 0 (RankedTensor (vec-of 3840 2160 3) (I64))))
+(let $op1 (arith_constant (NamedAttr "value" (IntegerAttr 0 (Index))) (Index)))
+(let $op2 (arith_constant (NamedAttr "value" (IntegerAttr 1 (Index))) (Index)))
+(let $op3 (arith_constant (NamedAttr "value" (IntegerAttr 2 (Index))) (Index)))
+(let $op4 (arith_constant (NamedAttr "value" (IntegerAttr 3840 (Index))) (Index)))
+(let $op5 (arith_constant (NamedAttr "value" (IntegerAttr 2160 (Index))) (Index)))
+(let $op6 (Value 6 (RankedTensor (vec-of 3840 2160) (I64))))
+(let $op7 (Value 7 (RankedTensor (vec-of 3840 2160) (I64))))
+(let $op8 (Value 8 (None)))
+
+;; RULES HERE ;;
+(ruleset rules)
+(rule ; division by a power of 2 is equivalent to right shift
+    ((= ?lhs (arith_divsi ?x (arith_constant (NamedAttr "value" (IntegerAttr ?n ?t)) ?t) ?t)) ; x / n
+     (= ?lgn (log2 ?n)) ; if n = 2^k, then k = log2(n)
+     (= ?n (<< 1 ?lgn))) ; check if n is a power of 2
+    ((union ?lhs (arith_shrsi ?x (arith_constant (NamedAttr "value" (IntegerAttr ?lgn ?t)) ?t) ?t))) ; x / n = x >> lgn
+    :ruleset rules
+)
+
+(run-schedule (saturate rules))
+
+;; EXTRACTS HERE ;;
+(check (= $op1 ( arith_constant ( NamedAttr "value" ( IntegerAttr 0 ( Index ) ) ) ( Index ) )))
+(extract $op1)
+(check (= $op2 ( arith_constant ( NamedAttr "value" ( IntegerAttr 1 ( Index ) ) ) ( Index ) )))
+(extract $op2)
+(check (= $op3 ( arith_constant ( NamedAttr "value" ( IntegerAttr 2 ( Index ) ) ) ( Index ) )))
+(extract $op3)
+(check (= $op4 ( arith_constant ( NamedAttr "value" ( IntegerAttr 3840 ( Index ) ) ) ( Index ) )))
+(extract $op4)
+(check (= $op5 ( arith_constant ( NamedAttr "value" ( IntegerAttr 2160 ( Index ) ) ) ( Index ) )))
+(extract $op5)

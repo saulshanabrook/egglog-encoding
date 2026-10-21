@@ -13,6 +13,8 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
+
+/benchmarks/corpus/.local/
 slotted/output.egg
 xdiff-tmp-*.egg
 xdiff-tmp-*.json
