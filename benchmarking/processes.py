@@ -82,20 +82,46 @@ def run_command(
             stderr=stderr_file,
             start_new_session=True,
         )
+        return_code = None
+        timed_out = False
+        cleanup_error = None
         try:
             return_code, usage = wait4_process(process, timeout_sec)
             wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            try:
+                terminate_process_group(process)
+            except OSError as error:
+                if return_code is None and not timed_out:
+                    raise
+                cleanup_error = error
+        if timed_out:
+            message = f"timed out after {timeout_sec} seconds"
+            if cleanup_error is not None:
+                message += f"; process-group cleanup failed: {cleanup_error}"
             return TimingResult(
                 status="timed-out",
                 timing=TimingRow(),
-                error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
+                error=ErrorRow(message=message),
+                stop_collection=cleanup_error is not None,
             )
-        finally:
-            terminate_process_group(process)
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
         stderr = read_tempfile(stderr_file)
+    assert return_code is not None
+    if cleanup_error is not None:
+        return TimingResult(
+            status="failure",
+            timing=timing,
+            error=ErrorRow(
+                message=f"process-group cleanup failed: {cleanup_error}",
+                exit_code=return_code if return_code >= 0 else None,
+                signal=-return_code if return_code < 0 else None,
+            ),
+            stop_collection=True,
+        )
     if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
         return TimingResult(
             status="failure",

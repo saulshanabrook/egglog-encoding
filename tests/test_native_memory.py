@@ -110,7 +110,10 @@ def test_unexpected_sigkill_is_a_stop_without_an_oom_claim(tmp_path: Path) -> No
     assert "OOM" not in result.error.message
 
 
-def test_cleanup_failure_prevents_another_condition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("exit_code", [0, 2, None])
+def test_cleanup_failure_retains_attempt_before_stopping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exit_code: int | None
+) -> None:
     cleanup = processes.terminate_process_group
     calls = 0
 
@@ -121,7 +124,10 @@ def test_cleanup_failure_prevents_another_condition(tmp_path: Path, monkeypatch:
     def observe(*_args: object) -> collection.ProcessObservation:
         nonlocal calls
         calls += 1
-        result = processes.run_command([sys.executable, "-c", "print('complete')"], tmp_path, 5)
+        child_code = (
+            "import time; time.sleep(60)" if exit_code is None else f"print('complete'); raise SystemExit({exit_code})"
+        )
+        result = processes.run_command([sys.executable, "-c", child_code], tmp_path, 1)
         return collection.ProcessObservation(result, None)
 
     monkeypatch.setattr(processes, "terminate_process_group", failed_cleanup)
@@ -130,6 +136,45 @@ def test_cleanup_failure_prevents_another_condition(tmp_path: Path, monkeypatch:
         make_target(binary_path=tmp_path / "engine"),
         (planned_run(required=2), planned_run(filename="other.egg", required=1)),
     )
-    with pytest.raises(PermissionError, match="cleanup failed"):
-        collection.collect_rows(ReportStore(tmp_path / "report.jsonl"), plan, 120, Console(file=io.StringIO()))
+    store = ReportStore(tmp_path / "report.jsonl")
+    with pytest.raises(ValueError, match="cleanup failed.*failed observation was retained"):
+        collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
+    assert calls == store.row_count == 1
+    record = store.records[0]
+    assert record["error_exit_code"] == exit_code
+    if exit_code is None:
+        assert record["status"] == "timed-out"
+        assert record["wall_sec"] is None and record["max_rss_bytes"] is None
+    else:
+        assert record["status"] == "failure"
+        assert record["wall_sec"] is not None and record["wall_sec"] > 0
+        assert record["max_rss_bytes"] is not None and record["max_rss_bytes"] > 0
+
+
+@pytest.mark.parametrize("stage", ["launch", "wait"])
+def test_process_setup_failure_does_not_fabricate_an_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    calls = 0
+
+    def failed_wait(*_args: object) -> None:
+        raise OSError("wait failed before a process outcome was available")
+
+    def observe(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        command = [str(tmp_path / "missing")] if stage == "launch" else [sys.executable, "-c", "pass"]
+        return collection.ProcessObservation(processes.run_command(command, tmp_path, 5), None)
+
+    if stage == "wait":
+        monkeypatch.setattr(processes, "wait4_process", failed_wait)
+    monkeypatch.setattr(collection, "run_process", observe)
+    plan = collection.CollectionPlan(
+        make_target(binary_path=tmp_path / "engine"),
+        (planned_run(required=2), planned_run(filename="other.egg", required=1)),
+    )
+    store = ReportStore(tmp_path / "report.jsonl")
+    with pytest.raises(OSError):
+        collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
     assert calls == 1
+    assert store.row_count == 0
