@@ -309,9 +309,23 @@ impl Parser {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<Command>, ParseError> {
-        let sexps = all_sexps(SexpParser::new(filename, input))?;
-        let nested: Vec<Vec<_>> = map_fallible(&sexps, self, Self::parse_command)?;
-        Ok(nested.into_iter().flatten().collect())
+        let mut ctx = SexpParser::new(filename, input);
+        let mut commands = Vec::new();
+        while let Some(next) = self.parse_next_command(&mut ctx)? {
+            commands.extend(next);
+        }
+        Ok(commands)
+    }
+
+    /// Parse one source form and expand its parser macros. An empty expansion is
+    /// `Some(vec![])`; only the end of the source returns `None`.
+    pub(crate) fn parse_next_command(
+        &mut self,
+        ctx: &mut SexpParser<'_>,
+    ) -> Result<Option<Vec<Command>>, ParseError> {
+        ctx.next_sexp()?
+            .map(|form| self.parse_command(&form))
+            .transpose()
     }
 
     // currently only used for testing, but no reason it couldn't be used elsewhere later
@@ -1382,6 +1396,17 @@ impl<'a> SexpParser<'a> {
         }
     }
 
+    /// Read one complete form with the ordinary grammar, retaining it for either
+    /// checked source execution or parser-macro expansion without re-lexing.
+    pub(crate) fn next_sexp(&mut self) -> Result<Option<Sexp<'a>>, ParseError> {
+        self.advance_past_whitespace();
+        if self.is_at_end() {
+            Ok(None)
+        } else {
+            sexp(self).map(Some)
+        }
+    }
+
     fn current_char(&self) -> Option<char> {
         self.input[self.index..].chars().next()
     }
@@ -1750,6 +1775,191 @@ mod tests {
         };
         assert_eq!(expr.to_string(), "(generated-λ)");
         assert_eq!(expr.span().string(), "(generated :name λ :flag)");
+    }
+
+    #[test]
+    fn program_parser_preserves_macro_expansion_and_owned_spans() {
+        use std::sync::Mutex;
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let retained = Arc::new(Mutex::new(Vec::new()));
+        let mut parser = Parser::default();
+        let macro_events = events.clone();
+        let macro_retained = retained.clone();
+        parser.add_command_macro(Arc::new(SimpleMacro::new(
+            "install",
+            move |_, span, parser| {
+                macro_events.lock().unwrap().push("install");
+                macro_retained.lock().unwrap().push(span);
+                let events = macro_events.clone();
+                parser.add_expr_macro(Arc::new(SimpleMacro::new(
+                    "boxed",
+                    move |args, span, parser| {
+                        events.lock().unwrap().push("boxed");
+                        Ok(Expr::Call(
+                            span,
+                            "Box".into(),
+                            map_fallible(args, parser, Parser::parse_expr)?,
+                        ))
+                    },
+                )));
+                let events = macro_events.clone();
+                parser.add_action_macro(Arc::new(SimpleMacro::new(
+                    "twice",
+                    move |args, span, parser| {
+                        events.lock().unwrap().push("twice");
+                        let expr = parser.parse_expr(&args[0])?;
+                        Ok(vec![
+                            Action::Expr(span.clone(), expr.clone()),
+                            Action::Expr(span, expr),
+                        ])
+                    },
+                )));
+                let events = macro_events.clone();
+                parser.add_command_macro(Arc::new(SimpleMacro::new(
+                    "emit",
+                    move |args, _, parser| {
+                        events.lock().unwrap().push("emit");
+                        let mut commands = Vec::new();
+                        for arg in args {
+                            commands.extend(parser.parse_command(arg)?);
+                        }
+                        Ok(commands)
+                    },
+                )));
+                Ok(vec![])
+            },
+        )));
+        let source = "(sort T)\n(install)\n(emit (twice (boxed \"λ\")) (A))\n(twice (boxed 9))";
+        let commands = {
+            let input = source.to_owned();
+            parser
+                .get_program_from_string(Some("macros.egg".into()), &input)
+                .unwrap()
+        };
+        drop(parser);
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["install", "emit", "twice", "boxed", "twice", "boxed"]
+        );
+        assert_eq!(
+            commands.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [
+                "(sort T)",
+                "(Box \"λ\")",
+                "(Box \"λ\")",
+                "(A)",
+                "(Box 9)",
+                "(Box 9)",
+            ]
+        );
+        let Command::Action(Action::Expr(action_span, Expr::Call(expr_span, _, args))) =
+            &commands[1]
+        else {
+            panic!("expected expanded action");
+        };
+        let Expr::Lit(literal_span, Literal::String(value)) = &args[0] else {
+            panic!("expected retained string literal");
+        };
+        assert_eq!(value, "λ");
+        let retained = retained.lock().unwrap();
+        for (span, range, text) in [
+            (&retained[0], (9, 18), "(install)"),
+            (action_span, (25, 45), "(twice (boxed \"λ\"))"),
+            (expr_span, (32, 44), "(boxed \"λ\")"),
+            (literal_span, (39, 43), "\"λ\""),
+        ] {
+            let Span::Egglog(raw) = span else {
+                panic!("expected source span");
+            };
+            assert_eq!(raw.file.name.as_deref(), Some("macros.egg"));
+            assert_eq!(raw.file.contents, source);
+            assert_eq!((raw.i, raw.j), range);
+            assert_eq!(span.string(), text);
+        }
+    }
+
+    #[test]
+    fn program_parser_preserves_owned_errors_and_stops_conversion() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for (source, message, range, callbacks) in [
+            ("(seen)\n)", "unexpected `)`", (7, 8), None),
+            (
+                "(seen)\n\"unterminated",
+                "string is missing end quote",
+                (7, 20),
+                None,
+            ),
+            (
+                "(seen)\nnot-a-command\n(seen)",
+                "expected command",
+                (7, 20),
+                Some(1),
+            ),
+        ] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let macro_calls = calls.clone();
+            let mut parser = Parser::default();
+            parser.add_command_macro(Arc::new(SimpleMacro::new("seen", move |_, _, _| {
+                macro_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![])
+            })));
+            let error = {
+                let input = source.to_owned();
+                parser
+                    .get_program_from_string(Some("errors.egg".into()), &input)
+                    .unwrap_err()
+            };
+            drop(parser);
+            if let Some(callbacks) = callbacks {
+                assert_eq!(calls.load(Ordering::SeqCst), callbacks);
+            }
+            assert_eq!(error.1, message);
+            let Span::Egglog(span) = &error.0 else {
+                panic!("expected source error span");
+            };
+            assert_eq!(span.file.name.as_deref(), Some("errors.egg"));
+            assert_eq!(span.file.contents, source);
+            assert_eq!((span.i, span.j), range);
+            assert_eq!(error.0.string(), &source[range.0..range.1]);
+        }
+    }
+
+    #[test]
+    fn materialized_program_does_not_run_until_requested() {
+        let mut egraph = EGraph::default();
+        let commands = egraph
+            .parse_program(None, "(relation Present ())\n(Present)")
+            .unwrap();
+        assert!(egraph.get_function("Present").is_none());
+        egraph.run_program(commands).unwrap();
+        assert_eq!(egraph.get_size("Present"), 1);
+    }
+
+    #[test]
+    fn program_parser_handles_eof_comments_and_multiple_forms() {
+        for (source, expected) in [
+            ("", vec![]),
+            (" \t\n; comment at EOF", vec![]),
+            (
+                "; leading comment\n(sort T)\n(sort U)",
+                vec!["(sort T)", "(sort U)"],
+            ),
+            (
+                "; leading comment\n(sort T)\n(sort U); trailing comment",
+                vec!["(sort T)", "(sort U)"],
+            ),
+        ] {
+            let commands = Parser::default()
+                .get_program_from_string(None, source)
+                .unwrap();
+            assert_eq!(
+                commands.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                expected,
+                "{source:?}"
+            );
+        }
     }
 
     #[test]
