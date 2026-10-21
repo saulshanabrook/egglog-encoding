@@ -1,0 +1,78 @@
+--- a/lib/patterns/PatternUtils.py
++++ b/lib/patterns/PatternUtils.py
+@@ -55,18 +55,25 @@
+ 
+ 
+ def deduplicate_patterns(patterns):
+-    unique_patterns = []
+-    for s_idx, pattern in enumerate(patterns):
+-        insert = True
+-        for j in range(s_idx + 1, len(patterns)):
+-            other_pattern = patterns[j]
+-
+-            if other_pattern.equal_to(pattern):
+-                insert = False
+-                break
+-        if insert:
+-            unique_patterns.append(pattern)
+-    return unique_patterns
++    """Keep the last original object for each exact, unoriented rendered pair.
++
++    The pinned equality deliberately renders every non-Context endpoint as
++    "Reg" and ignores pattern metadata. Preserve both quirks. These keys are
++    local because the original abstractor can subsequently mutate expressions.
++    """
++    if len(patterns) < 2:
++        return list(patterns)
++    seen: set[tuple[str, str]] = set()
++    survivors = []
++    for pattern in reversed(patterns):
++        left = pattern.src_expr.emit_context_expr_string() if isinstance(pattern.src_expr, Context) else 'Reg'
++        right = pattern.target_expr.emit_context_expr_string() if isinstance(pattern.target_expr, Context) else 'Reg'
++        key = (left, right) if left <= right else (right, left)
++        if key not in seen:
++            seen.add(key)
++            survivors.append(pattern)
++    survivors.reverse()
++    return survivors
+ 
+ 
+ def deduplicate_patterns_parallel(patterns, pool_size = 8, parallel = True):
+@@ -237,9 +244,8 @@
+     def emit_create_param_abstract_spec(self, input_values, output_value):
+         return "(TESTS {} (vector {}))".format(output_value, " ".join([str(v) for v in input_values]))
+ 
+-    def emit_synthesize_query(self, test_cases, depth = 2, num_src_regs = 2, exclude_regs = [], reg_only = False):
+-        reg_only_str = "#t" if reg_only else "#f"
+-        return "(synthesize-param-expression {} {} {} (list {}) {})".format(test_cases, depth, num_src_regs - 1, " ".join([str(reg) for reg in exclude_regs]), reg_only_str)
++    def emit_synthesize_query(self, test_cases, depth = 2, num_src_regs = 2, exclude_regs = []):
++        return "(synthesize-param-expression {} {} {} (list {}))".format(test_cases, depth, num_src_regs - 1, " ".join([str(reg) for reg in exclude_regs]))
+ 
+     def generate_param_expr(self, src_param_map, dst_param_map, dst_param_name, depth = 2, only_src_params = False, exclude_regs = []):
+         statements = []
+@@ -365,7 +371,7 @@
+         test_def = "(define param-test-cases (list \n{}\n))".format("\n".join(test_cases_def))
+         statements.append(test_def)
+ 
+-        synthesis_query = self.emit_synthesize_query("param-test-cases", depth = depth, exclude_regs = exclude_regs, reg_only = True)
++        synthesis_query = self.emit_synthesize_query("param-test-cases", depth = depth, exclude_regs = exclude_regs)
+ 
+         synthesis_result = "(define-values (sat? expr) {})".format(synthesis_query)
+         statements.append(synthesis_result)
+--- a/targets/halide/axioms.egg
++++ b/targets/halide/axioms.egg
+@@ -51,12 +51,14 @@
+      (LIT val prec)
+     (typed_cast-int-extend (LIT val (/ prec 2)) (/ prec 2) 1 1 prec)
+     ;:when ((< val 255))
++    :when ((> prec 1))
+ )
+ 
+ (rewrite
+      (LIT val prec)
+     (typed_cast-uint-extend (LIT val (/ prec 2)) (/ prec 2) 1 1 prec)
+     ;:when ((< val 255))
++    :when ((> prec 1))
+ )
+ 
+ ; Halide casts of broadcast is equal to broadcast of casts
