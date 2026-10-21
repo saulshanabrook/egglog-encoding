@@ -1,4 +1,4 @@
-use std::hash::Hasher;
+use std::{hash::Hasher, ops::Deref};
 
 use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
@@ -1507,58 +1507,76 @@ impl TypeInfo {
         }
     }
 
-    /// Check a closed action once, letting the caller select its output representation.
-    /// The emitter may decline an otherwise well-typed call (for example a table that
-    /// needs compiled execution). It must only prepare work: any failure discards the
-    /// tentative output and falls back to general inference without executing it.
-    pub(crate) fn check_closed_action<T>(
+    /// Resolve an unambiguous, single-output declared call. Overloaded primitive
+    /// names and `values` retain general inference. A caller may cache this result
+    /// while the type environment is unchanged.
+    pub(crate) fn closed_call_type(&self, head: &str) -> Option<&Arc<FuncType>> {
+        if head == "values" || self.is_primitive(head) {
+            return None;
+        }
+        self.get_func_type(head)
+            .filter(|func| func.num_outputs() == 1)
+    }
+
+    /// Check a closed action while selecting its call metadata and output
+    /// representation. `resolve` supplies a function admitted by `closed_call_type`
+    /// plus caller-specific metadata; it may also reject calls needing general
+    /// execution. `emit` only prepares work, so failure discards all tentative
+    /// output without executing it. Argument storage is chosen by the caller.
+    pub(crate) fn check_closed_action<T, Args, Call, Metadata>(
         &self,
         action: &Action,
-        emit: &mut impl FnMut(&Span, &Arc<FuncType>, Vec<T>) -> Option<T>,
-    ) -> Option<ClosedAction<T>> {
+        resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
+        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+    ) -> Option<ClosedAction<T>>
+    where
+        Args: FromIterator<T>,
+        Call: Deref<Target = FuncType>,
+    {
         match action {
             Action::Expr(_, expr) => {
-                let (value, _) = self.check_declared_expr(expr, emit)?;
+                let (value, _) = Self::check_declared_expr(expr, resolve, emit)?;
                 Some(ClosedAction::Expr(value))
             }
             Action::Union(_, left, right) => {
-                let (left, left_sort) = self.check_declared_expr(left, emit)?;
-                let (right, right_sort) = self.check_declared_expr(right, emit)?;
-                (left_sort.name() == right_sort.name() && self.is_sort_unionable(left_sort))
-                    .then_some(ClosedAction::Union(left, right))
+                let (left, left_call) = Self::check_declared_expr(left, resolve, emit)?;
+                let (right, right_call) = Self::check_declared_expr(right, resolve, emit)?;
+                let left_sort = left_call.output();
+                let right_sort = right_call.output();
+                ((Arc::ptr_eq(left_sort, right_sort) || left_sort.name() == right_sort.name())
+                    && self.is_sort_unionable(left_sort))
+                .then_some(ClosedAction::Union(left, right))
             }
             _ => None,
         }
     }
 
-    fn check_declared_expr<'a, T>(
-        &'a self,
+    fn check_declared_expr<T, Args, Call, Metadata>(
         expr: &Expr,
-        emit: &mut impl FnMut(&Span, &Arc<FuncType>, Vec<T>) -> Option<T>,
-    ) -> Option<(T, &'a ArcSort)> {
+        resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
+        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+    ) -> Option<(T, Call)>
+    where
+        Args: FromIterator<T>,
+        Call: Deref<Target = FuncType>,
+    {
         let Expr::Call(span, head, args) = expr else {
             return None;
         };
-        // `values` and overloaded primitive names require general inference.
-        if head == "values" || self.is_primitive(head) {
-            return None;
-        }
-        let func = self.get_func_type(head)?;
-        let [output] = func.outputs.as_slice() else {
-            return None;
-        };
+        let (func, metadata) = resolve(head)?;
         if func.input.len() != args.len() {
             return None;
         }
-        let mut checked_args = Vec::with_capacity(args.len());
-        for (arg, expected) in args.iter().zip(&func.input) {
-            let (value, sort) = self.check_declared_expr(arg, emit)?;
-            if sort.name() != expected.name() {
-                return None;
-            }
-            checked_args.push(value);
-        }
-        Some((emit(span, func, checked_args)?, output))
+        let checked_args = args
+            .iter()
+            .zip(&func.input)
+            .map(|(arg, expected)| {
+                let (value, call) = Self::check_declared_expr(arg, resolve, emit)?;
+                let sort = call.output();
+                (Arc::ptr_eq(sort, expected) || sort.name() == expected.name()).then_some(value)
+            })
+            .collect::<Option<Args>>()?;
+        Some((emit(span, &func, metadata, checked_args)?, func))
     }
 
     fn typecheck_standalone_action(
