@@ -18,9 +18,10 @@ name = "files"
 
 [features]
 default = ["bin"]
-bin = ["egglog/bin"]
+bin = ["egglog/bin", "dep:benchmark-memory"]
 
 [dependencies]
+benchmark-memory = { path = "../benchmark-memory", optional = true }
 egglog = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-reports = { workspace = true }

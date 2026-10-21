@@ -13,6 +13,9 @@ mod math;
 
 use math::Math;
 
+#[global_allocator]
+static ALLOCATOR: benchmark_memory::LimitedAllocator = benchmark_memory::LimitedAllocator;
+
 const ITERATIONS: usize = 11;
 const CHECK_LEFT: &str = "(+ (cos x) (cos x))";
 const CHECK_RIGHT: &str = "(d x (+ (sin x) (sin x)))";
@@ -27,7 +30,10 @@ enum ProofMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Run the fixed PLDI 2023 Math workload with current egg")]
+#[command(
+    about = "Run the fixed PLDI 2023 Math workload with current egg",
+    after_help = "Native memory option: --memory-limit-bytes <N>"
+)]
 struct Args {
     #[arg(long, value_enum, default_value_t)]
     proof_mode: ProofMode,
@@ -36,7 +42,7 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse_from(benchmark_memory::configure(std::env::args_os()));
     let (timing, _) = run_math(args.proof_mode)?;
     if let Some(path) = args.timing_summary {
         write_timing_summary(&path, &timing)?;
