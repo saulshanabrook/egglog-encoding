@@ -291,6 +291,24 @@ impl Run {
     }
 
     fn assert_proof_testing_snapshots(&self, outputs: &[CommandOutput]) {
+        // Negative commands discard their outputs. Every returned extraction
+        // must have its own adjacent proofs, including during desugared replay.
+        for (index, output) in outputs.iter().enumerate() {
+            let proof_count = match output {
+                CommandOutput::ExtractBest(..) => 1,
+                CommandOutput::ExtractVariants(_, terms) => terms.len(),
+                _ => continue,
+            };
+            assert!(
+                outputs
+                    .get(index + 1..index + 1 + proof_count)
+                    .is_some_and(|proofs| proofs
+                        .iter()
+                        .all(|output| matches!(output, CommandOutput::ProveExists { .. }))),
+                "missing proofs after extracted result at output {index}",
+            );
+        }
+
         if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
             let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
             if !proof_snapshot.is_empty() {

@@ -177,7 +177,16 @@ pub(crate) fn desugar_command(
         Command::PrintOverallStatistics(span, file) => {
             vec![NCommand::PrintOverallStatistics(span, file.clone())]
         }
-        Command::Extract(span, expr, variants) => vec![NCommand::Extract(span, expr, variants)],
+        Command::Extract(span, expr, variants) => {
+            if proof_testing {
+                vec![NCommand::ProveExtract(span, expr, variants, None)]
+            } else {
+                vec![NCommand::Extract(span, expr, variants)]
+            }
+        }
+        Command::ProveExtract(span, expr, variants, context) => {
+            vec![NCommand::ProveExtract(span, expr, variants, context)]
+        }
         Command::Check(span, facts) => {
             if proof_testing {
                 desugar_prove(parser, span.clone(), facts.clone())
@@ -237,6 +246,7 @@ pub(crate) fn desugar_command(
                             | Command::BiRewrite(..)
                             | Command::Prove(..)
                             | Command::ProveExists(..)
+                            | Command::ProveExtract(..)
                             | Command::LetBegin(..)
                             | Command::Push(..)
                             | Command::Pop(..)
@@ -245,7 +255,7 @@ pub(crate) fn desugar_command(
                 {
                     return Err(Error::DesugarError(
                         span.clone(),
-                        "prove, prove-exists, definitions, user-defined commands, push, and pop are not allowed inside (fail ...)"
+                        "prove, prove-exists, prove-extract, definitions, user-defined commands, push, and pop are not allowed inside (fail ...)"
                             .to_string(),
                     ));
                 }
