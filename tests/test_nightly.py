@@ -115,6 +115,52 @@ def test_worker_budget_keeps_completed_rows_and_renders_missing_endpoints(
     assert "test collection deadline" in (args.output_dir / "status.txt").read_text()
 
 
+def test_launched_workload_budget_expiry_is_retained_once_before_global_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nightly_case: dict[str, Any]
+) -> None:
+    calls = []
+    results = []
+
+    def measure(
+        binary: Path, _cwd: Path, _file: models.FileSpec, treatment: str, *_args: Any
+    ) -> collection.ProcessObservation:
+        calls.append((binary.name, treatment))
+        result = processes.run_command([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 120)
+        results.append(result)
+        return collection.ProcessObservation(result, None)
+
+    monkeypatch.setattr(collection, "run_process", measure)
+    args = worker_args(tmp_path / "output")
+    args.deadline = time.monotonic() + 0.3
+    assert nightly._collect(args) == 1
+    rows = ReportStore(args.output_dir / "index.jsonl").records
+    assert len(rows) == len(results) == 1
+    result = results[0]
+    assert result.stop_collection
+    assert result.error is not None and "budget exhausted during workload" in result.error.message
+    row = rows[0]
+    assert row["status"] == "failure"
+    assert row["timeout_sec"] == 120
+    assert row["wall_sec"] is not None and 0 < row["wall_sec"] < 5
+    assert row["max_rss_bytes"] is None
+    assert row["error_message"] == result.error.message
+    assert calls == [("branch", "off")]
+    assert nightly_case["builds"] == ["branch"]
+    assert nightly._render(args) == 0
+
+
+def test_requested_workload_timeout_is_still_a_local_timeout(tmp_path: Path) -> None:
+    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
+    try:
+        result = processes.run_command([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 1)
+    finally:
+        processes.COLLECTION_DEADLINE.reset(token)
+    assert result.status == "timed-out"
+    assert not result.stop_collection
+    assert result.error is not None and result.error.message == "timed out after 1 seconds"
+    assert result.timing == processes.TimingRow()
+
+
 def test_unsupported_main_is_fatal_and_preserves_branch_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nightly_case: dict[str, Any]
 ) -> None:
@@ -229,15 +275,16 @@ def test_real_fake_job_reaps_separately_sessioned_workload_before_partial_render
     worker.write_text(
         "import json,sys,time\nfrom pathlib import Path\n"
         f"sys.path.insert(0,{str(nightly.REPO_ROOT)!r})\n"
-        "from benchmarking.processes import COLLECTION_DEADLINE,BudgetExpired,run_command\n"
+        "from benchmarking.processes import COLLECTION_DEADLINE,run_command\n"
         "phase,out,deadline=sys.argv[1],Path(sys.argv[2]),float(sys.argv[3])\n"
         "if phase=='collect':\n"
         " (out/'index.jsonl').write_text('{\"completed\":true}\\n')\n"
         " (out/'nightly-context.json').write_text('{}')\n"
         " COLLECTION_DEADLINE.set(deadline)\n"
-        " try:\n"
-        f"  run_command([sys.executable,'-c',{measured_program!r}],out,30)\n"
-        " except BudgetExpired: (out/'owner-cleaned').write_text('yes')\n"
+        f" result=run_command([sys.executable,'-c',{measured_program!r}],out,30)\n"
+        " assert result.stop_collection and result.error is not None\n"
+        " assert 'budget exhausted during workload' in result.error.message\n"
+        " (out/'owner-cleaned').write_text('yes')\n"
         "else:\n"
         " assert (out/'owner-cleaned').read_text()=='yes'\n"
         " (out/'index.html').write_text('retained partial data')\n"
