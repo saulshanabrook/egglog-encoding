@@ -372,6 +372,12 @@ returned term. It uses the same cost model as `extract`; the proof establishes
 equality, not optimality. Evaluating the input is recorded as a source action;
 the returned term is never added as an assumption.
 
+A direct nullary custom-function input, such as `(prove-extract (root))`, reads its
+existing row and proves equality from that row's output witness to the selected
+term. The witness is projected from the row proof rather than assumed. A missing
+row fails the lookup. Keyed and nested custom-function lookups, including
+lookups in the variant count, remain unsupported.
+
 Proof extraction first runs the ordinary extractor unchanged. A separate pass
 walks its result DAG bottom-up, recovering types, values, and existing row proofs
 with keyed lookups. Its cache is keyed by both term and sort, so identical empty
@@ -383,12 +389,13 @@ globals retain their recorded evidence when an old constructor view was deleted.
 Containers use the same normalization rules as the proof checker, with source
 positions kept distinct from unordered container storage positions.
 
-Desugaring projects extraction's input and variant count into source actions
-for the proof checker, in evaluation order. The encoder uses the same actions
-when instrumenting their evaluation. The encoded `prove-extract` carries the
-input's action index; that checker action retains the typed original input.
-Each source occurrence also retains its type environment and exact lowered
-input/count. Strict replay rejects mismatched requests and preserves
+Desugaring projects extraction's evaluated input and variant count into source
+actions for the checker. The encoder uses the same actions when instrumenting
+their evaluation. A direct nullary function read contributes only its count
+action; its lookup expression is retained separately. The encoded
+`prove-extract` carries the first action's index. Each source occurrence also
+retains its type environment and exact lowered input/count. Strict replay
+rejects mismatched requests and preserves
 types from scopes that were later popped or redeclared. Executing an encoded
 request reads these inputs and metadata; it does not invoke the compiler
 or restore an encoding-state snapshot. Row and union evidence are converted once

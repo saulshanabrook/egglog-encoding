@@ -16,8 +16,10 @@ use crate::*;
 /// The source scope and exact lowered request for one extraction occurrence.
 /// Replay retains its type environment even after scopes are popped or sorts
 /// redeclared, without restoring or executing an encoding pipeline. The typed
-/// input itself is already retained in the proof checker's source actions.
+/// input is retained in the checker's actions, except direct function reads.
 pub(crate) struct ExtractionSource {
+    /// Direct function reads have no input action; retain only those expressions.
+    pub lookup_input: Option<ResolvedExpr>,
     pub types: TypeInfo,
     /// Final lowered input/count, filled after generated globals are removed.
     pub request: Option<(String, String)>,
@@ -541,8 +543,8 @@ fn source_term(
 pub(crate) struct ExtractionInput<'a> {
     lookup: TermLookup<'a>,
     input: NodeKey,
-    /// Existence evidence for the evaluated source input.
-    anchor: TermId,
+    /// A source-action existence proof, or an existing nullary row to project.
+    anchor: Option<TermId>,
     input_global: bool,
     output_size: usize,
 }
@@ -558,6 +560,16 @@ impl ExtractionSource {
         output_dag: &TermDag,
     ) -> Result<ExtractionInput<'a>, Error> {
         let sort = source_input.output_type();
+        let input_lookup = match source_input {
+            ResolvedExpr::Call(_, ResolvedCall::Func(func), _)
+                if func.subtype == FunctionSubtype::Custom
+                    && func.input.is_empty()
+                    && !self.types.is_global(&func.name) =>
+            {
+                Some(func)
+            }
+            _ => None,
+        };
         // Start from the extractor's arena so all selected roots retain their ids.
         let mut dag = output_dag.clone();
         let globals = gather_globals(&egraph.proof_check_program, &mut dag).map_err(|error| {
@@ -600,22 +612,50 @@ impl ExtractionSource {
             globals: witnesses,
             global_witnesses: HashSet::default(),
         };
-        let input = session
-            .read_node(input_term, sort.clone())?
-            .ok_or_else(|| {
-                Error::ExtractError("extraction input constructor evidence is missing".into())
-            })?;
+        let input = if let Some(func) = input_lookup {
+            let row = egraph
+                .read(|state| state.lookup_proof_values(&func.name, RawValues(vec![])))?
+                .ok_or_else(|| {
+                    Error::ExtractError("extraction function input is missing".into())
+                })?;
+            let key = (input_term, sort.name().to_owned());
+            let value = session.canonical(row[0], &sort)?;
+            session.nodes.insert(
+                key.clone(),
+                ProofNode {
+                    sort: sort.clone(),
+                    value,
+                    // The output witness is projected from this row below; its proof
+                    // does not require assuming or reconstructing the lookup's syntax.
+                    children: vec![],
+                    row: Some((row[0], row[1])),
+                },
+            );
+            key
+        } else {
+            session
+                .read_node(input_term, sort.clone())?
+                .ok_or_else(|| {
+                    Error::ExtractError("extraction input constructor evidence is missing".into())
+                })?
+        };
         if session.nodes[&input].value != session.canonical(input_value, &sort)? {
             return Err(Error::ExtractError(
                 "the extraction input's proof semantics do not match its evaluated value".into(),
             ));
         }
-        let names = &egraph.proof_state.proof_names;
-        let action = session.dag.lit(Literal::Int(input_action as i64));
-        let root = session.dag.lit(Literal::Int(0));
-        let anchor = session
-            .dag
-            .app(names.fiat_term_constructor.clone(), vec![action, root]);
+        let anchor = if input_lookup.is_none() {
+            let names = &egraph.proof_state.proof_names;
+            let action = session.dag.lit(Literal::Int(input_action as i64));
+            let root = session.dag.lit(Literal::Int(0));
+            Some(
+                session
+                    .dag
+                    .app(names.fiat_term_constructor.clone(), vec![action, root]),
+            )
+        } else {
+            None
+        };
         Ok(ExtractionInput {
             lookup: session,
             input,
@@ -690,7 +730,7 @@ impl ExtractionInput<'_> {
             .filter_map(|(key, node)| node.row.map(|row| (key.clone(), node.clone(), row)))
             .collect::<Vec<_>>();
         let names = &egraph.proof_state.proof_names;
-        let mut evidence_roots = vec![anchor];
+        let mut evidence_roots = anchor.into_iter().collect::<Vec<_>>();
         let mut evidence_keys = vec![];
         for (key, node, (value, row_proof)) in rows {
             let raw = session.materialize(row_proof, &proof_sort)?;
@@ -739,7 +779,7 @@ impl ExtractionInput<'_> {
                 ))
             })?;
         let mut ids = ids.into_iter();
-        let input_anchor = ids.next().unwrap();
+        let mut input_anchor = anchor.map(|_| ids.next().unwrap());
         let mut certificates = Certificates {
             store,
             nodes: session.nodes,
@@ -749,7 +789,12 @@ impl ExtractionInput<'_> {
             canonical_terms: HashMap::default(),
         };
         let mut expected_input = input.0;
-        for ((key, edge), id) in evidence_keys.into_iter().zip(ids) {
+        for ((key, edge), mut id) in evidence_keys.into_iter().zip(ids) {
+            if !edge && key == input && anchor.is_none() {
+                id = certificates.project(id, 0)?;
+                input_anchor = Some(id);
+                expected_input = certificates.store.get(id).rhs();
+            }
             let proof = certificates.store.get(id);
             if edge {
                 certificates.edges.insert(key.clone(), id);
@@ -776,7 +821,7 @@ impl ExtractionInput<'_> {
             }
         }
         let input_proof =
-            certificates.certify(&input, Some((input_anchor, expected_input)), true)?;
+            certificates.certify(&input, Some((input_anchor.unwrap(), expected_input)), true)?;
         let back = certificates.store.sym(input_proof);
         let canonical_anchor = certificates.trans(input_proof, back)?;
         let canonical_input = certificates.canonical_term(&input)?;

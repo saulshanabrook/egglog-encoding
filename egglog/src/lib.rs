@@ -2366,13 +2366,14 @@ impl EGraph {
                         "invalid prove-extract source action".into(),
                     ));
                 };
+                let source_input = source.lookup_input.as_ref().unwrap_or(source_input);
                 if source_input.output_type().name() != expr.output_type().name() {
                     return Err(Error::ExtractError(
                         "prove-extract source and result sorts differ".into(),
                     ));
                 }
                 // Retain the typed original input across ordinary extraction's
-                // mutable borrow; the checker already stores it at this occurrence.
+                // mutable borrow; function reads instead retain their lookup metadata.
                 let source_input = source_input.clone();
                 let (value, output) = self.extract_resolved(span, &expr, &variants)?;
                 let (dag, terms) = match &output {

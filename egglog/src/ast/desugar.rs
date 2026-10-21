@@ -4,14 +4,29 @@ use crate::*;
 use egglog_ast::span::Span;
 
 /// The source actions evaluated by extraction, in input-then-count order.
-/// The proof checker and encoder share these action/node positions; the
-/// extracted result is not an additional source action.
+/// A direct nullary function read contributes no input action: its existing
+/// row supplies the evidence. The checker and encoder share this ordering.
 pub(crate) fn extraction_source_actions(
     span: &Span,
     input: &ResolvedExpr,
     variants: &ResolvedExpr,
-) -> [ResolvedAction; 2] {
-    [input, variants].map(|expr| ResolvedAction::Expr(span.clone(), expr.clone()))
+    types: &TypeInfo,
+) -> Vec<ResolvedAction> {
+    let inputs = match input {
+        ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+            if func.subtype == FunctionSubtype::Custom
+                && args.is_empty()
+                && !types.is_global(&func.name) =>
+        {
+            args.as_slice()
+        }
+        _ => std::slice::from_ref(input),
+    };
+    inputs
+        .iter()
+        .chain(std::iter::once(variants))
+        .map(|expr| ResolvedAction::Expr(span.clone(), expr.clone()))
+        .collect()
 }
 
 /// Desugars a single command, removing syntactic sugar.

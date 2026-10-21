@@ -117,6 +117,19 @@ pub(crate) fn register_set_if_empty(
         move |egraph, _| egraph.register_set_if_empty(name.clone(), n_keys, out_arity),
     );
 
+    if key_sorts.is_empty() {
+        let name = view_name.to_string();
+        eg.add_internal_primitive(
+            ViewValue {
+                name: format!("view-value-{view_name}"),
+                output_sort: out_sorts[0].clone(),
+            },
+            // Extraction emits this read only as a top-level action.
+            FullState::valid_contexts(),
+            move |egraph, _| egraph.register_view_value_read(name.clone()),
+        );
+    }
+
     // The proof column reader is only meaningful in proof mode (2-output view).
     if out_sorts.len() >= 2 {
         let view_proof = ViewProof {
@@ -159,6 +172,24 @@ impl Primitive for SetIfEmpty {
         sig.extend(self.out_sorts.iter().cloned());
         sig.push(self.eclass_sort.clone());
         SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
+    }
+}
+
+/// Read a nullary extraction input without inserting a missing row.
+#[derive(Clone)]
+struct ViewValue {
+    name: String,
+    output_sort: ArcSort,
+}
+
+impl Primitive for ViewValue {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(&self.name, vec![self.output_sort.clone()], span.clone())
+            .into_box()
     }
 }
 
