@@ -1,0 +1,64 @@
+--- a/dag_in_context/src/lib.rs
++++ b/dag_in_context/src/lib.rs
+@@ -50,4 +50,27 @@
+ pub mod pretty_print;
+ pub mod schedule;
++
++// Publish only fully written events, so a later interruption preserves completed calls.
++pub fn reproduction_capture(kind: &str, payload: serde_json::Value) {
++    use std::io::Write;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
++    if let Some(directory) = std::env::var_os("EGGLOG_REPRO_CAPTURE_DIR") {
++        let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
++        let path = std::path::Path::new(&directory).join(format!("event-{sequence:06}.json"));
++        let pending = path.with_extension("json.pending");
++        let mut file = std::fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(&pending)
++            .unwrap();
++        let event = serde_json::json!({"version": 1, "sequence": sequence,
++            "kind": kind, "payload": payload});
++        serde_json::to_writer(&mut file, &event).unwrap();
++        file.write_all(b"\n").unwrap();
++        file.sync_all().unwrap();
++        std::fs::rename(pending, path).unwrap();
++    }
++}
+
+ pub type Result = std::result::Result<(), MainError>;
+@@ -247,5 +270,5 @@
+         let func = program.get_function(func).unwrap();
+         let term = func.to_egglog_with(&mut tree_state);
+-        let _func_var = print_with_intermediate_helper(
++        let func_var = print_with_intermediate_helper(
+             &tree_state.termdag,
+             term,
+@@ -253,4 +276,10 @@
+             &mut printed,
+         );
++        if std::env::var_os("EGGLOG_REPRO_CAPTURE_DIR").is_some() {
++            writeln!(
++                &mut printed, "; capture-root {} {}",
++                serde_json::to_string(&func.func_name().unwrap()).unwrap(), func_var
++            ).unwrap();
++        }
+     }
+
+@@ -954,4 +983,7 @@
+             let mut egraph = new_single_threaded_egraph();
+             egraph.parse_and_run_program(None, &egglog_prog)?;
++            reproduction_capture("optimization-complete", serde_json::json!({
++                "pass": i, "batch": &batch, "program": &egglog_prog
++            }));
+
+             let serialization_start = Instant::now();
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -175,4 +175,5 @@
+     };
+
++    dag_in_context::reproduction_capture("parent-complete", serde_json::json!({}));
+     let eggcc_duration = start_time.elapsed();
+     result.eggcc_compile_time = eggcc_duration;

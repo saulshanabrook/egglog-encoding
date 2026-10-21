@@ -13,3 +13,5 @@
 /.ruff_cache/
 __pycache__/
 *.py[cod]
+
+/benchmarks/corpus/.local/
