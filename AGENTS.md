@@ -100,8 +100,9 @@ or modify the JSONL.
   `--proof-extraction` to rewrite checks and extract, materialize, clean, and
   simplify proofs without verifying them. Treat its results as performance
   evidence only; `--proof-testing` remains the strict correctness mode.
-- Bare `./bench.py` compares `proofs` with `off`. The `proof-extraction`
-  treatment is explicit opt-in.
+- Bare `./bench.py` compares `proof-testing` with `off`, including proof
+  extraction and checking. Recording-only `proofs` and unchecked
+  `proof-extraction` remain explicit choices.
 - The five egglog treatments run `egglog-experimental`. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math
   workload. `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native
