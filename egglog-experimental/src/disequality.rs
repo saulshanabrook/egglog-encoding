@@ -132,6 +132,10 @@ impl Macro<Vec<Command>> for CheckContradiction {
 struct LowerDisequality(DisequalityEncoding);
 
 impl CommandMacro for LowerDisequality {
+    fn preserves_closed_constructor_action(&self, expression_head: Option<&str>) -> bool {
+        expression_head != Some(PLACEHOLDER)
+    }
+
     fn transform(
         &self,
         command: Command,

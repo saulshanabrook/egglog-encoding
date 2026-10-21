@@ -328,6 +328,45 @@ impl Parser {
             .transpose()
     }
 
+    /// Admit only the command/action dispatch that produces a singleton closed
+    /// action. Expression dispatch and types are checked for every call later.
+    pub(crate) fn closed_action<'s, 'a>(
+        &self,
+        form: &'s Sexp<'a>,
+    ) -> Option<(Option<&'s str>, typechecking::ClosedAction<&'s Sexp<'a>>)> {
+        let Sexp::List(items, _) = form else {
+            return None;
+        };
+        let [Sexp::Atom(head, _), args @ ..] = items.as_slice() else {
+            return None;
+        };
+        if self.commands.contains_key(head.as_ref())
+            || self.user_defined.contains(head.as_ref())
+            || self.actions.contains_key(head.as_ref())
+        {
+            return None;
+        }
+        if head == "union" {
+            return match args {
+                [left, right] => Some((None, typechecking::ClosedAction::Union(left, right))),
+                _ => None,
+            };
+        }
+        // Builtin dispatch applies even when reserved-name enforcement is off.
+        if RESERVED_KEYWORDS.contains(&head.as_ref())
+            || COMMAND_ONLY_KEYWORDS.contains(&head.as_ref())
+            || head == "index"
+        {
+            return None;
+        }
+        Some((Some(head), typechecking::ClosedAction::Expr(form)))
+    }
+
+    pub(crate) fn can_parse_constructor_call(&self, head: &str) -> bool {
+        !(self.exprs.contains_key(head)
+            || self.ensure_no_reserved_symbols && COMMAND_ONLY_KEYWORDS.contains(&head))
+    }
+
     // currently only used for testing, but no reason it couldn't be used elsewhere later
     pub fn get_expr_from_string(
         &mut self,
@@ -1666,6 +1705,60 @@ mod tests {
     }
 
     #[test]
+    fn source_action_admission_keeps_parser_dispatch() {
+        let mut parser = Parser::default();
+        for enforce_reserved in [false, true] {
+            parser.ensure_no_reserved_symbols = enforce_reserved;
+            for source in ["(index)", "(set)", "(input)", "(output)", "(union (A))"] {
+                let form = sexp(&mut SexpParser::new(None, source)).unwrap();
+                assert!(parser.closed_action(&form).is_none(), "{source}");
+                assert!(parser.parse_command(&form).is_err(), "{source}");
+            }
+            assert_eq!(
+                parser.can_parse_constructor_call("input"),
+                !enforce_reserved
+            );
+            assert_eq!(
+                parser.can_parse_constructor_call("output"),
+                !enforce_reserved
+            );
+        }
+
+        parser.add_user_defined("A".into()).unwrap();
+        let form = sexp(&mut SexpParser::new(None, "(A)")).unwrap();
+        assert!(parser.closed_action(&form).is_none());
+        assert!(
+            matches!(parser.parse_command(&form).unwrap().as_slice(), [Command::UserDefined(_, head, _)] if head == "A")
+        );
+        // Command dispatch does not apply to nested expression heads.
+        assert!(parser.can_parse_constructor_call("A"));
+
+        let form = sexp(&mut SexpParser::new(None, "(union (A) (B))")).unwrap();
+        parser.add_expr_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "expression override must not run".into()))
+        })));
+        assert!(parser.closed_action(&form).is_some());
+        assert!(matches!(
+            parser.parse_command(&form).unwrap().as_slice(),
+            [Command::Action(Action::Union(..))]
+        ));
+        parser.add_action_macro(Arc::new(SimpleMacro::new("union", |_, _, _| Ok(vec![]))));
+        assert!(parser.closed_action(&form).is_none());
+        assert!(parser.parse_command(&form).unwrap().is_empty());
+        parser.add_command_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "command override wins".into()))
+        })));
+        assert!(parser.closed_action(&form).is_none());
+        assert!(
+            parser
+                .parse_command(&form)
+                .unwrap_err()
+                .to_string()
+                .contains("command override wins")
+        );
+    }
+
+    #[test]
     fn lexer_preserves_unicode_whitespace_and_byte_spans() {
         for whitespace in [
             '\t', '\n', '\u{000b}', '\u{000c}', '\r', ' ', '\u{0085}', '\u{00a0}', '\u{1680}',
@@ -1927,6 +2020,29 @@ mod tests {
     }
 
     #[test]
+    fn program_parser_failure_preserves_only_streamed_prefix() {
+        let source = "(relation Added ())\n(Present)\n)\n(relation Unreached ())";
+        for streaming in [false, true] {
+            let mut egraph = EGraph::default();
+            egraph
+                .parse_and_run_program(None, "(relation Present ())")
+                .unwrap();
+            let error = if streaming {
+                egraph.parse_and_run_program(None, source)
+            } else {
+                egraph
+                    .parse_program(None, source)
+                    .and_then(|commands| egraph.run_program(commands))
+            }
+            .unwrap_err();
+            assert!(matches!(error, Error::ParseError(_)));
+            assert_eq!(egraph.get_function("Added").is_some(), streaming);
+            assert_eq!(egraph.get_size("Present"), usize::from(streaming));
+            assert!(egraph.get_function("Unreached").is_none());
+        }
+    }
+
+    #[test]
     fn materialized_program_does_not_run_until_requested() {
         let mut egraph = EGraph::default();
         let commands = egraph
@@ -1935,6 +2051,70 @@ mod tests {
         assert!(egraph.get_function("Present").is_none());
         egraph.run_program(commands).unwrap();
         assert_eq!(egraph.get_size("Present"), 1);
+    }
+
+    #[test]
+    fn streamed_program_preserves_parser_macro_registration() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parser
+            .add_command_macro(Arc::new(SimpleMacro::new("install", |_, _, parser| {
+                parser.add_command_macro(Arc::new(SimpleMacro::new("emit", |args, _, parser| {
+                    let mut commands = Vec::new();
+                    for arg in args {
+                        commands.extend(parser.parse_command(arg)?);
+                    }
+                    Ok(commands)
+                })));
+                Ok(vec![])
+            })));
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Left ()) (relation Right ())
+                 (install) (emit (Left) (Right)) (relation End ())",
+            )
+            .unwrap();
+        assert_eq!(egraph.get_size("Left"), 1);
+        assert_eq!(egraph.get_size("Right"), 1);
+        assert!(egraph.get_function("End").is_some());
+    }
+
+    #[test]
+    fn streamed_program_scopes_execution_installed_parser_extensions() {
+        struct Install;
+        impl crate::UserDefinedCommand for Install {
+            fn update(
+                &self,
+                egraph: &mut EGraph,
+                _: &[Expr],
+            ) -> Result<Vec<crate::CommandOutput>, Error> {
+                egraph
+                    .parser
+                    .add_command_macro(Arc::new(SimpleMacro::new("emit", |args, _, parser| {
+                        parser.parse_command(&args[0])
+                    })));
+                Ok(vec![])
+            }
+        }
+        let mut egraph = EGraph::default();
+        egraph
+            .add_command("install".into(), Arc::new(Install))
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(push) (install) (emit (relation Scoped ())) (Scoped)",
+            )
+            .unwrap();
+        assert_eq!(egraph.get_size("Scoped"), 1);
+        assert!(egraph.parser.commands.contains_key("emit"));
+        egraph
+            .parse_and_run_program(None, "(pop) (relation After ()) (After)")
+            .unwrap();
+        assert!(egraph.get_function("Scoped").is_none());
+        assert!(!egraph.parser.commands.contains_key("emit"));
+        assert_eq!(egraph.get_size("After"), 1);
     }
 
     #[test]
