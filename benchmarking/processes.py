@@ -17,11 +17,19 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
 from .models import Status
+
+# Nightly owns this optional deadline; ordinary CLI and paper calls leave it unset.
+COLLECTION_DEADLINE: ContextVar[float | None] = ContextVar("collection_deadline", default=None)
+
+
+class BudgetExpired(RuntimeError):
+    """Nightly setup or collection exhausted its shared budget."""
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,9 @@ def run_command(
     env_overrides: Mapping[str, str] | None = None,
     required_output: str | Sequence[str] | None = None,
 ) -> TimingResult:
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BudgetExpired("nightly collection budget exhausted before workload")
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     if env_overrides is not None:
@@ -76,8 +87,12 @@ def run_command(
             start_new_session=True,
         )
         try:
-            return_code, usage = wait4_process(process, timeout_sec)
-        except subprocess.TimeoutExpired:
+            remaining = timeout_sec if deadline is None else deadline - time.monotonic()
+            budget_limited = remaining < timeout_sec
+            return_code, usage = wait4_process(process, max(0, min(timeout_sec, remaining)))
+        except subprocess.TimeoutExpired as error:
+            if budget_limited:
+                raise BudgetExpired("nightly collection budget exhausted during workload") from error
             return TimingResult(
                 status="timed-out",
                 timing=TimingRow(),
@@ -124,7 +139,7 @@ def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[by
     process.wait()
 
 
-def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
+def wait4_process(process: subprocess.Popen[str], timeout_sec: float) -> tuple[int, resource.struct_rusage]:
     """Wait without adding polling delay to the measured child wall time."""
 
     timed_out = threading.Event()
