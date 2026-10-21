@@ -38,12 +38,12 @@ def test_public_entrypoint_dispatches_benchmark_and_profile(monkeypatch: pytest.
     assert calls == [("benchmark", ("--rounds", "1")), ("profile", ("file.egg",))]
 
 
-def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
+def test_pair_cli_defaults_to_current_checkout_off_vs_checked_proofs() -> None:
     args = benchmark.parse_benchmark_args([])
     baseline, candidate = benchmark.endpoint_requests(args)
 
     assert baseline == models.EndpointRequest(targets.parse_target("."), "off")
-    assert candidate == models.EndpointRequest(targets.parse_target("."), "proofs")
+    assert candidate == models.EndpointRequest(targets.parse_target("."), "proof-testing")
     assert args.detail == "summary"
     assert args.command == "benchmark"
 
@@ -54,7 +54,7 @@ def test_compare_target_inherits_candidate_target() -> None:
 
     assert baseline.target == candidate.target == targets.parse_target("mine=@branch")
     assert baseline.treatment == "off"
-    assert candidate.treatment == "proofs"
+    assert candidate.treatment == "proof-testing"
 
 
 def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
@@ -188,7 +188,7 @@ def test_main_reports_interactive_write_oserror(
     write_report(
         report,
         make_record(0, started_at="2026-07-17T00:00:00Z", treatment="off"),
-        make_record(1, started_at="2026-07-17T00:00:01Z", treatment="proofs"),
+        make_record(1, started_at="2026-07-17T00:00:01Z", treatment="proof-testing"),
     )
     target = make_target()
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
@@ -272,7 +272,7 @@ def test_cached_main_writes_all_samples_but_reports_requested_rounds_from_same_s
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     path = tmp_path / "report.jsonl"
-    treatments: tuple[models.Treatment, ...] = ("off", "proofs")
+    treatments: tuple[models.Treatment, ...] = ("off", "proof-testing")
     records = [
         make_record(index, started_at=f"2026-09-30T00:00:{index:02d}Z", treatment=treatment, target_label="original")
         for treatment in treatments
