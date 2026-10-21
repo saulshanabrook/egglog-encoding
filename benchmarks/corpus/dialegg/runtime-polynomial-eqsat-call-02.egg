@@ -1,0 +1,198 @@
+(sort IntVec (Vec i64))
+(sort FloatVec (Vec f64))
+
+;; Types
+(sort Type)
+(sort TypeVec (Vec Type))
+
+;; Attrs
+(sort Attr)
+(sort AttrDict (Map String Attr))
+(sort AttrVec (Vec Attr))
+(datatype AttrPair (NamedAttr String Attr) (ValueAttr Attr))
+
+;; Op
+;; Usage:
+;; (<op_variant> <operand1> <operand2> ... <operandN> <attr1> <attr2> ... <attrM> <region1> <region2> ... <regionR> <type>)
+(datatype Op 
+    (Value i64 Type)
+    (OpaqueOp i64 TypeVec)
+    (NoOp)
+)
+(sort OpVec (Vec Op))
+(datatype Block (Blk OpVec))
+(sort BlockVec (Vec Block))
+(datatype Region (Reg BlockVec))
+(sort RegionVec (Vec Region))
+
+;; helper functions
+(function type-of (Op) Type :merge old)
+(function dims (Type) IntVec :merge old)
+
+;;;; builtin dialect ;;;;
+
+;; Types
+
+(constructor F16 () Type)
+(constructor F32 () Type)
+(constructor F64 () Type)
+(constructor F80 () Type)
+(constructor F128 () Type)
+(constructor I1 () Type)
+(constructor I4 () Type)
+(constructor I8 () Type)
+(constructor I16 () Type)
+(constructor I32 () Type)
+(constructor I64 () Type)
+(constructor Int (i64) Type)
+(constructor SInt (i64) Type)
+(constructor UInt (i64) Type)
+(constructor OtherInt (String) Type)
+(constructor Index () Type)
+(constructor None () Type)
+(constructor Complex (Type) Type)
+(constructor Tuple (TypeVec) Type)
+(constructor Function (TypeVec TypeVec) Type)
+
+(constructor Vector (IntVec Type) Type)
+(constructor RankedTensor (IntVec Type) Type)
+(constructor UnrankedTensor (Type) Type)
+
+(constructor OpaqueType (String String) Type)
+
+; Dynamic RankedTensor type
+; (datatype Dimension
+;     (Dyn)
+;     (D i64)
+; )
+; (sort DimVec (Vec Dimension))
+; (function DynRankedTensor (DimVec Type) Type)
+
+; (rule ((= ?t (RankedTensor ?dims ?tp))) ((set (dims ?t) ?dims)))
+
+;; Attrs
+
+(constructor NoAttr () Attr)
+(constructor IntegerAttr (i64 Type) Attr)
+(constructor FloatAttr (f64 Type) Attr)
+(constructor StringAttr (String) Attr)
+(constructor UnitAttr () Attr)
+(constructor TypeAttr (Type) Attr)
+
+(constructor ArrayAttr (AttrVec) Attr)
+(constructor DenseIntArrayAttr (i64 IntVec Type) Attr)
+(constructor DenseFloatArrayAttr (f64 FloatVec Type) Attr)
+(constructor DenseIntElementsAttr (FloatVec Type) Attr)
+(constructor DenseFPElementsAttr (FloatVec Type) Attr)
+(constructor SymbolRefAttr (String) Attr)
+
+(constructor OpaqueAttr (String String) Attr) ; (<attr> <type-name>)
+
+; DenseResourceElementsAttr
+; DenseStringElementsAttr
+; DictionaryAttr
+; IntegerSetAttr
+; OpaqueAttr
+; SparseElementsAttr
+; SymbolRefAttr
+; StridedLayoutAttr
+
+;;;; arith dialect ;;;;
+
+;; Attrs
+(datatype FastMathFlags (none) (reassoc) (nnan) (fast))
+(constructor arith_fastmath (FastMathFlags) Attr)
+
+;; Ops
+(constructor arith_constant (AttrPair Type) Op)
+(constructor arith_mulf (Op Op AttrPair Type) Op :cost 100)
+(constructor arith_addf (Op Op AttrPair Type) Op)
+
+;;;; math dialect ;;;;
+(constructor math_powf (Op Op AttrPair Type) Op :cost 100000)
+
+;; OPS HERE ;;
+; main_func.func
+(let $op0 (arith_constant (NamedAttr "value" (IntegerAttr 100000000 (Index))) (Index)))
+(let $op1 (arith_constant (NamedAttr "value" (IntegerAttr 4 (Index))) (Index)))
+(let $op2 (Value 2 (RankedTensor (vec-of -9223372036854775808 -9223372036854775808) (F64))))
+(let $op3 (Value 3 (RankedTensor (vec-of -9223372036854775808 -9223372036854775808) (F64))))
+(let $op4 (Value 4 (RankedTensor (vec-of 100000000 4) (F64))))
+(let $op5 (Value 5 (I64)))
+(let $op6 (arith_constant (NamedAttr "value" (FloatAttr 5.0 (F64))) (F64)))
+(let $op7 (arith_constant (NamedAttr "value" (IntegerAttr 0 (Index))) (Index)))
+(let $op8 (arith_constant (NamedAttr "value" (IntegerAttr 1 (Index))) (Index)))
+(let $op9 (arith_constant (NamedAttr "value" (IntegerAttr 2 (Index))) (Index)))
+(let $op10 (arith_constant (NamedAttr "value" (IntegerAttr 3 (Index))) (Index)))
+(let $op11 (Value 11 (RankedTensor (vec-of 100000000) (F64))))
+(let $op12 (Value 12 (RankedTensor (vec-of 100000000) (F64))))
+(let $op13 (Value 13 (I64)))
+(let $op14 (Value 14 (RankedTensor (vec-of 100000000) (F64))))
+(let $op15 (Value 15 (None)))
+(let $op16 (Value 16 (None)))
+(let $op17 (arith_constant (NamedAttr "value" (IntegerAttr 0 (I32))) (I32)))
+(let $op18 (Value 18 (None)))
+
+;; RULES HERE ;;
+(ruleset rules)
+
+; commutative
+(rewrite (arith_addf ?x ?y ?a ?t) (arith_addf ?y ?x ?a ?t) :ruleset rules) ; x + y = y + x
+(rewrite (arith_mulf ?x ?y ?a ?t) (arith_mulf ?y ?x ?a ?t) :ruleset rules) ; x * y = y * x
+
+; associative
+(rewrite ; (x + y) + z = x + (y + z)
+    (arith_addf (arith_addf ?x ?y ?a ?t) ?z ?a ?t) 
+    (arith_addf ?x (arith_addf ?y ?z ?a ?t) ?a ?t) 
+    :ruleset rules
+)
+(rewrite ; (x * y) * z = x * (y * z)
+    (arith_mulf (arith_mulf ?x ?y ?a ?t) ?z ?a ?t) 
+    (arith_mulf ?x (arith_mulf ?y ?z ?a ?t) ?a ?t) 
+    :ruleset rules
+)
+
+; identity
+(rewrite (arith_mulf ?x (arith_constant (NamedAttr "value" (FloatAttr 1.0 ?t)) ?t) ?a ?t) ?x :ruleset rules) ; x * 1 = x
+(rewrite ; x^0 = 1
+    (math_powf ?x (arith_constant (NamedAttr "value" (FloatAttr 0.0 ?t)) ?t) ?a ?t) 
+    (arith_constant (NamedAttr "value" (FloatAttr 1.0 ?t)) ?t)
+    :ruleset rules
+)
+
+(rule ; x^n = x * x^(n - 1)
+    ((= ?lhs (math_powf ?x (arith_constant (NamedAttr "value" (FloatAttr ?n ?t)) ?t) ?a ?t))
+     (>= ?n 1.0))
+    ((union 
+        ?lhs 
+        (arith_mulf ?x (math_powf ?x (arith_constant (NamedAttr "value" (FloatAttr (- ?n 1.0) ?t)) ?t) ?a ?t) ?a ?t)
+    ))
+    :ruleset rules
+)
+
+; mx + nx = x(m + n)
+(rewrite 
+    (arith_addf (arith_mulf ?m ?x ?a ?t) (arith_mulf ?n ?x ?a ?t) ?a ?t)
+    (arith_mulf ?x (arith_addf ?m ?n ?a ?t) ?a ?t)
+    :ruleset rules
+)
+
+(run-schedule (saturate rules)) ; search 0.017s, apply 0.002s, rebuild 0.006s, total 0.025s
+
+;; EXTRACTS HERE ;;
+(check (= $op0 ( arith_constant ( NamedAttr "value" ( IntegerAttr 100000000 ( Index ) ) ) ( Index ) )))
+(extract $op0)
+(check (= $op1 ( arith_constant ( NamedAttr "value" ( IntegerAttr 4 ( Index ) ) ) ( Index ) )))
+(extract $op1)
+(check (= $op6 ( arith_constant ( NamedAttr "value" ( FloatAttr 5.0 ( F64 ) ) ) ( F64 ) )))
+(extract $op6)
+(check (= $op7 ( arith_constant ( NamedAttr "value" ( IntegerAttr 0 ( Index ) ) ) ( Index ) )))
+(extract $op7)
+(check (= $op8 ( arith_constant ( NamedAttr "value" ( IntegerAttr 1 ( Index ) ) ) ( Index ) )))
+(extract $op8)
+(check (= $op9 ( arith_constant ( NamedAttr "value" ( IntegerAttr 2 ( Index ) ) ) ( Index ) )))
+(extract $op9)
+(check (= $op10 ( arith_constant ( NamedAttr "value" ( IntegerAttr 3 ( Index ) ) ) ( Index ) )))
+(extract $op10)
+(check (= $op17 ( arith_constant ( NamedAttr "value" ( IntegerAttr 0 ( I32 ) ) ) ( I32 ) )))
+(extract $op17)
