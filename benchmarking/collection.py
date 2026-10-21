@@ -328,7 +328,7 @@ def run_process(
             require_workload_unchanged(file_spec)
             return ProcessObservation(result=result, timing_summary=None)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
-        result = run_command(command, checkout_path, timeout_sec)
+        result = run_command(command, checkout_path, timeout_sec, native_limit=True)
         require_workload_unchanged(file_spec)
         if result.status != "success":
             return ProcessObservation(result=result, timing_summary=None)
@@ -348,7 +348,7 @@ def run_preflight(
     binary_path: Path,
     checkout_path: Path,
     timeout_sec: int,
-    required_outputs: tuple[str, ...] = ("--timing-summary",),
+    required_outputs: tuple[str, ...] = ("--timing-summary", "--memory-limit-bytes"),
 ) -> TimingResult:
     """Run one untimed ``--help`` capability preflight."""
 
@@ -357,6 +357,7 @@ def run_preflight(
         checkout_path,
         timeout_sec,
         required_output=required_outputs,
+        native_limit=True,
     )
 
 
@@ -377,7 +378,7 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             raise ValueError(f"target {target.display_label} needs a fresh {engine} binary")
         if engine not in ("egglog", "egg"):
             continue
-        required_outputs = ["--timing-summary"]
+        required_outputs = ["--timing-summary", "--memory-limit-bytes"]
         if engine == "egglog":
             if any(run.disequality_encoding != "nee" for run in engine_runs):
                 required_outputs.append("--disequality-encoding")
@@ -571,6 +572,12 @@ def collect_rows(
                         observation=observation,
                     )
                 )
+                if observation.result.stop_collection:
+                    assert observation.result.error is not None
+                    raise ValueError(
+                        f"{observation.result.error.message}; the failed observation was retained; "
+                        "collection stopped before launching another workload"
+                    )
                 completed_observations += 1
                 result_counts[observation.result.status] += 1
                 if observation.result.status != "success":

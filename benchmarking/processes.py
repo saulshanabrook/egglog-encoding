@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from native_memory import NATIVE_SETUP_EXIT, native_memory_command
+
 from .models import Status
 
 
@@ -48,6 +50,7 @@ class TimingResult:
     status: Status
     timing: TimingRow
     error: ErrorRow | None
+    stop_collection: bool = False
 
 
 def run_command(
@@ -56,11 +59,15 @@ def run_command(
     timeout_sec: int,
     env_overrides: Mapping[str, str] | None = None,
     required_output: str | Sequence[str] | None = None,
+    *,
+    native_limit: bool = False,
 ) -> TimingResult:
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     if env_overrides is not None:
         env.update(env_overrides)
+    if native_limit:
+        command, env = native_memory_command(command, env)
     start = time.perf_counter()
     with (
         tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stdout_file,
@@ -75,21 +82,46 @@ def run_command(
             stderr=stderr_file,
             start_new_session=True,
         )
+        return_code = None
+        timed_out = False
+        cleanup_error = None
         try:
             return_code, usage = wait4_process(process, timeout_sec)
+            wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            try:
+                terminate_process_group(process)
+            except OSError as error:
+                if return_code is None and not timed_out:
+                    raise
+                cleanup_error = error
+        if timed_out:
+            message = f"timed out after {timeout_sec} seconds"
+            if cleanup_error is not None:
+                message += f"; process-group cleanup failed: {cleanup_error}"
             return TimingResult(
                 status="timed-out",
                 timing=TimingRow(),
-                error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
+                error=ErrorRow(message=message),
+                stop_collection=cleanup_error is not None,
             )
-        except BaseException:
-            terminate_process_group(process)
-            raise
-        wall_sec = time.perf_counter() - start
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
         stderr = read_tempfile(stderr_file)
+    assert return_code is not None
+    if cleanup_error is not None:
+        return TimingResult(
+            status="failure",
+            timing=timing,
+            error=ErrorRow(
+                message=f"process-group cleanup failed: {cleanup_error}",
+                exit_code=return_code if return_code >= 0 else None,
+                signal=-return_code if return_code < 0 else None,
+            ),
+            stop_collection=True,
+        )
     if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
         return TimingResult(
             status="failure",
@@ -109,15 +141,19 @@ def run_command(
     message = stderr.strip() or stdout.strip() or "process exited with non-zero status"
     exit_code = return_code if return_code >= 0 else None
     signal_number = -return_code if return_code < 0 else None
+    unexpected_kill = signal_number == signal.SIGKILL
+    if unexpected_kill:
+        message = f"unexpected SIGKILL (cause unknown): {message[-850:]}"
     return TimingResult(
         status="failure",
         timing=timing,
         error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
+        stop_collection=unexpected_kill or (native_limit and exit_code == NATIVE_SETUP_EXIT),
     )
 
 
 def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
-    """Kill and reap a command's isolated process group after an exceptional exit."""
+    """Kill remaining isolated-group members and reap the owned command."""
 
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
