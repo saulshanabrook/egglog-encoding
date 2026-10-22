@@ -4,12 +4,18 @@ use egglog::EGraph;
 
 fn graphs() -> impl Iterator<Item = EGraph> {
     [1, 4, 8, 12].into_iter().flat_map(|threads| {
-        [
-            EGraph::new_with_term_encoding().with_num_threads(threads),
-            EGraph::new_with_proofs()
-                .with_proof_testing()
-                .with_num_threads(threads),
-        ]
+        [false, true].into_iter().flat_map(move |no_decomp| {
+            [
+                EGraph::new_with_term_encoding().with_num_threads(threads),
+                EGraph::new_with_proofs()
+                    .with_proof_testing()
+                    .with_num_threads(threads),
+            ]
+            .map(|mut graph| {
+                graph.no_decomp = no_decomp;
+                graph
+            })
+        })
     })
 }
 

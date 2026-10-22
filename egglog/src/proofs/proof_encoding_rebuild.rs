@@ -6,8 +6,10 @@ use super::proof_encoding::ProofInstrumentor;
 use super::proof_encoding_helpers::Skeleton;
 use crate::*;
 use egglog_bridge::{RebuildProof, TableAction};
+use egglog_concurrency::ReadOptimizedLock;
 use egglog_core_relations::{ColumnId, CounterId, ExecutionState};
 use egglog_numeric_id::NumericId;
+use smallvec::SmallVec;
 
 /// One packed witness per changed row, using the existing proof algebra.
 /// The fixed layout has a slot for every scalar equality column, but its
@@ -19,6 +21,7 @@ pub(crate) struct NativeRowProof {
     columns: Vec<ColumnId>,
     proof_column: ColumnId,
     eclass_column: Option<ColumnId>,
+    spellings: ReadOptimizedLock<util::HashMap<SmallVec<[usize; 4]>, Value>>,
 }
 
 impl NativeRowProof {
@@ -36,6 +39,7 @@ impl NativeRowProof {
             columns,
             proof_column,
             eclass_column,
+            spellings: ReadOptimizedLock::new(Default::default()),
         }
     }
 }
@@ -51,23 +55,37 @@ impl RebuildProof for NativeRowProof {
         let mut args = Vec::with_capacity(self.columns.len() + 4);
         // Filled after constructing the composition below.
         args.extend([old_proof, old_proof]);
-        let mut skeleton = Skeleton::Leaf(0);
+        let mut pattern = SmallVec::<[usize; 4]>::new();
         for (slot, column) in self.columns.iter().enumerate() {
             if let Some((_, proof)) = steps.iter().find(|(changed, _)| changed == column) {
                 args.push(*proof);
-                let step = Skeleton::Leaf(slot + 1);
-                skeleton = if Some(*column) == self.eclass_column {
-                    step.sym().trans(skeleton)
-                } else {
-                    skeleton.congr(column.index(), step)
-                };
+                pattern.push(slot);
             } else {
                 args.push(old_proof);
             }
         }
-        args[0] = state
-            .base_values()
-            .get::<crate::sort::S>(skeleton.spelling().into());
+        let cached = self.spellings.read().get(&pattern).copied();
+        args[0] = cached.unwrap_or_else(|| {
+            let mut skeleton = Skeleton::Leaf(0);
+            for &slot in &pattern {
+                let column = self.columns[slot];
+                let step = Skeleton::Leaf(slot + 1);
+                skeleton = if Some(column) == self.eclass_column {
+                    step.sym().trans(skeleton)
+                } else {
+                    skeleton.congr(column.index(), step)
+                };
+            }
+            let spelling = state
+                .base_values()
+                .get::<crate::sort::S>(skeleton.spelling().into());
+            // String interning otherwise takes a mutex for every rebuilt row.
+            // Cache only observed column patterns, never all 2^arity patterns.
+            // Base-value intern storage is shared across database clones, so
+            // these immutable string IDs remain valid after push/pop and clone.
+            self.spellings.lock().insert(pattern, spelling);
+            spelling
+        });
         let id = Value::from_usize(state.inc_counter(self.ids));
         args.extend([id, self.unit]);
         self.packed.insert(state, args.into_iter());
@@ -163,32 +181,22 @@ impl ProofInstrumentor<'_> {
         let mut rules = String::new();
         // One rule per rebuildable key column (re-keys the row via set + delete).
         for (i, ty) in types[..n_keys].iter().enumerate() {
-            let is_container = ty.is_eq_container_sort();
             // Scalar children are owned by the native bulk pass.
-            if !is_container {
+            if !ty.is_eq_container_sort() {
                 continue;
             }
             let ci = child(i);
             let canon = format!("c{i}_canon_");
             let (query_view, value_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
-            // Canonicalize the column with the container rebuild primitive or a `@UF`
-            // lookup, and build the proof pieces. Container-reading rules are `:naive`
-            // (the primitive reads `@UF` tables the rule doesn't join on).
-            let (canon_fact, proof_lets, pf_arg) = if is_container {
-                let value_prim = self.container_rebuild_prim(ty);
-                let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
-                if proofs {
-                    let (lets, new_pf) = self.container_rebuild_proof(&view_prf, i, ty, &ci);
-                    (
-                        canon_fact,
-                        lets.join("\n                             "),
-                        new_pf,
-                    )
-                } else {
-                    (canon_fact, String::new(), "()".to_string())
-                }
+            // The container primitive reads UF tables absent from the query,
+            // so these structural maintenance rules remain naive.
+            let value_prim = self.container_rebuild_prim(ty);
+            let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
+            let (proof_lets, pf_arg) = if proofs {
+                let (lets, new_pf) = self.container_rebuild_proof(&view_prf, i, ty, &ci);
+                (lets.join("\n                             "), new_pf)
             } else {
-                unreachable!("non-container children take the index-driven rule")
+                (String::new(), "()".to_string())
             };
             let mut updated = key_vars.clone();
             updated[i] = canon.clone();
@@ -196,7 +204,7 @@ impl ProofInstrumentor<'_> {
             let facts = format!("{query_view}\n{canon_fact}\n(!= {ci} {canon})");
             let actions =
                 format!("{proof_lets}\n{updated_view}\n(delete ({view_name} {keys_str}))");
-            rules.push_str(&self.rebuild_rule(&facts, &actions, is_container));
+            rules.push_str(&self.rebuild_rule(&facts, &actions, true));
         }
         // Containers retain structural rebuilding; scalar columns are owned by
         // the native bulk pass, including a custom function's output.

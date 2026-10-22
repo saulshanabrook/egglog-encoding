@@ -63,12 +63,14 @@ impl Database {
             }
             _ => all.clone(),
         };
-        let candidates = if new_rows.size() == all.size() {
+        let scan_threshold = all.size().div_ceil(3);
+        let candidates = if new_rows.size() >= scan_threshold {
             all
         } else {
             let mut rows = Vec::new();
             new_rows.offsets(|row| rows.push(row));
-            for invalidation in input.invalidated {
+            let mut scan_all = false;
+            'groups: for invalidation in input.invalidated {
                 if invalidation.values.is_empty() {
                     continue;
                 }
@@ -76,17 +78,25 @@ impl Database {
                 let index = index.get().unwrap();
                 for value in invalidation.values {
                     if let Some(subset) = index.get_subset(value) {
+                        // Bound discovery cost too: do not collect and sort a
+                        // huge duplicate-heavy candidate list just to choose a
+                        // full scan afterwards. Duplicates may trigger a scan
+                        // earlier; that changes cost, not the rows' semantics.
+                        if rows.len().saturating_add(subset.size()) >= scan_threshold {
+                            scan_all = true;
+                            break 'groups;
+                        }
                         subset.offsets(|row| rows.push(row));
                     }
                 }
             }
-            rows.sort_unstable();
-            rows.dedup();
-            if rows.len() >= all.size().div_ceil(3) {
+            if scan_all {
                 // Once a substantial fraction is affected, a contiguous scan
                 // avoids sparse gathers. This is a cost choice, not semantics.
                 all
             } else {
+                rows.sort_unstable();
+                rows.dedup();
                 let mut subset = Subset::empty();
                 for row in rows {
                     subset.add_row_sorted(row);
