@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -24,6 +25,13 @@ from typing import TextIO
 from native_memory import NATIVE_SETUP_EXIT, native_memory_command
 
 from .models import Status
+
+# Nightly owns this optional deadline; ordinary CLI and paper calls leave it unset.
+COLLECTION_DEADLINE: ContextVar[float | None] = ContextVar("collection_deadline", default=None)
+
+
+class BudgetExpired(RuntimeError):
+    """Nightly setup or collection exhausted its shared budget."""
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,9 @@ def run_command(
     *,
     native_limit: bool = False,
 ) -> TimingResult:
+    deadline = COLLECTION_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise BudgetExpired("nightly collection budget exhausted before workload")
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     if env_overrides is not None:
@@ -85,11 +96,15 @@ def run_command(
         return_code = None
         timed_out = False
         cleanup_error = None
+        budget_expired = False
         try:
-            return_code, usage = wait4_process(process, timeout_sec)
+            remaining = timeout_sec if deadline is None else deadline - time.monotonic()
+            return_code, usage = wait4_process(process, max(0, min(timeout_sec, remaining)))
             wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
+            wall_sec = time.perf_counter() - start
             timed_out = True
+            budget_expired = remaining < timeout_sec
         finally:
             try:
                 terminate_process_group(process)
@@ -98,14 +113,18 @@ def run_command(
                     raise
                 cleanup_error = error
         if timed_out:
-            message = f"timed out after {timeout_sec} seconds"
+            message = (
+                "nightly collection budget exhausted during workload"
+                if budget_expired
+                else f"timed out after {timeout_sec} seconds"
+            )
             if cleanup_error is not None:
                 message += f"; process-group cleanup failed: {cleanup_error}"
             return TimingResult(
-                status="timed-out",
-                timing=TimingRow(),
+                status="failure" if budget_expired else "timed-out",
+                timing=TimingRow(wall_sec=wall_sec) if budget_expired else TimingRow(),
                 error=ErrorRow(message=message),
-                stop_collection=cleanup_error is not None,
+                stop_collection=budget_expired or cleanup_error is not None,
             )
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
@@ -160,7 +179,7 @@ def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[by
     process.wait()
 
 
-def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
+def wait4_process(process: subprocess.Popen[str], timeout_sec: float) -> tuple[int, resource.struct_rusage]:
     """Wait without adding polling delay to the measured child wall time."""
 
     timed_out = threading.Event()
