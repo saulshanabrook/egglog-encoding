@@ -1,0 +1,180 @@
+(sort IntVec (Vec i64))
+(sort FloatVec (Vec f64))
+
+;; Types
+(sort Type)
+(sort TypeVec (Vec Type))
+
+;; Attrs
+(sort Attr)
+(sort AttrDict (Map String Attr))
+(sort AttrVec (Vec Attr))
+(datatype AttrPair (NamedAttr String Attr) (ValueAttr Attr))
+
+;; Op
+;; Usage:
+;; (<op_variant> <operand1> <operand2> ... <operandN> <attr1> <attr2> ... <attrM> <region1> <region2> ... <regionR> <type>)
+(datatype Op 
+    (Value i64 Type)
+    (OpaqueOp i64 TypeVec)
+    (NoOp)
+)
+(sort OpVec (Vec Op))
+(datatype Block (Blk OpVec))
+(sort BlockVec (Vec Block))
+(datatype Region (Reg BlockVec))
+(sort RegionVec (Vec Region))
+
+;; helper functions
+(function type-of (Op) Type :merge old)
+(function dims (Type) IntVec :merge old)
+
+;;;; builtin dialect ;;;;
+
+;; Types
+
+(constructor F16 () Type)
+(constructor F32 () Type)
+(constructor F64 () Type)
+(constructor F80 () Type)
+(constructor F128 () Type)
+(constructor I1 () Type)
+(constructor I4 () Type)
+(constructor I8 () Type)
+(constructor I16 () Type)
+(constructor I32 () Type)
+(constructor I64 () Type)
+(constructor Int (i64) Type)
+(constructor SInt (i64) Type)
+(constructor UInt (i64) Type)
+(constructor OtherInt (String) Type)
+(constructor Index () Type)
+(constructor None () Type)
+(constructor Complex (Type) Type)
+(constructor Tuple (TypeVec) Type)
+(constructor Function (TypeVec TypeVec) Type)
+
+(constructor Vector (IntVec Type) Type)
+(constructor RankedTensor (IntVec Type) Type)
+(constructor UnrankedTensor (Type) Type)
+
+(constructor OpaqueType (String String) Type)
+
+; Dynamic RankedTensor type
+; (datatype Dimension
+;     (Dyn)
+;     (D i64)
+; )
+; (sort DimVec (Vec Dimension))
+; (function DynRankedTensor (DimVec Type) Type)
+
+; (rule ((= ?t (RankedTensor ?dims ?tp))) ((set (dims ?t) ?dims)))
+
+;; Attrs
+
+(constructor NoAttr () Attr)
+(constructor IntegerAttr (i64 Type) Attr)
+(constructor FloatAttr (f64 Type) Attr)
+(constructor StringAttr (String) Attr)
+(constructor UnitAttr () Attr)
+(constructor TypeAttr (Type) Attr)
+
+(constructor ArrayAttr (AttrVec) Attr)
+(constructor DenseIntArrayAttr (i64 IntVec Type) Attr)
+(constructor DenseFloatArrayAttr (f64 FloatVec Type) Attr)
+(constructor DenseIntElementsAttr (FloatVec Type) Attr)
+(constructor DenseFPElementsAttr (FloatVec Type) Attr)
+(constructor SymbolRefAttr (String) Attr)
+
+(constructor OpaqueAttr (String String) Attr) ; (<attr> <type-name>)
+
+; DenseResourceElementsAttr
+; DenseStringElementsAttr
+; DictionaryAttr
+; IntegerSetAttr
+; OpaqueAttr
+; SparseElementsAttr
+; SymbolRefAttr
+; StridedLayoutAttr
+
+;;;; linalg dialect ;;;;
+(with-dynamic-cost (constructor linalg_matmul (Op Op Op Type) Op))
+
+;;;; tensor dialect ;;;;
+(constructor tensor_empty (Type) Op)
+
+;; OPS HERE ;;
+; _10mm_func.func
+(let $op0 (Value 0 (RankedTensor (vec-of 73 77) (I32))))
+(let $op1 (Value 1 (RankedTensor (vec-of 77 99) (I32))))
+(let $op2 (Value 2 (RankedTensor (vec-of 99 39) (I32))))
+(let $op3 (Value 3 (RankedTensor (vec-of 39 20) (I32))))
+(let $op4 (Value 4 (RankedTensor (vec-of 20 76) (I32))))
+(let $op5 (Value 5 (RankedTensor (vec-of 76 70) (I32))))
+(let $op6 (Value 6 (RankedTensor (vec-of 70 75) (I32))))
+(let $op7 (Value 7 (RankedTensor (vec-of 75 41) (I32))))
+(let $op8 (Value 8 (RankedTensor (vec-of 41 84) (I32))))
+(let $op9 (Value 9 (RankedTensor (vec-of 84 93) (I32))))
+(let $op10 (Value 10 (RankedTensor (vec-of 93 79) (I32))))
+(let $op11 (tensor_empty (RankedTensor (vec-of 73 99) (I32))))
+(let $op12 (linalg_matmul $op0 $op1 $op11 (RankedTensor (vec-of 73 99) (I32))))
+(let $op13 (tensor_empty (RankedTensor (vec-of 73 39) (I32))))
+(let $op14 (linalg_matmul $op12 $op2 $op13 (RankedTensor (vec-of 73 39) (I32))))
+(let $op15 (tensor_empty (RankedTensor (vec-of 73 20) (I32))))
+(let $op16 (linalg_matmul $op14 $op3 $op15 (RankedTensor (vec-of 73 20) (I32))))
+(let $op17 (tensor_empty (RankedTensor (vec-of 73 76) (I32))))
+(let $op18 (linalg_matmul $op16 $op4 $op17 (RankedTensor (vec-of 73 76) (I32))))
+(let $op19 (tensor_empty (RankedTensor (vec-of 73 70) (I32))))
+(let $op20 (linalg_matmul $op18 $op5 $op19 (RankedTensor (vec-of 73 70) (I32))))
+(let $op21 (tensor_empty (RankedTensor (vec-of 73 75) (I32))))
+(let $op22 (linalg_matmul $op20 $op6 $op21 (RankedTensor (vec-of 73 75) (I32))))
+(let $op23 (tensor_empty (RankedTensor (vec-of 73 41) (I32))))
+(let $op24 (linalg_matmul $op22 $op7 $op23 (RankedTensor (vec-of 73 41) (I32))))
+(let $op25 (tensor_empty (RankedTensor (vec-of 73 84) (I32))))
+(let $op26 (linalg_matmul $op24 $op8 $op25 (RankedTensor (vec-of 73 84) (I32))))
+(let $op27 (tensor_empty (RankedTensor (vec-of 73 93) (I32))))
+(let $op28 (linalg_matmul $op26 $op9 $op27 (RankedTensor (vec-of 73 93) (I32))))
+(let $op29 (tensor_empty (RankedTensor (vec-of 73 79) (I32))))
+(let $op30 (linalg_matmul $op28 $op10 $op29 (RankedTensor (vec-of 73 79) (I32))))
+(let $op31 (Value 31 (None)))
+
+;; RULES HERE ;;
+(ruleset rules)
+
+; (rule ((= ?A (tensor_empty ?t))) ((set (type-of ?A) ?t)) :ruleset rules)
+(rule ((= ?A (Value ?id ?t))) ((set (type-of ?A) ?t)) :ruleset rules)
+(rule ((= ?A (linalg_matmul ?x ?y ?o ?t))) ((set (type-of ?A) ?t)) :ruleset rules)
+
+(function nrows (Type) i64 :merge old)
+(function ncols (Type) i64 :merge old)
+(rule ((= ?t (RankedTensor ?shape ?tp))) 
+    ((set (nrows ?t) (vec-get ?shape 0)) 
+     (set (ncols ?t) (vec-get ?shape 1)))
+    :ruleset rules
+)
+
+(rule 
+    ((linalg_matmul ?x ?y ?xy ?t)
+     (= a (nrows (type-of ?x)))
+     (= b (ncols (type-of ?x)))
+     (= c (ncols (type-of ?y))))
+
+    ((set-cost (linalg_matmul ?x ?y ?xy ?t) (* (* a b) c)))
+    :ruleset rules
+)
+
+(rule
+    ((= ?lhs (linalg_matmul (linalg_matmul ?x ?y ?xy ?xy_t) ?z ?xy_z ?xyz_t))
+     (= ?b (nrows (type-of ?y)))
+     (= ?d (ncols (type-of ?z)))
+     (= ?xyz_t (RankedTensor ? ?t)))
+    
+    ((let out_t (RankedTensor (vec-of ?b ?d) ?t))
+     (union ?lhs (linalg_matmul ?x (linalg_matmul ?y ?z (tensor_empty out_t) out_t) ?xy_z ?xyz_t)))
+    :ruleset rules
+)
+
+(run-schedule (saturate rules))
+
+;; EXTRACTS HERE ;;
+(extract $op30)
