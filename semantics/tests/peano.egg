@@ -1,0 +1,11 @@
+; Addition on unary numerals, evaluated into a separate Eval constructor so that no
+; term is unioned with its own subterm.
+(sort Math)
+(constructor Zero () Math)
+(constructor Succ (Math) Math)
+(constructor Add (Math Math) Math)
+(constructor Eval (Math) Math)
+(Eval (Add (Succ (Succ (Zero))) (Succ (Zero))))
+(rule ((Eval (Add (Zero) y))) ((union (Eval (Add (Zero) y)) (Eval y))))
+(rule ((Eval (Add (Succ x) y))) ((union (Eval (Add (Succ x) y)) (Succ (Eval (Add x y))))))
+(run-schedule (saturate (run)))

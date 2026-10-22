@@ -1,0 +1,6 @@
+; Unions that change nothing.
+(sort Math)
+(constructor A () Math)
+(constructor F (Math) Math)
+(union (A) (A))
+(union (F (A)) (F (A)))

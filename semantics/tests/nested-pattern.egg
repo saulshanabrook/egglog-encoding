@@ -1,0 +1,9 @@
+; A nested query pattern, flattened by the compiler and rebuilt by lifting.
+(sort Math)
+(constructor A () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(constructor H (Math) Math)
+(F (G (A)))
+(rule ((F (G x))) ((union (F (G x)) (H x))))
+(run-schedule (saturate (run)))

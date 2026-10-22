@@ -1,0 +1,52 @@
+(F (D)) = (F (A))  trans
+  (F (D)) = (F (A))  congr 0
+    (F (D)) = (F (C))  congr 0
+      (F (D)) = (F (D))  rule 1 {}
+      (D) = (C)  rule 4 {}
+    (C) = (A)  trans
+      (C) = (B)  rule 3 {}
+      (B) = (A)  rule 2 {}
+  (F (A)) = (F (A))  symm
+    (F (A)) = (F (A))  rule 0 {}
+
+(A) = (D)  trans
+  (A) = (C)  symm
+    (C) = (A)  trans
+      (C) = (B)  rule 3 {}
+      (B) = (A)  rule 2 {}
+  (C) = (D)  trans
+    (C) = (D)  symm
+      (D) = (C)  rule 4 {}
+    (D) = (D)  rule 4 {}
+
+(D) = (A)  trans
+  (D) = (C)  rule 4 {}
+  (C) = (A)  trans
+    (C) = (B)  rule 3 {}
+    (B) = (A)  rule 2 {}
+
+(A) = (C)  trans
+  (A) = (C)  symm
+    (C) = (A)  trans
+      (C) = (B)  rule 3 {}
+      (B) = (A)  rule 2 {}
+  (C) = (C)  rule 4 {}
+
+(C) = (A)  trans
+  (C) = (B)  rule 3 {}
+  (B) = (A)  rule 2 {}
+
+(A) = (B)  trans
+  (A) = (B)  symm
+    (B) = (A)  rule 2 {}
+  (B) = (B)  rule 3 {}
+
+(B) = (A)  rule 2 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(A) = (A)  rule 2 {}
+
+(A) = (A)  rule 2 {}

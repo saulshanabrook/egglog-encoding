@@ -649,6 +649,19 @@ impl ProofStore {
         self.check_proof_with_context(proof_id, program, &mut ctx)
     }
 
+    /// Check proofs in order against one program, sharing the checked-proof cache.
+    pub(crate) fn check_proofs(
+        &mut self,
+        proof_ids: &[ProofId],
+        program: &[ResolvedNCommand],
+    ) -> Result<Vec<Proposition>, ProofCheckError> {
+        let mut ctx = ProofCheckContext::new(program, &mut self.term_dag)?;
+        proof_ids
+            .iter()
+            .map(|&proof_id| self.check_proof_with_context(proof_id, program, &mut ctx))
+            .collect()
+    }
+
     /// Internal recursive proof checker with context
     fn check_proof_with_context(
         &mut self,

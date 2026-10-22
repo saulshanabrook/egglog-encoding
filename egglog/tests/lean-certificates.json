@@ -1,0 +1,828 @@
+[{"program":
+  "(sort Math)\n(ruleset r0)\n(constructor F (Math) Math)\n(constructor A () Math)\n(constructor B () Math)\n(rule () ((F (A)) (F (B)) (union (A) (B))) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n",
+  "certificates":
+  [{"root": 5,
+    "nodes":
+    [{"rhs": ["F", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["B", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["B", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"proof": 3, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"right": 4, "left": 2, "kind": "trans"},
+      "lhs": ["F", [["B", []]]]}],
+    "accepted": true},
+   {"root": 3,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"proof": 0, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"right": 2, "left": 1, "kind": "trans"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true}],
+  "case": "nested-union"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math Math) Math)\n(constructor G (Math) Math)\n(constructor H (Math) Math)\n(rule () ((F (G (B)) (G (B))) (union (A) (B))) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n(rule ((F (G x) (G x))) ((H x)) :name \"lean-rule-1\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 9,
+    "nodes":
+    [{"rhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 2, "base": 1},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["B", []],
+      "reason": {"proof": 2, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["A", []],
+      "reason": {"right": 2, "left": 4, "kind": "trans"},
+      "lhs": ["A", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 5, "base": 3},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["F", [["G", [["A", []]]], ["G", [["B", []]]]]],
+      "reason": {"kind": "congr", "index": 0, "child": 6, "base": 0},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["F", [["G", [["A", []]]], ["G", [["A", []]]]]],
+      "reason": {"kind": "congr", "index": 1, "child": 6, "base": 7},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["H", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-1",
+       "premises": [8],
+       "kind": "rule"},
+      "lhs": ["H", [["A", []]]]}],
+    "accepted": true},
+   {"root": 9,
+    "nodes":
+    [{"rhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 2, "base": 1},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["B", []],
+      "reason": {"proof": 2, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["A", []],
+      "reason": {"right": 2, "left": 4, "kind": "trans"},
+      "lhs": ["A", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 5, "base": 3},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["F", [["G", [["A", []]]], ["G", [["B", []]]]]],
+      "reason": {"kind": "congr", "index": 0, "child": 6, "base": 0},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["F", [["G", [["A", []]]], ["G", [["A", []]]]]],
+      "reason": {"kind": "congr", "index": 1, "child": 6, "base": 7},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]},
+     {"rhs": ["H", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-1",
+       "premises": [8],
+       "kind": "rule"},
+      "lhs": ["H", [["A", []]]]}],
+    "accepted": true},
+   {"root": 2,
+    "nodes":
+    [{"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["G", [["B", []]]]}],
+    "accepted": true},
+   {"root": 3,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"proof": 0, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"right": 2, "left": 1, "kind": "trans"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["G", [["B", []]]], ["G", [["B", []]]]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]}],
+    "accepted": true}],
+  "case": "nested-query"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A)) (G (B)) (union (F (A)) (G (B)))) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n(rule ((= (F x) (G y))) ((union x y)) :name \"lean-rule-1\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 13,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"proof": 0, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 2, "left": 1, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 5, "base": 4},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"proof": 6, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"right": 4, "left": 7, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 9, "base": 3},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 10, "left": 8, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [["x", ["A", []]], ["y", ["B", []]]],
+       "rule": "lean-rule-1",
+       "premises": [11],
+       "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 12, "base": 3},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 14,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"proof": 2, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"right": 0, "left": 3, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"proof": 5, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 7, "left": 6, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 9, "base": 8},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 10, "left": 4, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [["x", ["A", []]], ["y", ["B", []]]],
+       "rule": "lean-rule-1",
+       "premises": [11],
+       "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"proof": 12, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["B", []],
+      "reason": {"right": 9, "left": 13, "kind": "trans"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 12,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"proof": 2, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"right": 0, "left": 3, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"proof": 5, "kind": "symm"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 7, "left": 6, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 9, "base": 8},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 10, "left": 4, "kind": "trans"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [["x", ["A", []]], ["y", ["B", []]]],
+       "rule": "lean-rule-1",
+       "premises": [11],
+       "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true}],
+  "case": "equality-query"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(constructor A () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule ((F x)) ((G x)) :name \"lean-rule-1\" :ruleset r0)\n(run-schedule (saturate r0))\n",
+  "certificates":
+  [{"root": 3,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-1",
+       "premises": [2],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": true},
+   {"root": 3,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-1",
+       "premises": [2],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true}],
+  "case": "rule-chain"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor Missing () Math)\n(constructor A () Math)\n(constructor B () Math)\n(rule () ((A) (B)) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n(rule ((Missing)) ((union (A) (B))) :name \"lean-rule-1\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 0,
+    "nodes":
+    [{"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true}],
+  "case": "missing-premise"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor F (Math) Math)\n(constructor A () Math)\n(constructor G (Math) Math)\n(constructor B () Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n(rule () ((union (A) (G (B)))) :name \"lean-rule-1\" :ruleset r1)\n(run r1 1)\n",
+  "certificates":
+  [{"root": 3,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"proof": 0, "kind": "symm"},
+      "lhs": ["A", []]},
+     {"rhs": ["G", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]},
+     {"rhs": ["G", [["B", []]]],
+      "reason": {"right": 2, "left": 1, "kind": "trans"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["G", [["B", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true},
+   {"root": 0,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": true}],
+  "case": "support"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor F (Math) Math)\n(constructor B () Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x) (= x (B))) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run r1 1)\n",
+  "certificates":
+  [{"root": 2,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-2",
+       "premises": [0, 1],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": true}],
+  "case": "ordered-premises"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (F (A)))) :name \"lean-rule-0\" :ruleset r0)\n(run r0 1)\n(rule ((F (F x))) ((G x)) :name \"lean-rule-1\" :ruleset r1)\n(run r1 1)\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["F", [["F", [["A", []]]]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["F", [["A", []]]]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-1",
+       "premises": [0],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": true}],
+  "case": "nested-premise"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 0,
+    "nodes":
+    [{"rhs": ["Missing", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["Missing", []]}],
+    "accepted": false}],
+  "case": "invented-initial-fact"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 0,
+    "nodes":
+    [{"rhs": ["F", [["B", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["B", []]]]}],
+    "accepted": false}],
+  "case": "invented-application"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor Missing () Math)\n(constructor A () Math)\n(constructor B () Math)\n(rule () ((A)) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((B)) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((Missing)) ((union (A) (B))) :name \"lean-rule-2\" :ruleset r1)\n(run r1 1)\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["Missing", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["Missing", []]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-2", "premises": [0], "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": false}],
+  "case": "absent-premise"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-2", "premises": [0], "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": false}],
+  "case": "unbound-variable"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["B", []]]],
+       "rule": "lean-rule-2",
+       "premises": [0],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": false}],
+  "case": "wrong-binding"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 0,
+    "nodes":
+    [{"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-2",
+       "premises": [],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": false}],
+  "case": "missing-premise-proof"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor F (Math) Math)\n(constructor B () Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x) (= x (B))) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run r1 1)\n",
+  "certificates":
+  [{"root": 2,
+    "nodes":
+    [{"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["G", [["A", []]]],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-2",
+       "premises": [0, 1],
+       "kind": "rule"},
+      "lhs": ["G", [["A", []]]]}],
+    "accepted": false}],
+  "case": "premise-order"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [["x", ["A", []]]],
+       "rule": "lean-rule-2",
+       "premises": [0],
+       "kind": "rule"},
+      "lhs": ["A", []]}],
+    "accepted": false}],
+  "case": "wrong-conclusion"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 2,
+    "nodes":
+    [{"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["A", []]},
+     {"rhs": ["B", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["B", []],
+      "reason": {"right": 1, "left": 0, "kind": "trans"},
+      "lhs": ["A", []]}],
+    "accepted": false}],
+  "case": "transitivity-endpoints"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 2,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason":
+      {"subst": [], "rule": "lean-rule-1", "premises": [], "kind": "rule"},
+      "lhs": ["B", []]},
+     {"rhs": ["F", [["B", []]]],
+      "reason": {"kind": "congr", "index": 0, "child": 1, "base": 0},
+      "lhs": ["F", [["A", []]]]}],
+    "accepted": false}],
+  "case": "congruence-child"},
+ {"program":
+  "(sort Math)\n(ruleset r0)\n(ruleset r1)\n(constructor A () Math)\n(constructor B () Math)\n(constructor F (Math) Math)\n(constructor G (Math) Math)\n(rule () ((F (A))) :name \"lean-rule-0\" :ruleset r0)\n(rule () ((union (A) (B))) :name \"lean-rule-1\" :ruleset r0)\n(run r0 1)\n(rule ((F x)) ((G x)) :name \"lean-rule-2\" :ruleset r1)\n(run-schedule (saturate r1))\n",
+  "certificates":
+  [{"root": 1,
+    "nodes":
+    [{"rhs": ["F", [["A", []]]],
+      "reason":
+      {"subst": [], "rule": "lean-rule-0", "premises": [], "kind": "rule"},
+      "lhs": ["F", [["A", []]]]},
+     {"rhs": ["A", []],
+      "reason": {"proof": 0, "kind": "symm"},
+      "lhs": ["A", []]}],
+    "accepted": false}],
+  "case": "symmetry-claim"}]

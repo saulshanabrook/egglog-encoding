@@ -1,0 +1,10 @@
+; A term created by one rule is the premise of the next.
+(sort Math)
+(constructor A () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(constructor H (Math) Math)
+(F (A))
+(rule ((F x)) ((G x)))
+(rule ((G x)) ((H x)))
+(run-schedule (saturate (run)))

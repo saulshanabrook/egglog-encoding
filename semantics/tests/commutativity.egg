@@ -1,0 +1,8 @@
+; A rule whose head unions the matched term with a rebuilt one.
+(sort Math)
+(constructor One () Math)
+(constructor Two () Math)
+(constructor Add (Math Math) Math)
+(Add (One) (Two))
+(rule ((Add a b)) ((union (Add a b) (Add b a))))
+(run-schedule (saturate (run)))

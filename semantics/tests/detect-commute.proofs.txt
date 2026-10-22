@@ -1,0 +1,100 @@
+(Wrapper (Add (Two) (One))) = (Wrapper (Add (One) (Two)))  trans
+  (Wrapper (Add (Two) (One))) = (Wrapper (Add (One) (Two)))  congr 0
+    (Wrapper (Add (Two) (One))) = (Wrapper (Add (Two) (One)))  rule 1 {}
+    (Add (Two) (One)) = (Add (One) (Two))  rule 2 {a := (One), b := (Two)}
+      (Add (One) (Two)) = (Add (One) (Two))  congr 1
+        (Add (One) (Two)) = (Add (One) (Two))  congr 0
+          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+          (One) = (One)  rule 0 {}
+        (Two) = (Two)  rule 0 {}
+  (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  symm
+    (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+
+(Success) = (Success)  rule 3 {}
+  (Wrapper (Add (One) (Two))) = (Wrapper (Add (Two) (One)))  trans
+    (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  trans
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  symm
+        (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  congr 0
+          (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+          (Add (One) (Two)) = (Add (One) (Two))  congr 1
+            (Add (One) (Two)) = (Add (One) (Two))  congr 0
+              (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+              (One) = (One)  rule 1 {}
+            (Two) = (Two)  rule 1 {}
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+    (Wrapper (Add (One) (Two))) = (Wrapper (Add (Two) (One)))  congr 0
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+      (Add (One) (Two)) = (Add (Two) (One))  congr 1
+        (Add (One) (Two)) = (Add (Two) (One))  congr 0
+          (Add (One) (Two)) = (Add (Two) (One))  trans
+            (Add (One) (Two)) = (Add (Two) (One))  symm
+              (Add (Two) (One)) = (Add (One) (Two))  rule 2 {a := (One), b := (Two)}
+                (Add (One) (Two)) = (Add (One) (Two))  congr 1
+                  (Add (One) (Two)) = (Add (One) (Two))  congr 0
+                    (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+                    (One) = (One)  rule 0 {}
+                  (Two) = (Two)  rule 0 {}
+            (Add (Two) (One)) = (Add (Two) (One))  rule 1 {}
+          (Two) = (Two)  rule 1 {}
+        (One) = (One)  rule 1 {}
+
+(Success) = (Success)  rule 3 {}
+  (Wrapper (Add (One) (Two))) = (Wrapper (Add (Two) (One)))  trans
+    (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  trans
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  symm
+        (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  congr 0
+          (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+          (Add (One) (Two)) = (Add (One) (Two))  congr 1
+            (Add (One) (Two)) = (Add (One) (Two))  congr 0
+              (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+              (One) = (One)  rule 1 {}
+            (Two) = (Two)  rule 1 {}
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+    (Wrapper (Add (One) (Two))) = (Wrapper (Add (Two) (One)))  congr 0
+      (Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+      (Add (One) (Two)) = (Add (Two) (One))  congr 1
+        (Add (One) (Two)) = (Add (Two) (One))  congr 0
+          (Add (One) (Two)) = (Add (Two) (One))  trans
+            (Add (One) (Two)) = (Add (Two) (One))  symm
+              (Add (Two) (One)) = (Add (One) (Two))  rule 2 {a := (One), b := (Two)}
+                (Add (One) (Two)) = (Add (One) (Two))  congr 1
+                  (Add (One) (Two)) = (Add (One) (Two))  congr 0
+                    (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+                    (One) = (One)  rule 0 {}
+                  (Two) = (Two)  rule 0 {}
+            (Add (Two) (One)) = (Add (Two) (One))  rule 1 {}
+          (Two) = (Two)  rule 1 {}
+        (One) = (One)  rule 1 {}
+
+(Add (One) (Two)) = (Add (Two) (One))  trans
+  (Add (One) (Two)) = (Add (Two) (One))  symm
+    (Add (Two) (One)) = (Add (One) (Two))  rule 2 {a := (One), b := (Two)}
+      (Add (One) (Two)) = (Add (One) (Two))  congr 1
+        (Add (One) (Two)) = (Add (One) (Two))  congr 0
+          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+          (One) = (One)  rule 0 {}
+        (Two) = (Two)  rule 0 {}
+  (Add (Two) (One)) = (Add (Two) (One))  rule 1 {}
+
+(Add (Two) (One)) = (Add (One) (Two))  rule 2 {a := (One), b := (Two)}
+  (Add (One) (Two)) = (Add (One) (Two))  congr 1
+    (Add (One) (Two)) = (Add (One) (Two))  congr 0
+      (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+      (One) = (One)  rule 0 {}
+    (Two) = (Two)  rule 0 {}
+
+(Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+
+(Wrapper (Add (One) (Two))) = (Wrapper (Add (One) (Two)))  rule 0 {}
+
+(Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+
+(Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
+
+(Two) = (Two)  rule 1 {}
+
+(Two) = (Two)  rule 1 {}
+
+(One) = (One)  rule 1 {}
+
+(One) = (One)  rule 1 {}

@@ -1,0 +1,7 @@
+(F (A)) = (F (A))  rule 1 {}
+
+(F (A)) = (F (A))  rule 1 {}
+
+(A) = (A)  rule 1 {}
+
+(A) = (A)  rule 1 {}

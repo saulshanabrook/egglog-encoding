@@ -1,0 +1,9 @@
+; Re-association creates new terms until it saturates.
+(sort Math)
+(constructor One () Math)
+(constructor Two () Math)
+(constructor Three () Math)
+(constructor Add (Math Math) Math)
+(Add (Add (One) (Two)) (Three))
+(rule ((Add (Add a b) c)) ((union (Add (Add a b) c) (Add a (Add b c)))))
+(run-schedule (saturate (run)))

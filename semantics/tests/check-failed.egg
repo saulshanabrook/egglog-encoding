@@ -1,0 +1,7 @@
+; A failed check: nothing makes (F (B)) exist, so the program's outcome is the error.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(F (A))
+(check (F (B)))

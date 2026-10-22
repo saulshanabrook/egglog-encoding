@@ -1,0 +1,9 @@
+; The final check observes congruence and shares its query bindings: `x` is bound by the
+; first fact and constrained by the equality.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(F (A))
+(union (A) (B))
+(check (F x) (= x (B)) (= (F (A)) (F (B))))

@@ -1,0 +1,11 @@
+; An equality between two patterns, satisfied through a global union.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(F (A))
+(G (B))
+(union (F (A)) (G (B)))
+(rule ((= (F x) (G y))) ((union x y)))
+(run-schedule (saturate (run)))

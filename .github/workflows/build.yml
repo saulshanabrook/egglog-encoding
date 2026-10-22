@@ -12,6 +12,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  paper:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install LaTeX
+        run: sudo apt-get update && sudo apt-get install -y latexmk texlive-latex-extra texlive-science
+      - uses: leanprover/lean-action@24581d74d674803a25a81b10b059c5c0cdd344c6 # v1
+        with:
+          lake-package-directory: semantics
+          build-args: EgglogPaper
+          test: false
+          lint: false
+      - run: make paper-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semantics-paper
+          path: paper/build/semantics.pdf
+          if-no-files-found: error
+
   python:
     permissions:
       contents: read
@@ -22,8 +46,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
-      - run: make python-nits
-      - run: make python-test
+      - run: make python-check
 
   rust:
     permissions:
@@ -37,8 +60,7 @@ jobs:
           persist-credentials: false
       - run: rustup component add clippy rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: make rust-nits
-      - run: make rust-test
+      - run: make rust-check
 
   benchmark-smoke:
     permissions:
