@@ -64,15 +64,15 @@ Every benchmark invocation compares exactly two endpoints over the same ordered
 files: a candidate and a baseline. An endpoint is one target and treatment.
 There are no implicit matrices or multi-way comparisons.
 
-The default command compares proof mode with ordinary mode in the current
-checkout:
+The default command compares proof recording, extraction and checking with
+ordinary mode in the current checkout:
 
 ```bash
 ./bench.py
 
 # Equivalent endpoint selection:
 ./bench.py \
-  --target . --treatment proofs \
+  --target . --treatment proof-testing \
   --compare-target . --compare-treatment off
 ```
 
@@ -80,7 +80,7 @@ The endpoint defaults are:
 
 | Endpoint | Target | Treatment |
 | --- | --- | --- |
-| Candidate | `.` | `proofs` |
+| Candidate | `.` | `proof-testing` |
 | Baseline | candidate target | `off` |
 
 `--compare-target` defaults to the candidate target. Every rendered report
@@ -110,10 +110,16 @@ the corresponding proof-testing treatment provides the strict validity check.
 
 ### Common comparisons
 
-Proof overhead in the current checkout is the default:
+Checked proof overhead in the current checkout is the default:
 
 ```bash
 ./bench.py
+```
+
+Measure proof recording alone:
+
+```bash
+./bench.py --treatment proofs
 ```
 
 Measure non-validating proof-extraction overhead explicitly:
@@ -122,10 +128,10 @@ Measure non-validating proof-extraction overhead explicitly:
 ./bench.py --treatment proof-extraction
 ```
 
-Compare the current proof implementation with proof mode on `origin/main`:
+Compare checked proofs with checked proofs on `origin/main`:
 
 ```bash
-./bench.py --compare-target @origin/main --compare-treatment proofs
+./bench.py --compare-target @origin/main --compare-treatment proof-testing
 ```
 
 Compare term encoding with ordinary mode:
@@ -738,7 +744,7 @@ CI runs on pull requests, manual dispatches, and pushes to `main`:
 
 - `python`: `make python-nits`, then `make python-test`.
 - `rust`: `make rust-nits`, then `make rust-test`.
-- `benchmark-smoke`: a one-round `off`/`proofs` runner check on small Math and
+- `benchmark-smoke`: a one-round `off`/`proof-testing` runner check on small Math and
   disequality fixtures through `make benchmark-smoke`. The full parameter-analysis
   benchmark is not included in this CI job.
 - `codspeed`: an in-process, proofs-only benchmark over a smaller workload set
