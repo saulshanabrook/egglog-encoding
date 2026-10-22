@@ -23,6 +23,168 @@ mod tests {
     }
 
     #[test]
+    fn prove_extract_function_root_uses_existing_output_evidence() {
+        let source = r#"
+            (datatype E (A) (B))
+            (function root () E :merge old)
+            (ruleset initialization)
+            (rule () ((set (root) (A))) :ruleset initialization)
+            (run initialization 1)
+            (union (A) (B))
+            (subsume (A))
+        "#;
+        for variants in [0, 2] {
+            let extract = format!("(extract (root) {variants})");
+            let mut plain = EGraph::default();
+            plain.parse_and_run_program(None, source).unwrap();
+            let expected = plain.parse_and_run_program(None, &extract).unwrap()[0].to_string();
+            for mode in ["term", "recording", "testing", "extraction"] {
+                let mut egraph = match mode {
+                    "term" => EGraph::new_with_term_encoding(),
+                    "testing" => EGraph::new_with_proofs().with_proof_testing(),
+                    "extraction" => EGraph::default().with_proof_extraction(),
+                    _ => EGraph::new_with_proofs(),
+                };
+                egraph.parse_and_run_program(None, source).unwrap();
+                let shape = (egraph.num_nodes(), egraph.get_size("root"));
+                let outputs = egraph.parse_and_run_program(None, &extract).unwrap();
+                assert_eq!((egraph.num_nodes(), egraph.get_size("root")), shape);
+                let result = outputs
+                    .iter()
+                    .find(|output| {
+                        matches!(
+                            output,
+                            CommandOutput::ExtractBest(..) | CommandOutput::ExtractVariants(..)
+                        )
+                    })
+                    .unwrap();
+                assert_eq!(
+                    result.to_string(),
+                    expected,
+                    "mode={mode}, variants={variants}"
+                );
+                assert!(crate::proofs::proof_checker::gather_global_actions(&egraph.proof_check_program).all(|action| {
+                    !matches!(action, ResolvedAction::Expr(_, ResolvedExpr::Call(_, ResolvedCall::Func(func), _)) if func.name == "root")
+                }));
+                let proofs = outputs
+                    .iter()
+                    .filter_map(|output| match output {
+                        CommandOutput::ProveExists {
+                            proof_store,
+                            proof_id,
+                        } => Some((proof_store, *proof_id)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if matches!(mode, "term" | "recording") {
+                    assert!(proofs.is_empty());
+                } else {
+                    assert_eq!(proofs.len(), 1);
+                    for (store, id) in proofs {
+                        let proposition = store.get(id).proposition();
+                        assert!(matches!(
+                            store.term_dag().to_string(proposition.lhs).as_str(),
+                            "(A)" | "(B)"
+                        ));
+                        assert_eq!(store.term_dag().to_string(proposition.rhs), "(B)");
+                        store
+                            .clone()
+                            .check_proof(id, &egraph.proof_check_program)
+                            .unwrap();
+                    }
+                    // The lookup must not shift later FiatTerm indices.
+                    egraph.parse_and_run_program(None, "(extract (B))").unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prove_extract_function_root_rejects_keyed_lookups() {
+        for (parameter, argument) in [
+            ("i64", "7"),
+            ("E", "(A)"),
+            ("Es", "(vec-of (A))"),
+            ("E", "(Wrap (vec-of (A)))"),
+            ("E", "(vec-get (vec-of (A)) 0)"),
+        ] {
+            let source = format!(
+                r#"
+                (sort E)
+                (sort Es (Vec E))
+                (constructor A () E)
+                (constructor Wrap (Es) E)
+                (function root ({parameter}) E :merge old)
+                (set (root {argument}) (A))
+                "#
+            );
+            for mut egraph in [
+                EGraph::new_with_term_encoding(),
+                EGraph::new_with_proofs(),
+                EGraph::new_with_proofs().with_proof_testing(),
+                EGraph::default().with_proof_extraction(),
+            ] {
+                egraph.parse_and_run_program(None, &source).unwrap();
+                for command in ["extract", "prove-extract"] {
+                    assert!(matches!(
+                        egraph
+                            .parse_and_run_program(None, &format!("({command} (root {argument}))")),
+                        Err(Error::UnsupportedProofCommand {
+                            reason: ProofEncodingUnsupportedReason::FunctionLookupInAction,
+                            ..
+                        })
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prove_extract_function_root_does_not_insert_missing_rows() {
+        for mut egraph in [
+            EGraph::new_with_term_encoding(),
+            EGraph::new_with_proofs(),
+            EGraph::new_with_proofs().with_proof_testing(),
+        ] {
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype E (A) (Wrap E)) (function root () E :merge old)",
+                )
+                .unwrap();
+            let shape = (egraph.num_nodes(), egraph.get_size("root"));
+            let error = egraph
+                .parse_and_run_program(None, "(extract (root))")
+                .unwrap_err();
+            assert_eq!((egraph.num_nodes(), egraph.get_size("root")), shape);
+            assert!(
+                !matches!(error, Error::UnsupportedProofCommand { .. }),
+                "{error}"
+            );
+            assert!(
+                egraph
+                    .read(|state| state.lookup_proof_values("root", crate::RawValues(vec![])))
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(matches!(
+                egraph.parse_and_run_program(None, "(extract (Wrap (root)))"),
+                Err(Error::UnsupportedProofCommand {
+                    reason: ProofEncodingUnsupportedReason::FunctionLookupInAction,
+                    ..
+                })
+            ));
+            assert!(matches!(
+                egraph.parse_and_run_program(None, "(let missing (root))"),
+                Err(Error::UnsupportedProofCommand {
+                    reason: ProofEncodingUnsupportedReason::FunctionLookupInAction,
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn prove_extract_preserves_results_and_proves_each_actual_variant() {
         let source = r#"
             (datatype E (A) (Pair E E))
@@ -105,6 +267,10 @@ mod tests {
     fn prove_extract_numbers_nested_inputs_after_ordinary_extraction_and_in_replay() {
         let source = r#"
             (datatype E (Leaf i64) (Pair E E))
+            (function root () E :merge old)
+            (set (root) (Pair (Leaf 8) (Leaf 9)))
+            (extract (root))
+            (prove-extract (root))
             (extract (Pair (Leaf 1) (Leaf 2)))
             (prove-extract (Pair (Leaf 3) (Leaf 4)))
             (let later (Leaf 5))
@@ -139,7 +305,7 @@ mod tests {
                         .iter()
                         .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
                         .count(),
-                    if testing { 3 } else { 2 }
+                    if testing { 5 } else { 3 }
                 );
             }
         }
@@ -316,15 +482,21 @@ mod tests {
         let source = r#"
             (push)
             (datatype E (A :cost 10) (B :cost 1))
+            (function root () E :merge old)
+            (set (root) (A))
             (A)
             (rewrite (A) (B))
             (run 1)
             (extract (A))
             (fail (extract 7 -1))
             (extract (A) 2)
+            (extract (root))
             (pop)
             (datatype E (C i64))
             (let input (C 7))
+            (function root () E :merge old)
+            (set (root) input)
+            (extract (root))
             (extract input)
         "#;
         let mut native = EGraph::new_with_proofs().with_proof_testing();
@@ -364,7 +536,7 @@ mod tests {
                 .iter()
                 .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
                 .count(),
-            4
+            6
         );
         // A plain command after replay must remain plain even after nested failure.
         replay
@@ -803,10 +975,19 @@ mod tests {
             (constructor Wrap (Es Ints) E)
             (let a (A))
             (let empty (Wrap (vec-empty) (vec-empty)))
+            (function roots () Es :merge old)
+            (set (roots) (vec-of a a))
+            (function empty-roots () Es :merge old)
+            (set (empty-roots) (vec-empty))
+            (function number () i64 :merge old)
+            (set (number) 7)
             (rewrite (A) (B))
             (run 1)
             (extract (vec-of a a))
             (extract empty)
+            (extract (roots))
+            (extract (empty-roots))
+            (extract (number))
         "#;
         let mut plain = EGraph::default();
         let expected = plain
@@ -818,11 +999,14 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(expected.len(), 2);
+        assert_eq!(expected.len(), 5);
         assert_eq!(expected[0].0, "(vec-of (B) (B))");
         // Both empty values share the same term shape, but their different
         // element sorts must be recovered from Wrap's argument types.
         assert_eq!(expected[1].0, "(Wrap (vec-empty) (vec-empty))");
+        assert_eq!(expected[2].0, "(vec-of (B) (B))");
+        assert_eq!(expected[3].0, "(vec-empty)");
+        assert_eq!(expected[4].0, "7");
 
         let mut egraph = EGraph::new_with_proofs().with_proof_testing();
         let outputs = egraph.parse_and_run_program(None, source).unwrap();

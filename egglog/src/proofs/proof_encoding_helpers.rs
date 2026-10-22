@@ -1572,12 +1572,21 @@ fn command_supports_proof_encoding_impl(
         GenericCommand::Output { .. } if proofs_enabled => {
             Err(ProofEncodingUnsupportedReason::OutputCommand)
         }
-        // Extract commands can't have non-global function lookups
-        // because instrument_action_expr doesn't support them
-        // (global function calls are fine - they get desugared to constructors)
+        // A direct nullary function input reads an existing row. Keyed and
+        // nested lookups stay unsupported; the count has action semantics.
         GenericCommand::Extract(_, expr, variants)
         | GenericCommand::ProveExtract(_, expr, variants, _) => {
-            if expr_has_non_global_lookup(expr, type_info, extra_globals)
+            let inputs = match expr {
+                ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+                    if func.subtype == crate::FunctionSubtype::Custom && args.is_empty() =>
+                {
+                    args.as_slice()
+                }
+                _ => std::slice::from_ref(expr),
+            };
+            if inputs
+                .iter()
+                .any(|expr| expr_has_non_global_lookup(expr, type_info, extra_globals))
                 || expr_has_non_global_lookup(variants, type_info, extra_globals)
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
