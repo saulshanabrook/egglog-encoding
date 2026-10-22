@@ -135,5 +135,64 @@ fn parallel_batches_preserve_rebuilt_proofs() {
         "#,
             )
             .unwrap();
+        let subscription = graph.subscribe_equalities("N", true).unwrap();
+        let batch = graph.equality_events(subscription).unwrap();
+        assert!(batch.events.len() > 4096);
+        assert!(
+            batch
+                .events
+                .iter()
+                .all(|event| matches!(graph.congruence_source(event), Some("Item" | "Wrap")))
+        );
+    }
+}
+
+#[test]
+fn subscribers_observe_committed_congruences_and_detect_rollback() {
+    for mut graph in graphs() {
+        graph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype A (A0) (A1) (A2))
+            (datatype N (Pair A A) (Wrap N))
+            (let $a0 (A0)) (let $a1 (A1)) (let $a2 (A2))
+            (Wrap (Pair (A0) (A0)))
+            (Wrap (Pair (A1) (A1)))
+            (run 1)
+        "#,
+            )
+            .unwrap();
+        let a = graph.subscribe_equalities("A", false).unwrap();
+        let n = graph.subscribe_equalities("N", false).unwrap();
+        graph
+            .parse_and_run_program(None, "(push) (union $a0 $a1) (run 1)")
+            .unwrap();
+        let batch = graph.equality_events(a).unwrap();
+        assert_eq!(batch.events.len(), 1);
+        assert!(graph.congruence_source(&batch.events[0]).is_none());
+        let acknowledged = batch.next;
+        assert!(
+            graph
+                .equality_events(acknowledged)
+                .unwrap()
+                .events
+                .is_empty()
+        );
+        // Polling is replayable until the consumer explicitly saves `next`.
+        assert_eq!(graph.equality_events(a).unwrap().events.len(), 1);
+        let batch = graph.equality_events(n).unwrap();
+        let mut sources: Vec<_> = batch
+            .events
+            .iter()
+            .map(|event| graph.congruence_source(event).unwrap())
+            .collect();
+        sources.sort();
+        assert_eq!(sources, ["Pair", "Wrap"]);
+        graph
+            .parse_and_run_program(None, "(pop) (union $a0 $a2) (run 1)")
+            .unwrap();
+        assert!(graph.equality_events(acknowledged).is_none());
+        assert_eq!(graph.equality_events(a).unwrap().events.len(), 1);
     }
 }

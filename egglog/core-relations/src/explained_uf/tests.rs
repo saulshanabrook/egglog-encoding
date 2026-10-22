@@ -205,3 +205,21 @@ fn parallel_publishers_are_committed_in_timestamp_order() {
         }
     }
 }
+
+#[test]
+fn cursors_reject_foreign_tables_and_diverged_histories_of_equal_length() {
+    empty_execution_state!(state);
+    let mut left = ExplainedUfTable::new(None);
+    let start = left.start_cursor();
+    let mut right = left.clone();
+    left.new_buffer().stage_insert(&[v(3), v(1), v(0), v(0)]);
+    right.new_buffer().stage_insert(&[v(3), v(2), v(0), v(0)]);
+    left.merge(&mut state);
+    right.merge(&mut state);
+    assert!(left.events_since(start).is_some());
+    assert!(right.events_since(start).is_some());
+    assert!(left.events_since(right.cursor()).is_none());
+    assert!(right.events_since(left.cursor()).is_none());
+    let foreign = ExplainedUfTable::new(None);
+    assert!(foreign.events_since(start).is_none());
+}

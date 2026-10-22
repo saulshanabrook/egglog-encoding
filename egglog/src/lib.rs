@@ -40,7 +40,9 @@ use egglog_ast::generic_ast::{Change, GenericExpr, Literal};
 use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
 use egglog_bridge::{ColumnTy, QueryEntry, TableKind};
+pub use egglog_bridge::{EqualityBatch, EqualitySubscription};
 use egglog_core_relations as core_relations;
+pub use egglog_core_relations::EqualityMerged;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{
     OverallReport, ReportLevel, RulesetTimingRole, RunReport, TimingSummary, TimingSummaryError,

@@ -42,6 +42,7 @@ pub mod macros;
 mod native_rebuild;
 pub use native_rebuild::RebuildProof;
 mod native_uf;
+pub use native_uf::{EqualityBatch, EqualitySubscription};
 pub(crate) mod rule;
 #[cfg(test)]
 mod tests;

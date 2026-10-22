@@ -29,7 +29,7 @@ use crate::{
     offsets::Subset,
     pool::{Clear, Pooled, with_pool_set},
     row_buffer::TaggedRowBuffer,
-    table_spec::{ColumnId, Constraint, MutationBuffer},
+    table_spec::{ColumnId, Constraint, MergeOrigin, MutationBuffer},
 };
 
 use self::mask::{Mask, MaskIter, ValueSource, value_source};
@@ -483,11 +483,13 @@ impl<'db> ExecutionStateSeed<'db, '_> {
 struct MutationBuffers<'a> {
     notify_list: &'a NotificationList<TableId>,
     buffers: DenseIdMap<TableId, Box<dyn MutationBuffer>>,
+    origin: Option<MergeOrigin>,
 }
 
 impl Clone for MutationBuffers<'_> {
     fn clone(&self) -> Self {
         let mut res = MutationBuffers::new(self.notify_list, Default::default());
+        res.origin = self.origin;
         for (id, buf) in self.buffers.iter() {
             res.buffers.insert(id, buf.fresh_handle());
         }
@@ -503,10 +505,17 @@ impl<'a> MutationBuffers<'a> {
         MutationBuffers {
             notify_list,
             buffers,
+            origin: None,
         }
     }
     fn lazy_init(&mut self, table_id: TableId, f: impl FnOnce() -> Box<dyn MutationBuffer>) {
-        self.buffers.get_or_insert(table_id, f);
+        self.buffers.get_or_insert(table_id, || {
+            let mut buffer = f();
+            if let Some(origin) = self.origin {
+                buffer.set_merge_origin(origin);
+            }
+            buffer
+        });
     }
     fn stage_insert(&mut self, table_id: TableId, row: &[Value]) {
         self.buffers[table_id].stage_insert(row);
@@ -533,6 +542,13 @@ impl Clone for ExecutionState<'_> {
 }
 
 impl<'a> ExecutionState<'a> {
+    pub(crate) fn with_merge_origin(mut self, origin: MergeOrigin) -> Self {
+        self.buffers.origin = Some(origin);
+        for (_, buffer) in self.buffers.buffers.iter_mut() {
+            buffer.set_merge_origin(origin);
+        }
+        self
+    }
     pub(crate) fn new(
         db: DbView<'a>,
         buffers: DenseIdMap<TableId, Box<dyn MutationBuffer>>,

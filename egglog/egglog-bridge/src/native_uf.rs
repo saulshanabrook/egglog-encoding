@@ -4,6 +4,21 @@
 use super::*;
 use core_relations::{ExplainedUfTable, ReasonComposer, ReasonStep};
 
+/// An independent subscriber's acknowledged prefix of one native UF. Copying
+/// it creates another reader; polling does not advance it or invoke callbacks.
+#[derive(Clone, Copy, Debug)]
+pub struct EqualitySubscription {
+    function: FunctionId,
+    cursor: core_relations::EqualityCursor,
+}
+
+/// A borrowed batch from the committed UF. Save `next` after processing it.
+/// Events retain their reasons even after view rows are removed or compacted.
+pub struct EqualityBatch<'a> {
+    pub events: &'a [core_relations::EqualityMerged],
+    pub next: EqualitySubscription,
+}
+
 pub(super) struct ProofComposer {
     sym: TableAction,
     trans: TableAction,
@@ -47,6 +62,62 @@ impl ReasonComposer for ProofComposer {
 }
 
 impl EGraph {
+    /// Subscribe at the start of retained history, or at the current end.
+    /// Returns `None` for a function that does not use native explained UF.
+    pub fn subscribe_equalities(
+        &self,
+        function: FunctionId,
+        include_existing: bool,
+    ) -> Option<EqualitySubscription> {
+        let info = self.funcs.get(function)?;
+        let uf = self
+            .db
+            .get_table(info.table)
+            .as_any()
+            .downcast_ref::<ExplainedUfTable>()?;
+        Some(EqualitySubscription {
+            function,
+            cursor: if include_existing {
+                uf.start_cursor()
+            } else {
+                uf.cursor()
+            },
+        })
+    }
+
+    /// Poll a committed batch. `None` means the table was removed/cleared, or
+    /// rollback/branch divergence invalidated the acknowledged history prefix.
+    /// A cursor on a shared prefix remains valid in a cloned graph.
+    pub fn equality_events(&self, subscription: EqualitySubscription) -> Option<EqualityBatch<'_>> {
+        let info = self.funcs.get(subscription.function)?;
+        let uf = self
+            .db
+            .get_table(info.table)
+            .as_any()
+            .downcast_ref::<ExplainedUfTable>()?;
+        Some(EqualityBatch {
+            events: uf.events_since(subscription.cursor)?,
+            next: EqualitySubscription {
+                cursor: uf.cursor(),
+                ..subscription
+            },
+        })
+    }
+
+    /// Identify an accepted equality produced by a constructor-view collision.
+    /// Ordinary rule assertions and custom-function merges are not congruence
+    /// events. Redundant congruence candidates never enter the UF event log.
+    pub fn congruence_source(&self, event: &core_relations::EqualityMerged) -> Option<FunctionId> {
+        let origin = event.origin?;
+        if self.db.table_identity(origin.table)? != origin.identity {
+            return None;
+        }
+        self.funcs.iter().find_map(|(id, info)| {
+            (info.table == origin.table && info.read_projection.kind == TableKind::Constructor)
+                .then_some(id)
+        })
+    }
+
     /// Install an encoded UF. Its visible shape is `(S) -> (S, reason)`;
     /// writes assert equalities and reads expose historical root links.
     pub fn add_explained_uf(

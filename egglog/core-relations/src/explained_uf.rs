@@ -7,16 +7,26 @@
 
 use std::{
     any::Any,
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    ColumnId, Constraint, ExecutionState, MutationBuffer, Offset, OffsetRange, Row, RowId, Subset,
-    SubsetRef, Table, TableChange, TableSchema, TableSpec, TableVersion, Value, common::HashMap,
-    numeric_id::NumericId, pool::with_pool_set, table_spec::Generation,
+    ColumnId, Constraint, ExecutionState, MergeOrigin, MutationBuffer, Offset, OffsetRange, Row,
+    RowId, Subset, SubsetRef, Table, TableChange, TableSchema, TableSpec, TableVersion, Value,
+    common::HashMap, numeric_id::NumericId, pool::with_pool_set, table_spec::Generation,
 };
+
+// Identities are allocated only for table creation and successful unions. They
+// let cursors detect rollback followed by a different history of the same length.
+static NEXT_IDENTITY: AtomicUsize = AtomicUsize::new(1);
+fn fresh_identity() -> usize {
+    NEXT_IDENTITY.fetch_add(1, Ordering::Relaxed)
+}
 
 /// One oriented equality in a composable explanation path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +48,8 @@ pub trait ReasonComposer: Send + Sync {
 /// assertions do not allocate records or advance subscription cursors.
 #[derive(Clone, Debug)]
 pub struct EqualityMerged {
+    identity: usize,
+    pub origin: Option<MergeOrigin>,
     pub lhs: Value,
     pub rhs: Value,
     pub lhs_root: Value,
@@ -53,6 +65,8 @@ pub struct EqualityMerged {
 /// Obtain a new cursor only after successfully consuming a batch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EqualityCursor {
+    source: usize,
+    last_event: Option<usize>,
     generation: Generation,
     offset: usize,
 }
@@ -60,6 +74,7 @@ pub struct EqualityCursor {
 /// A native table for an encoded equality sort. Node storage is dense in the
 /// values actually seen, rather than in globally allocated egglog IDs.
 pub struct ExplainedUfTable {
+    identity: usize,
     nodes: HashMap<Value, usize>,
     values: Vec<Value>,
     parents: Vec<usize>,
@@ -67,12 +82,13 @@ pub struct ExplainedUfTable {
     events: Vec<EqualityMerged>,
     generation: Generation,
     composer: Option<Arc<dyn ReasonComposer>>,
-    pending: Arc<SegQueue<Vec<[Value; 4]>>>,
+    pending: Arc<SegQueue<AssertionBatch>>,
 }
 
 impl Clone for ExplainedUfTable {
     fn clone(&self) -> Self {
         Self {
+            identity: self.identity,
             nodes: self.nodes.clone(),
             values: self.values.clone(),
             parents: self.parents.clone(),
@@ -88,6 +104,7 @@ impl Clone for ExplainedUfTable {
 impl ExplainedUfTable {
     pub fn new(composer: Option<Arc<dyn ReasonComposer>>) -> Self {
         Self {
+            identity: fresh_identity(),
             nodes: HashMap::default(),
             values: Vec::new(),
             parents: Vec::new(),
@@ -112,6 +129,8 @@ impl ExplainedUfTable {
 
     pub fn cursor(&self) -> EqualityCursor {
         EqualityCursor {
+            source: self.identity,
+            last_event: self.events.last().map(|event| event.identity),
             generation: self.generation,
             offset: self.events.len(),
         }
@@ -119,6 +138,8 @@ impl ExplainedUfTable {
 
     pub fn start_cursor(&self) -> EqualityCursor {
         EqualityCursor {
+            source: self.identity,
+            last_event: None,
             generation: self.generation,
             offset: 0,
         }
@@ -127,9 +148,16 @@ impl ExplainedUfTable {
     /// Read a committed batch. `None` means this cursor was invalidated by a
     /// clear, or is ahead of this snapshot. Reading does not acknowledge it.
     pub fn events_since(&self, cursor: EqualityCursor) -> Option<&[EqualityMerged]> {
-        (cursor.generation == self.generation)
-            .then(|| self.events.get(cursor.offset..))
-            .flatten()
+        (cursor.source == self.identity
+            && cursor.generation == self.generation
+            && cursor.last_event
+                == cursor
+                    .offset
+                    .checked_sub(1)
+                    .and_then(|i| self.events.get(i))
+                    .map(|event| event.identity))
+        .then(|| self.events.get(cursor.offset..))
+        .flatten()
     }
 
     /// Explain an immutable ancestor path, including paths to former roots.
@@ -189,7 +217,7 @@ impl ExplainedUfTable {
         }
     }
 
-    fn insert(&mut self, row: [Value; 4], state: &mut ExecutionState) {
+    fn insert(&mut self, row: [Value; 4], origin: Option<MergeOrigin>, state: &mut ExecutionState) {
         let [lhs, rhs, asserted_reason, timestamp] = row;
         let a = self.node(lhs);
         let b = self.node(rhs);
@@ -227,6 +255,8 @@ impl ExplainedUfTable {
         // Publish only after the explanation has been prepared from old paths.
         let row_id = RowId::from_usize(self.events.len());
         self.events.push(EqualityMerged {
+            identity: fresh_identity(),
+            origin,
             lhs,
             rhs,
             lhs_root,
@@ -380,6 +410,7 @@ impl Table for ExplainedUfTable {
     }
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
+            origin: None,
             rows: Vec::new(),
             pending: Arc::downgrade(&self.pending),
         })
@@ -388,17 +419,17 @@ impl Table for ExplainedUfTable {
         let before = self.events.len();
         let mut rows = Vec::new();
         while let Some(batch) = self.pending.pop() {
-            rows.extend(batch);
+            rows.extend(batch.rows.into_iter().map(|row| (row, batch.origin)));
         }
-        if !rows.is_sorted_by_key(|row| row[3]) {
-            rows.sort_by_key(|row| row[3]);
+        if !rows.is_sorted_by_key(|(row, _)| row[3]) {
+            rows.sort_by_key(|(row, _)| row[3]);
         }
-        for row in rows {
+        for (row, origin) in rows {
             assert!(
                 self.events.last().is_none_or(|e| e.timestamp <= row[3]),
                 "UF timestamps must increase"
             );
-            self.insert(row, state);
+            self.insert(row, origin, state);
         }
         TableChange {
             added: self.events.len() != before,
@@ -407,12 +438,22 @@ impl Table for ExplainedUfTable {
     }
 }
 
-struct UfBuffer {
+struct AssertionBatch {
     rows: Vec<[Value; 4]>,
-    pending: Weak<SegQueue<Vec<[Value; 4]>>>,
+    origin: Option<MergeOrigin>,
+}
+
+struct UfBuffer {
+    origin: Option<MergeOrigin>,
+    rows: Vec<[Value; 4]>,
+    pending: Weak<SegQueue<AssertionBatch>>,
 }
 
 impl MutationBuffer for UfBuffer {
+    fn set_merge_origin(&mut self, origin: MergeOrigin) {
+        assert!(self.rows.is_empty(), "origin must be set before writing");
+        self.origin = Some(origin);
+    }
     fn stage_insert(&mut self, row: &[Value]) {
         self.rows
             .push(row.try_into().expect("UF assertions have four columns"));
@@ -422,6 +463,7 @@ impl MutationBuffer for UfBuffer {
     }
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(Self {
+            origin: self.origin,
             rows: Vec::new(),
             pending: self.pending.clone(),
         })
@@ -433,7 +475,10 @@ impl Drop for UfBuffer {
         if !self.rows.is_empty()
             && let Some(pending) = self.pending.upgrade()
         {
-            pending.push(std::mem::take(&mut self.rows));
+            pending.push(AssertionBatch {
+                rows: std::mem::take(&mut self.rows),
+                origin: self.origin,
+            });
         }
     }
 }
