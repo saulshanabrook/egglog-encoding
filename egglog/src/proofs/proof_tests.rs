@@ -494,8 +494,7 @@ mod tests {
     }
 
     /// The encoding reads `@UF` from rule actions under
-    /// `:unsafe-seminaive` — in user rule heads and in the indexed rebuild
-    /// rule. Assert this produces the same database as the safe baseline (the
+    /// `:unsafe-seminaive` in user rule heads. Assert this produces the same database as the safe baseline (the
     /// same rules annotated `:naive`), for a hardcoded handful of files
     /// (running it across all tests would be too slow).
     #[test]
@@ -523,10 +522,9 @@ mod tests {
                     .join("\n")
             };
 
-            // Guard against a vacuous comparison: both `:unsafe-seminaive`
-            // sites must be present, and the knob must flip every one of them,
-            // since a rule left `:unsafe-seminaive` runs identically on both
-            // sides. Only the rebuild rules carry `:internal-include-subsumed`.
+            // Guard against a vacuous comparison: user heads must still read
+            // UF under this annotation, and the knob must flip every one.
+            // Scalar rebuilding is now native in both cases.
             let unsafe_encoding = encode(false);
             let (rebuild, rule_head): (Vec<&str>, Vec<&str>) = unsafe_encoding
                 .lines()
@@ -537,8 +535,8 @@ mod tests {
                 "expected {file} to encode a rule head `:unsafe-seminaive`"
             );
             assert!(
-                !rebuild.is_empty(),
-                "expected {file} to encode the rebuild rule `:unsafe-seminaive`"
+                rebuild.is_empty() && unsafe_encoding.contains("(native-rebuild)"),
+                "expected {file} to use native scalar rebuilding"
             );
             assert!(
                 !encode(true).contains(":unsafe-seminaive"),

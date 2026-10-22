@@ -40,6 +40,7 @@ const FRESH_ID_RESERVATION_SIZE: usize = 256;
 
 pub mod macros;
 mod native_rebuild;
+pub use native_rebuild::RebuildProof;
 mod native_uf;
 pub(crate) mod rule;
 #[cfg(test)]

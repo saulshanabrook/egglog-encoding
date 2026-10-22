@@ -10,4 +10,4 @@ expression: snapshot
 (function add (i64 i64) (i64 Unit) :merge (values old0 ()) :unextractable :internal-view function :internal-identity-vals 1 :internal-native-rebuild)
 (check (= (values __n __pv) (add 0 0))
 (= __n 0))
-(run-schedule (seq (saturate (seq (run __rebuilding) (native-rebuild))) (run __subsume_ruleset)))
+(run-schedule (seq (saturate (seq (run __rebuilding_cleanup) (run __rebuilding) (native-rebuild))) (run __subsume_ruleset)))

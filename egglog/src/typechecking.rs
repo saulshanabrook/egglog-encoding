@@ -1166,6 +1166,7 @@ impl TypeInfo {
             internal_term_node: fdecl.internal_term_node,
             internal_native_uf: fdecl.internal_native_uf,
             internal_native_rebuild: fdecl.internal_native_rebuild,
+            internal_rebuild_proof: fdecl.internal_rebuild_proof.clone(),
         })
     }
 
