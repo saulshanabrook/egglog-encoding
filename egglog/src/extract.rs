@@ -786,6 +786,10 @@ pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> V
         return value;
     };
 
+    if let Some(canonical) = egraph.backend.native_uf_find(uf_func.backend_id, value) {
+        return canonical;
+    }
+
     if uf_func.func_type.input.len() == 1 {
         return egraph
             .backend
@@ -1051,7 +1055,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn term_encoding_rebuild_makes_canonical_lookup_one_hop() {
+    fn term_encoding_extraction_uses_native_canonicalization() {
         let mut egraph = EGraph::new_with_term_encoding();
         egraph
             .parse_and_run_program(
@@ -1064,13 +1068,14 @@ mod tests {
                 (Mk 2)
                 ; Union query-matched variables (existing e-classes), not
                 ; freshly-built constructor terms: this takes the general
-                ; `UF_<Sort>` edge path (forming a multi-edge chain to compress)
+                ; `UF_<Sort>` assertion path
                 ; rather than the term-mode construct-into-e-class optimization,
                 ; which would fuse the operands with no chain to compress.
                 (relation Link (E E))
-                (Link (Mk 0) (Mk 1))
                 (Link (Mk 1) (Mk 2))
                 (rule ((Link x y)) ((union x y)))
+                (run 1)
+                (Link (Mk 0) (Mk 1))
                 (run 1)
                 "#,
             )
@@ -1083,10 +1088,7 @@ mod tests {
             .filter(|(rule, _)| rule.as_ref().contains("uf_path_compress"))
             .map(|(_, matches)| *matches)
             .sum();
-        assert!(
-            path_compressions > 0,
-            "test must create a multi-edge UF chain"
-        );
+        assert_eq!(path_compressions, 0, "native UFs need no compression rules");
 
         let uf_name = &egraph.proof_state.uf_parent["E"];
         let uf_id = egraph.functions[uf_name].backend_id;
@@ -1095,13 +1097,19 @@ mod tests {
             .backend
             .for_each(uf_id, |row| rows.push(row.vals.to_vec()));
         assert!(rows.len() >= 2);
+        assert!(
+            rows.iter()
+                .any(|row| egraph.backend.lookup_id(uf_id, &[row[1]]).is_some()),
+            "historical root links must remain uncompressed"
+        );
 
         let sort = egraph.get_sort_by_name("E").unwrap();
+        let root = egraph.backend.native_uf_find(uf_id, rows[0][0]).unwrap();
         for row in rows {
             let child = row[0];
             let parent = row[1];
-            assert_eq!(egraph.backend.lookup_id(uf_id, &[parent]), None);
-            assert_eq!(find_canonical(&egraph, child, sort), parent);
+            assert_eq!(find_canonical(&egraph, child, sort), root);
+            assert_eq!(find_canonical(&egraph, parent, sort), root);
         }
     }
 }

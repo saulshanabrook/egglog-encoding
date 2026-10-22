@@ -236,6 +236,7 @@ where
                     identity_vals: f.identity_vals,
                     cost: f.cost,
                     term_node: f.internal_term_node,
+                    native_uf: f.internal_native_uf,
                 },
             },
             GenericNCommand::Index {
@@ -872,6 +873,8 @@ where
         /// the last input), which proof extraction reconstructs. Unset for views
         /// and plain bookkeeping relations.
         term_node: bool,
+        /// Native union-find storage with explained historical root links.
+        native_uf: bool,
     },
 
     /// Declare a named index over an existing function's columns.
@@ -1218,6 +1221,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1242,6 +1246,9 @@ where
                 }
                 if let Some(c) = cost {
                     write!(f, " :internal-cost {c}")?;
+                }
+                if *native_uf {
+                    write!(f, " :internal-native-uf")?;
                 }
                 if *term_node {
                     write!(f, " :internal-term-node")?;
@@ -1563,6 +1570,8 @@ where
     /// reconstructs these; views and plain bookkeeping relations (e.g.
     /// subsumption markers) are unmarked and never read.
     pub internal_term_node: bool,
+    /// Use the native explained UF table for this internal function.
+    pub internal_native_uf: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1663,6 +1672,7 @@ impl FunctionDecl {
             internal_view: None,
             identity_vals: None,
             internal_term_node: false,
+            internal_native_uf: false,
         }
     }
 
@@ -1689,6 +1699,7 @@ impl FunctionDecl {
             internal_view: None,
             identity_vals: None,
             internal_term_node: false,
+            internal_native_uf: false,
         }
     }
 }
@@ -1716,6 +1727,7 @@ where
             internal_view: self.internal_view,
             identity_vals: self.identity_vals,
             internal_term_node: self.internal_term_node,
+            internal_native_uf: self.internal_native_uf,
         }
     }
 }
@@ -2131,6 +2143,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -2146,6 +2159,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             },
             GenericCommand::Index {
                 span,
@@ -2255,6 +2269,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2267,6 +2282,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2407,6 +2423,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2419,6 +2436,7 @@ where
                 identity_vals,
                 cost,
                 term_node,
+                native_uf,
             },
             GenericCommand::Index {
                 span,
