@@ -148,7 +148,11 @@ fn fail_rejects_proof_commands_in_all_modes() {
         EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs(),
     ] {
-        for source in ["(fail (prove (= 1 1)))", "(fail (prove-exists Missing))"] {
+        for source in [
+            "(fail (prove (= 1 1)))",
+            "(fail (prove-exists Missing))",
+            "(fail (prove-extract (A)))",
+        ] {
             let error = egraph.parse_and_run_program(None, source).unwrap_err();
             assert!(
                 matches!(&error, Error::DesugarError(..)),

@@ -366,6 +366,43 @@ See [`crate::proofs::proof_container_rebuild`] for the rebuild primitives, and
 
 # Proofs
 
+`(prove-extract expr)` runs ordinary extraction and emits both its result and
+a proof of `expr = result`. An optional variant count produces a proof for each
+returned term. It uses the same cost model as `extract`; the proof establishes
+equality, not optimality. Evaluating the input is recorded as a source action;
+the returned term is never added as an assumption.
+
+Proof extraction first runs the ordinary extractor unchanged. A separate pass
+walks its result DAG bottom-up, recovering types, values, and existing row proofs
+with keyed lookups. Its cache is keyed by both term and sort, so identical empty
+container syntax can have different element types. It composes child and
+union-find evidence without inserting the returned term.
+Dynamic constructor costs and variants use the same tree extraction path;
+explicit alternative algorithms are unsupported in term/proof mode. Input
+globals retain their recorded evidence when an old constructor view was deleted.
+Containers use the same normalization rules as the proof checker, with source
+positions kept distinct from unordered container storage positions.
+
+The compiler lowers the input and variant count with ordinary extraction and
+records their source actions. The encoded `prove-extract` carries the input's
+action index. Each source occurrence retains its type environment and exact
+lowered input/count. Strict replay rejects mismatched requests and preserves
+types from scopes that were later popped or redeclared. Executing an encoded
+request reads these inputs and metadata; it does not invoke the compiler
+or restore an encoding-state snapshot. Row and union evidence are converted once
+into a shared `ProofStore`; all variants compose directly in that store before
+simplification and, when enabled, checking. Composition validates its endpoints
+before calling the proof algebra.
+
+Proof-testing mode rewrites `check` and `extract` outside `fail` and validates
+the proofs. Commands inside `fail` retain their ordinary behavior; explicit
+proof commands, including `prove-extract`, are rejected there.
+Proof-extraction mode performs the same work without validation. Recording-only
+mode leaves ordinary checks and extracts in place. Checked mode includes
+validation; recording and unchecked extraction modes remain distinct treatments.
+Separate correctness regressions validate all three modes independently of
+benchmark measurements.
+
 A proof in the e-graph is a *raw proof*: a justification, plus references to the
 proofs it is built from. It does not carry the equality it proves. Proof
 conversion turns each one into a
