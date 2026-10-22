@@ -1875,7 +1875,9 @@ impl crate::constraint::TypeConstraint for DropReflexiveStepTypeConstraint {
 pub(crate) fn body_exprs(body: &[ResolvedFact]) -> Vec<&ResolvedExpr> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<&'a ResolvedExpr>) {
         out.push(expr);
-        if let ResolvedExpr::Call(_, _, args) = expr {
+        if let ResolvedExpr::Call(_, head, args) = expr
+            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+        {
             for arg in args {
                 walk(arg, out);
             }
@@ -1917,13 +1919,14 @@ pub(crate) enum ActionNode<'a> {
 ///
 /// A fiat names a term by its index here (see
 /// [`ProofInstrumentor::reflexive_for_justification`]); [`body_exprs`] says
-/// what keeps the two sides agreeing. `remove_globals` turns a global reference
-/// into a nullary call, one node either way, so the encoded action numbers the
-/// same as the one proof checking reads.
+/// what keeps the two sides agreeing. Global reads remain one source node;
+/// their storage keys introduced by global lowering are not source expressions.
 pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<ActionNode<'a>>) {
         out.push(ActionNode::Expr(expr));
-        if let ResolvedExpr::Call(_, _, args) = expr {
+        if let ResolvedExpr::Call(_, head, args) = expr
+            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+        {
             for arg in args {
                 walk(arg, out);
             }
@@ -1932,9 +1935,11 @@ pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     let mut out = vec![];
     match action {
         ResolvedAction::Let(_, _, expr) | ResolvedAction::Expr(_, expr) => walk(expr, &mut out),
-        ResolvedAction::Set(_, _, args, value) => {
-            for arg in args {
-                walk(arg, &mut out);
+        ResolvedAction::Set(_, head, args, value) => {
+            if !matches!(head, ResolvedCall::Func(func) if func.is_global) {
+                for arg in args {
+                    walk(arg, &mut out);
+                }
             }
             walk(value, &mut out);
             out.push(ActionNode::Row(action));

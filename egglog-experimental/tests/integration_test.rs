@@ -2040,6 +2040,54 @@ fn test_backoff_node_limit() {
 }
 
 #[test]
+fn test_get_size_includes_shared_global_rows() {
+    // Read through the host API: database-size reads have no proof validator.
+    fn size(egraph: &egglog::EGraph, names: &[&str]) -> i64 {
+        let args = names
+            .iter()
+            .map(|name| egraph.base_to_value::<egglog::sort::S>((*name).to_owned().into()))
+            .collect::<Vec<_>>();
+        let value = egraph
+            .read(|state| {
+                egglog::ReadPrim::apply(&egglog_experimental::GetSizePrimitive, state, &args)
+            })
+            .unwrap();
+        egraph.value_to_base::<i64>(value)
+    }
+    for mut egraph in [
+        egglog_experimental::new_experimental_egraph(),
+        egglog_experimental::new_experimental_egraph_with_term_encoding(),
+        egglog_experimental::new_experimental_egraph_with_proofs(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype Math (Num i64))
+            (let $a (Num 1))
+            (let $b (Num 2))
+            (let $n 3)
+        "#,
+            )
+            .unwrap();
+        assert_eq!(size(&egraph, &[]), 5);
+        assert_eq!(size(&egraph, &["$a", "$n"]), 2);
+        assert_eq!(size(&egraph, &["missing"]), 0);
+        // Use core extraction; the experimental parser maps `extract` to a
+        // user-defined command that term/proof encoding does not accept.
+        egraph
+            .run_program(vec![egglog::ast::Command::Extract(
+                span!(),
+                Expr::Var(span!(), "$a".into()),
+                Expr::Lit(span!(), Literal::Int(0)),
+            )])
+            .unwrap();
+        // Compiler temporaries created by extraction do not add user rows.
+        assert_eq!(size(&egraph, &[]), 5);
+    }
+}
+
+#[test]
 fn test_get_node_size_excludes_analysis_tables() {
     let mut egraph = egglog_experimental::new_experimental_egraph();
     egraph

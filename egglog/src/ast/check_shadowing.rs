@@ -66,6 +66,11 @@ impl Names {
                 }
                 Ok(())
             }
+            ResolvedNCommand::CoreAction(ResolvedAction::Let(span, name, _)) => {
+                self.check(name.name.clone(), span.clone())?;
+                self.track_global_alias(&name.name, span);
+                Ok(())
+            }
             ResolvedNCommand::CoreAction(action) => self.check_shadowing_action(action),
             ResolvedNCommand::CoreActions(actions) => {
                 let mut inner = self.clone();
@@ -74,8 +79,14 @@ impl Names {
                 }
                 Ok(())
             }
-            ResolvedNCommand::LetBegin(..) => {
-                unreachable!("LetBegin is removed by remove_globals")
+            ResolvedNCommand::LetBegin(span, name, actions) => {
+                self.check(name.name.clone(), span.clone())?;
+                self.track_global_alias(&name.name, span);
+                let mut inner = self.clone();
+                for action in actions.iter() {
+                    inner.check_shadowing_action(action)?;
+                }
+                Ok(())
             }
             ResolvedNCommand::Check(_span, query) => {
                 let mut inner = self.clone();
@@ -109,7 +120,9 @@ impl Names {
             match expr {
                 ResolvedExpr::Lit(..) => {}
                 ResolvedExpr::Var(span, name) => {
-                    out.entry(name.name.clone()).or_insert_with(|| span.clone());
+                    if !name.is_global_ref {
+                        out.entry(name.name.clone()).or_insert_with(|| span.clone());
+                    }
                 }
                 ResolvedExpr::Call(_span, _func, args) => {
                     args.iter().for_each(|e| collect_expr_names(e, out));

@@ -45,18 +45,54 @@ impl ReadPrim for GetSizePrimitive {
                 .table_sizes()
                 .into_iter()
                 .filter_map(|(name, size)| {
-                    (!name.starts_with(INTERNAL_SYMBOL_PREFIX)).then_some(size)
+                    if name.starts_with(INTERNAL_SYMBOL_PREFIX) {
+                        global_rows(&state, name, None)
+                    } else {
+                        Some(size)
+                    }
                 })
                 .sum(),
             tables => tables
                 .iter()
                 .map(|value| state.base_values().unwrap::<S>(*value).0)
-                .filter_map(|name| state.table_size(&name))
+                .map(|name| {
+                    state.table_size(&name).unwrap_or_else(|| {
+                        state
+                            .tables()
+                            .filter_map(|table| global_rows(&state, table, Some(&name)))
+                            .sum()
+                    })
+                })
                 .sum(),
         };
         let size = i64::try_from(size).ok()?;
         Some(state.base_values().get::<i64>(size))
     }
+}
+
+// A shared global table is internal, but its source bindings still count as
+// separate user rows. Reading their string keys also works after desugared replay.
+fn global_rows(state: &ReadState<'_, '_>, table: &str, requested: Option<&str>) -> Option<usize> {
+    let signature = state.function_schema(table).ok()?;
+    if !signature.is_global || signature.input.len() != 1 || signature.input[0].name() != "String" {
+        return None;
+    }
+    let mut count = 0;
+    let mut visit = |keys: &[Value]| {
+        let name = state.base_values().unwrap::<S>(keys[0]).0;
+        if requested.map_or_else(
+            || !name.starts_with(INTERNAL_SYMBOL_PREFIX),
+            |requested| name == requested,
+        ) {
+            count += 1;
+        }
+    };
+    // Eq-sort globals have constructor-style views under term encoding.
+    state
+        .function_entries(table, |row| visit(row.inputs))
+        .or_else(|_| state.constructor_enodes(table, |row| visit(row.children)))
+        .ok()?;
+    Some(count)
 }
 
 /// `(get-node-size!)`: the number of e-nodes in visible constructor tables whose

@@ -303,26 +303,32 @@ per-column rules, so a subsumed row stays subsumed after its children move.
 
 # Globals
 
-[`crate::ast::remove_globals`] is the global-lowering pass used by both native
-execution and term/proof encoding. It turns each global into a function with no
-arguments before the term encoding runs:
+[`crate::ast::remove_globals`] is used by both native execution and term/proof
+encoding. It stores globals in one table per sort, keyed by their source names:
 
 ```text
-(let g1 (Add (Num 1) (Num 2)))
+(let $g1 (Add (Num 1) (Num 2)))
+(let $g2 (Num 3))
 ```
 
 becomes
 
 ```text
-(function g1 () Math :internal-let)
-(set (g1) (Add (Num 1) (Num 2)))
+(function @Globals_Math (String) Math :no-merge :internal-let)
+(set (@Globals_Math "$g1") (Add (Num 1) (Num 2)))
+(set (@Globals_Math "$g2") (Num 3))
 ```
 
-and references to `g1` become the lookup `(g1)`. An eq-sort global is encoded
-like a nullary constructor: it gets an FD view
-`g1 : () -> (Math, proof)` with the congruence `:merge`, a rebuild index, and
-rebuild rules like any other function. Because the definition is a `set` and not
-a `union`, a global adds no e-class merge of its own.
+References to `$g1` become `(@Globals_Math "$g1")`. For an eq-sort, the encoder
+adds a proof column to the shared table: `String -> (Math, proof)`. The table's
+merge, rebuild index, and rebuild rules serve all globals of that sort.
+A definition stores its value without adding an e-class merge.
+
+The storage key is not part of the source expression. Proof-node numbering
+therefore treats a global read as one node, and proof checking evaluates the
+original binding. Native and encoded execution each keep their own desugaring
+state, so temporaries introduced by the encoder do not reuse source tables
+whose output schema has acquired a proof column.
 
 Primitive globals, such as `(let $two 2)`, keep the function emitted by
 `remove_globals`. Their values never change under union, so the encoding adds

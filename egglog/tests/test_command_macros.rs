@@ -119,7 +119,7 @@ fn test_single_macro_with_desugar_program() {
 
     // Check that let is desugared correctly
     assert!(
-        output.contains("(set (a) (Num 1))"),
+        output.contains(r#"(set (@Globals_Math "a") (Num 1))"#),
         "Expected let desugared"
     );
 }
@@ -222,7 +222,7 @@ fn test_macro_adds_commands_after_rules() {
 
     // The let should still be there, unaffected
     assert!(
-        output.contains("(set (a) (Num 1))"),
+        output.contains(r#"(set (@Globals_Math "a") (Num 1))"#),
         "Expected desugared a: {output}"
     );
 }

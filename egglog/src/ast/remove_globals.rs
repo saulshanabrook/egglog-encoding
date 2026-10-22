@@ -1,5 +1,5 @@
-//! Remove global variables from the program by translating
-//! them into functions with no arguments.
+//! Replace global bindings and references with writes and reads of a shared
+//! table for each sort, keyed by the binding name.
 //! This requires type information, so it is done after type checking.
 //! Primitives are translated into functions with a primitive output.
 //! When a globally-bound primitive value is used in the actions of a rule,
@@ -9,154 +9,90 @@ use crate::*;
 use crate::{core::ResolvedCall, typechecking::FuncType};
 use egglog_ast::generic_ast::{GenericAction, GenericExpr, GenericFact, GenericRule};
 
-struct GlobalRemover<'a> {
-    fresh: &'a mut SymbolGen,
+/// Storage assigned by global desugaring. `push`/`pop` clone and restore this
+/// with the rest of the type information.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GlobalTables {
+    tables: HashMap<String, Arc<FuncType>>,
+    pub(crate) bindings: HashMap<String, Arc<FuncType>>,
 }
 
-/// Removes all globals from a program.
-/// No top level lets are allowed after this pass,
-/// nor any variable that references a global.
-/// Adds new functions for global variables
-/// and replaces references to globals with
-/// references to the new functions.
-/// e.g.
-/// ```ignore
-/// (let x 3)
-/// (Add x x)
-/// ```
-/// becomes
-/// ```ignore
-/// (function x () i64)
-/// (set (x) 3)
-/// (Add (x) (x))
-/// ```
-///
-/// If later, this global is referenced in a rule:
-/// ```ignore
-/// (rule ((Neg y))
-///       ((Add x x)))
-/// ```
-/// We instrument the query to make the value available:
-/// ```ignore
-/// (rule ((Neg y)
-///        (= fresh_var_for_x (x)))
-///       ((Add fresh_var_for_x fresh_var_for_x)))
-/// ```
-pub(crate) fn remove_globals(
-    prog: Vec<ResolvedNCommand>,
-    fresh: &mut SymbolGen,
-) -> Vec<ResolvedNCommand> {
-    let mut remover = GlobalRemover { fresh };
-    prog.into_iter()
-        .flat_map(|cmd| remover.remove_globals_cmd(cmd))
-        .collect()
-}
+impl GlobalTables {
+    fn read(&self, span: Span, var: &ResolvedVar) -> ResolvedExpr {
+        GenericExpr::Call(
+            span.clone(),
+            ResolvedCall::Func(self.bindings[&var.name].clone()),
+            vec![GenericExpr::Lit(span, Literal::String(var.name.clone()))],
+        )
+    }
 
-fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
-    assert!(
-        var.is_global_ref,
-        "resolved_var_to_call called on non-global var"
-    );
-    ResolvedCall::Func(Arc::new(FuncType {
-        name: var.name.clone(),
-        subtype: FunctionSubtype::Custom,
-        input: vec![],
-        outputs: vec![var.sort.clone()],
-    }))
-}
-
-/// TODO (yz) it would be better to implement replace_global_var
-/// as a function from ResolvedVar to ResolvedExpr
-/// and use it as an argument to `subst` instead of `visit_expr`,
-/// but we have not implemented `subst` for command.
-fn replace_global_vars(expr: ResolvedExpr) -> ResolvedExpr {
-    match expr.get_global_var() {
-        Some(resolved_var) => {
-            GenericExpr::Call(expr.span(), resolved_var_to_call(&resolved_var), vec![])
+    fn replace_global_vars(&self, expr: ResolvedExpr) -> ResolvedExpr {
+        match expr.get_global_var() {
+            Some(var) => self.read(expr.span(), &var),
+            None => expr,
         }
-        None => expr,
+    }
+
+    pub(crate) fn expr(&self, expr: ResolvedExpr) -> ResolvedExpr {
+        expr.visit_exprs(&mut |expr| self.replace_global_vars(expr))
+    }
+
+    fn action(&self, action: ResolvedAction) -> ResolvedAction {
+        action.visit_exprs(&mut |expr| self.replace_global_vars(expr))
     }
 }
 
-pub(crate) fn remove_globals_expr(expr: ResolvedExpr) -> ResolvedExpr {
-    expr.visit_exprs(&mut replace_global_vars)
+struct GlobalRemover<'a> {
+    fresh: &'a mut SymbolGen,
+    globals: &'a mut GlobalTables,
+    declarations: Vec<ResolvedNCommand>,
 }
 
-fn remove_globals_action(action: ResolvedAction) -> ResolvedAction {
-    action.visit_exprs(&mut replace_global_vars)
+/// Lower globals directly to one table per sort, keyed by the binding's name:
+///
+/// ```ignore
+/// (let $x 3)
+/// (let $y (+ $x 1))
+/// ```
+/// becomes
+/// ```ignore
+/// (function @Globals_i64 (String) i64 :no-merge :internal-let)
+/// (set (@Globals_i64 "$x") 3)
+/// (set (@Globals_i64 "$y") (+ (@Globals_i64 "$x") 1))
+/// ```
+/// Globals used in a rule head are bound in its query, so its actions do not
+/// need to look up mutable tables. Names must be checked before this pass.
+pub(crate) fn remove_globals(
+    prog: Vec<ResolvedNCommand>,
+    fresh: &mut SymbolGen,
+    globals: &mut GlobalTables,
+) -> Vec<ResolvedNCommand> {
+    let mut remover = GlobalRemover {
+        fresh,
+        globals,
+        declarations: vec![],
+    };
+    let commands = prog
+        .into_iter()
+        .flat_map(|cmd| remover.remove_globals_cmd(cmd))
+        .collect::<Vec<_>>();
+    remover.declarations.extend(commands);
+    remover.declarations
 }
 
 impl GlobalRemover<'_> {
-    fn remove_globals_cmd(&mut self, cmd: ResolvedNCommand) -> Vec<ResolvedNCommand> {
-        match cmd {
-            GenericNCommand::CoreAction(action) => match action {
-                GenericAction::Let(span, name, expr) => {
-                    let ty = expr.output_type();
-
-                    let resolved_call = ResolvedCall::Func(Arc::new(FuncType {
-                        name: name.name.clone(),
-                        subtype: FunctionSubtype::Custom,
-                        input: vec![],
-                        outputs: vec![ty.clone()],
-                    }));
-                    let func_decl = ResolvedFunctionDecl {
-                        name: name.name,
-                        subtype: FunctionSubtype::Custom,
-                        schema: Schema {
-                            input: vec![],
-                            outputs: vec![ty.name().to_owned()],
-                        },
-                        merge: None,
-                        cost: None,
-                        unextractable: true,
-                        internal_hidden: false,
-                        internal_let: true,
-                        span: span.clone(),
-                        internal_view: None,
-                        identity_vals: None,
-                        internal_term_node: false,
-                    };
-                    vec![
-                        GenericNCommand::Function(func_decl),
-                        GenericNCommand::CoreAction(GenericAction::Set(
-                            span,
-                            resolved_call,
-                            vec![],
-                            remove_globals_expr(expr),
-                        )),
-                    ]
-                }
-                _ => vec![GenericNCommand::CoreAction(remove_globals_action(action))],
-            },
-            // Rewrite global references but leave the block's own `let`s local.
-            GenericNCommand::CoreActions(actions) => {
-                vec![GenericNCommand::CoreActions(
-                    actions.visit_actions(&mut remove_globals_action),
-                )]
-            }
-            // Declare `a` as a global function, then run the block, ending by
-            // setting the function to the block's trailing value.
-            GenericNCommand::LetBegin(span, name, actions) => {
-                let mut acts = actions.0;
-                let value = match acts.pop() {
-                    Some(GenericAction::Expr(_, e)) => e,
-                    _ => panic!("`(let _ (begin ...))` must end with an expression"),
-                };
-                let ty = value.output_type();
-                let resolved_call = ResolvedCall::Func(Arc::new(FuncType {
-                    name: name.name.clone(),
-                    subtype: FunctionSubtype::Custom,
-                    input: vec![],
-                    outputs: vec![ty.clone()],
-                }));
-                let func_decl = ResolvedFunctionDecl {
-                    name: name.name,
+    fn bind(&mut self, span: &Span, name: &ResolvedVar) -> (ResolvedCall, Vec<ResolvedExpr>) {
+        let sort = name.sort.name().to_owned();
+        let table = self.globals.tables.entry(sort.clone()).or_insert_with(|| {
+            let table_name = self.fresh.fresh(&format!("Globals_{sort}"));
+            self.declarations
+                .push(GenericNCommand::Function(ResolvedFunctionDecl {
+                    name: table_name.clone(),
                     subtype: FunctionSubtype::Custom,
                     schema: Schema {
-                        input: vec![],
-                        outputs: vec![ty.name().to_owned()],
+                        input: vec!["String".to_owned()],
+                        outputs: vec![sort],
                     },
-
                     merge: None,
                     cost: None,
                     unextractable: true,
@@ -166,18 +102,61 @@ impl GlobalRemover<'_> {
                     internal_view: None,
                     identity_vals: None,
                     internal_term_node: false,
+                }));
+            Arc::new(FuncType {
+                name: table_name,
+                subtype: FunctionSubtype::Custom,
+                is_global: true,
+                input: vec![StringSort.to_arcsort()],
+                outputs: vec![name.sort.clone()],
+            })
+        });
+        self.globals
+            .bindings
+            .insert(name.name.clone(), table.clone());
+        (
+            ResolvedCall::Func(table.clone()),
+            vec![GenericExpr::Lit(
+                span.clone(),
+                Literal::String(name.name.clone()),
+            )],
+        )
+    }
+
+    fn remove_globals_cmd(&mut self, cmd: ResolvedNCommand) -> Vec<ResolvedNCommand> {
+        match cmd {
+            GenericNCommand::CoreAction(action) => match action {
+                GenericAction::Let(span, name, expr) => {
+                    let expr = self.globals.expr(expr);
+                    let (table, key) = self.bind(&span, &name);
+                    vec![GenericNCommand::CoreAction(GenericAction::Set(
+                        span, table, key, expr,
+                    ))]
+                }
+                _ => vec![GenericNCommand::CoreAction(self.globals.action(action))],
+            },
+            // Rewrite global references but leave the block's own `let`s local.
+            GenericNCommand::CoreActions(actions) => {
+                vec![GenericNCommand::CoreActions(
+                    actions.visit_actions(&mut |action| self.globals.action(action)),
+                )]
+            }
+            // Run the block with local bindings, then store its trailing value
+            // in the global's row.
+            GenericNCommand::LetBegin(span, name, actions) => {
+                let mut acts = actions.0;
+                let value = match acts.pop() {
+                    Some(GenericAction::Expr(_, e)) => e,
+                    _ => panic!("`(let _ (begin ...))` must end with an expression"),
                 };
-                let mut new_acts: Vec<_> = acts.into_iter().map(remove_globals_action).collect();
-                new_acts.push(GenericAction::Set(
-                    span,
-                    resolved_call,
-                    vec![],
-                    remove_globals_expr(value),
-                ));
-                vec![
-                    GenericNCommand::Function(func_decl),
-                    GenericNCommand::CoreActions(GenericActions(new_acts)),
-                ]
+                let value = self.globals.expr(value);
+                let mut new_acts: Vec<_> = acts
+                    .into_iter()
+                    .map(|action| self.globals.action(action))
+                    .collect();
+                let (table, key) = self.bind(&span, &name);
+                new_acts.push(GenericAction::Set(span, table, key, value));
+                vec![GenericNCommand::CoreActions(GenericActions(new_acts))]
             }
             GenericNCommand::NormRule { rule } => {
                 // A map from the global variables in actions to their new names
@@ -203,11 +182,7 @@ impl GlobalRemover<'_> {
                 let new_facts: Vec<ResolvedFact> = globals
                     .iter()
                     .map(|(old, new)| {
-                        GenericFact::Eq(
-                            new.span(),
-                            GenericExpr::Call(new.span(), resolved_var_to_call(old), vec![]),
-                            new.clone(),
-                        )
+                        GenericFact::Eq(new.span(), self.globals.read(new.span(), old), new.clone())
                     })
                     .collect();
 
@@ -217,7 +192,10 @@ impl GlobalRemover<'_> {
                     body: rule
                         .body
                         .iter()
-                        .map(|fact| fact.clone().visit_exprs(&mut replace_global_vars))
+                        .map(|fact| {
+                            fact.clone()
+                                .visit_exprs(&mut |expr| self.globals.replace_global_vars(expr))
+                        })
                         .chain(new_facts)
                         .collect(),
                     // replace references to globals with the newly bound names
@@ -244,7 +222,7 @@ impl GlobalRemover<'_> {
                 }
                 vec![GenericNCommand::Fail(span, removed)]
             }
-            _ => vec![cmd.visit_exprs(&mut replace_global_vars)],
+            _ => vec![cmd.visit_exprs(&mut |expr| self.globals.replace_global_vars(expr))],
         }
     }
 }

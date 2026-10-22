@@ -1002,6 +1002,7 @@ mod tests {
         let removed = remove_globals(
             checker.proof_check_program.clone(),
             &mut SymbolGen::new("premise_order".to_string()),
+            &mut Default::default(),
         );
         let mut compared = 0;
         for command in &removed {

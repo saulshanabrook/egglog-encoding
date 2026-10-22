@@ -1106,11 +1106,16 @@ impl<'a> ProofInstrumentor<'a> {
                 // A global aliases its value. Primitive values use the function
                 // emitted by `remove_globals`; eq-sort values and their proofs go in the
                 // global's FD view without allocating another e-class.
-                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                if self.egraph.type_info.is_global(&func_type.name) {
                     let e_value = exprs.pop().expect("a set has a value");
+                    let keys = ids(&exprs);
                     if !func_type.output().is_eq_sort() {
-                        emit.stmts
-                            .push(format!("(set ({}) {})", func_type.name, e_value.value));
+                        emit.stmts.push(format!(
+                            "(set ({} {}) {})",
+                            func_type.name,
+                            ListDisplay(&keys, " "),
+                            e_value.value
+                        ));
                         return;
                     }
                     let proof = if self.proofs_enabled() {
@@ -1118,9 +1123,9 @@ impl<'a> ProofInstrumentor<'a> {
                     } else {
                         "()".to_string()
                     };
-                    // The FD view `() -> (val, proof)` records `x`'s e-class.
+                    // The FD view records this global's e-class and proof.
                     let e_value = e_value.value;
-                    let update = self.update_fd_view(&func_type.name, &[], &e_value, &proof);
+                    let update = self.update_fd_view(&func_type.name, &keys, &e_value, &proof);
                     emit.stmts.push(update);
                     return;
                 }
@@ -1767,10 +1772,11 @@ impl<'a> ProofInstrumentor<'a> {
     ///
     /// The signature requires the fallback pair, so both are bare fresh ids: no
     /// row says anything about either, since nothing ever reads them.
-    fn lookup_global(&mut self, name: &str, res: &mut Vec<String>) -> String {
+    fn lookup_global(&mut self, name: &str, keys: &[String], res: &mut Vec<String>) -> String {
+        let keys = ListDisplay(keys, " ");
         if !self.egraph.type_info.global_sorts[name].is_eq_sort() {
             let value = self.fresh_var();
-            res.push(format!("(let {value} ({name}))"));
+            res.push(format!("(let {value} ({name} {keys}))"));
             return value;
         }
         let view = name.to_string();
@@ -1785,7 +1791,7 @@ impl<'a> ProofInstrumentor<'a> {
         };
         let vx = self.fresh_var();
         res.push(format!(
-            "(let {vx} ({set_if_empty} {fresh_e} {fallback_proof}))"
+            "(let {vx} ({set_if_empty} {keys} {fresh_e} {fallback_proof}))"
         ));
         vx
     }
@@ -2101,7 +2107,8 @@ impl<'a> ProofInstrumentor<'a> {
             }
             ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
                 if self.egraph.type_info.is_global(&func_type.name) {
-                    let value = self.lookup_global(&func_type.name, emit.stmts);
+                    let keys = args.iter().map(ToString::to_string).collect::<Vec<_>>();
+                    let value = self.lookup_global(&func_type.name, &keys, emit.stmts);
                     let mut global = Operand::plain(value);
                     if self.proofs_enabled() && func_type.output().is_eq_sort() {
                         // The merge is evaluated under the written global's value,
@@ -2113,8 +2120,10 @@ impl<'a> ProofInstrumentor<'a> {
                         let read =
                             crate::proofs::proof_fresh::view_proof_prim_name(&func_type.name);
                         let proof = self.fresh_var();
-                        emit.stmts
-                            .push(format!("(let {proof} ({read} {fallback}))"));
+                        emit.stmts.push(format!(
+                            "(let {proof} ({read} {} {fallback}))",
+                            ListDisplay(&keys, " ")
+                        ));
                         global.connector = Some(Connector::Node(self.mint_sym(&proof)));
                     }
                     return global;
@@ -2195,7 +2204,11 @@ impl<'a> ProofInstrumentor<'a> {
                             // FD view (see `lookup_global`). This is the only custom
                             // lookup allowed here.
                             if self.egraph.type_info.is_global(&func_type.name) {
-                                Operand::plain(self.lookup_global(&func_type.name, emit.stmts))
+                                Operand::plain(self.lookup_global(
+                                    &func_type.name,
+                                    &ids(&args),
+                                    emit.stmts,
+                                ))
                             } else {
                                 panic!(
                                     "Found a function lookup in actions, should have been prevented by typechecking"

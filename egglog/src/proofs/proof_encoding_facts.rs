@@ -186,7 +186,11 @@ impl ProofInstrumentor<'_> {
                             && !func_type.output().is_eq_sort()
                         {
                             let value = self.fresh_var();
-                            res.push(format!("(= {value} ({}))", func_type.name));
+                            res.push(format!(
+                                "(= {value} ({} {}))",
+                                func_type.name,
+                                ListDisplay(&new_args, " ")
+                            ));
                             let proof = if self.proofs_enabled() {
                                 self.reflexive_fiat_proof(func_type.output().name(), &value)
                             } else {

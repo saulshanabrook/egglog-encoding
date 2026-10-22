@@ -975,12 +975,15 @@ impl EGraph {
         n: usize,
         include_output: bool,
     ) -> Result<(Vec<TermId>, Option<Vec<TermId>>, TermDag), Error> {
+        let global = (!self.functions.contains_key(sym))
+            .then(|| self.backend.base_values().get::<S>(sym.to_owned().into()));
         let func = self
             .functions
             .get(sym)
+            .or_else(|| self.global_table(sym))
             .ok_or(TypeError::UnboundFunction(sym.to_owned(), span!()))?;
         let (_, input_arity, output_arity) = func.table_read_projection();
-        let input_sorts = &func.func_type.input[..input_arity];
+        let input_sorts = &func.func_type.input[usize::from(global.is_some())..input_arity];
         // Logical columns are a prefix of the physical inputs-then-outputs row.
         let output_sorts = if input_arity < func.func_type.input.len() {
             &func.func_type.input[input_arity..input_arity + output_arity]
@@ -1003,6 +1006,9 @@ impl EGraph {
         };
 
         let extract_row = |row: egglog_bridge::ScanEntry| {
+            if global.is_some_and(|key| row.vals[0] != key) {
+                return true;
+            }
             if inputs.len() < n {
                 // include subsumed rows
                 let mut children: Vec<TermId> = Vec::new();
