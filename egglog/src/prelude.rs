@@ -783,6 +783,7 @@ pub fn add_function(
         cost: None,
         term_node: false,
         native_uf: false,
+        native_rebuild: false,
     }])
 }
 
