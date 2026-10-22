@@ -202,20 +202,27 @@ fn output_only_replacement_survives_and_noop_keeps_version() {
 
 #[test]
 fn full_parallel_pass_visits_every_live_row_once() {
+    struct VisitOnce(Vec<AtomicUsize>);
+    impl RowRebuilder for VisitOnce {
+        fn rebuild(&self, row: &[Value], _: &mut ExecutionState, _: &mut Vec<Value>) -> bool {
+            assert_eq!(self.0[row[0].index()].fetch_add(1, Ordering::Relaxed), 0);
+            false
+        }
+    }
+    // Several bounded batches per worker, with a partial final batch and stale
+    // physical rows. Reusing a scan buffer must not replay its previous rows.
+    let n = 100_003;
     for threads in [1, 4, 8, 12] {
         let pool = egglog_concurrency::ThreadPool::new(threads);
         pool.install(|| {
-            let (mut db, table) = fixture(10_000);
+            let (mut db, table) = fixture(n);
             db.with_execution_state(None, |state| {
-                for i in (0..10_000).step_by(3) {
+                for i in (0..n).step_by(3) {
                     state.stage_remove(table, &[v(i)]);
                 }
             });
             db.merge_all();
-            let rewrite = Rewrite {
-                visited: AtomicUsize::new(0),
-                replacements: vec![],
-            };
+            let rewrite = VisitOnce((0..n).map(|_| AtomicUsize::new(0)).collect());
             assert!(
                 !db.rebuild_rows(
                     RebuildInput {
@@ -230,10 +237,61 @@ fn full_parallel_pass_visits_every_live_row_once() {
                 )
                 .changed
             );
+            for (i, count) in rewrite.0.iter().enumerate() {
+                assert_eq!(
+                    count.load(Ordering::Relaxed),
+                    usize::from(!i.is_multiple_of(3)),
+                    "row={i}, threads={threads}"
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn large_invalidation_batches_preserve_new_and_unaffected_rows() {
+    for threads in [1, 4, 8, 12] {
+        egglog_concurrency::ThreadPool::new(threads).install(|| {
+            let (mut db, table) = fixture(100);
+            let version = db.get_table(table).version();
+            db.with_execution_state(None, |state| {
+                state.stage_insert(table, &[v(500), v(109), v(7), v(1)]);
+            });
+            db.merge_all();
+            // Almost all invalidated values are absent from this view. The
+            // affected value occurs in both an old row and a newly added row.
+            let mut values: Vec<_> = (1_000..2_000).map(v).collect();
+            values.push(v(109));
+            let rewrite = Rewrite {
+                visited: AtomicUsize::new(0),
+                replacements: vec![(1, v(109), v(0))],
+            };
+            let progress = db.rebuild_rows(
+                RebuildInput {
+                    table,
+                    after: Some(&version),
+                    invalidated: &[RebuildValues {
+                        columns: &[ColumnId::new(1)],
+                        values: &values,
+                    }],
+                    timestamp_column: ColumnId::new(3),
+                    next_timestamp: v(2),
+                },
+                &rewrite,
+                None,
+            );
+            assert!(progress.changed);
+            db.merge_all();
+            assert_eq!(db.get_table(table).len(), 101);
+            for i in 0..100 {
+                let row = db.get_table(table).get_row(&[v(i)]).unwrap();
+                let expected = if i == 9 { v(0) } else { v(i + 100) };
+                assert_eq!(row.vals[1], expected);
+                assert_eq!(row.vals[2], v(i + 200));
+            }
             assert_eq!(
-                rewrite.visited.load(Ordering::Relaxed),
-                6_666,
-                "threads={threads}"
+                db.get_table(table).get_row(&[v(500)]).unwrap().vals[1],
+                v(0)
             );
         });
     }

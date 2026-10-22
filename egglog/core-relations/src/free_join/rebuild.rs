@@ -1,6 +1,8 @@
 //! Bulk row maintenance over a frozen database view. Candidate discovery uses
 //! the same occurrence-index catalog as queries, including its parallel builds.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::{Database, get_occurrence_index_from_tableinfo};
 use crate::{
     ColumnId, ExecutionState, ExternalContext, Offset, Subset, TableId, TableSchema, TableVersion,
@@ -64,7 +66,14 @@ impl Database {
             _ => all.clone(),
         };
         let scan_threshold = all.size().div_ceil(3);
-        let candidates = if new_rows.size() >= scan_threshold {
+        // A sort-wide equality batch can dwarf a small view while matching
+        // almost none of its rows. Bound unsuccessful index probes as well as
+        // the candidate offsets collected below. A full scan is conservative:
+        // the rebuilder still decides whether each row actually changes.
+        let invalidated_keys = input.invalidated.iter().fold(0usize, |total, group| {
+            total.saturating_add(group.values.len())
+        });
+        let candidates = if new_rows.size() >= scan_threshold || invalidated_keys >= all.size() {
             all
         } else {
             let mut rows = Vec::new();
@@ -111,31 +120,43 @@ impl Database {
                 changed: false,
             };
         }
-        let chunk_size = size
-            .div_ceil(parallel::current_num_threads().max(1) * 2)
-            .max(1024);
-        let starts: Vec<_> = (0..size).step_by(chunk_size).collect();
-        let changed = parallel::map(&starts, |_, &start| {
+        let threads = parallel::current_num_threads().max(1);
+        // Large fixed partitions leave workers idle when canonicalization and
+        // proof work are unevenly distributed. Claim bounded batches instead,
+        // reusing each worker's scan buffer and execution state. The bound also
+        // keeps copied rows close to their use, rather than buffering a large
+        // fraction of the table before starting canonicalization.
+        let chunk_size = size.div_ceil(threads * 2).clamp(1024, 16 * 1024);
+        let workers = vec![(); threads.min(size.div_ceil(chunk_size))];
+        let next = AtomicUsize::new(0);
+        let changed = parallel::map(&workers, |_, _| {
             self.with_execution_state(context, |state| {
                 let mut rows = TaggedRowBuffer::new(info.spec.arity());
-                table.scan_bounded(
-                    candidates.as_ref(),
-                    Offset::from_usize(start),
-                    chunk_size,
-                    &mut rows,
-                );
                 let mut out = Vec::with_capacity(info.spec.arity());
                 let mut changed = false;
-                for (_, row) in rows.iter() {
-                    out.clear();
-                    if rebuilder.rebuild(row, state, &mut out) {
-                        assert_eq!(out.len(), info.spec.arity(), "row rebuilder changed arity");
-                        out[input.timestamp_column.index()] = input.next_timestamp;
-                        // All removals are staged before the normal merge's
-                        // insert phase, including an output-only replacement.
-                        state.stage_remove(input.table, &row[..n_keys]);
-                        state.stage_insert(input.table, &out);
-                        changed = true;
+                loop {
+                    let start = next.fetch_add(chunk_size, Ordering::Relaxed);
+                    if start >= size {
+                        break;
+                    }
+                    rows.clear();
+                    table.scan_bounded(
+                        candidates.as_ref(),
+                        Offset::from_usize(start),
+                        chunk_size,
+                        &mut rows,
+                    );
+                    for (_, row) in rows.iter() {
+                        out.clear();
+                        if rebuilder.rebuild(row, state, &mut out) {
+                            assert_eq!(out.len(), info.spec.arity(), "row rebuilder changed arity");
+                            out[input.timestamp_column.index()] = input.next_timestamp;
+                            // All removals are staged before the normal merge's
+                            // insert phase, including an output-only replacement.
+                            state.stage_remove(input.table, &row[..n_keys]);
+                            state.stage_insert(input.table, &out);
+                            changed = true;
+                        }
                     }
                 }
                 changed
