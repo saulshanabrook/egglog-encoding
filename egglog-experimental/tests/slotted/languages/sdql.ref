@@ -1,0 +1,32 @@
+;;; Egglog constructors in `sdql.egg` and their reference spellings.
+;;;
+;;;     <Constructor>  <reference>
+;;;
+;;; Python test terms use the egglog constructor name. The reference spelling is
+;;; an operator tag, or `=payload` for a bare literal with an optional prefix.
+;;; For example, `Add +` translates `(Add a b)` to `(+ a b)`, while
+;;; `Num =payload` translates `(Num 3)` to `3`.
+;;;
+;;; The reference combines languages in one enum: `sdql-let` distinguishes this
+;;; constructor from the array language's `let`. Symbol payloads need `sym:` so
+;;; the reference parser does not interpret them as operator tags.
+
+Lambda       lambda
+Sing         sing
+Add          +
+Mult         *
+Sub          -
+Equality     eq
+Get          get
+Range        range
+App          apply
+IfThen       ifthen
+Binop        binop
+SubArray     subarray
+Unique       unique
+Sum          sum
+Merge        merge
+Let          sdql-let
+Num          =payload
+Symbol       =payload sym:
+Null         null

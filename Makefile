@@ -1,6 +1,6 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
+	proof-tests slotted-eval benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
 	update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
@@ -25,6 +25,10 @@ check: nits test
 nits: python-nits rust-nits
 
 test: python-test rust-test
+	cargo build -p egglog-experimental -p egraph-isomorphism --bins
+	cargo build --manifest-path slotted/xmulti/Cargo.toml
+	cargo test --manifest-path slotted/xmulti/Cargo.toml
+	uv run --locked python slotted/checks/check-slotted.py
 
 python-check: python-nits python-test
 
@@ -68,6 +72,12 @@ rust-doc-links:
 proof-tests:
 	cargo test --workspace --test files 'proofs/'
 
+# The paper's case studies -- the S4.1 array goal and the S4.2 SDQL workloads -- on the
+# encoding and on the reference through both of its matchers, at the artifact's budgets.
+# Release builds of both binaries, since these are the numbers a graph is drawn from.
+slotted-eval:
+	uv run --locked python slotted/eval.py
+
 # Smoke the runner on small files, not the full local benchmark suite.
 benchmark-smoke:
 	rm -f -- "$(BENCHMARK_SMOKE_REPORT)"
@@ -102,6 +112,7 @@ nightly-local: nightly-uv nightly-rustup
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details
+	INSTA_UPDATE=always cargo test -p egglog-experimental --test slotted_files
 
 format:
 	uv run --locked ruff format .

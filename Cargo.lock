@@ -669,6 +669,7 @@ dependencies = [
  "egglog",
  "egglog-ast",
  "egglog-reports",
+ "egraph-isomorphism",
  "fixedbitset",
  "glob",
  "hashbrown 0.16.1",
@@ -676,8 +677,12 @@ dependencies = [
  "lazy_static",
  "libtest-mimic",
  "log",
+ "mimalloc",
  "num",
+ "rustc-hash",
+ "serde",
  "serde_json",
+ "smallvec",
  "stacker",
 ]
 
@@ -716,6 +721,16 @@ dependencies = [
  "egglog",
  "getrandom 0.3.4",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "egraph-isomorphism"
+version = "0.1.0"
+dependencies = [
+ "egraph-serialize",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

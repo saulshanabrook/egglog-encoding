@@ -1,0 +1,13 @@
+;;; Egglog constructors in `toy.egg` and their reference spellings.
+;;; See `sdql.ref` for the format.
+
+Lam          lam
+F            f
+G            g
+H            h
+K            k
+Sub          sub
+Sub2         sub2
+Add          add
+Null         null
+Num          =payload

@@ -12,6 +12,7 @@ members = [
   "egglog/src/sort/add_primitive",
   "egglog/wasm-example",
   "egg-math-benchmark",
+  "egraph-isomorphism",
   "egglog-experimental",
 ]
 

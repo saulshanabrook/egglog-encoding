@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: "snapshot.join(\"\\n\")"
 ---
+delete-then-set.egg: the encoding defers a head's `delete` past its `set` of the same key, so the set merges with the old value instead of replacing it
 eggcc-2mm.egg: the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks
 llama.egg: luminal transformer benchmark: too large to run in proof modes as part of the routine test suite
 paged_llama.egg: luminal transformer benchmark: too large to run in proof modes as part of the routine test suite

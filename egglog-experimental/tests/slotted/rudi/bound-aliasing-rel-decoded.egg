@@ -1,0 +1,25 @@
+(sort U)
+
+(constructor Lam (U U) U)
+(constructor App (U U) U)
+(constructor Truth () U)
+(constructor GG (U U) U)
+
+(let t (Truth))
+
+(let l0 (Lam $0 $0))
+(let l1 (Lam $1 $1))
+(union l0 l1)
+
+(let g (App (Lam $0 $0) $0))
+
+(rewrite
+    (Truth)
+    (GG a $0)
+    :when ((App (Lam a a) $0))
+)
+
+(run 10)
+
+(check (= t (GG $0 $0)))
+(check (= t (GG $0 $1)))

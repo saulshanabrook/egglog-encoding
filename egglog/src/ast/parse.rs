@@ -101,6 +101,12 @@ pub enum Sexp {
     List(Vec<Sexp>, Span),
 }
 
+/// Parse source forms without interpreting command syntax. Source-to-source
+/// frontends can use this lexer while supplying their own command vocabulary.
+pub fn parse_sexps(filename: Option<String>, input: &str) -> Result<Vec<Sexp>, ParseError> {
+    all_sexps(SexpParser::new(filename, input))
+}
+
 impl Sexp {
     pub fn span(&self) -> Span {
         match self {

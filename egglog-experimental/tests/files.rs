@@ -372,6 +372,10 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 
     for entry in glob::glob(glob).unwrap() {
         let path = entry.unwrap();
+        // Slotted fixtures use their own compiler and runner.
+        if path.starts_with("tests/slotted") {
+            continue;
+        }
         let is_fixture = path
             .components()
             .any(|component| component.as_os_str() == "fixtures");

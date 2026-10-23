@@ -1,0 +1,30 @@
+;; The indices a group's element index is read at.
+(relation GroupIdx (i64))
+(relation GroupIdxSmall (i64))
+;; Valid indices for each refinement-vector length, shared by equal lengths.
+(ruleset slotted-refine)
+(relation Idx (i64 i64))
+(rule ((Idx _len _i) (= _next (+ (* _i 2) 1)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine)
+(rule ((Idx _len _i) (= _next (+ (* _i 2) 2)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; multi-sort slotted machinery
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(ruleset slotted)
+;; rows moved into their leaders' frames: once the leaders have settled
+(ruleset slotted-migrate)
+;; the groups from the rows' symmetries, closed and restricted, settled on their own
+(ruleset slotted-group)
+(ruleset slotted-empty)
+(ruleset slotted-shrink)
+(ruleset slotted-restore)
+;; the shape walks: once per settled state of the groups, see `MACHINERY_SCHEDULE`
+(ruleset slotted-shape)
+;; the readings a pattern joins: derived once the groups have settled
+(ruleset slotted-read)
+(ruleset slotted-apply)
+
+(function SlottedNodeLayout (String i64) Unit :no-merge :internal-hidden)
+(function SlottedEdgeLayout (String i64) Unit :no-merge :internal-hidden)
+(function SlottedBinderLayout (String i64 i64 i64 String) Unit :no-merge :internal-hidden)
+(function SlottedPayloadLayout (String i64 String) Unit :no-merge :internal-hidden)

@@ -1,0 +1,43 @@
+(sort L) ; the logical sort containing propositions; booleans.
+
+(constructor True () L)
+(constructor False () L)
+
+(constructor Forall (L L) L :binder 0)
+(constructor Implies (L L) L)
+(constructor And (L L) L)
+
+(constructor P (L) L)
+(constructor Q (L) L)
+
+(rewrite
+    (True)
+    (Forall $0 (And b1 b2))
+    :when (
+        (= t (True))
+        (= t (Forall $0 b1))
+        (= t (Forall $0 b2))
+    )
+)
+
+(rewrite
+    (True)
+    (Forall $0 b)
+    :when (
+        (= t (True))
+        (= t (Forall $0 (And (Implies a b) a)))
+    )
+)
+
+; axioms:
+; = true (forall x: P(x))
+(union (True) (Forall $0 (P $0)))
+
+; = true (forall x: P(x) -> Q(x))
+(union (True) (Forall $0 (Implies (P $0) (Q $0))))
+
+(run 2)
+
+; goal:
+; = true (forall x: Q(x))
+(check (= (True) (Forall $0 (Q $0))))

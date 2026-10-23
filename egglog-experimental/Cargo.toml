@@ -12,18 +12,28 @@ readme = "README.md"
 harness = false
 name = "files"
 
+[[test]]
+harness = false
+name = "slotted_files"
+
 [[bench]]
 harness = false
 name = "files"
 
 [features]
 default = ["bin"]
-bin = ["egglog/bin"]
+bin = ["egglog/bin", "dep:mimalloc"]
 
 [dependencies]
 egglog = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-reports = { workspace = true }
+egraph-isomorphism = { path = "../egraph-isomorphism" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+mimalloc = { workspace = true, optional = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
 num = "0.4.3"
 lazy_static = "1.4"
 log = "0.4"
@@ -37,4 +47,3 @@ divan = { workspace = true }
 glob = "0.3.1"
 insta = "1.40"
 libtest-mimic = "0.8.1"
-serde_json = { workspace = true }
