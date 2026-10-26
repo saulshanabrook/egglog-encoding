@@ -115,6 +115,7 @@ impl GlobalRemover<'_> {
                         internal_view: None,
                         identity_vals: None,
                         internal_term_node: false,
+                        internal_native_uf: false,
                     };
                     vec![
                         GenericNCommand::Function(func_decl),
@@ -166,6 +167,7 @@ impl GlobalRemover<'_> {
                     internal_view: None,
                     identity_vals: None,
                     internal_term_node: false,
+                    internal_native_uf: false,
                 };
                 let mut new_acts: Vec<_> = acts.into_iter().map(remove_globals_action).collect();
                 new_acts.push(GenericAction::Set(

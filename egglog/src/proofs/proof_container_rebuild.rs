@@ -54,8 +54,9 @@ pub(crate) fn uf_canon_proof_prim_name(uf_name: &str) -> String {
 ///   is its own leader, so the caller gets the fallback exactly where the step
 ///   proves nothing and is dropped unread.
 ///
-/// Both are the generic view-column read over the two-output `@UF_<S>` table, so
-/// both use the generic view-column reader. They read `@UF_<S>`, so
+/// Native UF reads use its canonicalization capability and compose historical
+/// root-link reasons on demand. Legacy UF functions retain direct column reads.
+/// They read `@UF_<S>`, so
 /// they are sound only in the action of a rule whose body joins the driving
 /// `@UF` delta. Called from the sort's Sort command, so they exist both during
 /// encoding and on re-parse.
@@ -76,7 +77,7 @@ pub(crate) fn register_uf_canon(
             out_sort: sort.clone(),
         },
         WriteState::valid_contexts(),
-        move |egraph, _| egraph.register_view_column_read(table.clone(), 1, 0),
+        move |egraph, _| egraph.register_uf_read(table.clone(), false, Vec::new()),
     );
 
     // The proof column is `Unit` in term mode, and no rule reads it there.
@@ -85,6 +86,10 @@ pub(crate) fn register_uf_canon(
             name: eg.proof_state.proof_names.proof_datatype.clone(),
         });
         let table = uf_name.to_string();
+        let proof_tables = vec![
+            eg.proof_state.proof_names.eq_sym_constructor.clone(),
+            eg.proof_state.proof_names.eq_trans_constructor.clone(),
+        ];
         eg.add_internal_primitive(
             UfCanonCol {
                 name: uf_canon_proof_prim_name(uf_name),
@@ -92,12 +97,12 @@ pub(crate) fn register_uf_canon(
                 out_sort: proof_sort,
             },
             WriteState::valid_contexts(),
-            move |egraph, _| egraph.register_view_column_read(table.clone(), 1, 1),
+            move |egraph, _| egraph.register_uf_read(table.clone(), true, proof_tables.clone()),
         );
     }
 }
 
-/// One column of an eq-sort's `@UF_<S>` row, read by term with a fallback (see
+/// One canonicalization result of an eq-sort's UF, with a fallback (see
 /// [`register_uf_canon`]).
 #[derive(Clone)]
 struct UfCanonCol {
@@ -148,7 +153,6 @@ pub(crate) fn register_container_rebuild_from_spec(
             name: spec.internal_rebuild_prim.clone(),
             container_sort: container_sort.clone(),
             uf_names: uf_names.clone(),
-            proof_mode: spec.internal_rebuild_proof_prim.is_some(),
         },
         None,
     );
@@ -222,7 +226,6 @@ fn rebuild_container_value_rec(
     sort: &ArcSort,
     value: Value,
     uf_names: &HashMap<String, String>,
-    proof_mode: bool,
 ) -> Option<Value> {
     let elements = {
         let cvs = state.container_values();
@@ -231,11 +234,9 @@ fn rebuild_container_value_rec(
     let mut leaders: HashMap<Value, Value> = HashMap::default();
     for (esort, eval) in &elements {
         let new = if esort.is_eq_sort() {
-            lookup_uf_row(state, uf_names, esort, *eval, proof_mode)
-                .map(|(leader, _)| leader)
-                .unwrap_or(*eval)
+            lookup_uf_leader(state, uf_names, esort, *eval).unwrap_or(*eval)
         } else if esort.is_eq_container_sort() {
-            rebuild_container_value_rec(state, esort, *eval, uf_names, proof_mode)?
+            rebuild_container_value_rec(state, esort, *eval, uf_names)?
         } else {
             *eval
         };
@@ -248,23 +249,21 @@ fn rebuild_container_value_rec(
     Some(rebuild_with_leaders(cvs, es, sort, value, &leaders))
 }
 
-/// Look up an eq-sort element's single-UF row. The first value column is the
-/// leader; proof mode has a second value column containing `key = leader`.
-/// A missing row means the element is already a root.
-fn lookup_uf_row<'a, 'db: 'a, S>(
+/// Resolve an eq-sort element without constructing a proof. Native tables use
+/// their canonicalization capability; legacy tables keep one-hop lookup.
+fn lookup_uf_leader<'a, 'db: 'a, S>(
     state: &S,
     uf_names: &HashMap<String, String>,
     esort: &ArcSort,
     eval: Value,
-    proof_mode: bool,
-) -> Option<(Value, Option<Value>)>
+) -> Option<Value>
 where
     S: RegistrySealed<'a, 'db>,
 {
     let uf_name = uf_names.get(esort.name())?;
     let action = state.registry().lookup_table(uf_name)?;
-    let values = action.lookup_values(state.es(), &[eval])?;
-    Some((values[0], proof_mode.then(|| values[1])))
+    let leader = action.uf_find(state.es(), eval);
+    Some(leader)
 }
 
 /// A term-encoding primitive that canonicalizes a container value's elements to
@@ -278,8 +277,6 @@ struct ContainerRebuild {
     container_sort: ArcSort,
     /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
     uf_names: HashMap<String, String>,
-    /// Whether the single UF row has a second proof value column.
-    proof_mode: bool,
 }
 
 impl Primitive for ContainerRebuild {
@@ -299,13 +296,7 @@ impl Primitive for ContainerRebuild {
 
 impl ReadPrim for ContainerRebuild {
     fn apply<'a, 'db>(&self, mut state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
-        rebuild_container_value_rec(
-            &mut state,
-            &self.container_sort,
-            args[0],
-            &self.uf_names,
-            self.proof_mode,
-        )
+        rebuild_container_value_rec(&mut state, &self.container_sort, args[0], &self.uf_names)
     }
 }
 
@@ -421,10 +412,13 @@ fn rebuild_leaves_with_proofs(
             continue;
         }
         if esort.is_eq_sort() {
-            if let Some((leader, Some(proof))) =
-                lookup_uf_row(state, &prim.uf_names, esort, *eval, true)
-                && leader != *eval
-            {
+            let action = state
+                .registry()
+                .lookup_table(prim.uf_names.get(esort.name())?)?
+                .clone();
+            let leader = action.uf_find(state.es(), *eval);
+            if leader != *eval {
+                let proof = action.uf_reason(state.raw_exec_state(), *eval)?;
                 leaders.insert(*eval, leader);
                 if changed.insert(*eval) {
                     child_proofs.push(proof);

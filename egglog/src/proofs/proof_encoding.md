@@ -48,25 +48,30 @@ readable.
 ```text
 (sort Math :internal-uf @UF_Math)
 (function @UF_Math (Math) (Math Unit)
-    :merge ((set (@UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
-            (values (ordering-min old0 new0) ()))
-    :unextractable :internal-hidden :internal-identity-vals 1)
+    :no-merge :unextractable :internal-hidden :internal-native-uf)
 ```
 
-`@UF_<Sort>` maps each term to its parent, plus the proof column. A term with no
-row is its own representative, so the lookup is identity-on-miss. To union `a`
-and `b` the encoding runs
-`(set (@UF_<Sort> (ordering-max a b)) (values (ordering-min a b) ()))`. If the
-key already had a different parent, the `:merge` block keeps the smaller of the
-two parents and `set`s the larger parent's edge to the smaller one (both are
-equal to the key). `ordering-max`/`ordering-min` impose an arbitrary but
-deterministic order (by insertion), so the parent choice is stable.
+`@UF_<Sort>` uses a native table. Inserting `(a, b, reason)` asserts an
+equality; the table resolves both endpoints and links the larger root to the
+smaller root. Repeated assertions within a component make no semantic change.
 
-`:internal-identity-vals 1` marks the first value column (the parent) as the one
-that decides whether a re-`set` is a change, so re-setting an existing edge leaves
-the row untouched, skips the `:merge` block, and does not re-stage the same union
-forever. It makes re-writes idempotent; it is *not* a key, and many rows can point
-at one parent.
+The table's read projection records **historical root links**: displaced root,
+parent at displacement, and a proof between those two roots (`Unit` in term
+mode). These rows never change. They drive incremental rebuilding, but their
+parent column is not necessarily the current representative.
+
+`@UF_<Sort>_canon` and extraction use the native `find` capability. The proof
+canonicalizer composes immutable root-link witnesses to the current root.
+Path compression updates a separate parent array, so it cannot invalidate those
+witnesses. On an accepted assertion `a = b`, the native proof adapter composes
+its supplied reason with the pre-merge paths from `a` and `b` to their roots.
+It uses the existing symmetry and transitivity proof constructors, not a new
+trusted proof rule. No witness is allocated for a redundant assertion.
+
+The native table exposes cursor-based batches of accepted equalities, including
+the original endpoints, pre-merge roots, timestamp, and reasons. Cursors are
+acknowledged by consumers; clearing invalidates them and cloning separates
+mutable UF state and pending writes.
 
 ## The view
 
@@ -226,14 +231,13 @@ Between the original program's commands, the encoding runs maintenance rules tha
 restore the invariants egglog would otherwise maintain during rebuilding:
 
 ```text
-(ruleset @parent)               ;; path compression on the union-find
+(ruleset @parent)               ;; reserved; native UF needs no compression rules
 (ruleset @rebuilding)           ;; re-canonicalize view rows; resolve congruence
 (ruleset @rebuilding_cleanup)   ;; drop rows merged away
 (ruleset @subsume_ruleset)      ;; apply subsumption markers
 
 (run-schedule
     (seq (saturate (seq (run @rebuilding_cleanup)
-                        (saturate (seq (run @parent)))
                         (run @rebuilding)))
          (run @subsume_ruleset)))
 ```
@@ -244,15 +248,9 @@ no maintenance runs after it. Everything else is followed by the schedule above.
 
 ## Path compression
 
-The only union-find rule flattens `a -> b -> c` chains to `a -> c`:
-
-```text
-(rule ((= (values b pb) (@UF_Math a))
-       (= (values c pc) (@UF_Math b))
-       (!= b c))
-      ((set (@UF_Math a) (values c ())))
-        :ruleset @parent :name "@uf_path_compress")
-```
+Compression occurs inside native UF updates. The generated maintenance schedule
+contains no path-compression rule or parent-ruleset invocation. Historical
+root-link rows remain stable even when the native forest is compressed.
 
 ## Keeping the view canonical
 
@@ -433,11 +431,11 @@ reading an element out of a container, carrying a proof per argument.
 The union-find and view proof columns become real:
 
 ```text
-(function @UF_Math (Math) (Math @Proof) :merge (… @Packed_2 "trans_sym_p0_p1" …) …)
+(function @UF_Math (Math) (Math @Proof) :no-merge :internal-native-uf …)
 (function Add (Math Math) (Math @Proof) :merge (… @Packed_2 "trans_p0_sym_p1" …) …)
 ```
 
-If term `k` has parent `p`, `(@UF_Math k)` returns `(values p proof)` where
+If term `k` has historical parent `p`, `(@UF_Math k)` returns `(values p proof)` where
 `proof` proves `k = p` — the key on the left. A view row's proof runs the other
 way, `eclass = f(children)`.
 
@@ -782,11 +780,11 @@ skeleton and stays a row of its own. The row count is also already reduced by
 dropping steps the encoder knows are reflexive — `(Num 1)`'s own conclusion is
 its canonical one, so neither `Num` level composes anything.
 
-**Merge bodies and maintenance rules.** A custom function's `:merge`, the
-path-compression rule, and the container rebuild rule are all code the encoder
-wrote rather than a user head, so they compose too: path compression emits
-`@Trans` of the two edge proofs, and the container rebuild emits a `@Congr` onto
-the view row.
+**Merge bodies and maintenance.** A custom function's `:merge` and the container
+rebuild rule have no user head to replay, so they compose witnesses directly.
+The native UF's reason adapter likewise composes `@Sym` and `@Trans` over
+immutable root-link proofs; container rebuilding emits a `@Congr` onto the view
+row.
 
 ### Body premises
 
@@ -913,6 +911,6 @@ A container is built over its elements' **natural** ids, not their deduped
 e-classes: a deduped id can extract to a different syntactic shape, which would
 break the rule-head check for the container's proof. Each element's
 `natural -> (deduped, connector)` edge goes into the element's ordinary
-`@UF_<E>`, so the standard rebuild and path compression canonicalize the natural
+`@UF_<E>`, so native canonicalization and view rebuilding canonicalize the natural
 like any other stale term. That edge's proof column is the element's connector,
 which is therefore one of the few connectors a rule head does write a row for.

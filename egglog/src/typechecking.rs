@@ -1164,6 +1164,7 @@ impl TypeInfo {
             internal_view: fdecl.internal_view,
             identity_vals: fdecl.identity_vals,
             internal_term_node: fdecl.internal_term_node,
+            internal_native_uf: fdecl.internal_native_uf,
         })
     }
 

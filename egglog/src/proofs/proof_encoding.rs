@@ -850,51 +850,15 @@ impl<'a> ProofInstrumentor<'a> {
         (decl, merge)
     }
 
-    /// Declare a sort's union-find `@UF : (S) -> (S, {Unit|Proof})`, mapping each
-    /// term to its parent plus a proof `key = parent` (`()` in term mode). Its
-    /// `:merge` resolves conflicting parents (see `proof_encoding.md`). Also emits
-    /// the `path_compress` rule.
+    /// Declare native equality storage. Relational reads are immutable root
+    /// links; canonicalization primitives chase the native parent forest.
     fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<Command> {
-        let proofs = self.proofs_enabled();
         let uf_name = self.uf_name(sort_name);
         let proof_type = self.proof_type_str().to_string();
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("uf_path_compress");
-        let path_compress_ruleset_name = self.proof_names().path_compress_ruleset_name.clone();
-
-        let a = self.egraph.parser.symbol_gen.fresh("uf_a");
-        let b = self.egraph.parser.symbol_gen.fresh("uf_b");
-        let c = self.egraph.parser.symbol_gen.fresh("uf_c");
-        let pb = self.egraph.parser.symbol_gen.fresh("uf_pb");
-        let pc = self.egraph.parser.symbol_gen.fresh("uf_pc");
-
-        // An `@UF` row's carried proof proves `key = parent`, so both share their
-        // lhs and it is the larger side's that the composition reverses.
-        let (packed_decl, uf_merge) =
-            self.ordered_union_merge(&uf_name, Skeleton::Leaf(0).sym().trans(Skeleton::Leaf(1)));
-        // path compression: a->b (pb: a=b), b->c (pc: b=c)  =>  a->c (Trans pb pc: a=c)
-        let (compressed_proof_lets, compressed_proof) = if proofs {
-            let trans = self.proof_names().eq_trans_constructor.clone();
-            let mut mints = vec![];
-            let pf = self.mint(&mut mints, &trans, &format!("{pb} {pc}"));
-            (mints.join("\n                    "), pf)
-        } else {
-            (String::new(), "()".to_string())
-        };
-
-        let code = format!(
-            "{packed_decl}
-             (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden :internal-identity-vals 1)
-             (rule ((= (values {b} {pb}) ({uf_name} {a}))
-                    (= (values {c} {pc}) ({uf_name} {b}))
-                    (!= {b} {c}))
-                  ({compressed_proof_lets}
-                   (set ({uf_name} {a}) (values {c} {compressed_proof})))
-                   :ruleset {path_compress_ruleset_name}
-                   :name \"{fresh_name}\")
-                   "
-        );
-
-        self.parse_program(&code)
+        self.parse_program(&format!(
+            "(function {uf_name} ({sort_name}) ({sort_name} {proof_type}) \
+             :no-merge :unextractable :internal-hidden :internal-native-uf)"
+        ))
     }
 
     /// An eq-sort global needs a view that follows unions, like a constructor.
@@ -2395,17 +2359,14 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// Any schedule should be sound as long as we saturate.
     fn rebuild(&mut self) -> Schedule {
-        let path_compress_ruleset = self.proof_names().path_compress_ruleset_name.clone();
         let rebuilding_cleanup_ruleset = self.proof_names().rebuilding_cleanup_ruleset_name.clone();
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let subsume_ruleset = self.proof_names().subsume_ruleset_name.clone();
-        // The `@UF` `:merge` resolves conflicting parents itself, so only
-        // `path_compress` (flattening chains) remains as UF maintenance.
+        // Native UF commits already maintain canonical representatives.
         self.parse_schedule(format!(
             "(seq
               (saturate
                   {rebuilding_cleanup_ruleset}
-                  (saturate {path_compress_ruleset})
                   {rebuilding_ruleset})
               {subsume_ruleset})"
         ))
