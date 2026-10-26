@@ -43,6 +43,7 @@ mod join_tail;
 mod packed_cache;
 mod prepared_index;
 mod probe;
+pub(crate) mod rebuild;
 mod residual_index;
 // The packed trie is exercised independently before it is wired into execution.
 #[allow(dead_code)]
