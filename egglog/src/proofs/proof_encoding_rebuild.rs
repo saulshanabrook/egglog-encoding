@@ -49,8 +49,13 @@ impl ProofInstrumentor<'_> {
         // from matching.
         let e = self.fresh_var();
         let pf = self.fresh_var();
+        let native = if self.proofs_enabled() {
+            ""
+        } else {
+            " :internal-native-rebuild"
+        };
         let mut decls = format!(
-            "(function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)
+            "(function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden{native})
              (rule (({subsumed_name} {children})
                     (= (values {e} {pf}) ({view_name} {children})))
                    ((subsume ({view_name} {children})))
@@ -61,6 +66,9 @@ impl ProofInstrumentor<'_> {
         // Mirrors [`Self::rebuilding_rules`]: the single-key `@UF` has no row for
         // a canonical node, so a per-column lookup only fires when there is work.
         // The `@UF` proof column is unused for subsumed rows.
+        if !self.proofs_enabled() {
+            return decls;
+        }
         for (i, ty) in input.iter().enumerate() {
             if !ty.is_eq_sort() {
                 continue;
@@ -179,12 +187,14 @@ impl ProofInstrumentor<'_> {
             .cloned()
             .unwrap_or_default()
         {
-            rules.push_str(&self.indexed_rebuild_rule(fdecl, &key_vars, &types, &vi));
+            if proofs {
+                rules.push_str(&self.indexed_rebuild_rule(fdecl, &key_vars, &types, &vi));
+            }
         }
         if output_is_eclass {
             // Covered by the index rule above, which indexes the e-class column too.
         } else if fdecl.subtype == FunctionSubtype::Custom && !self.is_encoded_global(fdecl) {
-            if types[n - 1].is_eq_sort() {
+            if proofs && types[n - 1].is_eq_sort() {
                 rules.push_str(&self.fd_custom_value_rebuild_rule(fdecl, &key_vars, n - 1));
             } else if types[n - 1].is_eq_container_sort() {
                 rules.push_str(&self.fd_container_value_rebuild_rule(fdecl, &key_vars, n - 1));

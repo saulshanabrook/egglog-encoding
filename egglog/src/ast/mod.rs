@@ -237,6 +237,7 @@ where
                     cost: f.cost,
                     term_node: f.internal_term_node,
                     native_uf: f.internal_native_uf,
+                    native_rebuild: f.internal_native_rebuild,
                 },
             },
             GenericNCommand::Index {
@@ -472,6 +473,8 @@ pub enum GenericSchedule<Head, Leaf> {
     Saturate(Span, Box<GenericSchedule<Head, Leaf>>),
     Repeat(Span, usize, Box<GenericSchedule<Head, Leaf>>),
     Run(Span, GenericRunConfig<Head, Leaf>),
+    /// One bulk maintenance wave for explicitly registered encoded views.
+    NativeRebuild(Span),
     Sequence(Span, Vec<GenericSchedule<Head, Leaf>>),
 }
 
@@ -486,6 +489,7 @@ where
         f: &mut impl FnMut(Vec<GenericFact<Head, Leaf>>) -> Vec<GenericFact<Head, Leaf>>,
     ) -> Self {
         match self {
+            GenericSchedule::NativeRebuild(span) => GenericSchedule::NativeRebuild(span),
             GenericSchedule::Saturate(span, generic_schedule) => {
                 GenericSchedule::Saturate(span, Box::new(generic_schedule.visit_queries(f)))
             }
@@ -514,6 +518,7 @@ where
     /// Also unwraps single-element sequences into their inner schedule.
     fn flatten_sequences(self) -> Self {
         match self {
+            GenericSchedule::NativeRebuild(span) => GenericSchedule::NativeRebuild(span),
             GenericSchedule::Saturate(span, sched) => {
                 GenericSchedule::Saturate(span, Box::new(sched.flatten_sequences()))
             }
@@ -544,6 +549,7 @@ where
         f: &mut impl FnMut(GenericExpr<Head, Leaf>) -> GenericExpr<Head, Leaf>,
     ) -> Self {
         match self {
+            GenericSchedule::NativeRebuild(span) => GenericSchedule::NativeRebuild(span),
             GenericSchedule::Saturate(span, sched) => {
                 GenericSchedule::Saturate(span, Box::new(sched.visit_exprs(f)))
             }
@@ -569,6 +575,7 @@ where
         Leaf2: Clone + PartialEq + Eq + Display + Hash,
     {
         match self {
+            GenericSchedule::NativeRebuild(span) => GenericSchedule::NativeRebuild(span),
             GenericSchedule::Saturate(span, sched) => {
                 GenericSchedule::Saturate(span, Box::new(sched.map_symbols(head, leaf)))
             }
@@ -595,6 +602,7 @@ where
         fun: &mut impl FnMut(String) -> String,
     ) -> GenericSchedule<Head, Leaf> {
         let mapped = match self {
+            GenericSchedule::NativeRebuild(span) => GenericSchedule::NativeRebuild(span),
             GenericSchedule::Saturate(span, sched) => {
                 GenericSchedule::Saturate(span, Box::new(sched.map_string_symbols(fun)))
             }
@@ -627,6 +635,7 @@ where
 impl<Head: Display, Leaf: Display> Display for GenericSchedule<Head, Leaf> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            GenericSchedule::NativeRebuild(_) => write!(f, "(native-rebuild)"),
             GenericSchedule::Saturate(_ann, sched) => write!(f, "(saturate {sched})"),
             GenericSchedule::Repeat(_ann, size, sched) => write!(f, "(repeat {size} {sched})"),
             GenericSchedule::Run(_ann, config) => write!(f, "{config}"),
@@ -875,6 +884,7 @@ where
         term_node: bool,
         /// Native union-find storage with explained historical root links.
         native_uf: bool,
+        native_rebuild: bool,
     },
 
     /// Declare a named index over an existing function's columns.
@@ -1222,6 +1232,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1246,6 +1257,9 @@ where
                 }
                 if let Some(c) = cost {
                     write!(f, " :internal-cost {c}")?;
+                }
+                if *native_rebuild {
+                    write!(f, " :internal-native-rebuild")?;
                 }
                 if *native_uf {
                     write!(f, " :internal-native-uf")?;
@@ -1572,6 +1586,7 @@ where
     pub internal_term_node: bool,
     /// Use the native explained UF table for this internal function.
     pub internal_native_uf: bool,
+    pub internal_native_rebuild: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1673,6 +1688,7 @@ impl FunctionDecl {
             identity_vals: None,
             internal_term_node: false,
             internal_native_uf: false,
+            internal_native_rebuild: false,
         }
     }
 
@@ -1700,6 +1716,7 @@ impl FunctionDecl {
             identity_vals: None,
             internal_term_node: false,
             internal_native_uf: false,
+            internal_native_rebuild: false,
         }
     }
 }
@@ -1728,6 +1745,7 @@ where
             identity_vals: self.identity_vals,
             internal_term_node: self.internal_term_node,
             internal_native_uf: self.internal_native_uf,
+            internal_native_rebuild: self.internal_native_rebuild,
         }
     }
 }
@@ -2144,6 +2162,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -2160,6 +2179,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             },
             GenericCommand::Index {
                 span,
@@ -2270,6 +2290,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2283,6 +2304,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2424,6 +2446,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2437,6 +2460,7 @@ where
                 cost,
                 term_node,
                 native_uf,
+                native_rebuild,
             },
             GenericCommand::Index {
                 span,
