@@ -43,6 +43,7 @@ mod tests {
                 (set (f (K2)) 1)
                 (rule ({body}) ((Root)))
                 (run 1)
+                (check (Root))
                 (extract (Root))
                 (fail (check (= (Root) (Unrelated))))
                 "#
@@ -61,6 +62,7 @@ mod tests {
             (set (f) (B))
             (rule ((= (f) expr) (= expr (A))) ((union (Root) expr)))
             (run 1)
+            (check (Root))
             (extract (Root))
             (fail (check (= (Root) (Unrelated))))
         "#;
