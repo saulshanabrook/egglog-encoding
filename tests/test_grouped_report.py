@@ -53,6 +53,36 @@ def test_grouped_snapshot_keeps_all_samples_and_derives_current_engine_labels(tm
     assert serialize_grouped_report(ReportStore(path).grouped_report()) == encoded
 
 
+def test_resolved_labels_refresh_cached_groups_without_rewriting_observations(tmp_path: Path) -> None:
+    path = tmp_path / "reports.jsonl"
+    records = (
+        make_record(0, started_at="2026-09-30T00:00:00Z", binary_sha256="sha256:old", target_label="figures"),
+        make_record(1, started_at="2026-09-30T00:00:01Z", binary_sha256="sha256:new"),
+        make_record(
+            2, started_at="2026-09-30T00:00:02Z", binary_sha256="sha256:egg", treatment="egg", target_label="figures"
+        ),
+    )
+    write_report(path, *records)
+    before = path.read_bytes()
+    store = ReportStore(path)
+
+    refreshed = store.grouped_report({("figures", "egglog"): "sha256:new"})
+    assert {group["key"]["binary_sha256"]: group["labels"] for group in refreshed.data["groups"]} == {
+        "sha256:old": [],
+        "sha256:new": ["figures"],
+        "sha256:egg": ["figures"],
+    }
+    missing = store.grouped_report({("figures", "egglog"): "sha256:unobserved"})
+    assert {group["key"]["binary_sha256"]: group["labels"] for group in missing.data["groups"]} == {
+        "sha256:old": [],
+        "sha256:new": [],
+        "sha256:egg": ["figures"],
+    }
+    assert store.records == records
+    assert path.read_bytes() == before
+    assert all(sample["target_label"] is None for sample in refreshed.data["groups"][1]["samples"])
+
+
 @pytest.mark.parametrize("field", ["grouped_schema_version", "report_schema_version"])
 def test_grouped_codec_rejects_incompatible_versions(tmp_path: Path, field: str) -> None:
     data = json.loads(serialize_grouped_report(ReportStore(tmp_path / "empty.jsonl").grouped_report()))
