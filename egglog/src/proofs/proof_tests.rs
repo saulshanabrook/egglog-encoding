@@ -23,6 +23,40 @@ mod tests {
     }
 
     #[test]
+    fn constructor_merge_reads_a_dirty_view() {
+        let source = r#"
+            (datatype Bound (IntB i64) (Join Bound Bound) (Other i64))
+            (function bound (i64) Bound :merge (Join old new))
+            (relation seed (i64))
+            (seed 1)
+            (seed 2)
+            (rule ((seed n))
+                  ((set (bound 0) (IntB n))
+                   (Join (IntB n) (IntB n))
+                   (Other n)))
+            (run 1)
+            (check (= joined (bound 0)) (= joined (Join a b)))
+            (fail (check (= (IntB 1) (IntB 2))))
+            (fail (check (= (bound 0) (IntB 1))))
+            (fail (check (= (bound 0) (IntB 2))))
+        "#;
+        // The rule dirties Join's view while bound's merge needs to intern a Join.
+        // Other keeps enough tables dirty to exercise the dependency-ordered merge path
+        // even without proof recording's additional tables.
+        for threads in [1, 2] {
+            for mut egraph in [
+                EGraph::default(),
+                EGraph::new_with_term_encoding(),
+                EGraph::new_with_proofs(),
+                EGraph::new_with_proofs().with_proof_testing(),
+            ] {
+                egraph.set_num_threads(threads);
+                egraph.parse_and_run_program(None, source).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn prove_extract_function_root_uses_existing_output_evidence() {
         let source = r#"
             (datatype E (A) (B))
