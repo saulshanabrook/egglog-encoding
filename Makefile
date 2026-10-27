@@ -13,6 +13,7 @@ BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
 UV_VERSION ?= 0.11.30
 UV_BOOTSTRAP_DIR ?= $(CURDIR)/.uv/$(UV_VERSION)
 NIGHTLY_UV = $(shell command -v uv || echo $(UV_BOOTSTRAP_DIR)/uv)
+HOST_PYTHON ?= python3
 
 # Ubuntu's cargo predates rust-toolchain.toml's pin, so the nightly needs
 # rustup's shims; scripts/nightly_bench.py puts them first on PATH.
@@ -81,8 +82,8 @@ benchmark-smoke:
 
 # Publish nightly/output/ for the egraphs-good nightly service
 # (nightly.cs.washington.edu), which runs this target and serves that directory.
-nightly: nightly-uv nightly-rustup
-	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py
+nightly:
+	CARGO_HOME="$(CARGO_HOME_DIR)" NIGHTLY_UV="$(NIGHTLY_UV)" $(HOST_PYTHON) scripts/nightly_bench.py
 
 nightly-uv:
 	@command -v uv >/dev/null || test -x "$(UV_BOOTSTRAP_DIR)/uv" || \
@@ -97,8 +98,8 @@ nightly-rustup:
 
 # The nightly host's run at one round, for trying it locally. nightly/output/ is
 # git-ignored, so this writes it just as the host does.
-nightly-local: nightly-uv nightly-rustup
-	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py --rounds 1
+nightly-local:
+	CARGO_HOME="$(CARGO_HOME_DIR)" NIGHTLY_UV="$(NIGHTLY_UV)" $(HOST_PYTHON) scripts/nightly_bench.py --rounds 1
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details
