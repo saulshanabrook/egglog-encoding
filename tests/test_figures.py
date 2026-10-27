@@ -16,7 +16,7 @@ from benchmarking.models import FileSpec
 from benchmarking.reports.grouped import grouped_report_path, write_grouped_report
 from benchmarking.reports.store import ReportStore
 
-from .report_fixtures import make_record, make_target, write_report
+from .report_fixtures import make_record, make_target, make_timing_summary, write_report
 
 
 def catalog_fixture(directory: Path, **settings: Any) -> Path:
@@ -62,6 +62,61 @@ def test_config_help_does_not_expand_files(tmp_path: Path, capsys: pytest.Captur
     text = capsys.readouterr().out
     assert "runtime:" in text and "memory:" in text
     assert "--cached" not in text
+
+
+@pytest.mark.parametrize("rounds", ["0", "-1", "no"])
+def test_invalid_round_override(tmp_path: Path, rounds: str) -> None:
+    with pytest.raises(SystemExit):
+        figures.parse_args(["--config", str(catalog_fixture(tmp_path)), "--rounds", rounds])
+
+
+@pytest.mark.parametrize("rounds", [1, 3])
+def test_round_override_collects_shared_runs_and_binds_effective_samples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rounds: int
+) -> None:
+    from benchmarking import collection, processes
+
+    path = catalog_fixture(tmp_path)
+    (tmp_path / "one.egg").write_text("(check (= 1 1))")
+    report = tmp_path / "report.jsonl"
+    target = make_target(target_label="figures", binary_path=tmp_path / "engine")
+    launched: list[Any] = []
+    resolved_rounds: list[int] = []
+
+    def resolve(requests: Any, _store: Any, rounds: int, *_args: Any) -> Any:
+        resolved_rounds.append(rounds)
+        return {request.endpoint.target: target for request in requests}
+
+    def observe(*args: Any) -> Any:
+        launched.append(args)
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=1), None), make_timing_summary()
+        )
+
+    def render(command: list[str], **_kwargs: Any) -> None:
+        Path(command[command.index("--base") - 1]).write_bytes(b"rendered")
+
+    monkeypatch.setattr(collection, "resolve_requests", resolve)
+    monkeypatch.setattr(collection, "preflight_collection", lambda *_args: None)
+    monkeypatch.setattr(collection, "run_process", observe)
+    monkeypatch.setattr(figures.subprocess, "run", render)
+    args = ["--config", str(path), "--report", str(report), "--rounds", str(rounds)]
+    assert figures.main(args) == 0
+    assert len(launched) == rounds  # Both figure views share one collection request.
+    assert figures.load_config(path).rounds == 2
+    assert figures.load_config(figures.DEFAULT_CONFIG).rounds == 10
+    for name in ("runtime", "memory"):
+        receipt = json.loads((tmp_path / f"{name}.receipt.json").read_bytes())
+        selected = receipt["selected_observations"][0]
+        assert receipt["rounds"] == selected["requested_rows"] == selected["selected_rows"] == rounds
+        assert receipt["invocation"][-2:] == ["--rounds", str(rounds)]
+        bound = json.loads((tmp_path / f"{name}.bound.vl.json").read_bytes())
+        params = {p["name"]: p["value"] for p in bound["params"]}
+        assert params["rounds"] == rounds
+        assert params["t_critical"] == (None if rounds == 1 else pytest.approx(4.302652729696142))
+    assert figures.main(args) == 0
+    assert len(launched) == rounds
+    assert resolved_rounds == [rounds, rounds]
 
 
 @pytest.mark.parametrize("settings", [{"rounds": 0}, {"rounds": True}, {"timeout_sec": -1}, {"experiments": {}}])
@@ -139,10 +194,12 @@ def test_bound_copy_receipt_and_incremental_rendering(tmp_path: Path, monkeypatc
             raise figures.subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(figures.subprocess, "run", render)
-    console = Console(file=io.StringIO())
+    stream = io.StringIO()
+    console = Console(file=stream, width=20)
     original = (tmp_path / "chart.vl.json").read_bytes()
     outputs = figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", [], console)
     assert len(outputs) == 6 and len(calls) == 6
+    assert all(str(output) in stream.getvalue().splitlines() for output in outputs)
     receipt = json.loads((tmp_path / "out/runtime.receipt.json").read_bytes())
     other = json.loads((tmp_path / "out/memory.receipt.json").read_bytes())
     assert receipt["selection_sha256"] == other["selection_sha256"]
