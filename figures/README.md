@@ -88,6 +88,12 @@ Failures remove skipped repetitions from the estimate. Cached runs contribute
 timing information without counting as elapsed work. Redirected per-run logs
 include the same approximate remaining time. Build and rendering time are excluded.
 
+Preparation phases are named on stderr before input resolution, corpus metadata,
+cache loading and target resolution begin. `-v`/`--verbose` adds their elapsed
+times and known counts, plus per-attempt start lines when output is redirected.
+Each figure reports `Rendering NAME` or `NAME: unchanged`; all output paths are
+printed in either case.
+
 ## Selection and statistics
 
 The runner refreshes the shared typed `.reports-grouped.json`, including current
