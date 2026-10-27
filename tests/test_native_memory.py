@@ -39,6 +39,7 @@ def test_native_exit_protocol_does_not_depend_on_diagnostic_text(
     assert result.stop_collection is stop
     assert result.error is not None and result.error.exit_code == code
     assert result.error.message == "arbitrary diagnostic"
+    assert result.error.memory_limit_bytes == (native_memory.NATIVE_LIMIT_BYTES if controlled and code == 86 else None)
     assert result.timing.wall_sec is not None and result.timing.max_rss_bytes is not None
 
 
@@ -58,7 +59,11 @@ def test_native_outcome_is_retained_before_local_skip_or_invocation_stop(
             processes.TimingResult(
                 "failure",
                 processes.TimingRow(),
-                processes.ErrorRow("native failure", exit_code=code),
+                processes.ErrorRow(
+                    "native failure",
+                    exit_code=code,
+                    memory_limit_bytes=native_memory.NATIVE_LIMIT_BYTES if code == 86 else None,
+                ),
                 stop_collection=code == 87,
             ),
             None,
@@ -74,6 +79,9 @@ def test_native_outcome_is_retained_before_local_skip_or_invocation_stop(
         collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
         assert calls == store.row_count == 2
     assert store.records[0]["error_exit_code"] == code
+    assert store.records[0].get("error_memory_limit_bytes") == (
+        native_memory.NATIVE_LIMIT_BYTES if code == 86 else None
+    )
 
 
 def test_older_binary_rejecting_native_option_fails_preflight(tmp_path: Path) -> None:

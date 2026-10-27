@@ -14,9 +14,9 @@ const input = (id, treatment, changes={}) => ({logical_id:id, label:id, family:'
   fact_directory_sha256:'', treatment, validation_failures:{}, ...changes});
 function group(id, treatment, values, changes={}) {
   const key={binary_sha256:'current',file_sha256:id,fact_directory_sha256:'',treatment,
-    disequality_encoding:'nee',timeout_sec:300};
+    disequality_encoding:'nee'};
   return {key,labels:['figures'],samples:values.map((value,index)=>({...key,row_index:index,
-    started_at:new Date(Date.UTC(2026,9,1,0,0,index)).toISOString(),status:'success',
+    started_at:new Date(Date.UTC(2026,9,1,0,0,index)).toISOString(),status:'success',timeout_sec:300,
     wall_sec:value,max_rss_bytes:value===null?null:value*1048576,...changes}))};
 }
 async function evaluate(name, inputs, groups, rounds=2) {
@@ -24,7 +24,7 @@ async function evaluate(name, inputs, groups, rounds=2) {
   for(const p of spec.params) if(p.name==='selected_inputs')p.value=inputs.map(input=>({...input,
     selected_row_indices:input.selected_row_indices??groups.find(g=>g.labels.includes('figures')&&
       g.key.file_sha256===input.file_sha256&&g.key.fact_directory_sha256===input.fact_directory_sha256&&
-      g.key.treatment===input.treatment&&g.key.timeout_sec===300&&g.key.disequality_encoding==='nee')
+      g.key.treatment===input.treatment&&g.key.disequality_encoding==='nee')
       ?.samples.slice(-rounds).map(row=>row.row_index)??[]}));
     else if(p.name==='rounds')p.value=rounds;
     else if(p.name==='t_critical')p.value=rounds===1?null:12.706204736432095;
@@ -32,7 +32,7 @@ async function evaluate(name, inputs, groups, rounds=2) {
   const logger=vega.logger(vega.Warn,undefined,(...args)=>warnings.push(args));
   const runtime=compile(spec,{logger}).spec;
   const loader=vega.loader();
-  loader.load=async()=>JSON.stringify({grouped_schema_version:1,report_schema_version:5,groups});
+  loader.load=async()=>JSON.stringify({grouped_schema_version:2,report_schema_version:5,groups});
   const view=new vega.View(vega.parse(runtime),{renderer:'none',loader,logger});
   try {
     await view.runAsync();
@@ -59,7 +59,7 @@ test('all five paper specs compile, preserve missing endpoints and render',async
     assert.match(c.svg,/unresolved baseline 1/);
   }
 });
-test('newest N observations include failures and never borrow a moved label',async()=>{
+test('bound observations include failures and never borrow a moved label',async()=>{
   const a=group('a','off',[100,1,3]);
   const d=await evaluate('disequality-runtime',[input('a','off')],[a]);
   const mean=find(d,'absolute_means')[0].datum;
@@ -114,7 +114,7 @@ test('CDF cohort uses >=.2 seconds without upper cutoff, shared denominator and 
   }
 });
 test('strict validation veto applies only to checked proofs, missing RSS cannot change cohort',async()=>{
-  const inputs=['off','term','proof-testing'].map(t=>input('a',t,{validation_failures:{'current/300/nee':'Known strict failure'}}));
+  const inputs=['off','term','proof-testing'].map(t=>input('a',t,{validation_failures:{'current/nee':'Known strict failure'}}));
   const groups=['off','term','proof-testing'].map((t,i)=>group('a',t,[i+1,i+1]));
   const c=await evaluate('corpus-runtime-cdf',inputs,groups);
   assert.deepEqual(find(c,'cdf_points').map(p=>p.datum.mode),['Congruence']);
@@ -183,4 +183,30 @@ test('disequality statuses identify missing configurations without valid plotted
   const result=await evaluate('disequality-runtime',treatments.map(t=>input('a',t)),[]);
   for(const label of ['DE · Disegg','EE · Egg','NEE · Egg','OEE · Egg','NEE · Egglog'])
     assert.ok(find(result,'absolute_status').some(m=>m.datum.summary.startsWith(label+': ')));
+});
+
+test('all figures use the bound original row IDs rather than a raw tail or recorded timeout',async()=>{
+  for(const name of ['disequality-runtime','math-runtime','math-memory','corpus-runtime-cdf','corpus-memory-cdf']) {
+    const treatments=name.startsWith('corpus')?['off','term','proof-testing']:
+      name.startsWith('math')?['egg','egg-proof-testing','off','proof-testing']:['off'];
+    const groups=treatments.map((t,i)=>group('a',t,[i+1,1000,i+1]));
+    for(const g of groups) {
+      g.samples[0].timeout_sec=600;
+      g.samples[2].timeout_sec=120;
+    }
+    const inputs=treatments.map(t=>input('a',t,{selected_row_indices:[0,2]}));
+    const result=await evaluate(name,inputs,groups);
+    if(name.startsWith('corpus'))
+      assert.deepEqual(find(result,'cdf_points').map(p=>p.datum.ratio),[2,3]);
+    else
+      assert.deepEqual(find(result,'absolute_means').map(p=>p.datum.mean),treatments.map((_,i)=>i+1));
+    const empty=await evaluate(name,inputs.map(i=>({...i,selected_row_indices:[]})),groups);
+    if(name.startsWith('corpus')) {
+      assert.equal(find(empty,'cdf_points').length,0);
+      assert.match(empty.svg,/unresolved baseline 1/);
+    } else {
+      assert.equal(find(empty,'absolute_runs').length,0);
+      assert.match(empty.svg,/0\/2 observations/);
+    }
+  }
 });

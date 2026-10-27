@@ -47,6 +47,11 @@ nor modifies prepared input bytes. It uses `--proof-testing`, while ordinary
 source validation checks the captured native output contract. Neither command is
 an implicit prerequisite of collection or cache-only rendering.
 
+Memory exhaustion and timeouts record safety deferrals and continue independent
+inputs; failed resource setup or process control halts validation. Semantic proof
+failures veto checked results for the same input, executable and encoding across
+timeouts, until a later strict success clears them.
+
 The recipe tests use pinned fixtures and fake tools; running them does not acquire
 sources or rebuild author toolchains. The legacy single-fixture materializer and
 SPEQ recorder are also located here, independently of the prepared population.

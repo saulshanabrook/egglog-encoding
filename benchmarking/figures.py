@@ -20,6 +20,8 @@ from rich.console import Console
 from scipy import stats
 
 from benchmarks.reproduction.corpus import MANIFEST_RELATIVE_PATH, VALIDATION_POLICY, load_manifest
+from benchmarks.reproduction.native import NATIVE_ALLOCATION_FAILURE
+from native_memory import NATIVE_LIMIT_BYTES
 
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment
 from .models import BenchmarkEndpoint, EndpointRequest, FileSpec, ResolvedTarget, validate_unique_file_identities
@@ -69,7 +71,7 @@ class FigureInventory(TypedDict):
     unavailable_cases: list[dict[str, Any]]
 
 
-def _figure_inventory(root: Path, timeout_sec: int, selected: Sequence[FileSpec] | None = None) -> FigureInventory:
+def _figure_inventory(root: Path, selected: Sequence[FileSpec] | None = None) -> FigureInventory:
     """Project saved corpus metadata without collecting or regenerating inputs."""
 
     directory = (root / MANIFEST_RELATIVE_PATH).parent.resolve()
@@ -106,17 +108,15 @@ def _figure_inventory(root: Path, timeout_sec: int, selected: Sequence[FileSpec]
         }
     for outcome in manifest.outcomes:
         item = workloads.get((outcome["file_sha256"], outcome["fact_directory_sha256"]))
-        if (
-            item is None
-            or outcome["kind"] != "validation"
-            or outcome["policy"] != VALIDATION_POLICY
-            or outcome["timeout_sec"] != timeout_sec
-        ):
+        if item is None or outcome["kind"] != "validation" or outcome["policy"] != VALIDATION_POLICY:
             continue
-        key = f"{outcome['binary_sha256']}/{timeout_sec}/{outcome['disequality_encoding']}"
+        key = f"{outcome['binary_sha256']}/{outcome['disequality_encoding']}"
         if outcome["status"] == "success":
             item["validation_failures"].pop(key, None)
-        else:
+        elif outcome["reason"] not in (
+            NATIVE_ALLOCATION_FAILURE,
+            f"timed out after {outcome['timeout_sec']:g} seconds",
+        ):
             item["validation_failures"][key] = outcome["reason"] or "Strict proof validation failed"
     return {
         "workloads": list(workloads.values()),
@@ -270,7 +270,10 @@ def render_figures(
             for treatment in figure.treatments:
                 physical = file.for_engine(TREATMENT_SPECS[treatment].engine)
                 rows = grouped.latest_records(
-                    CacheKey.for_endpoint(BenchmarkEndpoint(target, treatment), file, config.timeout_sec), config.rounds
+                    CacheKey.for_endpoint(BenchmarkEndpoint(target, treatment), file),
+                    config.rounds,
+                    config.timeout_sec,
+                    NATIVE_LIMIT_BYTES,
                 )
                 incomplete += len(rows) < config.rounds or any(row.record["status"] != "success" for row in rows)
                 selected_inputs.append(
@@ -341,9 +344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cwd = Path.cwd()
         figures = resolve_figures(config, args.names, cwd)
-        inventory = _figure_inventory(
-            ROOT, config.timeout_sec, tuple(dict.fromkeys(file for figure in figures for file in figure.files))
-        )
+        inventory = _figure_inventory(ROOT, tuple(dict.fromkeys(file for figure in figures for file in figure.files)))
         target_request = parse_target(str(args.target))
         if not target_request.source:
             raise ValueError("figures requires a source target, not a cached label lookup")

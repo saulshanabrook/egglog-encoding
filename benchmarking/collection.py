@@ -192,12 +192,12 @@ def plan_collection(
         for file in files:
             for endpoint in endpoints:
                 physical_file = file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine)
-                key = CacheKey.for_endpoint(endpoint, file, timeout_sec)
+                key = CacheKey.for_endpoint(endpoint, file)
                 cells.setdefault(key, (endpoint, physical_file))
     if not cells:
         return ()
 
-    selected = store.selected_statuses_for_keys(tuple(cells), rounds)
+    selected = store.selected_statuses_for_keys(tuple(cells), rounds, timeout_sec)
     runs_by_target: dict[ResolvedTarget, list[BenchmarkRunPlan]] = {}
     for key, (endpoint, file) in cells.items():
         cached = selected[key]
@@ -443,7 +443,6 @@ def label_has_enough_rows(
             target.binary_sha256_for(endpoint.treatment),
             file_spec.sha256,
             endpoint.treatment,
-            timeout_sec,
             file_spec.fact_directory_sha256,
             endpoint.disequality_encoding,
         )
@@ -451,7 +450,7 @@ def label_has_enough_rows(
         for logical_file in (files_by_endpoint[endpoint] if files_by_endpoint is not None else files)
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
-    selected = store.selected_statuses_for_keys(keys, rounds)
+    selected = store.selected_statuses_for_keys(keys, rounds, timeout_sec)
     return all(any(status != "success" for status in selected[key]) or len(selected[key]) >= rounds for key in keys)
 
 
@@ -618,7 +617,7 @@ def flat_report_record(
     """Construct the complete persisted record for one observation."""
 
     result = observation.result
-    return {
+    record: ReportRecord = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "started_at": started_at,
         "status": result.status,
@@ -643,6 +642,9 @@ def flat_report_record(
         "error_message": result.error.message if result.error is not None else None,
         "timing_summary": observation.timing_summary,
     }
+    if result.error is not None and result.error.memory_limit_bytes is not None:
+        record["error_memory_limit_bytes"] = result.error.memory_limit_bytes
+    return record
 
 
 class CollectionETAColumn(ProgressColumn):
@@ -661,13 +663,11 @@ class CollectionETAColumn(ProgressColumn):
         self.durations: dict[CacheKey, list[float]] = {}
         self.active: tuple[CacheKey, float] | None = None
         for target, run in runs:
-            key = CacheKey.for_endpoint(
-                BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file, timeout_sec
-            )
+            key = CacheKey.for_endpoint(BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file)
             self.remaining[key] = run.missing_observations
             self.durations[key] = [
                 wall
-                for row in store.latest_records(key, run.required_rows)
+                for row in store.latest_records(key, run.required_rows, timeout_sec)
                 if row.record["status"] == "success"
                 and (wall := row.record["wall_sec"]) is not None
                 and isfinite(wall)
@@ -738,7 +738,7 @@ def collect_rows(
         for round_index in range(max_deficit):
             for target, run in runs:
                 key = CacheKey.for_endpoint(
-                    BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file, timeout_sec
+                    BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file
                 )
                 if round_index >= run.missing_observations or key in stopped:
                     continue

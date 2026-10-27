@@ -535,7 +535,7 @@ def test_cached_failure_stops_only_its_condition_until_forced(tmp_path: Path, st
     (plan,) = collection.plan_collection(store, benchmark_requests, {target.request: target}, 3, 120, False)
     assert plan.total_missing_observations == 0
     assert collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 120)
-    assert not collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 121)
+    assert collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 121) is (status == "failure")
 
     endpoints = (
         models.EndpointRequest(target.request, "off"),
@@ -588,6 +588,46 @@ def test_fresh_failure_stops_only_its_condition(
     assert calls.count(("file.egg", "proofs")) == calls.count(("other.egg", "off")) == 3
     assert store.row_count == 7
     assert [row["status"] for row in store.records].count(status) == 1
+
+
+@pytest.mark.parametrize("known_cap", [None, 8 * 1024**3])
+def test_raised_memory_limit_retries_only_missing_rows_and_records_new_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, known_cap: int | None
+) -> None:
+    old = make_record(1, started_at="2026-07-04T12:00:01Z", status="failure")
+    old["error_exit_code"] = 86
+    if known_cap is not None:
+        old["error_memory_limit_bytes"] = known_cap
+    report = tmp_path / "report.jsonl"
+    write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z"), old)
+    store = ReportStore(report)
+    target = make_target(binary_path=tmp_path / "engine")
+    requests = (collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (FILE_SPEC,)),)
+    (plan,) = collection.plan_collection(store, requests, {target.request: target}, 3, 120, False)
+    assert plan.runs[0].cached_statuses == ("success",)
+    assert plan.total_missing_observations == 2
+    calls = []
+
+    def observe(*args: object) -> collection.ProcessObservation:
+        calls.append(args)
+        return collection.ProcessObservation(
+            processes.TimingResult(
+                "failure",
+                processes.TimingRow(wall_sec=1),
+                processes.ErrorRow("allocation failed", exit_code=86, memory_limit_bytes=processes.NATIVE_LIMIT_BYTES),
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(collection, "run_process", observe)
+    collection.collect_rows(store, plan, 120, Console(file=io.StringIO()))
+    assert len(calls) == 1 and store.row_count == 3
+    assert store.records[-1]["error_memory_limit_bytes"] == processes.NATIVE_LIMIT_BYTES
+    assert "error_memory_limit_bytes" not in store.records[0]
+    (repeated,) = collection.plan_collection(store, requests, {target.request: target}, 3, 120, False)
+    assert repeated.total_missing_observations == 0
+    collection.collect_rows(store, repeated, 120, Console(file=io.StringIO()))
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("width", [80, 120])
@@ -657,8 +697,8 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
     (plan,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, False)
     collection.preflight_collection(plan, 120)
     collection.collect_rows(store, plan, 120, Console(stderr=True))
-    key = CacheKey.for_endpoint(selected_endpoint, file_spec, 120)
-    selected = store.selected_statuses_for_keys((key,), 1)[key]
+    key = CacheKey.for_endpoint(selected_endpoint, file_spec)
+    selected = store.selected_statuses_for_keys((key,), 1, 120)[key]
 
     persisted = json.loads(report.read_text(encoding="utf-8"))
     assert "row_index" not in persisted
@@ -785,7 +825,7 @@ def test_collected_row_uses_selected_engine_binary_and_hash(
 
     assert observed_binaries == [egg_binary]
     assert store.records[0]["binary_sha256"] == "sha256:egg"
-    assert CacheKey.for_endpoint(selected_endpoint, file_spec, 120).binary_sha256 == "sha256:egg"
+    assert CacheKey.for_endpoint(selected_endpoint, file_spec).binary_sha256 == "sha256:egg"
 
 
 def test_collect_rows_rejects_unsupported_timing_summary_before_append(
@@ -1120,13 +1160,13 @@ def test_collection_eta_uses_cached_durations_without_cached_elapsed(
     estimate = collection.CollectionETAColumn(ReportStore(report), ((target, first), (target, second)), 120)
     assert task.elapsed == 0
     assert str(estimate.render(task)) == "ETA ~0:00:50"
-    key = CacheKey.for_endpoint(endpoint(target), first.file, 120)
+    key = CacheKey.for_endpoint(endpoint(target), first.file)
     estimate.active = (key, 0)
     clock[0] += 4
     assert str(estimate.render(task)) == "ETA ~0:00:46"
     estimate.complete(key, processes.TimingResult("success", processes.TimingRow(wall_sec=6), None))
     assert str(estimate.render(task)) == "ETA ~0:00:32"
-    second_key = CacheKey.for_endpoint(endpoint(target), second.file, 120)
+    second_key = CacheKey.for_endpoint(endpoint(target), second.file)
     estimate.complete(second_key, processes.TimingResult("failure", processes.TimingRow(), None))
     assert str(estimate.render(task)) == "ETA ~0:00:08"
 

@@ -192,8 +192,10 @@ def _selected_observations(
     selected: dict[_ObservationKey, tuple[IndexedRecord, ...]] = {}
     for endpoint_order, endpoint in enumerate((comparison.baseline, comparison.candidate)):
         for file_order, file in enumerate(comparison.files):
-            key = CacheKey.for_endpoint(endpoint, file, comparison.timeout_sec)
-            selected[(endpoint_order, file_order)] = store.latest_records(key, comparison.rounds)
+            key = CacheKey.for_endpoint(endpoint, file)
+            selected[(endpoint_order, file_order)] = store.latest_records(
+                key, comparison.rounds, comparison.timeout_sec, comparison.memory_limit_bytes
+            )
     return selected
 
 

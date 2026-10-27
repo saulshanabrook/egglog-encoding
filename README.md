@@ -358,7 +358,7 @@ the command. `./bench.py figures --help` lists configured figure names. Outputs
 default to `figures/eval/`; `--output-dir ../extended-egglog-paper/figures/eval`
 places the PDFs at the paper's expected paths. See the figure guide for the flat
 JSON catalog, observation identities, statistical protocol, and provenance receipts.
-Use `./bench.py figures --rounds 3 --report /tmp/figures-quick.jsonl` for a shorter
+Use `./bench.py figures --rounds 3` for a shorter
 run without changing the ten-run production catalog.
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
@@ -555,21 +555,33 @@ Cache reuse is keyed by:
 - binary SHA-256;
 - file SHA-256;
 - fact-directory SHA-256;
-- treatment;
-- disequality encoding; and
-- timeout.
+- treatment; and
+- disequality encoding.
 
 Target source, path, git revision, dirty state, labels, and display paths are
-provenance rather than cache-key dimensions. The runner selects the newest
-`--rounds` rows for each exact endpoint/file, ordering first by `started_at` and
+provenance rather than cache-key dimensions. Resource bounds do not partition
+successful observations. The runner selects the newest applicable `--rounds`
+rows for each exact endpoint/file, ordering first by `started_at` and
 then by physical JSONL order. Without `--force-run`, it appends only missing
 rows. With `--force-run`, it appends a full fresh set and then selects the
 newest rows.
 
 A failed or timed-out attempt ends the remaining repetitions of that exact
 workload and endpoint; independent conditions continue. A compatible selected
-cached failure also prevents automatic retries. Use `--force-run` to explicitly
+cached ordinary error also prevents automatic retries. A timeout or native
+allocation failure is retried only when its corresponding bound increases;
+successful rows still count toward the requested total. A success remains
+reusable at the same or a higher timeout. After lowering the timeout, its
+recorded deadline or completed wall time must fit. Use `--force-run` to explicitly
 retry failed conditions; earlier observations remain in the append-only cache.
+
+Keep `.reports.jsonl` as the active append-only cache when changing resource
+bounds. New native allocation failures record the configured requested allowance
+in `error_memory_limit_bytes`; this is not RSS or necessarily the effective
+address-space limit under a stricter inherited limit. Older allocation failures
+without a recorded allowance do not block collection. If another observation is
+needed, a new allocation failure records the current allowance and prevents
+repeated retries at that bound.
 
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
@@ -603,7 +615,7 @@ incomplete instead of averaging only successful rows.
 This tool writes the cache and grouped data; figures read the grouped data
 directly. The codec rejects old schema versions and requires successful rows
 from timing-summary-capable engines to contain timing data. It trusts the tool's typed writer rather than repeating the
-`TypedDict` as runtime field-by-field validation. A schema change intentionally
+`TypedDict` as runtime field-by-field validation. An incompatible schema change intentionally
 invalidates existing caches: move or remove an incompatible report and
 recompute it.
 

@@ -62,8 +62,11 @@ Each figure requests the product of its own files and treatments. Collection
 merges identical requests across figures into one plan and one progress display.
 Runtime and memory views therefore share launches. It reuses compatible cached
 observations and collects only missing observations; there is no separate
-cached/render-only mode. Cached failed conditions are retained rather than
-repeated automatically. Repeating an unchanged completed invocation launches no
+cached/render-only mode. Ordinary errors remain cached. Memory-limit and timeout
+failures are retried only after the corresponding bound increases. Successful
+runs remain reusable across bound changes; after lowering the timeout, their
+recorded timeout or completed wall time must fit the new deadline.
+Repeating an unchanged completed invocation launches no
 additional measurements and renders the requested images again.
 
 The default source is this checkout with label `figures`. `--target figures=@main`
@@ -89,14 +92,14 @@ belongs to the current grouped artifact; raw label-only lookup remains based on
 recorded observations. Source targets are checked and rebound on each figure
 invocation. An ordinary comparison that assigns the same label/engine to two
 different binaries is rejected before launch. The raw
-`.reports.jsonl` remains append-only. The runner selects observation row IDs
-through the shared typed report API, using the current executable, physical
-input/facts hashes, treatment, encoding and timeout. The authored Vega-Lite
-specifications use those IDs from the grouped JSON. They never borrow missing
-measurements from an older executable.
+`.reports.jsonl` remains append-only. The shared selector matches the current
+executable, physical input/facts hashes, treatment and encoding, then selects
+rows applicable to the requested resource bounds. It binds their original row
+indices into the Vega-Lite specifications. They never borrow missing measurements
+from an older executable.
 Native disequality `.in` and logical Egglog `.egg` inputs remain distinct.
 
-The shared selector chooses the newest requested N rows per identity, ordered by
+The shared selector chooses the newest requested N applicable rows per identity, ordered by
 timestamp and physical row index, including failures. It retains good raw points but
 reports an estimate only when all N rows succeeded and the metric is finite.
 Partial observations, timeouts and missing RSS remain explicit. With N >= 2,
@@ -129,8 +132,9 @@ summaries, not population confidence bands.
 Corpus metadata is projected lazily for selected published inputs. Aliases,
 preparation blockers and exact-identity strict-validation failures are retained.
 The 156 unavailable source cases are separate from saved replay and baseline
-counts. A historical strict-proof failure vetoes the checked-proof series only,
-not congruence-only measurements. Custom non-corpus figures require no corpus
+counts. Strict-proof errors veto the checked-proof series across resource bounds;
+resource-limit outcomes stay in observation reporting. Congruence-only measurements
+remain independent of strict-proof validation. Custom non-corpus figures require no corpus
 validation. Collection never acquires sources, regenerates inputs or invokes
 separate validators; those remain under
 [benchmark reproduction](../benchmarks/reproduction/README.md).
@@ -147,7 +151,7 @@ relative assets from the authored specification's directory.
 
 Each invocation renders temporary PDF/SVG/PNG files and replaces the previous
 images after all three succeed. The raw JSONL and grouped JSON retain observation
-provenance, including source/binary hashes, statuses and row IDs. Preserve these
+provenance, including recorded resource bounds, source/binary hashes, statuses and row IDs. Preserve these
 with the catalog, authored specifications, validated Math12 boundary evidence and
 disequality contradiction-agreement results when handing off measurements.
 Fill paper result sentences only from validated measurements, keeping failed

@@ -118,7 +118,7 @@ def test_native_cache_and_plan_use_physical_input_identity(tmp_path: Path) -> No
     record["timing_summary"] = None
     store.append(record)
     store = ReportStore(store.path)
-    assert CacheKey.for_endpoint(endpoints[1], logical, 120).file_sha256 == native.sha256
+    assert CacheKey.for_endpoint(endpoints[1], logical).file_sha256 == native.sha256
     (plan,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, False)
     assert [(run.treatment, run.missing_observations) for run in plan.runs] == [
         ("egg-de", 1),

@@ -36,6 +36,7 @@ class EvalLiveModule(Protocol):
 
 
 _PYTHON_MODULES = (
+    "native_memory.py",
     "benchmarking/__init__.py",
     "benchmarking/engines.py",
     "benchmarking/models.py",

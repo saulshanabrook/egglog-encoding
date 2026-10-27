@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from benchmarking.figures import _figure_inventory
+from benchmarks.reproduction.native import NATIVE_ALLOCATION_FAILURE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -59,7 +60,7 @@ def corpus_fixture(root: Path) -> dict[str, Any]:
 
 def test_inventory_keeps_source_blockers_separate(tmp_path: Path) -> None:
     corpus = corpus_fixture(tmp_path)
-    inventory = _figure_inventory(tmp_path, 300)
+    inventory = _figure_inventory(tmp_path)
     assert len(inventory["workloads"]) == 3
     assert inventory["unavailable_cases"][0]["reason"] == "Source dependency is unavailable"
     assert inventory["workloads"][0]["file_sha256"] == corpus["workloads"][0]["sha256"]
@@ -67,7 +68,7 @@ def test_inventory_keeps_source_blockers_separate(tmp_path: Path) -> None:
     assert not (tmp_path / "benchmarks/local/figure-inventory.json").exists()
     corpus["cases"][-1]["reason"] = "New source evidence"
     (tmp_path / "benchmarks/corpus/manifest.json").write_text(json.dumps(corpus))
-    assert _figure_inventory(tmp_path, 300)["unavailable_cases"][0]["reason"] == "New source evidence"
+    assert _figure_inventory(tmp_path)["unavailable_cases"][0]["reason"] == "New source evidence"
 
 
 def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) -> None:
@@ -87,12 +88,48 @@ def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) ->
     path = tmp_path / "benchmarks/corpus/.local/outcomes.json"
     path.parent.mkdir()
     path.write_text(json.dumps([outcome]))
-    assert _figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {
-        "sha256:engine/300/nee": "Strict replay failed",
+    assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {
+        "sha256:engine/nee": "Strict replay failed",
     }
-    assert _figure_inventory(tmp_path, 120)["workloads"][0]["validation_failures"] == {}
-    path.write_text(json.dumps([outcome, {**outcome, "status": "success"}]))
-    assert _figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {}
+    path.write_text(json.dumps([outcome, {**outcome, "timeout_sec": 120, "reason": "timed out after 120 seconds"}]))
+    assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {
+        "sha256:engine/nee": "Strict replay failed",
+    }
+    path.write_text(json.dumps([outcome, {**outcome, "status": "success", "reason": None, "timeout_sec": 120}]))
+    assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {}
+
+
+@pytest.mark.parametrize(
+    "reason,resource",
+    [
+        (NATIVE_ALLOCATION_FAILURE, True),
+        ("timed out after 300 seconds", True),
+        ("timed out after 120 seconds", False),
+        ("timed out after 300 seconds; proof replay failed", False),
+        (NATIVE_ALLOCATION_FAILURE + "; proof replay failed", False),
+        ("Proof failed under memory limit", False),
+    ],
+)
+def test_legacy_resource_outcomes_do_not_veto_checked_results(tmp_path: Path, reason: str, resource: bool) -> None:
+    item = corpus_fixture(tmp_path)["workloads"][0]
+    outcome = {
+        "file_sha256": item["sha256"],
+        "fact_directory_sha256": "",
+        "binary_sha256": "sha256:engine",
+        "timeout_sec": 300,
+        "disequality_encoding": "nee",
+        "kind": "validation",
+        "policy": "proof-testing-v1",
+        "status": "failure",
+        "reason": reason,
+    }
+    path = tmp_path / "benchmarks/corpus/.local/outcomes.json"
+    path.parent.mkdir()
+    original = json.dumps([outcome])
+    path.write_text(original)
+    expected = {} if resource else {"sha256:engine/nee": reason}
+    assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == expected
+    assert path.read_text() == original
 
 
 def test_metadata_only_validates_selected_corpus_inputs(tmp_path: Path) -> None:
@@ -108,19 +145,15 @@ def test_metadata_only_validates_selected_corpus_inputs(tmp_path: Path) -> None:
     published = manifest.read_bytes()
     (directory / corpus["workloads"][1]["file"]).unlink()
     selected = FileSpec(item["file"], (directory / item["file"]).resolve(), item["sha256"])
-    inventory = _figure_inventory(tmp_path, 300, [selected])
+    inventory = _figure_inventory(tmp_path, [selected])
     assert len(inventory["workloads"]) == 1
     assert inventory["workloads"][0]["label"] == "math"
     assert inventory["workloads"][0]["family"] == "math"
     assert manifest.read_bytes() == published
     with pytest.raises(ValueError, match="unregistered"):
-        _figure_inventory(tmp_path, 300, [FileSpec(item["file"], selected.absolute_path, "changed")])
+        _figure_inventory(tmp_path, [FileSpec(item["file"], selected.absolute_path, "changed")])
     # Matching another published file's bytes does not authorize replacing
     # this path's pinned workload identity.
     with pytest.raises(ValueError, match="unregistered"):
-        _figure_inventory(
-            tmp_path, 300, [FileSpec(item["file"], selected.absolute_path, corpus["workloads"][1]["sha256"])]
-        )
-    assert (
-        _figure_inventory(tmp_path, 300, [FileSpec("custom.egg", tmp_path / "custom.egg", "custom")])["workloads"] == []
-    )
+        _figure_inventory(tmp_path, [FileSpec(item["file"], selected.absolute_path, corpus["workloads"][1]["sha256"])])
+    assert _figure_inventory(tmp_path, [FileSpec("custom.egg", tmp_path / "custom.egg", "custom")])["workloads"] == []

@@ -125,8 +125,12 @@ or modify the JSONL.
   in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
-- Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory
-  SHA-256, treatment, disequality encoding, and timeout.
+- Cache identity is binary SHA-256, file SHA-256, fact-directory SHA-256,
+  treatment and disequality encoding. Reuse successful observations across
+  resource bounds; a lower timeout requires an observed wall time that fits.
+  Retry cached resource failures only when their own bound increases; ordinary
+  errors remain cached. Keep one append-only report, retaining original limits
+  and optional allocation-failure bounds without rewriting old observations.
 - The baseline and candidate must have different endpoint cache identities
   (binary SHA-256, treatment, and disequality encoding). They may use the same
   binary when treatment or encoding differs.

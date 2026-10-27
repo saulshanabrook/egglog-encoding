@@ -20,7 +20,7 @@ def test_encoding_endpoints_and_cached_results_are_distinct(tmp_path: Path) -> N
     candidate = models.BenchmarkEndpoint(target, "off", "ee")
     file = models.FileSpec("test.egg", tmp_path / "test.egg", "sha256:file")
     models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
-    assert CacheKey.for_endpoint(baseline, file, 120) != CacheKey.for_endpoint(candidate, file, 120)
+    assert CacheKey.for_endpoint(baseline, file) != CacheKey.for_endpoint(candidate, file)
     store = ReportStore(tmp_path / "results.jsonl")
     store.append(make_record(0, started_at="2026-09-16T00:00:00Z"))
     requests = tuple(collection.BenchmarkRequest(request, (file,)) for request in (before, after))

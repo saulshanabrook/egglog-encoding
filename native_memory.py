@@ -27,7 +27,7 @@ def native_memory_command(
 
     Only egglog-experimental and egg-math-benchmark accept this option. An older
     binary must reject it at preflight instead of silently running uncapped.
-    Changed cap/environment experiments require a separate report and receipt.
+    Allocation failures record this limit; increasing it permits a cached retry.
     """
     args = list(command)
     if limit_bytes is not None:
