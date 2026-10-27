@@ -1845,6 +1845,13 @@ impl MergeFn {
                 if let Some(table) = egraph.external_write_table(*id) {
                     write_deps.insert(table);
                 }
+                // Canonicalizing a constructor in a merge reads its view before
+                // inserting on a miss. Keep that view available and merge its
+                // pending rows before this callback, just like a Function lookup.
+                if let Some(plan) = egraph.set_if_empty_plan(*id, args.len()) {
+                    read_deps.insert(plan.table);
+                    write_deps.insert(plan.table);
+                }
             }
             Function(func, args) => {
                 read_deps.insert(egraph.funcs[*func].table);
