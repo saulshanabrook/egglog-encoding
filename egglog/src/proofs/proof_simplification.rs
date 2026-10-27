@@ -346,6 +346,77 @@ mod tests {
     use crate::{EGraph, TermDag};
 
     #[test]
+    fn simplify_merge_preserves_its_conclusion() {
+        for merge in ["old", "new", "(Choose old new)"] {
+            let mut egraph = EGraph::default();
+            let source = format!(
+                "(datatype E (A) (B) (Choose E E))
+                 (function f (i64) E :merge {merge})
+                 (set (f 0) (A))
+                 (set (f 0) (B))"
+            );
+            let parsed = egraph.parse_program(None, &source).unwrap();
+            let program = egraph
+                .process_program_internal(parsed, false)
+                .unwrap()
+                .resolved;
+            let mut dag = TermDag::default();
+            let key = dag.lit(crate::ast::Literal::Int(0));
+            let old = dag.app("A".into(), vec![]);
+            let new = dag.app("B".into(), vec![]);
+            let old_view = dag.app("f".into(), vec![key, old]);
+            let new_view = dag.app("f".into(), vec![key, new]);
+            let merged = match merge {
+                "old" => old,
+                "new" => new,
+                _ => dag.app("Choose".into(), vec![old, new]),
+            };
+            let merged_view = dag.app("f".into(), vec![key, merged]);
+            let mut store = ProofStore::new(dag, Default::default(), Default::default());
+            let old_proof = store.add_proof(Proof {
+                proposition: Proposition::new(old_view, old_view),
+                justification: Justification::Fiat,
+            });
+            let old_proof = store.add_proof(Proof {
+                proposition: Proposition::new(old_view, old_view),
+                justification: Justification::Sym(old_proof),
+            });
+            let new_proof = store.add_proof(Proof {
+                proposition: Proposition::new(new_view, new_view),
+                justification: Justification::Fiat,
+            });
+            let invalid = store.add_proof(Proof {
+                proposition: Proposition::new(old_view, new_view),
+                justification: Justification::MergeFn {
+                    function: "f".into(),
+                    old_proof,
+                    new_proof,
+                },
+            });
+            assert!(
+                store
+                    .check_proof(invalid, &program)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("not established by merge function")
+            );
+            let expected = Proposition::new(merged_view, merged_view);
+            let proof = store.add_proof(Proof {
+                proposition: expected.clone(),
+                justification: Justification::MergeFn {
+                    function: "f".into(),
+                    old_proof,
+                    new_proof,
+                },
+            });
+            assert_eq!(store.check_proof(proof, &program).unwrap(), expected);
+            let simplified = store.simplify(proof);
+            assert_eq!(store.get(simplified).proposition, expected);
+            assert_eq!(store.check_proof(simplified, &program).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn simplify_symmetry_preserves_shared_transitivity_dags() {
         const DEPTH: usize = 12;
         let mut egraph = EGraph::default();
