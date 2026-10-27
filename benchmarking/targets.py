@@ -19,7 +19,7 @@ from typing import Literal
 from rich.console import Console
 from rich.text import Text
 
-from .engines import TREATMENT_SPECS, Engine, Treatment, validate_engine_workload
+from .engines import TREATMENT_SPECS, Engine, Treatment, math_workload_arguments, validate_engine_workload
 from .models import EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
 
 BuildProfile = Literal["release", "profiling"]
@@ -316,7 +316,7 @@ def workload_command(
         validate_engine_workload(file_spec, treatment)
         if specification.engine != "egg":
             return [str(binary_path), str(file_spec.absolute_path), "100000", "10000"]
-        return [str(binary_path), *specification.flags]
+        return [str(binary_path), *specification.flags, *math_workload_arguments(file_spec)]
     return [
         str(binary_path),
         "--mode",
