@@ -143,20 +143,6 @@ def test_comparison_rejects_identical_cache_endpoints() -> None:
         models.ComparisonSpec(endpoint, endpoint, (FILE_SPEC,), 1, 120)
 
 
-def test_endpoint_requests_group_one_shared_target_and_two_distinct_targets() -> None:
-    shared = targets.parse_target(".")
-    baseline = models.EndpointRequest(shared, "off")
-    candidate = models.EndpointRequest(shared, "proofs")
-
-    assert benchmark.group_endpoint_requests(baseline, candidate) == ((shared, (baseline, candidate)),)
-
-    other = models.EndpointRequest(targets.parse_target("@origin/main"), "proofs")
-    assert benchmark.group_endpoint_requests(baseline, other) == (
-        (shared, (baseline,)),
-        (other.target, (other,)),
-    )
-
-
 def test_main_validates_old_report_before_target_resolution(
     monkeypatch: pytest.MonkeyPatch,
     capsys: Any,
@@ -169,7 +155,7 @@ def test_main_validates_old_report_before_target_resolution(
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(
         benchmark,
-        "resolve_targets",
+        "resolve_requests",
         lambda *_args: pytest.fail("an incompatible report must fail before target resolution/build"),
     )
 
@@ -195,8 +181,8 @@ def test_main_reports_interactive_write_oserror(
     monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
     monkeypatch.setattr(
         benchmark,
-        "resolve_targets",
-        lambda groups, *_args: {request: target for request, _endpoints in groups},
+        "resolve_requests",
+        lambda requests, *_args: {request.endpoint.target: target for request in requests},
     )
 
     def fail_write(*_args: object) -> Path:
@@ -224,9 +210,9 @@ def test_main_preflights_both_fresh_targets_before_collecting(
     monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
     monkeypatch.setattr(
         benchmark,
-        "resolve_targets",
-        lambda request_groups, *_args: {
-            request: targets_by_label[request.label or ""] for request, _endpoints in request_groups
+        "resolve_requests",
+        lambda requests, *_args: {
+            request.endpoint.target: targets_by_label[request.endpoint.target.label or ""] for request in requests
         },
     )
     preflighted: list[str] = []
@@ -237,9 +223,9 @@ def test_main_preflights_both_fresh_targets_before_collecting(
         if label == "new":
             raise ValueError("target new does not support --timing-summary")
 
-    monkeypatch.setattr(benchmark, "preflight_collection", fail_new_preflight)
+    monkeypatch.setattr(collection, "preflight_collection", fail_new_preflight)
     monkeypatch.setattr(
-        benchmark,
+        collection,
         "collect_rows",
         lambda *_args: pytest.fail("collection must wait until both targets pass preflight"),
     )
@@ -284,9 +270,13 @@ def test_cached_main_writes_all_samples_but_reports_requested_rounds_from_same_s
     target = make_target(target_label="new-label")
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
-    monkeypatch.setattr(benchmark, "resolve_targets", lambda groups, *_args: {request: target for request, _ in groups})
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_requests",
+        lambda requests, *_args: {request.endpoint.target: target for request in requests},
+    )
     observed: list[GroupedReport] = []
-    original_write = benchmark.write_grouped_report
+    original_write = collection.write_grouped_report
     original_catalog = benchmark.build_report_catalog
 
     def write(snapshot: GroupedReport, destination: Path) -> Path:
@@ -297,10 +287,10 @@ def test_cached_main_writes_all_samples_but_reports_requested_rounds_from_same_s
         assert observed == [snapshot]
         assert comparison.rounds == 5
         assert len(snapshot.records) == 20
-        assert {tuple(group["labels"]) for group in snapshot.data["groups"]} == {("original",)}
+        assert {tuple(group["labels"]) for group in snapshot.data["groups"]} == {("new-label", "original")}
         return original_catalog(snapshot, comparison, detail)
 
-    monkeypatch.setattr(benchmark, "write_grouped_report", write)
+    monkeypatch.setattr(collection, "write_grouped_report", write)
     monkeypatch.setattr(benchmark, "build_report_catalog", catalog)
 
     assert benchmark.main(["--report", str(path), "--rounds", "5", "--timeout-sec", "120", "file.egg"]) == 0
@@ -318,14 +308,18 @@ def test_main_refreshes_grouped_snapshot_after_partial_collection(
     target = make_target()
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
-    monkeypatch.setattr(benchmark, "resolve_targets", lambda groups, *_args: {request: target for request, _ in groups})
-    monkeypatch.setattr(benchmark, "preflight_collection", lambda *_args: None)
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_requests",
+        lambda requests, *_args: {request.endpoint.target: target for request in requests},
+    )
+    monkeypatch.setattr(collection, "preflight_collection", lambda *_args: None)
 
     def collect(store: ReportStore, *_args: object) -> None:
         store.append(make_record(0, started_at="2026-09-30T00:00:00Z", status="failure"))
         raise failure("collection stopped")
 
-    monkeypatch.setattr(benchmark, "collect_rows", collect)
+    monkeypatch.setattr(collection, "collect_rows", collect)
     argv = ["--report", str(path), "--rounds", "1", "--timeout-sec", "120", "file.egg"]
     if failure is KeyboardInterrupt:
         with pytest.raises(KeyboardInterrupt, match="collection stopped"):
@@ -344,7 +338,11 @@ def test_grouped_write_failure_does_not_mask_collection_failure(
     target = make_target()
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
-    monkeypatch.setattr(benchmark, "resolve_targets", lambda groups, *_args: {request: target for request, _ in groups})
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_requests",
+        lambda requests, *_args: {request.endpoint.target: target for request in requests},
+    )
 
     def fail_preflight(*_args: object) -> None:
         raise ValueError("original collection failure")
@@ -352,8 +350,8 @@ def test_grouped_write_failure_does_not_mask_collection_failure(
     def fail_write(*_args: object) -> Path:
         raise PermissionError("snapshot destination unavailable")
 
-    monkeypatch.setattr(benchmark, "preflight_collection", fail_preflight)
-    monkeypatch.setattr(benchmark, "write_grouped_report", fail_write)
+    monkeypatch.setattr(collection, "preflight_collection", fail_preflight)
+    monkeypatch.setattr(collection, "write_grouped_report", fail_write)
     assert benchmark.main(["--report", str(path), "--rounds", "1", "file.egg"]) == 2
     output = capsys.readouterr().err
     assert "could not refresh grouped report" in output
@@ -369,7 +367,9 @@ def test_duplicate_physical_inputs_fail_before_building(tmp_path: Path, monkeypa
         engine_inputs=(("egg-ee", native), ("egg-de", native)),
     )
     monkeypatch.setattr(benchmark, "resolve_files", lambda *args: (logical, native))
-    monkeypatch.setattr(benchmark, "resolve_targets", lambda *args: pytest.fail("must reject before building"))
+    monkeypatch.setattr(
+        collection, "resolve_targets", lambda *args, **kwargs: pytest.fail("must reject before building")
+    )
     assert (
         benchmark.main(
             [

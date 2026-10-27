@@ -31,10 +31,11 @@ def test_same_file_with_different_fact_contents_is_a_distinct_workload(tmp_path:
     workloads.validate_workloads((first, second))
 
 
-def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command", ("prove", "prove-extract"))
+def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path, command: str) -> None:
     prove_file = tmp_path / "prove.egg"
     prove_file.write_text(
-        "; comments may mention (prove ...)\n(datatype Expr)\n(prove (Fact))\n",
+        f"; comments may mention (prove ...)\n(datatype Expr)\n({command} (Fact))\n",
         encoding="utf-8",
     )
 

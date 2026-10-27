@@ -200,6 +200,10 @@ requested endpoint/file already has enough rows. If more rows are required, a
 clean cached git revision can be rebuilt; a label pointing to a dirty checkout
 requires a new `label=SOURCE` request.
 
+Each invocation refreshes its resolved labels in the grouped snapshot, including
+fully cached runs; raw `label=` lookup still follows recorded observations.
+One invocation cannot assign the same label and engine to different binaries.
+
 The baseline and candidate may share a binary, as the default proof-overhead
 comparison does, but their complete cache identities—binary SHA-256 and
 treatment and disequality encoding—must differ.
@@ -309,7 +313,7 @@ ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads so the selected treatment controls whether
+`(check ...)` or `(extract ...)` in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they

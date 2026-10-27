@@ -19,24 +19,18 @@ from rich.console import Console
 from rich.text import Text
 
 from .collection import (
-    CollectionPlan,
-    build_collection_plan,
-    collect_rows,
-    emit_collection_plan,
-    preflight_collection,
-    resolve_targets,
+    BenchmarkRequest,
+    collect,
+    plan_collection,
+    resolve_requests,
 )
-from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
+from .engines import TREATMENTS, Treatment
 from .models import (
     BenchmarkEndpoint,
     ComparisonSpec,
     DetailLevel,
     EndpointRequest,
-    ResolvedTarget,
-    TargetRequest,
-    validate_unique_file_identities,
 )
-from .reports.grouped import grouped_report_path, write_grouped_report
 from .reports.interactive import interactive_report_path, open_interactive_report, write_interactive_report
 from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
@@ -167,42 +161,6 @@ def endpoint_requests(args: argparse.Namespace) -> tuple[EndpointRequest, Endpoi
     return baseline, candidate
 
 
-def group_endpoint_requests(
-    baseline: EndpointRequest,
-    candidate: EndpointRequest,
-) -> tuple[tuple[TargetRequest, tuple[EndpointRequest, ...]], ...]:
-    """Group endpoint requests by target while preserving baseline-first order."""
-
-    grouped: dict[TargetRequest, list[EndpointRequest]] = {}
-    for endpoint in (baseline, candidate):
-        grouped.setdefault(endpoint.target, []).append(endpoint)
-    return tuple((target, tuple(endpoints)) for target, endpoints in grouped.items())
-
-
-def collection_plans(
-    store: ReportStore,
-    comparison: ComparisonSpec,
-    force_run: bool,
-) -> tuple[CollectionPlan, ...]:
-    """Group exact endpoints by resolved target so each target is preflighted once."""
-
-    endpoints_by_target: dict[ResolvedTarget, list[BenchmarkEndpoint]] = {}
-    for endpoint in (comparison.baseline, comparison.candidate):
-        endpoints_by_target.setdefault(endpoint.target, []).append(endpoint)
-    return tuple(
-        build_collection_plan(
-            store,
-            target,
-            tuple(endpoints),
-            comparison.files,
-            comparison.rounds,
-            comparison.timeout_sec,
-            force_run,
-        )
-        for target, endpoints in endpoints_by_target.items()
-    )
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the ordinary benchmark command."""
 
@@ -220,15 +178,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # materialization can build or run anything.
         store = ReportStore(report_path)
         files = resolve_files(args.files, invocation_cwd, args.fact_directory)
-        for endpoint in (baseline_request, candidate_request):
-            physical_files = tuple(file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine) for file in files)
-            validate_unique_file_identities(physical_files)
-            for file in physical_files:
-                validate_engine_workload(file, endpoint.treatment)
-        resolved_targets = resolve_targets(
-            group_endpoint_requests(baseline_request, candidate_request),
+        requests = tuple(BenchmarkRequest(endpoint, files) for endpoint in (baseline_request, candidate_request))
+        resolved_targets = resolve_requests(
+            requests,
             store,
-            files,
             int(args.rounds),
             int(args.timeout_sec),
             bool(args.force_run),
@@ -251,25 +204,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             rounds=int(args.rounds),
             timeout_sec=int(args.timeout_sec),
         )
-        # Preflight every fresh target before any measured observation can be
-        # appended, then execute the already-validated plans in order.
-        plans = collection_plans(store, comparison, bool(args.force_run))
-        collection_complete = False
-        try:
-            for plan in plans:
-                preflight_collection(plan, comparison.timeout_sec)
-            for plan in plans:
-                emit_collection_plan(console, plan)
-                collect_rows(store, plan, comparison.timeout_sec, console)
-            collection_complete = True
-        finally:
-            try:
-                grouped = store.grouped_report()
-                write_grouped_report(grouped, grouped_report_path(report_path))
-            except Exception as error:
-                if collection_complete:
-                    raise
-                console.print(Text.assemble(("error:", "red"), " could not refresh grouped report: ", str(error)))
+        plans = plan_collection(
+            store, requests, resolved_targets, comparison.rounds, comparison.timeout_sec, bool(args.force_run)
+        )
+        grouped = collect(store, plans, requests, resolved_targets, comparison.timeout_sec, console)
 
         catalog = build_report_catalog(grouped, comparison, cast(DetailLevel, str(args.detail)))
         if args.format == "markdown":
