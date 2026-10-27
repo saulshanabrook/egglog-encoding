@@ -8,7 +8,7 @@ queries. Pair statistics and presentation live above this persistence boundary.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -249,8 +249,12 @@ class ReportStore:
             handle.write(encoded + b"\n")
         self._index(indexed)
 
-    def grouped_report(self) -> GroupedReport:
-        """Freeze every indexed observation and derive current aliases from JSONL alone."""
+    def grouped_report(self, label_bindings: Mapping[tuple[str, Engine], str] | None = None) -> GroupedReport:
+        """Freeze observations and refresh aliases from any targets resolved this invocation.
+
+        Bindings override historical labels without changing sample provenance or
+        adding observations when the current binary is already fully cached.
+        """
 
         latest: dict[tuple[str, Engine], IndexedRecord] = {}
         for label, rows in self._by_label.items():
@@ -258,9 +262,12 @@ class ReportStore:
                 identity = (label, TREATMENT_SPECS[row.record["treatment"]].engine)
                 if identity not in latest or row.order_key > latest[identity].order_key:
                     latest[identity] = row
+        bindings = {identity: row.record["binary_sha256"] for identity, row in latest.items()}
+        if label_bindings is not None:
+            bindings.update(label_bindings)
         labels: dict[tuple[Engine, str], list[str]] = {}
-        for (label, engine), row in latest.items():
-            labels.setdefault((engine, row.record["binary_sha256"]), []).append(label)
+        for (label, engine), binary_sha256 in bindings.items():
+            labels.setdefault((engine, binary_sha256), []).append(label)
         groups: list[ObservationGroup] = [
             {
                 "key": cast(GroupedKey, asdict(key)),
