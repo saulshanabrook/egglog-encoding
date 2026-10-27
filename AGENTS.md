@@ -119,9 +119,10 @@ or modify the JSONL.
   parameter-analysis drivers on `.in` inputs without proofs. Mixed-engine
   comparisons build each required executable, and every cache row identifies
   the executable that actually ran.
-- Benchmark inputs should not contain executable `(prove ...)` commands. Use
-  `(check ...)` so the selected treatment controls proof extraction, and cover
-  strict proof validity in proof tests.
+- Benchmark inputs should not contain executable `(prove ...)` or
+  `(prove-extract ...)` commands. Use `(check ...)` and `(extract ...)` so the
+  selected treatment controls proof extraction, and cover strict proof validity
+  in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
 - Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory

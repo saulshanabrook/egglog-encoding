@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 from rich.console import Console
 
-from benchmarking import benchmark, collection, engines, models, processes, targets
+from benchmarking import collection, engines, models, processes, targets
 from benchmarking.reports.store import CacheKey, ReportStore
 
 from .report_fixtures import ROOT, make_record, make_target, make_timing_summary, write_report
@@ -68,73 +68,48 @@ def rendered_collection_plan(
     return stream.getvalue().rstrip()
 
 
-def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    shared_target = make_target(target_label="shared", binary_sha256="sha256:shared")
-    comparison = models.ComparisonSpec(
-        models.BenchmarkEndpoint(shared_target, "off"),
-        models.BenchmarkEndpoint(shared_target, "proofs"),
-        (FILE_SPEC,),
-        1,
-        120,
+def test_plan_collection_merges_overlaps_without_expanding_other_scopes(tmp_path: Path) -> None:
+    target = make_target()
+    other = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
+    store = ReportStore(tmp_path / "reports.jsonl")
+    store.append(make_record(0, started_at="2026-07-04T12:00:00Z"))
+    requests = (
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (FILE_SPEC, other)),
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "proofs"), (FILE_SPEC,)),
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (other,)),
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "proof-testing"), (other,)),
     )
-    observed: list[tuple[models.ResolvedTarget, tuple[models.BenchmarkEndpoint, ...], bool]] = []
-    sentinel = cast(collection.CollectionPlan, object())
+    resolved = {target.request: target}
 
-    def build_plan(
-        _store: ReportStore,
-        target: models.ResolvedTarget,
-        endpoints: tuple[models.BenchmarkEndpoint, ...],
-        _files: tuple[models.FileSpec, ...],
-        _rounds: int,
-        _timeout_sec: int,
-        force_run: bool,
-    ) -> collection.CollectionPlan:
-        observed.append((target, endpoints, force_run))
-        return sentinel
+    (plan,) = collection.plan_collection(store, requests, resolved, 2, 120, False)
+    (forced,) = collection.plan_collection(store, requests, resolved, 2, 120, True)
 
-    monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
-
-    plans = benchmark.collection_plans(cast(ReportStore, object()), comparison, True)
-
-    assert plans == (sentinel,)
-    assert observed == [(shared_target, (comparison.baseline, comparison.candidate), True)]
+    assert [(run.file.display_path, run.treatment, run.missing_observations) for run in plan.runs] == [
+        ("file.egg", "off", 1),
+        ("other.egg", "off", 2),
+        ("file.egg", "proofs", 2),
+        ("other.egg", "proof-testing", 2),
+    ]
+    assert len(forced.runs) == 4
+    assert forced.total_missing_observations == 8
 
 
-def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_plan_collection_keeps_distinct_targets_with_the_same_binary_separate(tmp_path: Path) -> None:
     baseline_target = make_target(target_label="cached", binary_sha256="sha256:shared", binary_path=None)
     candidate_target = make_target(
         target_label="current",
         binary_sha256="sha256:shared",
         binary_path=ROOT / "egglog-experimental",
     )
-    comparison = models.ComparisonSpec(
-        models.BenchmarkEndpoint(baseline_target, "off"),
-        models.BenchmarkEndpoint(candidate_target, "proofs"),
-        (FILE_SPEC,),
-        1,
-        120,
+    requests = (
+        collection.BenchmarkRequest(models.EndpointRequest(baseline_target.request, "off"), (FILE_SPEC,)),
+        collection.BenchmarkRequest(models.EndpointRequest(candidate_target.request, "proofs"), (FILE_SPEC,)),
     )
-    observed: list[models.ResolvedTarget] = []
+    resolved = {target.request: target for target in (baseline_target, candidate_target)}
 
-    def build_plan(
-        _store: ReportStore,
-        target: models.ResolvedTarget,
-        _endpoints: tuple[models.BenchmarkEndpoint, ...],
-        _files: tuple[models.FileSpec, ...],
-        _rounds: int,
-        _timeout_sec: int,
-        _force_run: bool,
-    ) -> collection.CollectionPlan:
-        observed.append(target)
-        return cast(collection.CollectionPlan, object())
+    plans = collection.plan_collection(ReportStore(tmp_path / "reports.jsonl"), requests, resolved, 1, 120, False)
 
-    monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
-
-    benchmark.collection_plans(cast(ReportStore, object()), comparison, False)
-
-    assert observed == [baseline_target, candidate_target]
+    assert [plan.target for plan in plans] == [baseline_target, candidate_target]
 
 
 def test_same_checkout_target_aliases_build_once(
@@ -389,6 +364,123 @@ def test_batch_target_resolution_reuses_complete_cache_label_before_building_pen
     assert resolved[fresh_request].binary_path == binary_path
 
 
+def test_request_resolution_checks_only_each_endpoints_own_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "reports.jsonl"
+    write_report(
+        path,
+        make_record(0, started_at="2026-07-04T12:00:00Z", target_label="cached"),
+        make_record(
+            1,
+            started_at="2026-07-04T12:00:01Z",
+            target_label="cached",
+            treatment="proofs",
+            file_sha256="sha256:other",
+        ),
+    )
+    target_request = targets.parse_target("cached=")
+    other = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
+    requests = (
+        collection.BenchmarkRequest(models.EndpointRequest(target_request, "off"), (FILE_SPEC,)),
+        collection.BenchmarkRequest(models.EndpointRequest(target_request, "proofs"), (other,)),
+    )
+    monkeypatch.setattr(collection, "materialize_git_ref", lambda *_a: pytest.fail("exact requirements are cached"))
+    monkeypatch.setattr(collection, "build_resolved_target", lambda *_a: pytest.fail("exact requirements are cached"))
+
+    resolved = collection.resolve_requests(requests, ReportStore(path), 1, 120, False, ROOT, ROOT, Console())
+
+    assert resolved[target_request].binary_sha256 == "sha256:bin"
+    assert resolved[target_request].binary_path is None
+
+
+def test_shared_collection_refreshes_all_aliases_when_every_run_is_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "reports.jsonl"
+    write_report(path, make_record(0, started_at="2026-07-04T12:00:00Z"))
+    before = path.read_bytes()
+    first = make_target(target_label="figures")
+    alias = make_target(target_label="alias")
+    requests = tuple(
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (FILE_SPEC,))
+        for target in (first, alias)
+    )
+    resolved = {target.request: target for target in (first, alias)}
+    store = ReportStore(path)
+    plans = collection.plan_collection(store, requests, resolved, 1, 120, False)
+    monkeypatch.setattr(collection, "run_process", lambda *_a: pytest.fail("all observations are cached"))
+    monkeypatch.setattr(collection, "run_preflight", lambda *_a: pytest.fail("no fresh preflight is needed"))
+
+    grouped = collection.collect(store, plans, requests, resolved, 120, Console(file=io.StringIO()))
+
+    assert len(plans) == 1
+    assert grouped.data["groups"][0]["labels"] == ["alias", "figures"]
+    assert grouped.records[0]["target_label"] is None
+    assert path.read_bytes() == before
+    assert json.loads(path.with_name("reports-grouped.json").read_bytes())["groups"][0]["labels"] == [
+        "alias",
+        "figures",
+    ]
+
+
+def test_shared_collection_rejects_conflicting_label_bindings_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = make_target(target_label="figures", binary_sha256="sha256:first")
+    second = replace(
+        make_target(target_label="figures", binary_sha256="sha256:second"),
+        request=targets.parse_target("figures=@other"),
+    )
+    requests = tuple(
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (FILE_SPEC,))
+        for target in (first, second)
+    )
+    resolved = {target.request: target for target in (first, second)}
+    store = ReportStore(tmp_path / "reports.jsonl")
+    plans = collection.plan_collection(store, requests, resolved, 1, 120, False)
+    monkeypatch.setattr(collection, "preflight_collection", lambda *_a: pytest.fail("ambiguous label must fail first"))
+
+    with pytest.raises(ValueError, match="label 'figures' resolves to different egglog binaries"):
+        collection.collect(store, plans, requests, resolved, 120, Console(file=io.StringIO()))
+    assert not store.path.exists()
+
+
+def test_multiple_targets_share_round_progress_and_stop_only_the_failed_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = make_target(target_label="first", binary_sha256="sha256:first", binary_path=tmp_path / "first")
+    second = make_target(target_label="second", binary_sha256="sha256:second", binary_path=tmp_path / "second")
+    run = planned_run(required=2)
+    calls: list[str] = []
+
+    def observe(binary: Path, *_args: object) -> collection.ProcessObservation:
+        calls.append(binary.name)
+        if binary.name == "first":
+            return collection.ProcessObservation(
+                processes.TimingResult("failure", processes.TimingRow(), processes.ErrorRow("failed")), None
+            )
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=0.25), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "run_process", observe)
+    stream = io.StringIO()
+    store = ReportStore(tmp_path / "reports.jsonl")
+
+    collection.collect_rows(
+        store,
+        (collection.CollectionPlan(first, (run,)), collection.CollectionPlan(second, (run,))),
+        120,
+        Console(file=stream),
+    )
+
+    assert calls == ["first", "second", "second"]
+    assert store.row_count == 3
+    assert stream.getvalue().count("collected 3 fresh runs") == 1
+    assert "2 targets: collected 3 fresh runs" in stream.getvalue()
+
+
 def test_collection_plan_counts_cache_and_missing_rows(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
@@ -638,6 +730,35 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
     assert calls == [
         (egglog_binary, ("--timing-summary", "--memory-limit-bytes", "--proof-testing")),
         (egg_binary, ("--timing-summary", "--memory-limit-bytes")),
+    ]
+
+
+def test_preflight_requires_math12_witness_flags_only_for_fresh_math12(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    egg_binary = ROOT / "egg-math-benchmark"
+    target = replace(make_target(), engine_binaries=(models.EngineBinary("egg", "sha256:egg", egg_binary),))
+    math12 = replace(
+        planned_run(treatment="egg", required=1),
+        file=models.FileSpec("math12.egg", ROOT / "absent.egg", engines.MATH12_WORKLOAD_SHA256),
+    )
+    math11 = planned_run(treatment="egg", required=1)
+    calls: list[tuple[str, ...]] = []
+
+    def preflight(
+        _binary: Path, _checkout: Path, _timeout: int, required_outputs: tuple[str, ...]
+    ) -> processes.TimingResult:
+        calls.append(required_outputs)
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
+
+    monkeypatch.setattr(collection, "run_preflight", preflight)
+    collection.preflight_collection(collection.CollectionPlan(target, (math12,)), 120)
+    cached12 = replace(math12, cached_statuses=("success",), missing_observations=0)
+    collection.preflight_collection(collection.CollectionPlan(target, (cached12, math11)), 120)
+
+    assert calls == [
+        ("--timing-summary", "--memory-limit-bytes", "--iterations", "--check-left", "--check-right"),
+        ("--timing-summary", "--memory-limit-bytes"),
     ]
 
 
