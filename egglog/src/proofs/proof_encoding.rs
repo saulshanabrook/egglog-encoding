@@ -1802,7 +1802,7 @@ impl<'a> ProofInstrumentor<'a> {
         run: Option<HeadRun>,
     ) -> Operand {
         if func_type.subtype != FunctionSubtype::Constructor {
-            let fv = self.add_custom_row(emit, func_type, &ids(args));
+            let fv = self.add_custom_row(emit, func_type, args);
             Operand::plain(fv)
         } else if !self.egraph.proof_state.proofs_enabled {
             let canon = self.add_constructor_term_only(emit.stmts, func_type, &ids(args));
@@ -1812,12 +1812,24 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
-    /// Custom functions: take a fresh e-class for the row and update the FD
-    /// view. No canonicalization threading.
-    fn add_custom_row(&mut self, emit: &mut Emit, func_type: &FuncType, args: &[String]) -> String {
+    /// Custom functions: update the FD view over canonical values, carrying the
+    /// congruence proof from the source row to those input and output values.
+    fn add_custom_row(
+        &mut self,
+        emit: &mut Emit,
+        func_type: &FuncType,
+        args: &[Operand],
+    ) -> String {
         let fv = self.fresh_term_id(emit.stmts, &func_type.name);
         let view_proof_var = if self.egraph.proof_state.proofs_enabled {
-            self.reflexive_for_row(emit)
+            let own = self.reflexive_for_row(emit);
+            let mut steps = vec![];
+            for (i, arg) in args.iter().enumerate() {
+                if let Some(connector) = &arg.connector {
+                    steps.push((i, self.connector_node(emit, connector)));
+                }
+            }
+            self.canonicalize(own, steps)
         } else {
             "()".to_string()
         };
@@ -1826,7 +1838,14 @@ impl<'a> ProofInstrumentor<'a> {
         // f-application term `f(children, output)` (what `fv` extracts to) — the
         // premise `MergeRow`/`MergeIdx` reconstruct their conclusion from.
         let (output, children) = args.split_last().expect("custom set needs an output");
-        let update = self.update_fd_view(&func_type.name, children, output, &view_proof_var);
+        // The view write reads the proof directly, outside a proof-node mint.
+        self.emit_pending_group(emit.stmts, &view_proof_var);
+        let update = self.update_fd_view(
+            &func_type.name,
+            &ids(children),
+            &output.value,
+            &view_proof_var,
+        );
         emit.stmts.push(update);
         fv
     }

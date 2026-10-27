@@ -22,6 +22,56 @@ mod tests {
     }
 
     #[test]
+    fn custom_set_rows_keep_canonical_input_and_output_proofs() {
+        let inputs = [
+            // The custom fact and constructor fact must bind the same term.
+            "(= (f expr) value) (= expr (K1))",
+            // Fact order cannot change which term a variable denotes.
+            "(= expr (K1)) (= (f expr) value)",
+            // A nested constructor query composes the same input connector.
+            "(= (f (K1)) value)",
+        ];
+        for body in inputs {
+            let source = format!(
+                r#"
+                (datatype K (K1) (K2))
+                (datatype E (Root) (Unrelated))
+                (Unrelated)
+                (function f (K) i64 :merge (min old new))
+                (union (K1) (K2))
+                (set (f (K2)) 1)
+                (rule ({body}) ((Root)))
+                (run 1)
+                (check (Root))
+                (extract (Root))
+                (fail (check (= (Root) (Unrelated))))
+                "#
+            );
+            EGraph::new_with_proofs()
+                .with_proof_testing()
+                .parse_and_run_program(None, &source)
+                .unwrap();
+        }
+        // The output is a child of the custom row's application term too.
+        let source = r#"
+            (datatype E (Root) (A) (B) (Unrelated))
+            (Unrelated)
+            (function f () E :merge old)
+            (union (A) (B))
+            (set (f) (B))
+            (rule ((= (f) expr) (= expr (A))) ((union (Root) expr)))
+            (run 1)
+            (check (Root))
+            (extract (Root))
+            (fail (check (= (Root) (Unrelated))))
+        "#;
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(None, source)
+            .unwrap();
+    }
+
+    #[test]
     fn ordinary_extract_function_root_reads_existing_output() {
         let source = r#"
             (datatype E (A) (B))
