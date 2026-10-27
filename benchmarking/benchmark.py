@@ -13,6 +13,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from time import perf_counter
 from typing import cast
 
 from rich.console import Console
@@ -116,6 +117,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="write an interactive HTML snapshot next to the report cache and open it",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="show preparation timings and collection starts")
     args = parser.parse_args(argv)
     if args.report == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
@@ -168,17 +170,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_benchmark_args(raw_argv)
     console = Console(stderr=True)
     try:
+        console.print("Preparing repository")
+        started = perf_counter()
         script_root = Path(__file__).resolve().parents[1]
         invocation_cwd = Path.cwd()
         repo_root = git_root_for_path(script_root)
         report_path = resolve_report_path(str(args.report), invocation_cwd)
         baseline_request, candidate_request = endpoint_requests(args)
+        if args.verbose:
+            console.print(Text(f"  repository ready in {perf_counter() - started:.1f}s: {repo_root}"))
 
         # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
+        console.print(Text(f"Loading cache {report_path}"))
+        started = perf_counter()
         store = ReportStore(report_path)
+        if args.verbose:
+            console.print(f"  loaded {store.row_count} observations in {perf_counter() - started:.1f}s")
+        console.print("Resolving inputs")
+        started = perf_counter()
         files = resolve_files(args.files, invocation_cwd, args.fact_directory)
+        if args.verbose:
+            console.print(f"  resolved {len(files)} workload files in {perf_counter() - started:.1f}s")
         requests = tuple(BenchmarkRequest(endpoint, files) for endpoint in (baseline_request, candidate_request))
+        console.print("Resolving targets")
+        started = perf_counter()
         resolved_targets = resolve_requests(
             requests,
             store,
@@ -189,6 +205,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             repo_root,
             console,
         )
+        if args.verbose:
+            console.print(f"  resolved {len(resolved_targets)} targets in {perf_counter() - started:.1f}s")
         comparison = ComparisonSpec(
             baseline=BenchmarkEndpoint(
                 resolved_targets[baseline_request.target],
@@ -207,7 +225,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         plans = plan_collection(
             store, requests, resolved_targets, comparison.rounds, comparison.timeout_sec, bool(args.force_run)
         )
-        grouped = collect(store, plans, requests, resolved_targets, comparison.timeout_sec, console)
+        grouped = collect(
+            store, plans, requests, resolved_targets, comparison.timeout_sec, console, verbose=args.verbose
+        )
 
         catalog = build_report_catalog(grouped, comparison, cast(DetailLevel, str(args.detail)))
         if args.format == "markdown":
