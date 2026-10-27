@@ -6,6 +6,7 @@ From the code repository root:
 ./bench.py figures
 ./bench.py figures --help
 ./bench.py figures math-runtime math-memory
+./bench.py figures --rounds 3 --report /tmp/figures-quick.jsonl
 ./bench.py figures --config path/to/catalog.json
 ./bench.py figures --output-dir ../extended-egglog-paper/figures/eval
 ```
@@ -70,8 +71,16 @@ The default source is this checkout with label `figures`. `--target figures=@mai
 selects another source using the ordinary target syntax; label-only lookups are
 not source targets. `--report /tmp/figure-test.jsonl` isolates test observations.
 Command-line paths resolve relative to the invocation directory. The production
-catalog requests ten runs per condition. Use a separate temporary catalog with
-`rounds: 1` for CLI smoke checks; do not change the production catalog for tests.
+catalog requests ten runs per condition. `--rounds N` overrides that count for
+collection, sample selection, intervals and receipts without changing the catalog.
+Use `--rounds 1` and a temporary report for CLI smoke checks.
+
+The shared collection progress estimates remaining time across all missing runs.
+`ETA ~` uses successful cached and newly measured durations; unseen conditions
+use their mean, or a rough one-second guess until any timing is available.
+Failures remove skipped repetitions from the estimate. Cached runs contribute
+timing information without counting as elapsed work. Redirected per-run logs
+include the same approximate remaining time. Build and rendering time are excluded.
 
 ## Selection and statistics
 
