@@ -227,7 +227,7 @@ mod tests {
         let _args = benchmark_memory::configure([
             "math-boundary-case".into(),
             "--memory-limit-bytes".into(),
-            "6442450944".into(),
+            "8589934592".into(),
         ]);
         let expected_witness = iterations == 12;
         let sizes = match engine.as_str() {

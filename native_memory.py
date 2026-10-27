@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping, Sequence
 
-NATIVE_LIMIT_BYTES = 6 * 1024**3
+NATIVE_LIMIT_BYTES = 8 * 1024**3
 NATIVE_ALLOCATION_EXIT = 86
 NATIVE_SETUP_EXIT = 87
 NATIVE_ALLOCATOR_ENV = {

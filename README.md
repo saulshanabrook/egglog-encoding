@@ -545,8 +545,8 @@ cached failure also prevents automatic retries. Use `--force-run` to explicitly
 retry failed conditions; earlier observations remain in the append-only cache.
 
 Controlled launches through `bench.py` use one fixed native memory policy:
-6 GiB of additional virtual address space above startup mappings on macOS,
-or 6 GiB of total virtual address space on Linux. This is an address-space
+8 GiB of additional virtual address space above startup mappings on macOS,
+or 8 GiB of total virtual address space on Linux. This is an address-space
 limit, not an RSS or process-group cap. Peak RSS remains an external measurement;
 host pressure and RSS are not polled to enforce protection. A stricter inherited
 limit wins. Author compilers, original parameter drivers, Python and Cargo do
@@ -565,11 +565,11 @@ condition, while failed setup/preflight, process-control failure or an unexplain
 SIGKILL stops the invocation. An older target rejecting the option fails
 preflight rather than running uncapped.
 
-The fixed policy is part of the measurement contract, without adding cache-key
-fields. Changed-cap or allocator-environment experiments use direct executable
-commands with separate diagnostic evidence and reports; do not pool or relabel
-them with production observations. Profiling applies the same policy to the
-controlled workload inside Samply.
+Cache keys do not encode the allocation policy. After changing the cap or
+allocator environment, use a fresh report, such as
+`--report benchmarks/local/reports-8gib.jsonl`, and retain the previous report.
+Do not pool or relabel observations collected under different policies.
+Profiling applies the same policy to the controlled workload inside Samply.
 
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight

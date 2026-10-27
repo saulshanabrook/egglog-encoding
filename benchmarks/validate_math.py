@@ -2,7 +2,7 @@
 
 Build the release test executable with ``cargo test --release -p
  egg-math-benchmark --no-run --message-format=json`` and pass its executable
-path here. Each ignored Rust test case installs the existing native 6 GiB
+path here. Each ignored Rust test case installs the existing native 8 GiB
 limit before constructing a graph. This diagnostic collects no benchmark rows.
 """
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.engines import MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT, MATH12_WORKLOAD_PATH, MATH12_WORKLOAD_SHA256
+from native_memory import NATIVE_LIMIT_BYTES
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
@@ -43,7 +44,7 @@ def validate(test_binary: Path, output: Path) -> dict[str, Any]:
         "fixture_sha256": MATH12_WORKLOAD_SHA256,
         "test_binary": str(test_binary),
         "test_binary_sha256": "sha256:" + hashlib.sha256(test_binary.read_bytes()).hexdigest(),
-        "native_limit_bytes": 6 * 1024**3,
+        "native_limit_bytes": NATIVE_LIMIT_BYTES,
         "timeout_sec": 300,
         "cases": [],
         "complete": False,

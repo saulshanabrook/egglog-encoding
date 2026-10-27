@@ -20,7 +20,7 @@ from .test_collection import planned_run
 
 def test_native_command_uses_explicit_limit_and_fixed_startup_policy() -> None:
     command, env = native_memory.native_memory_command(["engine", "--help"], {"RUST_LOG": "error"})
-    assert command == ["engine", "--memory-limit-bytes=6442450944", "--help"]
+    assert command == ["engine", "--memory-limit-bytes=8589934592", "--help"]
     assert env == {"RUST_LOG": "error", **native_memory.NATIVE_ALLOCATOR_ENV}
     assert native_memory.native_memory_command(["engine"], {}, 123)[0] == ["engine", "--memory-limit-bytes=123"]
 
@@ -92,7 +92,7 @@ def test_older_binary_rejecting_native_option_fails_preflight(tmp_path: Path) ->
     engine = tmp_path / "engine"
     engine.write_text(
         f"#!{sys.executable}\nimport sys\n"
-        "assert sys.argv[1] == '--memory-limit-bytes=6442450944'\n"
+        "assert sys.argv[1] == '--memory-limit-bytes=8589934592'\n"
         "print('unsupported native option',file=sys.stderr)\nsys.exit(2)\n"
     )
     engine.chmod(0o755)

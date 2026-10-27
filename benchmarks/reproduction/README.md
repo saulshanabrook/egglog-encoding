@@ -18,7 +18,7 @@ uv run --locked pytest -q benchmarks/reproduction/tests
 ```
 
 Both native commands require the native memory-limit prerequisite. Controlled
-ordinary replay and strict validation use its fixed six-GiB policy. Author builds,
+ordinary replay and strict validation use its fixed eight-GiB policy. Author builds,
 Python, Racket and compiler processes are bounded by time/output/process cleanup;
 this does not claim to cap their memory. Native exhaustion is a per-workload
 outcome; failed limit setup or process control stops the attempt. Retained-root
@@ -71,7 +71,7 @@ uv run --locked python -m benchmarks.validate_math \
   --test-binary /path/to/egg_math_benchmark-test --output /tmp/math12-validation
 ```
 
-Each sequential subprocess installs the existing six-GiB native allocation
+Each sequential subprocess installs the eight-GiB native allocation
 limit and has a 300-second timeout. Logical constructor and class counts,
 terminal-query non-insertion, and the eleven/twelve equality boundary are
 checked in both engines with proofs off and fully checked. Failed conditions
