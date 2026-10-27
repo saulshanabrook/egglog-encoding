@@ -143,3 +143,32 @@ test('a first-row timeout remains explicit when collection stopped before N',asy
   assert.equal(find(d,'absolute_means').length,0);
   assert.match(d.svg,/1\/10 observations; 1 failed \(1 timeout\)/);
 });
+
+test('failed checked Math rows and unavailable ratios retain condition and engine axes',async()=>{
+  const treatments=['egg','egg-proof-testing','off','proof-testing'];
+  const inputs=treatments.map(t=>input('a',t));
+  const groups=treatments.map((t,i)=>group('a',t,[i%2?null:2],i%2?{status:'failure',error_exit_code:86}:{}));
+  for(const metric of ['runtime','memory']) {
+    const result=await evaluate(`math-${metric}`,inputs,groups,1);
+    const labels=result.marks.filter(m=>m.mark.role==='axis-label').map(m=>m.text);
+    for(const label of ['Off · Egg','Checked · Egg','Off · Egglog','Checked · Egglog','Egg','Egglog'])
+      assert.ok(labels.includes(label),`missing axis label: ${label}`);
+    assert.equal(find(result,'absolute_runs').length,2);
+    assert.equal(find(result,'ratio_points').length,0);
+    assert.match(result.svg,/Checked · Egg: 1\/1 observations; 1 failed, 1 memory limit/);
+    assert.match(result.svg,/Checked · Egglog: 1\/1 observations; 1 failed, 1 memory limit/);
+    assert.match(result.svg,/Egg: Ratio unavailable/);
+    assert.match(result.svg,/Egglog: Ratio unavailable/);
+    const missing=await evaluate(`math-${metric}`,inputs,[],1);
+    const missingLabels=missing.marks.filter(m=>m.mark.role==='axis-label').map(m=>m.text);
+    for(const label of ['Off · Egg','Checked · Egg','Off · Egglog','Checked · Egglog','Egg','Egglog'])
+      assert.ok(missingLabels.includes(label),`missing empty axis label: ${label}`);
+  }
+});
+
+test('disequality statuses identify missing configurations without valid plotted marks',async()=>{
+  const treatments=['egg-de','egg-ee','egg-nee','egg-oee','off'];
+  const result=await evaluate('disequality-runtime',treatments.map(t=>input('a',t)),[]);
+  for(const label of ['DE · Disegg','EE · Egg','NEE · Egg','OEE · Egg','NEE · Egglog'])
+    assert.ok(find(result,'absolute_status').some(m=>m.datum.summary.startsWith(label+': ')));
+});

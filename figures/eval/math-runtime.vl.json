@@ -69,17 +69,19 @@
     {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "value"},
     {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
     {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
-    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "variance", "field": "value", "as": "sample_variance"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}], "groupby": ["input_id"]},
+    {"calculate": "isValid(datum.run) && (datum.run.error_exit_code === 86 || datum.run.error_message && (indexof(datum.run.error_message, 'process-group RSS') >= 0 || indexof(datum.run.error_message, 'memory-limit') >= 0 || indexof(datum.run.error_message, 'memory limit') >= 0)) ? 1 : 0", "as": "memory_limited"},
+    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "variance", "field": "value", "as": "sample_variance"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}, {"op": "sum", "field": "memory_limited", "as": "memory_limit_n"}], "groupby": ["input_id"]},
     {"calculate": "datum.sample_n === rounds && datum.valid_n === rounds && !datum.validation_issue", "as": "complete"},
     {"calculate": "datum.complete ? datum.sample_mean : null", "as": "mean"},
     {"calculate": "datum.complete && rounds > 1 ? datum.sample_variance / rounds : null", "as": "var_mean"},
     {"calculate": "datum.complete && rounds > 1 ? datum.mean - t_critical * sqrt(datum.var_mean) : null", "as": "ci_low"},
     {"calculate": "datum.complete && rounds > 1 ? datum.mean + t_critical * sqrt(datum.var_mean) : null", "as": "ci_high"},
-    {"calculate": "datum.validation_issue || (datum.failed_n ? datum.sample_n + '/' + rounds + ' observations; ' + datum.failed_n + ' failed (' + datum.timeout_n + ' timeout); estimate unavailable' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' observations; measurement unavailable; no estimate' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' observations; estimate unavailable' : rounds === 1 ? 'n=1; CI unavailable' : '')", "as": "issue"},
+    {"calculate": "datum.validation_issue || (datum.failed_n ? datum.sample_n + '/' + rounds + ' observations; ' + datum.failed_n + ' failed' + (datum.timeout_n ? ', ' + datum.timeout_n + ' timeout' : '') + (datum.memory_limit_n ? ', ' + datum.memory_limit_n + ' memory limit' : '') + '; estimate unavailable' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' observations; measurement unavailable; no estimate' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' observations; estimate unavailable' : rounds === 1 ? 'n=1; CI unavailable' : '')", "as": "issue"},
     {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
     {"calculate": "indexof(['egg','egg-proof-testing'],datum.input.treatment) >= 0 ? 'Egg' : 'Egglog'", "as": "engine"},
     {"calculate": "indexof(['egg','off'],datum.input.treatment) >= 0 ? 'Off' : 'Checked'", "as": "mode"},
     {"calculate": "datum.mode + ' · ' + datum.engine", "as": "condition"},
+    {"calculate": "datum.condition + ': ' + datum.issue", "as": "condition_status"},
     {"calculate": "(datum.run_number % 5 - 2) * 3", "as": "jitter"},
     {"calculate": "min(0, isValid(datum.ci_low) ? datum.ci_low : 0)", "as": "absolute_low"},
     {"calculate": "max(1, isValid(datum.value) ? datum.value : 0, isValid(datum.ci_high) ? datum.ci_high : 0)", "as": "absolute_high"},
@@ -133,6 +135,14 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "Off · Egg",
+                  "Checked · Egg",
+                  "Off · Egglog",
+                  "Checked · Egglog"
+                ]
               }
             },
             "color": {
@@ -214,6 +224,14 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "Off · Egg",
+                  "Checked · Egg",
+                  "Off · Egglog",
+                  "Checked · Egglog"
+                ]
               }
             }
           }
@@ -258,6 +276,14 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "Off · Egg",
+                  "Checked · Egg",
+                  "Off · Egglog",
+                  "Checked · Egglog"
+                ]
               }
             }
           }
@@ -317,7 +343,7 @@
           "as": "ratio_high"
         },
         {
-          "calculate": "!isValid(datum.ratio) ? 'Ratio unavailable: incomplete or invalid sample' : rounds === 1 ? format(datum.ratio,'.3g') + '×; CI unavailable (n=1)' : !datum.bounded ? format(datum.ratio,'.3g') + '×; Fieller interval unbounded or unavailable' : format(datum.ratio,'.3g') + '× [' + format(datum.ratio_low,'.3g') + ', ' + format(datum.ratio_high,'.3g') + ']'",
+          "calculate": "datum.engine + ': ' + (!isValid(datum.ratio) ? 'Ratio unavailable: incomplete or invalid sample' : rounds === 1 ? format(datum.ratio,'.3g') + '×; CI unavailable (n=1)' : !datum.bounded ? format(datum.ratio,'.3g') + '×; Fieller interval unbounded or unavailable' : format(datum.ratio,'.3g') + '× [' + format(datum.ratio_low,'.3g') + ', ' + format(datum.ratio_high,'.3g') + ']')",
           "as": "ratio_summary"
         },
         {
@@ -394,7 +420,13 @@
                     "Egg",
                     "Egglog"
                   ],
-                  "title": null
+                  "title": null,
+                  "scale": {
+                    "domain": [
+                      "Egg",
+                      "Egglog"
+                    ]
+                  }
                 }
               }
             },
@@ -433,7 +465,13 @@
                     "Egg",
                     "Egglog"
                   ],
-                  "title": null
+                  "title": null,
+                  "scale": {
+                    "domain": [
+                      "Egg",
+                      "Egglog"
+                    ]
+                  }
                 }
               }
             }
@@ -457,7 +495,13 @@
                 "Egglog"
               ],
               "title": null,
-              "axis": null
+              "axis": null,
+              "scale": {
+                "domain": [
+                  "Egg",
+                  "Egglog"
+                ]
+              }
             },
             "text": {
               "field": "ratio_summary"
@@ -493,10 +537,18 @@
             "Off · Egglog",
             "Checked · Egglog"
           ],
-          "axis": null
+          "axis": null,
+          "scale": {
+            "domain": [
+              "Off · Egg",
+              "Checked · Egg",
+              "Off · Egglog",
+              "Checked · Egglog"
+            ]
+          }
         },
         "text": {
-          "field": "issue"
+          "field": "condition_status"
         },
         "x": {
           "value": 0

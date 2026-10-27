@@ -359,7 +359,7 @@ def render_figures(
         receipt["outputs"] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in outputs}
         write_if_changed(receipt_path, json.dumps(receipt, default=str, ensure_ascii=False, indent=2).encode() + b"\n")
         for output in outputs:
-            console.print(str(output))
+            console.print(str(output), soft_wrap=True)
             rendered.append(output)
         incomplete = sum(
             len(selection["rows"]) < config.rounds or any(row["status"] != "success" for row in selection["rows"])
