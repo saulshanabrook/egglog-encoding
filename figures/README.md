@@ -1,0 +1,156 @@
+# Paper benchmark figures
+
+From the code repository root:
+
+```sh
+./bench.py figures
+./bench.py figures --help
+./bench.py figures math-runtime math-memory
+./bench.py figures --config path/to/catalog.json
+./bench.py figures --output-dir ../extended-egglog-paper/figures/eval
+```
+
+Install the root Python environment with `uv sync --locked`, the pinned Rust
+toolchain, and Node.js/npm. The command builds release executables and invokes
+pinned standalone `npx` packages: Vega 6.4.0, Vega-Lite 6.4.3, Vega CLI 6.4.0,
+Canvas 3.2.3. No npm project or separate PDF converter is required. PDF text uses
+embedded font subsets. The first run may download the pinned renderer packages.
+
+The five PDFs replace the paper's `figures/eval/` placeholders. SVG and 3x PNG
+companions, inspectable bound specifications, and provenance receipts are
+written alongside them. Absolute image paths are printed on stderr. The default
+output directory is each authored specification's directory, `figures/eval/`
+for the bundled catalog. The paper repository is needed only when selecting it
+as the output destination.
+
+| Figure | Comparison |
+| --- | --- |
+| `disequality-runtime` | Native DE, EE, NEE, OEE and relation-based Egglog NEE; proofs off |
+| `math-runtime` | Twelve-round Math; Egg/Egglog off/checked proofs; absolute time and within-engine overhead |
+| `math-memory` | The same Math process executions, reporting peak RSS and overhead |
+| `corpus-runtime-cdf` | Congruence-only and checked-proof overhead across the application replays |
+| `corpus-memory-cdf` | The same configurations, executions and runtime-selected files, reporting RSS overhead |
+
+## Flat configuration and automatic reuse
+
+[`catalog.json`](catalog.json) contains global `rounds` and `timeout_sec` settings
+and a `figures` object. Each figure declares only `spec`, `files` and
+`treatments`, using existing treatment strings:
+
+```json
+{
+  "rounds": 10,
+  "timeout_sec": 300,
+  "figures": {
+    "example": {
+      "spec": "example.vl.json",
+      "files": ["../benchmarks/corpus/eggcc/*.egg"],
+      "treatments": ["off", "term", "proof-testing"]
+    }
+  }
+}
+```
+
+No names selects every figure; names select a subset. An alternate catalog is
+selected with `--config`, not a positional path. Help lists that catalog without
+expanding files, reading the observation cache or building engines. Spec and
+workload paths resolve relative to the catalog. Globs expand in sorted order;
+recursive `**` is supported. Overlapping patterns retain each path once.
+Different paths with identical bytes remain a duplicate-workload error.
+
+Each figure requests the product of its own files and treatments. Collection
+merges identical requests across figures into one plan and one progress display.
+Runtime and memory views therefore share launches. It reuses compatible cached
+observations and collects only missing observations; there is no separate
+cached/render-only mode. Cached failed conditions are retained rather than
+repeated automatically. Repeating an unchanged completed invocation launches no
+additional measurements and leaves unchanged images alone.
+
+The default source is this checkout with label `figures`. `--target figures=@main`
+selects another source using the ordinary target syntax; label-only lookups are
+not source targets. `--report /tmp/figure-test.jsonl` isolates test observations.
+Command-line paths resolve relative to the invocation directory. The production
+catalog requests ten runs per condition. Use a separate temporary catalog with
+`rounds: 1` for CLI smoke checks; do not change the production catalog for tests.
+
+## Selection and statistics
+
+The runner refreshes the shared typed `.reports-grouped.json`, including current
+label-to-engine identities when every observation is already cached. This binding
+belongs to the current grouped artifact; raw label-only lookup remains based on
+recorded observations. Source targets are checked and rebound on each figure
+invocation. An ordinary comparison that assigns the same label/engine to two
+different binaries is rejected before launch. The raw
+`.reports.jsonl` remains append-only. The authored Vega-Lite specifications
+select the requested label, physical input/facts hashes, treatment, encoding and
+timeout. They never borrow missing measurements from an older executable.
+Native disequality `.in` and logical Egglog `.egg` inputs remain distinct.
+
+The plot selects the newest requested N rows per identity, ordered by timestamp
+and physical row index, including failures. It retains good raw points but
+reports an estimate only when all N rows succeeded and the metric is finite.
+Partial observations, timeouts and missing RSS remain explicit. With N >= 2,
+absolute mean intervals use Student's t at 95%. N = 1 permits a mean point but
+no interval. Math overhead uses independent-sample Fieller-style 95% intervals;
+unavailable or unbounded intervals retain their explanation. The t critical
+value is the only statistical scalar supplied by Python: Vega performs means,
+sample variances, ratios, Fieller calculations, cohort selection and ranking.
+
+Whole-process time includes launch, input reading, parsing, lowering, execution
+and requested proof work. Compilation and input conversion occur beforehand.
+Checked proofs include recording, extraction/materialization and checking.
+Native Egg materializes explanations in memory with explanation-length
+optimization disabled; these timings do not serialize proof files. Egglog does
+simplify extracted proofs. The two metrics use the same selected executions.
+
+The corpus contains 486 saved deduplicated replays from Eggcc, HardBoiled,
+MISAAL, Churchroad, DialEgg and Luminal, excluding Math. Select only a complete,
+successful baseline's mean wall time >= 0.2 seconds, with no upper cutoff.
+Memory and candidate outcomes never select membership. Each file has equal
+weight; projects contribute different numbers of files. Both candidate curves
+and both metrics share the selected denominator. Failed/missing ratios never
+become finite timeouts or disappear from coverage.
+
+Complete data support empirical median/95th-percentile annotations. With
+incomplete outcomes, reached annotations are measured coverage thresholds;
+unreached thresholds are explicitly unestablished. These CDFs are sample
+summaries, not population confidence bands.
+
+Corpus metadata is projected lazily for selected published inputs. Aliases,
+preparation blockers and exact-identity strict-validation failures are retained.
+The 156 unavailable source cases are separate from saved replay and baseline
+counts. A historical strict-proof failure vetoes the checked-proof series only,
+not congruence-only measurements. Custom non-corpus figures require no corpus
+validation. Collection never acquires sources, regenerates inputs or invokes
+separate validators; those remain under
+[benchmark reproduction](../benchmarks/reproduction/README.md).
+
+## Inspect and hand off
+
+Each generated `.bound.vl.json` changes only declared invocation parameters and
+the report data URL. The standard parameters are `target_label`, `timeout_sec`,
+`rounds`, `t_critical`, `selected_inputs` and `source_blockers`. Expected inputs
+include physical identities and corpus metadata, not precomputed statistics.
+They scope subset configurations and keep missing conditions visible. The bound
+copy can be rendered directly using the same pinned `npx vl2pdf` command, with
+`--base` set to the authored specification's directory.
+
+Each `.receipt.json` records effective settings, source/binary hashes, selected
+row identities and original provenance, metadata, rendering versions and output
+hashes. Historical argv was not stored in the cache: command templates are
+reconstructed, not claimed as recorded argv. Match `selection_sha256` between
+runtime/memory receipts and hand off outputs from one invocation. Preserve the
+validated Math12 boundary evidence and disequality contradiction-agreement test
+results alongside the selected observations. Fill paper result sentences only
+from validated measurements, keeping failed and missing cases visible.
+
+```sh
+make figures-test
+make parameter-test
+```
+
+The figure tests use synthetic snapshots without writing the benchmark cache.
+They cover sample counts, means/intervals, missing/failing outcomes, label and
+subset selection, cohort boundaries and coverage. Inspect all five PDFs/PNGs at
+manuscript width for unclipped labels, tails and uncertainty; use `pdffonts` to
+verify embedding. `make check` and `make benchmark-smoke` cover the full project.

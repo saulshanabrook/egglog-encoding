@@ -1,7 +1,9 @@
 # Parameter-analysis implementation comparison
 
-This comparison runs the authors' DE, EE, NEE, and OEE implementations and the
-existing Egglog NE and EE encodings, with proofs off. The author-supplied
+The paper figure runs the authors' DE, EE, NEE, and OEE implementations and
+relation-based Egglog NEE, with proofs off. Egglog NEE uses the existing `nee`
+selector (called NE in the source); the separate Egglog EE encoding remains
+available through the ordinary benchmark CLI. The author-supplied
 [native corpus](parameter-analysis.in) is canonical. Its checked-in
 [Egglog translation](parameter-analysis.egg) contains the same six fixed numeral
 constraints, 100,000 equality pairs, and 10,000 disequality pairs in author order,
@@ -21,16 +23,16 @@ The author-supplied drivers and corpus are distributed under
 From the repository root:
 
 ```sh
-make figures-parameter
+./bench.py figures disequality-runtime
 ```
 
-This makes three sequential `./bench.py` comparisons and requests ten runs per
-implementation, using the append-only `.reports.jsonl` cache. Compatible cached
+This requests ten runs per configuration through one collection plan, using the
+append-only `.reports.jsonl` cache. Compatible cached
 observations are reused. Cargo dependency resolution and release builds happen
 automatically, outside measurement. Each measured interval spans the complete
 engine process, including input reading, expression parsing, and shutdown.
 The native CSV timers start after file reading and line-splitting, so the figure
-uses external whole-process time for all six implementations. The timeout is
+uses external whole-process time for all five configurations. The timeout is
 300 seconds. No proofs or proof checks run.
 
 Native rows identify the `.in` file and its hash; Egglog rows identify the `.egg`
@@ -39,18 +41,10 @@ There is no conversion or input preparation during collection. The corpus's
 normal native output reports a contradiction; the native programs also permit
 consistent inputs to exit successfully.
 
-To render an existing grouped snapshot without running benchmarks:
-
-```sh
-make figures/parameter-analysis.svg figures/parameter-analysis.png
-```
-
-These targets do not refresh the snapshot from JSONL; `make parameter-bench`
-refreshes it while reusing compatible cached observations.
-
-Outputs are `figures/parameter-analysis.png` and `figures/parameter-analysis.svg`.
-The Vega-Lite specification reads `.reports-grouped.json` directly and selects
-the latest matching group for each condition under the `figures` target alias.
-Dots show cached observations; the mean and sample count use those observations.
-Missing or failed conditions remain visible. See the
-[figure notes](../../figures/parameter-analysis.md) for selection details.
+Outputs are `figures/eval/disequality-runtime.pdf`, `.svg`, and `.png`.
+Automatic cache reuse collects only missing observations, refreshes the grouped
+snapshot and renders changed figures. The specification selects the `figures`
+label and configured physical inputs. Dots show selected process executions;
+complete samples show their arithmetic mean and 95% Student-t confidence
+interval. Missing or failed conditions remain visible. See the
+[figure guide](../../figures/README.md) for selection and provenance details.

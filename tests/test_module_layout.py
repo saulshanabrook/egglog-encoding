@@ -78,6 +78,7 @@ def test_package_initializers_are_docstring_only() -> None:
 RUNNER_LAYERS = frozenset(
     {
         "benchmarking.benchmark",
+        "benchmarking.figures",
         "benchmarking.collection",
         "benchmarking.processes",
         "benchmarking.profile",
