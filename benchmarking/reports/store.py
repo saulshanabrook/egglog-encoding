@@ -11,8 +11,11 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
-from typing import Final, Literal, TypedDict, cast
+from typing import Final, Literal, NotRequired, TypedDict, cast
+
+from native_memory import NATIVE_ALLOCATION_EXIT, NATIVE_LIMIT_BYTES
 
 from ..engines import TREATMENT_SPECS, Engine
 from ..models import (
@@ -27,8 +30,8 @@ from ..models import (
 type ReportSchemaVersion = Literal[5]
 REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 5
 
-type GroupedSchemaVersion = Literal[1]
-GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 1
+type GroupedSchemaVersion = Literal[2]
+GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 2
 
 type TimingSummarySchemaVersion = Literal[4]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
@@ -89,6 +92,7 @@ class ReportRecord(TypedDict):
     error_exit_code: int | None
     error_signal: int | None
     error_message: str | None
+    error_memory_limit_bytes: NotRequired[int]  # Configured allowance; inherited address-space limits may be tighter.
     timing_summary: TimingSummaryRecord | None
 
 
@@ -99,7 +103,6 @@ class CacheKey:
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    timeout_sec: int
     fact_directory_sha256: str = ""
     disequality_encoding: DisequalityEncoding = "nee"
 
@@ -108,7 +111,6 @@ class CacheKey:
         cls,
         endpoint: BenchmarkEndpoint,
         file_spec: FileSpec,
-        timeout_sec: int,
     ) -> CacheKey:
         """Build the identity shared by collection and reporting."""
 
@@ -118,7 +120,6 @@ class CacheKey:
             file_sha256=file_spec.sha256,
             treatment=endpoint.treatment,
             disequality_encoding=endpoint.disequality_encoding,
-            timeout_sec=timeout_sec,
             fact_directory_sha256=file_spec.fact_directory_sha256,
         )
 
@@ -146,11 +147,46 @@ class IndexedRecord:
         return (self.started_at, self.row_index)
 
 
+def select_records(
+    rows: Sequence[IndexedRecord], rounds: int, timeout_sec: int, memory_limit_bytes: int
+) -> tuple[IndexedRecord, ...]:
+    """Select newest applicable observations, retaining failures at unchanged bounds.
+
+    Successful completion under an equal/tighter deadline is sufficient even
+    when process-launch overhead exceeds that deadline or wall time is absent.
+    Only a raised bound retires its resource failure; ordinary errors persist.
+    """
+    if rounds < 1:
+        raise ValueError("rounds must be positive")
+    eligible = []
+    for row in rows:
+        record = row.record
+        wall = record["wall_sec"]
+        if record["status"] == "success":
+            if record["timeout_sec"] > timeout_sec and not (
+                wall is not None and isfinite(wall) and 0 < wall <= timeout_sec
+            ):
+                continue
+        elif "process-group cleanup failed:" in (record["error_message"] or ""):
+            pass  # A control failure is not repaired by raising a workload limit.
+        elif record["status"] == "timed-out":
+            if timeout_sec > record["timeout_sec"]:
+                continue
+        elif record["error_exit_code"] == NATIVE_ALLOCATION_EXIT and TREATMENT_SPECS[record["treatment"]].engine in (
+            "egglog",
+            "egg",
+        ):
+            bound = record.get("error_memory_limit_bytes")
+            if bound is None or memory_limit_bytes > bound:
+                continue
+        eligible.append(row)
+    return tuple(sorted(eligible, key=lambda row: row.order_key)[-rounds:])
+
+
 class GroupedKey(TypedDict):
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    timeout_sec: int
     fact_directory_sha256: str
     disequality_encoding: DisequalityEncoding
 
@@ -196,12 +232,12 @@ class GroupedReport:
             for row in sorted((row for rows in self._by_key.values() for row in rows), key=lambda row: row.row_index)
         )
 
-    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
+    def latest_records(
+        self, key: CacheKey, rounds: int, timeout_sec: int, memory_limit_bytes: int = NATIVE_LIMIT_BYTES
+    ) -> tuple[IndexedRecord, ...]:
         """Select the requested tail without discarding the snapshot's other samples."""
 
-        if rounds < 1:
-            raise ValueError("rounds must be positive")
-        return self._by_key.get(key, ())[-rounds:]
+        return select_records(self._by_key.get(key, ()), rounds, timeout_sec, memory_limit_bytes)
 
 
 class ReportStore:
@@ -317,22 +353,26 @@ class ReportStore:
         self,
         keys: Sequence[CacheKey],
         rounds: int,
+        timeout_sec: int,
+        memory_limit_bytes: int = NATIVE_LIMIT_BYTES,
     ) -> dict[CacheKey, tuple[Status, ...]]:
         """Select latest statuses for every distinct exact cache key."""
 
         if rounds < 1:
             raise ValueError("rounds must be positive")
         return {
-            key: tuple(row.record["status"] for row in self.latest_records(key, rounds)) for key in dict.fromkeys(keys)
+            key: tuple(
+                row.record["status"] for row in self.latest_records(key, rounds, timeout_sec, memory_limit_bytes)
+            )
+            for key in dict.fromkeys(keys)
         }
 
-    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
+    def latest_records(
+        self, key: CacheKey, rounds: int, timeout_sec: int, memory_limit_bytes: int = NATIVE_LIMIT_BYTES
+    ) -> tuple[IndexedRecord, ...]:
         """Return up to ``rounds`` newest rows in chronological presentation order."""
 
-        if rounds < 1:
-            raise ValueError("rounds must be positive")
-        ordered = sorted(self._by_key.get(key, ()), key=lambda row: row.order_key)
-        return tuple(ordered[-rounds:])
+        return select_records(self._by_key.get(key, ()), rounds, timeout_sec, memory_limit_bytes)
 
     def _indexed(self, record: ReportRecord) -> IndexedRecord:
         return IndexedRecord(
@@ -363,7 +403,6 @@ def _record_key(record: ReportRecord) -> CacheKey:
         file_sha256=record["file_sha256"],
         treatment=record["treatment"],
         disequality_encoding=record["disequality_encoding"],
-        timeout_sec=record["timeout_sec"],
         fact_directory_sha256=record["fact_directory_sha256"],
     )
 

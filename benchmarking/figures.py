@@ -20,11 +20,12 @@ from rich.console import Console
 from scipy import stats
 
 from benchmarks.paper import FigureInventory, figure_inventory
+from native_memory import NATIVE_LIMIT_BYTES
 
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment
 from .models import EndpointRequest, FileSpec, ResolvedTarget
 from .reports.grouped import grouped_report_path, write_grouped_report
-from .reports.store import GroupedReport, ObservationGroup
+from .reports.store import CacheKey, GroupedReport, ObservationGroup
 from .targets import parse_target, sha256_file, workload_command
 from .workloads import resolve_files
 
@@ -205,7 +206,7 @@ def render_figures(
     label = target.row.label
     if label is None:
         raise ValueError("figure target must have a label")
-    labeled_groups: dict[tuple[str, str, Treatment, str, int], ObservationGroup] = {}
+    labeled_groups: dict[tuple[str, str, Treatment, str], ObservationGroup] = {}
     for group in grouped.data["groups"]:
         if label not in group["labels"]:
             continue
@@ -215,7 +216,6 @@ def render_figures(
             key["fact_directory_sha256"],
             key["treatment"],
             key["disequality_encoding"],
-            key["timeout_sec"],
         )
         if identity in labeled_groups:
             raise ValueError("grouped label addresses multiple executable identities for one input")
@@ -229,6 +229,18 @@ def render_figures(
             info = metadata.get((file.sha256, file.fact_directory_sha256))
             for treatment in figure.treatments:
                 physical = file.for_engine(TREATMENT_SPECS[treatment].engine)
+                selected_group = labeled_groups.get((physical.sha256, physical.fact_directory_sha256, treatment, "nee"))
+                if selected_group is not None and selected_group["key"]["binary_sha256"] != target.binary_sha256_for(
+                    treatment
+                ):
+                    raise ValueError("grouped label does not address the selected executable")
+                rows = (
+                    grouped.latest_records(
+                        CacheKey(**selected_group["key"]), config.rounds, config.timeout_sec, NATIVE_LIMIT_BYTES
+                    )
+                    if selected_group is not None
+                    else ()
+                )
                 selected_inputs.append(
                     {
                         "logical_id": f"{file.sha256}/{file.fact_directory_sha256}",
@@ -237,13 +249,10 @@ def render_figures(
                         "file_sha256": physical.sha256,
                         "fact_directory_sha256": physical.fact_directory_sha256,
                         "treatment": treatment,
+                        "selected_row_indices": [row.row_index for row in rows],
                         "validation_failures": info["validation_failures"] if info else {},
                     }
                 )
-                selected_group = labeled_groups.get(
-                    (physical.sha256, physical.fact_directory_sha256, treatment, "nee", config.timeout_sec)
-                )
-                rows = selected_group["samples"][-config.rounds :] if selected_group is not None else []
                 try:
                     binary_path = target.binary_path_for(treatment)
                 except ValueError:
@@ -259,25 +268,32 @@ def render_figures(
                         "selected_rows": len(rows),
                         "rows": [
                             {
-                                key: row.get(key)
-                                for key in (
-                                    "row_index",
-                                    "started_at",
-                                    "status",
-                                    "binary_sha256",
-                                    "file_sha256",
-                                    "fact_directory_sha256",
-                                    "treatment",
-                                    "disequality_encoding",
-                                    "timeout_sec",
-                                    "target_label",
-                                    "target_source",
-                                    "target_git_ref",
-                                    "target_git_sha",
-                                    "target_is_dirty",
-                                    "file_path",
-                                    "fact_directory_path",
-                                )
+                                "row_index": row.row_index,
+                                **{
+                                    key: row.record.get(key)
+                                    for key in (
+                                        "started_at",
+                                        "status",
+                                        "binary_sha256",
+                                        "file_sha256",
+                                        "fact_directory_sha256",
+                                        "treatment",
+                                        "disequality_encoding",
+                                        "timeout_sec",
+                                        "error_exit_code",
+                                        "error_signal",
+                                        "error_message",
+                                        "error_memory_limit_bytes",
+                                        "target_label",
+                                        "target_source",
+                                        "target_git_ref",
+                                        "target_git_sha",
+                                        "target_is_dirty",
+                                        "file_path",
+                                        "fact_directory_path",
+                                    )
+                                    if key in row.record
+                                },
                             }
                             for row in rows
                         ],
@@ -311,6 +327,7 @@ def render_figures(
             "invocation": ["./bench.py", "figures", *invocation],
             "rounds": config.rounds,
             "timeout_sec": config.timeout_sec,
+            "memory_limit_bytes": NATIVE_LIMIT_BYTES,
             "target": asdict(target.row),
             "engine_binaries": [asdict(b) for b in target.engine_binaries],
             "selection_sha256": hashlib.sha256(selected_bytes).hexdigest(),

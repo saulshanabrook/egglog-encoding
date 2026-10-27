@@ -208,6 +208,7 @@ def test_bound_copy_receipt_and_incremental_rendering(tmp_path: Path, monkeypatc
     params = {p["name"]: p["value"] for p in bound["params"]}
     assert params["target_label"] == "figures"
     assert params["selected_inputs"][0]["file_sha256"] == "sha256:file"
+    assert params["selected_inputs"][0]["selected_row_indices"] == [1, 2]
     assert "binary_sha256" not in params["selected_inputs"][0]
     assert bound["data"]["url"] == grouped_report_path(report).as_uri()
     assert (tmp_path / "chart.vl.json").read_bytes() == original
@@ -231,6 +232,94 @@ def test_bound_copy_receipt_and_incremental_rendering(tmp_path: Path, monkeypatc
     figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", [], console)
     assert outputs[2].read_bytes() == b"rendered"
     assert len(calls) == 12
+
+
+def test_bound_ids_and_receipts_share_adaptive_selection_without_rewriting_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = catalog_fixture(tmp_path)
+    config = figures.load_config(path)
+    file = FileSpec("example.egg", tmp_path / "example.egg", "sha256:file")
+    resolved = [figures.ResolvedFigure(f, (file,)) for f in config.figures]
+    report = tmp_path / "cache.jsonl"
+    rows = [
+        make_record(0, started_at="2026-10-01T00:00:00Z", timeout_sec=120, wall_sec=120.01),
+        make_record(1, started_at="2026-10-01T00:00:01Z", timeout_sec=300, wall_sec=100),
+        make_record(2, started_at="2026-10-01T00:00:02Z", timeout_sec=300, wall_sec=180),
+        make_record(3, started_at="2026-10-01T00:00:03Z", timeout_sec=60, status="timed-out"),
+        make_record(4, started_at="2026-10-01T00:00:04Z", status="failure"),
+        make_record(5, started_at="2026-10-01T00:00:05Z", status="failure"),
+    ]
+    for row, cap in zip(rows[-2:], (8, 16), strict=True):
+        row["error_exit_code"] = 86
+        row["error_memory_limit_bytes"] = cap * 1024**3
+    for row in rows:
+        row["target_label"] = "figures"
+    write_report(report, *rows)
+    original = report.read_bytes()
+    grouped = ReportStore(report).grouped_report()
+    write_grouped_report(grouped, grouped_report_path(report))
+    assert len(grouped.data["groups"]) == 1
+    assert len(grouped.data["groups"][0]["samples"]) == 6
+
+    def render(command: list[str], **_kwargs: Any) -> None:
+        Path(command[command.index("--base") - 1]).write_bytes(b"rendered")
+
+    monkeypatch.setattr(figures.subprocess, "run", render)
+    for cap, expected in ((16, [1, 5]), (32, [0, 1])):
+        monkeypatch.setattr(figures, "NATIVE_LIMIT_BYTES", cap * 1024**3)
+        figures.render_figures(
+            resolved,
+            config,
+            grouped,
+            report,
+            make_target(target_label="figures"),
+            tmp_path,
+            [],
+            Console(file=io.StringIO()),
+        )
+        selections = []
+        for name in ("runtime", "memory"):
+            receipt = json.loads((tmp_path / f"{name}.receipt.json").read_bytes())
+            selected = receipt["selected_observations"][0]["rows"]
+            bound = json.loads((tmp_path / f"{name}.bound.vl.json").read_bytes())
+            params = {p["name"]: p["value"] for p in bound["params"]}
+            assert params["selected_inputs"][0]["selected_row_indices"] == expected
+            assert [row["row_index"] for row in selected] == expected
+            assert receipt["timeout_sec"] == 120
+            assert receipt["memory_limit_bytes"] == cap * 1024**3
+            assert [row["timeout_sec"] for row in selected] == [rows[i]["timeout_sec"] for i in expected]
+            assert "error_memory_limit_bytes" not in selected[0]
+            if cap == 16:
+                assert selected[1]["error_memory_limit_bytes"] == 16 * 1024**3
+                assert selected[1]["error_exit_code"] == 86
+            selections.append(receipt["selection_sha256"])
+        assert selections[0] == selections[1]
+        assert report.read_bytes() == original
+
+
+def test_render_rejects_a_label_bound_to_another_executable(tmp_path: Path) -> None:
+    path = catalog_fixture(tmp_path)
+    config = figures.load_config(path)
+    file = FileSpec("example.egg", tmp_path / "example.egg", "sha256:file")
+    report = tmp_path / "cache.jsonl"
+    write_report(
+        report,
+        make_record(0, started_at="2026-10-01T00:00:00Z", target_label="figures", binary_sha256="old"),
+    )
+    grouped = ReportStore(report).grouped_report()
+    write_grouped_report(grouped, grouped_report_path(report))
+    with pytest.raises(ValueError, match="selected executable"):
+        figures.render_figures(
+            [figures.ResolvedFigure(config.figures[0], (file,))],
+            config,
+            grouped,
+            report,
+            make_target(target_label="figures"),
+            tmp_path,
+            [],
+            Console(file=io.StringIO()),
+        )
 
 
 @pytest.fixture

@@ -9,6 +9,8 @@ from typing import NotRequired, TypedDict, cast
 
 from benchmarking.models import FileSpec
 
+from .reproduction.native import NATIVE_ALLOCATION_FAILURE
+
 
 class Alias(TypedDict):
     case: str
@@ -108,17 +110,15 @@ def figure_inventory(root: Path, timeout_sec: int, selected: Sequence[FileSpec] 
     if outcomes.is_file():
         for outcome in cast(list[Validation], json.loads(outcomes.read_text())):
             item = workloads.get((outcome["file_sha256"], outcome["fact_directory_sha256"]))
-            if (
-                item is None
-                or outcome["kind"] != "validation"
-                or outcome["policy"] != "proof-testing-v1"
-                or outcome["timeout_sec"] != timeout_sec
-            ):
+            if item is None or outcome["kind"] != "validation" or outcome["policy"] != "proof-testing-v1":
                 continue
-            key = f"{outcome['binary_sha256']}/{timeout_sec}/{outcome['disequality_encoding']}"
+            key = f"{outcome['binary_sha256']}/{outcome['disequality_encoding']}"
             if outcome["status"] == "success":
                 item["validation_failures"].pop(key, None)
-            else:
+            elif outcome["reason"] not in (
+                NATIVE_ALLOCATION_FAILURE,
+                f"timed out after {outcome['timeout_sec']:g} seconds",
+            ):
                 item["validation_failures"][key] = outcome["reason"] or "Strict proof validation failed"
     return {
         "id": 1,

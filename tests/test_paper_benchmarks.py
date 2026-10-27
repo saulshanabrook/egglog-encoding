@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks import paper
+from benchmarks.reproduction.native import NATIVE_ALLOCATION_FAILURE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,11 +88,51 @@ def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) ->
     path.parent.mkdir()
     path.write_text(json.dumps([outcome]))
     assert paper.figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {
-        "sha256:engine/300/nee": "Strict replay failed",
+        "sha256:engine/nee": "Strict replay failed",
     }
-    assert paper.figure_inventory(tmp_path, 120)["workloads"][0]["validation_failures"] == {}
-    path.write_text(json.dumps([outcome, {**outcome, "status": "success"}]))
+    assert paper.figure_inventory(tmp_path, 120)["workloads"][0]["validation_failures"] == {
+        "sha256:engine/nee": "Strict replay failed",
+    }
+    path.write_text(json.dumps([outcome, {**outcome, "timeout_sec": 120, "reason": "timed out after 120 seconds"}]))
+    assert paper.figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {
+        "sha256:engine/nee": "Strict replay failed",
+    }
+    path.write_text(json.dumps([outcome, {**outcome, "status": "success", "reason": None, "timeout_sec": 120}]))
     assert paper.figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {}
+
+
+@pytest.mark.parametrize(
+    "reason,resource",
+    [
+        (NATIVE_ALLOCATION_FAILURE, True),
+        ("timed out after 300 seconds", True),
+        ("timed out after 120 seconds", False),
+        ("timed out after 300 seconds; proof replay failed", False),
+        (NATIVE_ALLOCATION_FAILURE + "; proof replay failed", False),
+        ("Proof failed under memory limit", False),
+    ],
+)
+def test_legacy_resource_outcomes_do_not_veto_checked_results(tmp_path: Path, reason: str, resource: bool) -> None:
+    item = corpus_fixture(tmp_path)["workloads"][0]
+    outcome = {
+        "file_sha256": item["sha256"],
+        "fact_directory_sha256": "",
+        "binary_sha256": "sha256:engine",
+        "timeout_sec": 300,
+        "disequality_encoding": "nee",
+        "kind": "validation",
+        "policy": "proof-testing-v1",
+        "status": "failure",
+        "reason": reason,
+    }
+    path = tmp_path / "benchmarks/corpus/.local/outcomes.json"
+    path.parent.mkdir()
+    original = json.dumps([outcome])
+    path.write_text(original)
+    expected = {} if resource else {"sha256:engine/nee": reason}
+    for timeout in (120, 300, 600):
+        assert paper.figure_inventory(tmp_path, timeout)["workloads"][0]["validation_failures"] == expected
+    assert path.read_text() == original
 
 
 def test_metadata_only_validates_selected_corpus_inputs(tmp_path: Path) -> None:

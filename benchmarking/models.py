@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from native_memory import NATIVE_LIMIT_BYTES
+
 from .engines import TREATMENT_SPECS, Engine, Treatment
 
 Status = Literal["success", "timed-out", "failure"]
@@ -155,6 +157,7 @@ class ComparisonSpec:
     files: tuple[FileSpec, ...]
     rounds: int
     timeout_sec: int
+    memory_limit_bytes: int = NATIVE_LIMIT_BYTES
 
     def __post_init__(self) -> None:
         if not self.files:
