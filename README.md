@@ -478,42 +478,47 @@ sharing it.
 
 ### Nightly
 
-`make nightly` benchmarks each treatment in `TREATMENTS` — `term`, `proofs`,
-and `proof-extraction` — on the current checkout and on the latest `main`,
-writing `nightly/output/index.jsonl` and the interactive page beside it:
+`make nightly` compares the current checkout and `main` with proofs off and
+fully checked proofs (`proof-testing`). It uses an explicit seven-file subset:
+Math-11, Eggcc 2mm, HardBoiled Conv1D-32, Luminal Llama, MISAAL HVX dot-product,
+Churchroad wide multiply and DialEgg NMM-40. The ordinary CLI roster is separate.
 
 ```bash
 make nightly
-uv run --locked python scripts/nightly_bench.py /path/to/output  # alternate output directory
+python3 scripts/nightly_bench.py /path/to/output --rounds 1 --timeout-sec 120
 ```
 
-Endpoints are labelled by target (`branch` / `main`) and commit hash, so the
-page's dropdown can compare any two of them and it is clear which commit each
-side is; endpoints with identical binaries collapse to one option. The page
-opens on proof overhead of the current checkout. Populating is best effort: an
-endpoint that fails to build or run drops one dropdown option rather than
-failing the run. Edit `TARGETS` and `TREATMENTS` in `scripts/nightly_bench.py`
-to change what is measured.
+The initial request is one observation per endpoint/file, with a 120-second
+workload timeout. Compatible observations are shared by executable identity.
+The default page shows checked/off overhead of the branch; `branch-vs-main.md`
+compares the two checked endpoints from the same snapshot. Identical executables
+share observations rather than appearing as distinct measurements.
 
-Each run replaces both published files, so `index.jsonl` is the cache that run
-measured into and a failed run publishes no page.
+A host Python 3.8+ standard-library supervisor starts before bootstrap. It bounds
+uv/rustup installation, uv's Python 3.12 environment setup, target preparation,
+builds, collection and final rendering under one **two-hour maximum**. Collection
+reserves 120 seconds for partial rendering and five seconds for process cleanup.
+`--rounds` and `--timeout-sec` cannot extend that deadline; `--budget-sec` can
+shorten it. Native/setup process owners enforce the earlier collection deadline
+and reap their own process groups. Final rendering has its own remaining-time
+bound and never builds or collects.
 
-`make nightly-local` is the same run at `--rounds 1`, for trying the whole
-pipeline out without waiting for a full nightly.
+Each job replaces `nightly/output/index.jsonl`, `index-grouped.json` and
+`index.html`. Completed rows survive timeout or fatal setup failure; partial
+reports retain missing/failed outcomes. `status.txt` explains an incomplete job,
+and `nightly-context.json` preserves its exact target/input identities for the
+separate render worker. No generic interactive-report state is added. Ordinary
+workload failures may leave other workloads running; failed native setup or
+process control halts further collection. Deployment of the branch/main workflow
+requires the native-cap prerequisite on `main`: an older binary rejecting the
+option is reported explicitly and is never run uncapped.
 
-The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
-this repository, runs `make nightly`, and serves `nightly/output/`, matching the
-`report=` entry in the nightly configuration. Two things that runner does not
-provide, `make nightly` arranges itself: it installs a pinned uv into `.uv/`
-when uv is missing from `PATH` (uv then downloads its own CPython; bump
-`UV_VERSION` in the `Makefile` to move that pin), and it installs rustup when
-the box has none. The runner also leaves rustup's `~/.cargo/bin` off `PATH`,
-which would leave cargo resolving to Ubuntu's — too old for
-`rust-toolchain.toml`'s pin — so `nightly_bench.py` puts those shims first.
-
-Both installers run `curl … | sh`, so on a developer box prefer installing uv
-and rustup yourself: `make nightly` and `make nightly-local` skip each one that
-is already there. Only a bare CI runner needs them.
+The [egraphs-good nightly service](https://nightly.cs.washington.edu) runs
+`make nightly` and serves `nightly/output/`. The bounded supervisor invokes the
+existing pinned uv/rustup bootstrap targets and puts rustup's cargo shims first
+on PATH. Existing installations are reused. `make nightly-local` remains an
+alias for the same one-round bounded run; `HOST_PYTHON` selects the host
+supervisor interpreter.
 
 ### CPU profiling
 
