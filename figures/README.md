@@ -6,7 +6,7 @@ From the code repository root:
 ./bench.py figures
 ./bench.py figures --help
 ./bench.py figures math-runtime math-memory
-./bench.py figures --rounds 3 --report /tmp/figures-quick.jsonl
+./bench.py figures --rounds 3
 ./bench.py figures --config path/to/catalog.json
 ./bench.py figures --output-dir ../extended-egglog-paper/figures/eval
 ```
@@ -63,8 +63,11 @@ Each figure requests the product of its own files and treatments. Collection
 merges identical requests across figures into one plan and one progress display.
 Runtime and memory views therefore share launches. It reuses compatible cached
 observations and collects only missing observations; there is no separate
-cached/render-only mode. Cached failed conditions are retained rather than
-repeated automatically. Repeating an unchanged completed invocation launches no
+cached/render-only mode. Ordinary errors remain cached. Memory-limit and timeout
+failures are retried only after the corresponding bound increases. Successful
+runs remain reusable across bound changes; after lowering the timeout, their
+recorded timeout or completed wall time must fit the new deadline.
+Repeating an unchanged completed invocation launches no
 additional measurements and leaves unchanged images alone.
 
 The default source is this checkout with label `figures`. `--target figures=@main`
@@ -90,13 +93,15 @@ belongs to the current grouped artifact; raw label-only lookup remains based on
 recorded observations. Source targets are checked and rebound on each figure
 invocation. An ordinary comparison that assigns the same label/engine to two
 different binaries is rejected before launch. The raw
-`.reports.jsonl` remains append-only. The authored Vega-Lite specifications
-select the requested label, physical input/facts hashes, treatment, encoding and
-timeout. They never borrow missing measurements from an older executable.
+`.reports.jsonl` remains append-only. The shared selector matches the requested
+label, executable, physical input/facts hashes, treatment and encoding, then
+selects rows applicable to the requested resource bounds. It binds their original
+row indices into the Vega-Lite specifications. They never borrow missing
+measurements from an older executable.
 Native disequality `.in` and logical Egglog `.egg` inputs remain distinct.
 
-The plot selects the newest requested N rows per identity, ordered by timestamp
-and physical row index, including failures. It retains good raw points but
+The plot uses the newest requested N applicable rows per identity, ordered by
+timestamp and physical row index, including failures. It retains good raw points but
 reports an estimate only when all N rows succeeded and the metric is finite.
 Partial observations, timeouts and missing RSS remain explicit. With N >= 2,
 absolute mean intervals use Student's t at 95%. N = 1 permits a mean point but
@@ -139,13 +144,15 @@ separate validators; those remain under
 Each generated `.bound.vl.json` changes only declared invocation parameters and
 the report data URL. The standard parameters are `target_label`, `timeout_sec`,
 `rounds`, `t_critical`, `selected_inputs` and `source_blockers`. Expected inputs
-include physical identities and corpus metadata, not precomputed statistics.
+include physical identities, selected original row indices and corpus metadata,
+not precomputed statistics.
 They scope subset configurations and keep missing conditions visible. The bound
 copy can be rendered directly using the same pinned `npx vl2pdf` command, with
 `--base` set to the authored specification's directory.
 
-Each `.receipt.json` records effective settings, source/binary hashes, selected
-row identities and original provenance, metadata, rendering versions and output
+Each `.receipt.json` records requested resource bounds, source/binary hashes,
+selected row identities and original provenance (including recorded timeouts and
+the configured native allowance on allocation failures), metadata, rendering versions and output
 hashes. Historical argv was not stored in the cache: command templates are
 reconstructed, not claimed as recorded argv. Match `selection_sha256` between
 runtime/memory receipts and hand off outputs from one invocation. Preserve the
