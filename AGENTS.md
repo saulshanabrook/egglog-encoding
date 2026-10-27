@@ -139,7 +139,7 @@ or modify the JSONL.
   benchmark phases. `--config` selects a flat JSON catalog with global `rounds`
   and `timeout_sec`, and direct per-figure `spec`, `files`, and `treatments`.
 - The production catalog requests ten executions and a 300-second timeout. Use
-  separate one-round catalogs and temporary reports for synthetic/CLI checks;
+  `--rounds 1` and temporary reports for synthetic/CLI checks;
   ordinary benchmark defaults are unchanged. There is no cached-only mode.
 - Reuse compatible observations automatically, merge repeated runtime/memory
   requests, and refresh current label bindings even with zero fresh runs.

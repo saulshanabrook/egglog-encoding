@@ -79,7 +79,7 @@
     {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
     {"calculate": "{'egg-de':'DE · Disegg', 'egg-ee':'EE · Egg', 'egg-nee':'NEE · Egg', 'egg-oee':'OEE · Egg', 'off':'NEE · Egglog'}[datum.input.treatment] || datum.input.treatment", "as": "condition"},
     {"calculate": "(datum.run_number % 5 - 2) * 3", "as": "jitter"},
-    {"calculate": "datum.complete ? format(datum.mean, '.3g') + ' s; n=' + datum.sample_n + (rounds === 1 ? '; CI unavailable' : '') : datum.issue", "as": "summary"},
+    {"calculate": "datum.condition + ': ' + (datum.complete ? format(datum.mean, '.3g') + ' s; n=' + datum.sample_n + (rounds === 1 ? '; CI unavailable' : '') : datum.issue)", "as": "summary"},
     {"calculate": "min(0, isValid(datum.ci_low) ? datum.ci_low : 0)", "as": "absolute_low"},
     {"calculate": "max(1, isValid(datum.value) ? datum.value : 0, isValid(datum.ci_high) ? datum.ci_high : 0)", "as": "absolute_high"},
     {"extent": "absolute_low", "param": "absolute_low_extent"},
@@ -133,6 +133,15 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "DE · Disegg",
+                  "EE · Egg",
+                  "NEE · Egg",
+                  "OEE · Egg",
+                  "NEE · Egglog"
+                ]
               }
             },
             "color": {
@@ -221,6 +230,15 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "DE · Disegg",
+                  "EE · Egg",
+                  "NEE · Egg",
+                  "OEE · Egg",
+                  "NEE · Egglog"
+                ]
               }
             }
           }
@@ -266,6 +284,15 @@
               ],
               "axis": {
                 "labelLimit": 180
+              },
+              "scale": {
+                "domain": [
+                  "DE · Disegg",
+                  "EE · Egg",
+                  "NEE · Egg",
+                  "OEE · Egg",
+                  "NEE · Egglog"
+                ]
               }
             }
           }
@@ -299,7 +326,16 @@
             "OEE · Egg",
             "NEE · Egglog"
           ],
-          "axis": null
+          "axis": null,
+          "scale": {
+            "domain": [
+              "DE · Disegg",
+              "EE · Egg",
+              "NEE · Egg",
+              "OEE · Egg",
+              "NEE · Egglog"
+            ]
+          }
         },
         "text": {
           "field": "summary"

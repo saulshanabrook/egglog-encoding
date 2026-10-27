@@ -14,7 +14,8 @@ import tempfile
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from math import ceil, isfinite
 from pathlib import Path
 
 from rich.console import Console
@@ -22,6 +23,8 @@ from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    ProgressColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -642,6 +645,53 @@ def flat_report_record(
     }
 
 
+class CollectionETAColumn(ProgressColumn):
+    """Estimate the whole missing plan, refining a rough one-second fallback.
+
+    Exact successful cached/live durations predict each condition. Unseen
+    conditions use the mean known duration until they finish once themselves.
+    Cached work never advances the progress clock or completed counter.
+    """
+
+    def __init__(
+        self, store: ReportStore, runs: tuple[tuple[ResolvedTarget, BenchmarkRunPlan], ...], timeout_sec: int
+    ) -> None:
+        super().__init__(table_column=Column(no_wrap=True))
+        self.remaining: dict[CacheKey, int] = {}
+        self.durations: dict[CacheKey, list[float]] = {}
+        self.active: tuple[CacheKey, float] | None = None
+        for target, run in runs:
+            key = CacheKey.for_endpoint(
+                BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file, timeout_sec
+            )
+            self.remaining[key] = run.missing_observations
+            self.durations[key] = [
+                wall
+                for row in store.latest_records(key, run.required_rows)
+                if row.record["status"] == "success"
+                and (wall := row.record["wall_sec"]) is not None
+                and isfinite(wall)
+                and wall > 0
+            ]
+
+    def complete(self, key: CacheKey, result: TimingResult) -> None:
+        self.remaining[key] = self.remaining[key] - 1 if result.status == "success" else 0
+        wall = result.timing.wall_sec
+        if result.status == "success" and wall is not None and isfinite(wall) and wall > 0:
+            self.durations[key].append(wall)
+        self.active = None
+
+    def render(self, task: Task) -> Text:
+        means = {key: sum(values) / len(values) for key, values in self.durations.items() if values}
+        fallback = sum(means.values()) / len(means) if means else 1.0
+        seconds = sum(count * means.get(key, fallback) for key, count in self.remaining.items())
+        active = self.active
+        if active is not None:
+            key, started = active
+            seconds -= min(max(0.0, (task.elapsed or 0.0) - started), means.get(key, fallback))
+        return Text(f"ETA ~{timedelta(seconds=ceil(max(0.0, seconds)))}")
+
+
 def collect_rows(
     store: ReportStore,
     plan: CollectionPlan | tuple[CollectionPlan, ...],
@@ -659,6 +709,7 @@ def collect_rows(
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
     stopped: set[CacheKey] = set()
+    estimate = CollectionETAColumn(store, runs, timeout_sec)
 
     with Progress(
         TextColumn(
@@ -674,6 +725,7 @@ def collect_rows(
         ),
         MofNCompleteColumn(table_column=Column(no_wrap=True)),
         TimeElapsedColumn(table_column=Column(no_wrap=True)),
+        estimate,
         console=console,
         transient=True,
         disable=not console.is_terminal,
@@ -700,6 +752,7 @@ def collect_rows(
                 )
                 if len(plans) > 1:
                     label = f"{target.display_label} · {label}"
+                estimate.active = (key, progress.tasks[0].elapsed or 0.0)
                 progress.update(
                     process_task,
                     current=label,
@@ -738,6 +791,7 @@ def collect_rows(
                 if observation.result.status != "success":
                     stopped.add(key)
                     total_observations -= run.missing_observations - round_index - 1
+                estimate.complete(key, observation.result)
                 progress.update(
                     process_task,
                     advance=1,
@@ -748,7 +802,7 @@ def collect_rows(
                     progress.console.print(
                         Text(
                             f"  [{observation_number}/{total_observations}] {label}: "
-                            f"{format_timing_result(observation.result)}"
+                            f"{format_timing_result(observation.result)} · {estimate.render(progress.tasks[0])}"
                         )
                     )
     target_label = plans[0].target.display_label if len(plans) == 1 else f"{len(plans)} targets"

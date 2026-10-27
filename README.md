@@ -358,6 +358,8 @@ the command. `./bench.py figures --help` lists configured figure names. Outputs
 default to `figures/eval/`; `--output-dir ../extended-egglog-paper/figures/eval`
 places the PDFs at the paper's expected paths. See the figure guide for the flat
 JSON catalog, observation identities, statistical protocol, and provenance receipts.
+Use `./bench.py figures --rounds 3 --report /tmp/figures-quick.jsonl` for a shorter
+run without changing the ten-run production catalog.
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
 `(check ...)` or `(extract ...)` in timed workloads so the selected treatment controls whether

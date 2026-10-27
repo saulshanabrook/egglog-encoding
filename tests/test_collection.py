@@ -6,10 +6,11 @@ import io
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from rich.console import Console
+from rich.progress import TaskID
 
 from benchmarking import collection, engines, models, processes, targets
 from benchmarking.reports.store import CacheKey, ReportStore
@@ -1015,9 +1016,9 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     collection.collect_rows(store, plan, 120, console)
 
     assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s",
-        "  [2/3] file.egg · proofs · 1/1: failed after 0.500s: bad rule more context",
-        "  [3/3] other.egg · off · 1/1: timed out after 120 seconds",
+        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s · ETA ~0:00:01",
+        "  [2/3] file.egg · proofs · 1/1: failed after 0.500s: bad rule more context · ETA ~0:00:01",
+        "  [3/3] other.egg · off · 1/1: timed out after 120 seconds · ETA ~0:00:00",
         "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
     ]
     assert store.row_count == 3
@@ -1060,7 +1061,7 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     assert "succeeded after" not in rendered
     assert "file.egg" in rendered
     assert "off" in rendered
-    assert "ETA" not in rendered
+    assert "ETA ~0:00:00" in rendered
     assert "failed after 0.500s: bad rule" in rendered
     assert "abc123: collected 2 fresh runs · 1 successful, 1 failed" in rendered
 
@@ -1092,3 +1093,115 @@ def test_preflight_requires_math12_flag_only_for_fresh_math12(
         ("--timing-summary", "--memory-limit-bytes", "--math12"),
         ("--timing-summary", "--memory-limit-bytes"),
     ]
+
+
+def test_collection_eta_uses_cached_durations_without_cached_elapsed(
+    tmp_path: Path,
+) -> None:
+    target = make_target(binary_path=tmp_path / "engine")
+    first = planned_run(required=3, cached=("success",))
+    second = planned_run(filename="other.egg", required=3)
+    report = tmp_path / "report.jsonl"
+    write_report(
+        report,
+        make_record(0, started_at="2026-10-01T00:00:00Z", file_sha256=first.file.sha256, wall_sec=10),
+        make_record(
+            1,
+            started_at="2026-10-01T00:00:01Z",
+            file_sha256=second.file.sha256,
+            fact_directory_sha256="other facts",
+            wall_sec=1000,
+        ),
+    )
+    clock = [100.0]
+    progress = collection.Progress(get_time=lambda: clock[0], auto_refresh=False, console=Console(file=io.StringIO()))
+    progress.add_task("Collecting", total=5)
+    task = progress.tasks[0]
+    estimate = collection.CollectionETAColumn(ReportStore(report), ((target, first), (target, second)), 120)
+    assert task.elapsed == 0
+    assert str(estimate.render(task)) == "ETA ~0:00:50"
+    key = CacheKey.for_endpoint(endpoint(target), first.file, 120)
+    estimate.active = (key, 0)
+    clock[0] += 4
+    assert str(estimate.render(task)) == "ETA ~0:00:46"
+    estimate.complete(key, processes.TimingResult("success", processes.TimingRow(wall_sec=6), None))
+    assert str(estimate.render(task)) == "ETA ~0:00:32"
+    second_key = CacheKey.for_endpoint(endpoint(target), second.file, 120)
+    estimate.complete(second_key, processes.TimingResult("failure", processes.TimingRow(), None))
+    assert str(estimate.render(task)) == "ETA ~0:00:08"
+
+
+@pytest.mark.parametrize("status", ["failure", "timed-out"])
+@pytest.mark.parametrize("width", [80, 120])
+def test_fresh_progress_eta_revises_remaining_work_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: models.Status, width: int
+) -> None:
+    target = make_target(binary_path=tmp_path / "engine")
+    runs = (planned_run(required=2), planned_run(filename="other.egg", required=2))
+    clock = [100.0]
+    progress_instances: list[collection.Progress] = []
+    snapshots: list[tuple[float, float | None, float | None, str]] = []
+
+    class Progress(collection.Progress):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **(kwargs | {"get_time": lambda: clock[0], "auto_refresh": False}))
+            progress_instances.append(self)
+
+        def update(self, task_id: TaskID, **kwargs: Any) -> None:
+            super().update(task_id, **kwargs)
+            task = self.tasks[0]
+            column = self.columns[-1]
+            assert isinstance(column, collection.CollectionETAColumn)
+            snapshots.append((task.completed, task.total, task.elapsed, str(column.render(task))))
+
+    calls = 0
+
+    def observe(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            progress = progress_instances[0]
+            task = progress.tasks[0]
+            column = progress.columns[-1]
+            assert isinstance(column, collection.CollectionETAColumn)
+            assert str(column.render(task)) == "ETA ~0:00:04"
+            display = io.StringIO()
+            Console(file=display, width=width, color_system=None).print(progress.get_renderable())
+            assert "ETA ~0:00:04" in display.getvalue()
+            assert all(len(line) <= width for line in display.getvalue().splitlines())
+            clock[0] += 0.5
+            assert str(column.render(task)) == "ETA ~0:00:04"
+            clock[0] += 1.5
+            return collection.ProcessObservation(
+                processes.TimingResult(status, processes.TimingRow(wall_sec=2), processes.ErrorRow("failed")), None
+            )
+        clock[0] += 4
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=4), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "Progress", Progress)
+    monkeypatch.setattr(collection, "run_process", observe)
+    store = ReportStore(tmp_path / "report.jsonl")
+    collection.collect_rows(store, collection.CollectionPlan(target, runs), 120, Console(file=io.StringIO()))
+    assert calls == store.row_count == 3
+    assert len(progress_instances) == 1
+    assert snapshots == [
+        (0, 4, 0, "ETA ~0:00:04"),
+        (1, 3, 2, "ETA ~0:00:02"),
+        (1, 3, 2, "ETA ~0:00:02"),
+        (2, 3, 6, "ETA ~0:00:04"),
+        (2, 3, 6, "ETA ~0:00:04"),
+        (3, 3, 10, "ETA ~0:00:00"),
+    ]
+
+
+def test_fully_cached_collection_has_no_progress_or_launches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(collection, "Progress", lambda *_a, **_k: pytest.fail("no fresh work"))
+    monkeypatch.setattr(collection, "run_process", lambda *_a: pytest.fail("no fresh work"))
+    collection.collect_rows(
+        ReportStore(tmp_path / "report.jsonl"),
+        collection.CollectionPlan(make_target(), (planned_run(cached=("success",) * 6),)),
+        120,
+        Console(file=io.StringIO()),
+    )
