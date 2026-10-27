@@ -1,0 +1,321 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Paper figure. All sample selection and statistics are performed by the visible Vega transforms. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
+  "data": {
+    "url": "../../.reports-grouped.json",
+    "format": {
+      "type": "json"
+    }
+  },
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {"name": "timeout_sec", "value": 300},
+    {"name": "rounds", "value": 10},
+    {"name": "t_critical", "value": 2.2621571628540993},
+    {"name": "selected_inputs", "value": []},
+    {"name": "source_blockers", "value": []}
+  ],
+  "config": {
+    "font": "Arial",
+    "view": {
+      "stroke": null
+    },
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 12,
+      "gridColor": "#e8eaed",
+      "titlePadding": 10
+    },
+    "legend": {
+      "labelFontSize": 11,
+      "title": null,
+      "orient": "top"
+    },
+    "title": {
+      "anchor": "start",
+      "fontSize": 16,
+      "subtitleFontSize": 11,
+      "subtitlePadding": 8
+    }
+  },
+  "title": {
+    "text": "Disequality runtime",
+    "subtitle": [
+      "100,000 equality pairs · 10,000 disequality pairs + six fixed assertions · proofs off",
+      "Dots: process runs. Tick: mean. Error bar: 95% Student-t interval. Lower is better."
+    ]
+  },
+  "transform": [
+    {"calculate": "[datum.groups, [null]]", "as": "batches"},
+    {"flatten": ["batches"], "as": ["candidates"]},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {"filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.timeout_sec === timeout_sec && datum.group.key.disequality_encoding === 'nee')"},
+    {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.fact_directory_sha256 + '/' + datum.group.key.treatment : ''", "as": "group_id"},
+    {"aggregate": [{"op": "values", "as": "observed"}]},
+    {"calculate": "pluck(datum.observed, 'group_id')", "as": "group_ids"},
+    {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
+    {"calculate": "selected_inputs", "as": "inputs"},
+    {"flatten": ["inputs"], "as": ["input"]},
+    {"calculate": "datum.input.file_sha256 + '/' + datum.input.fact_directory_sha256 + '/' + datum.input.treatment", "as": "input_id"},
+    {"calculate": "indexof(datum.group_ids, datum.input_id)", "as": "group_index"},
+    {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
+    {"calculate": "isValid(datum.group)", "as": "eligible_group"},
+    {"calculate": "datum.eligible_group ? datum.group.samples : []", "as": "observations"},
+    {"calculate": "slice(datum.observations, max(0, length(datum.observations) - rounds))", "as": "samples"},
+    {"calculate": "length(datum.samples)", "as": "sample_n"},
+    {"calculate": "datum.input.treatment === 'proof-testing' && datum.eligible_group && datum.input.validation_failures ? datum.input.validation_failures[datum.group.key.binary_sha256 + '/' + timeout_sec + '/nee'] || '' : ''", "as": "validation_issue"},
+    {"calculate": "datum.sample_n ? datum.samples : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["run"]},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "value"},
+    {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "variance", "field": "value", "as": "sample_variance"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}], "groupby": ["input_id"]},
+    {"calculate": "datum.sample_n === rounds && datum.valid_n === rounds && !datum.validation_issue", "as": "complete"},
+    {"calculate": "datum.complete ? datum.sample_mean : null", "as": "mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.sample_variance / rounds : null", "as": "var_mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean - t_critical * sqrt(datum.var_mean) : null", "as": "ci_low"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean + t_critical * sqrt(datum.var_mean) : null", "as": "ci_high"},
+    {"calculate": "datum.validation_issue || (datum.failed_n ? datum.sample_n + '/' + rounds + ' observations; ' + datum.failed_n + ' failed (' + datum.timeout_n + ' timeout); estimate unavailable' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' observations; measurement unavailable; no estimate' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' observations; estimate unavailable' : rounds === 1 ? 'n=1; CI unavailable' : '')", "as": "issue"},
+    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
+    {"calculate": "{'egg-de':'DE · Disegg', 'egg-ee':'EE · Egg', 'egg-nee':'NEE · Egg', 'egg-oee':'OEE · Egg', 'off':'NEE · Egglog'}[datum.input.treatment] || datum.input.treatment", "as": "condition"},
+    {"calculate": "(datum.run_number % 5 - 2) * 3", "as": "jitter"},
+    {"calculate": "datum.complete ? format(datum.mean, '.3g') + ' s; n=' + datum.sample_n + (rounds === 1 ? '; CI unavailable' : '') : datum.issue", "as": "summary"},
+    {"calculate": "min(0, isValid(datum.ci_low) ? datum.ci_low : 0)", "as": "absolute_low"},
+    {"calculate": "max(1, isValid(datum.value) ? datum.value : 0, isValid(datum.ci_high) ? datum.ci_high : 0)", "as": "absolute_high"},
+    {"extent": "absolute_low", "param": "absolute_low_extent"},
+    {"extent": "absolute_high", "param": "absolute_high_extent"}
+  ],
+  "hconcat": [
+    {
+      "width": 410,
+      "height": {
+        "step": 40
+      },
+      "layer": [
+        {
+          "name": "absolute_runs",
+          "transform": [
+            {
+              "filter": "isValid(datum.value) && !datum.validation_issue"
+            }
+          ],
+          "mark": {
+            "type": "point",
+            "filled": true,
+            "opacity": 0.55,
+            "size": 38
+          },
+          "encoding": {
+            "x": {
+              "field": "value",
+              "type": "quantitative",
+              "title": "Whole-process wall time (s)",
+              "scale": {
+                "domain": {
+                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
+                }
+              },
+              "axis": {
+                "format": "~g",
+                "tickCount": 5
+              }
+            },
+            "y": {
+              "field": "condition",
+              "type": "nominal",
+              "title": null,
+              "sort": [
+                "DE · Disegg",
+                "EE · Egg",
+                "NEE · Egg",
+                "OEE · Egg",
+                "NEE · Egglog"
+              ],
+              "axis": {
+                "labelLimit": 180
+              }
+            },
+            "color": {
+              "field": "condition",
+              "type": "nominal",
+              "legend": null,
+              "scale": {
+                "domain": [
+                  "DE · Disegg",
+                  "EE · Egg",
+                  "NEE · Egg",
+                  "OEE · Egg",
+                  "NEE · Egglog"
+                ],
+                "range": [
+                  "#2a6f97",
+                  "#2a6f97",
+                  "#2a6f97",
+                  "#2a6f97",
+                  "#b75d19"
+                ]
+              }
+            },
+            "yOffset": {
+              "field": "jitter",
+              "type": "quantitative",
+              "scale": null
+            },
+            "tooltip": [
+              {
+                "field": "condition"
+              },
+              {
+                "field": "value",
+                "format": ".5g"
+              },
+              {
+                "field": "sample_n"
+              },
+              {
+                "field": "run.row_index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "absolute_intervals",
+          "transform": [
+            {
+              "filter": "datum.run_number === 1 && isValid(datum.ci_low)"
+            }
+          ],
+          "mark": {
+            "type": "rule",
+            "strokeWidth": 2,
+            "color": "#20252b"
+          },
+          "encoding": {
+            "x": {
+              "field": "ci_low",
+              "type": "quantitative",
+              "title": "Whole-process wall time (s)",
+              "scale": {
+                "domain": {
+                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
+                }
+              },
+              "axis": {
+                "format": "~g",
+                "tickCount": 5
+              }
+            },
+            "x2": {
+              "field": "ci_high"
+            },
+            "y": {
+              "field": "condition",
+              "type": "nominal",
+              "title": null,
+              "sort": [
+                "DE · Disegg",
+                "EE · Egg",
+                "NEE · Egg",
+                "OEE · Egg",
+                "NEE · Egglog"
+              ],
+              "axis": {
+                "labelLimit": 180
+              }
+            }
+          }
+        },
+        {
+          "name": "absolute_means",
+          "transform": [
+            {
+              "filter": "datum.run_number === 1 && datum.complete"
+            }
+          ],
+          "mark": {
+            "type": "tick",
+            "thickness": 2.5,
+            "size": 20,
+            "color": "#20252b"
+          },
+          "encoding": {
+            "x": {
+              "field": "mean",
+              "type": "quantitative",
+              "title": "Whole-process wall time (s)",
+              "scale": {
+                "domain": {
+                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
+                }
+              },
+              "axis": {
+                "format": "~g",
+                "tickCount": 5
+              }
+            },
+            "y": {
+              "field": "condition",
+              "type": "nominal",
+              "title": null,
+              "sort": [
+                "DE · Disegg",
+                "EE · Egg",
+                "NEE · Egg",
+                "OEE · Egg",
+                "NEE · Egglog"
+              ],
+              "axis": {
+                "labelLimit": 180
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "absolute_status",
+      "transform": [
+        {
+          "filter": "datum.run_number === 1"
+        }
+      ],
+      "width": 270,
+      "height": {
+        "step": 40
+      },
+      "mark": {
+        "type": "text",
+        "align": "left",
+        "fontSize": 10
+      },
+      "encoding": {
+        "y": {
+          "field": "condition",
+          "type": "nominal",
+          "sort": [
+            "DE · Disegg",
+            "EE · Egg",
+            "NEE · Egg",
+            "OEE · Egg",
+            "NEE · Egglog"
+          ],
+          "axis": null
+        },
+        "text": {
+          "field": "summary"
+        },
+        "color": {
+          "condition": {
+            "test": "!datum.complete",
+            "value": "#9a3e1c"
+          },
+          "value": "#30363d"
+        },
+        "x": {
+          "value": 0
+        }
+      }
+    }
+  ],
+  "spacing": 16
+}

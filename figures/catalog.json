@@ -1,0 +1,75 @@
+{
+  "rounds": 10,
+  "timeout_sec": 300,
+  "figures": {
+    "disequality-runtime": {
+      "spec": "eval/disequality-runtime.vl.json",
+      "files": [
+        "../benchmarks/disequality/parameter-analysis.egg"
+      ],
+      "treatments": [
+        "egg-de",
+        "egg-ee",
+        "egg-nee",
+        "egg-oee",
+        "off"
+      ]
+    },
+    "math-runtime": {
+      "spec": "eval/math-runtime.vl.json",
+      "files": [
+        "../benchmarks/corpus/math/math-iteration-12.egg"
+      ],
+      "treatments": [
+        "egg",
+        "egg-proof-testing",
+        "off",
+        "proof-testing"
+      ]
+    },
+    "math-memory": {
+      "spec": "eval/math-memory.vl.json",
+      "files": [
+        "../benchmarks/corpus/math/math-iteration-12.egg"
+      ],
+      "treatments": [
+        "egg",
+        "egg-proof-testing",
+        "off",
+        "proof-testing"
+      ]
+    },
+    "corpus-runtime-cdf": {
+      "spec": "eval/corpus-runtime-cdf.vl.json",
+      "files": [
+        "../benchmarks/corpus/eggcc/*.egg",
+        "../benchmarks/corpus/hardboiled/*.egg",
+        "../benchmarks/corpus/misaal/*.egg",
+        "../benchmarks/corpus/churchroad/*.egg",
+        "../benchmarks/corpus/dialegg/*.egg",
+        "../benchmarks/corpus/luminal/*.egg"
+      ],
+      "treatments": [
+        "off",
+        "term",
+        "proof-testing"
+      ]
+    },
+    "corpus-memory-cdf": {
+      "spec": "eval/corpus-memory-cdf.vl.json",
+      "files": [
+        "../benchmarks/corpus/eggcc/*.egg",
+        "../benchmarks/corpus/hardboiled/*.egg",
+        "../benchmarks/corpus/misaal/*.egg",
+        "../benchmarks/corpus/churchroad/*.egg",
+        "../benchmarks/corpus/dialegg/*.egg",
+        "../benchmarks/corpus/luminal/*.egg"
+      ],
+      "treatments": [
+        "off",
+        "term",
+        "proof-testing"
+      ]
+    }
+  }
+}

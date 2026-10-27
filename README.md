@@ -348,6 +348,17 @@ details and archive SHA-256. Herbie remains a bounded static proxy in the
 ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
+The [paper figures](figures/README.md) use the checked-in
+`benchmarks/corpus/manifest.json` rather than the default workload list.
+Run `./bench.py figures` from this checkout to build the required release engines,
+reuse compatible observations, collect missing runs, and render all five paper
+figures as PDF, SVG, and PNG. Setup requires the Python environment above, the
+pinned Rust toolchain, and Node.js/npm (`npx`); renderer packages are pinned in
+the command. `./bench.py figures --help` lists configured figure names. Outputs
+default to `figures/eval/`; `--output-dir ../extended-egglog-paper/figures/eval`
+places the PDFs at the paper's expected paths. See the figure guide for the flat
+JSON catalog, observation identities, statistical protocol, and provenance receipts.
+
 Benchmark files must not contain executable `(prove ...)` commands. Use
 `(check ...)` or `(extract ...)` in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
