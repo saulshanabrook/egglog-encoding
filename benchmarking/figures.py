@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +120,9 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
     parser.add_argument("names", nargs="*", help="configured figure names (default: all)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="flat figure JSON catalog")
     parser.add_argument(
+        "--rounds", type=int, default=config.rounds, help="observations per condition (overrides catalog)"
+    )
+    parser.add_argument(
         "--target", default=f"figures={ROOT}", help="source target (default: this checkout, label figures)"
     )
     parser.add_argument("--report", type=Path, default=Path(".reports.jsonl"), help="append-only observation cache")
@@ -127,6 +130,8 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
         "--output-dir", type=Path, help="common output directory (default: each specification directory)"
     )
     args = parser.parse_args(argv)
+    if args.rounds < 1:
+        parser.error("--rounds must be positive")
     if str(args.report) == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
     if len(args.names) != len(set(args.names)):
@@ -134,7 +139,7 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
     unknown = set(args.names) - {figure.name for figure in config.figures}
     if unknown:
         parser.error("unknown figure names: " + ", ".join(sorted(unknown)) + "; select a JSON catalog with --config")
-    return args, config
+    return args, replace(config, rounds=args.rounds)
 
 
 def resolve_figures(config: FigureConfig, names: Sequence[str], invocation_cwd: Path) -> tuple[ResolvedFigure, ...]:
