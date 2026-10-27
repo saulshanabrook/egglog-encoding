@@ -26,7 +26,7 @@ from rich.progress import (
 from rich.table import Column
 from rich.text import Text
 
-from .engines import TREATMENT_SPECS
+from .engines import MATH_WORKLOAD_ARGUMENTS, TREATMENT_SPECS
 from .models import (
     BenchmarkEndpoint,
     DisequalityEncoding,
@@ -384,6 +384,13 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
                 required_outputs.append("--disequality-encoding")
             required_outputs.extend(
                 flag for run in engine_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
+            )
+        else:
+            required_outputs.extend(
+                flag
+                for run in engine_runs
+                for flag in MATH_WORKLOAD_ARGUMENTS.get(run.file.sha256, ())
+                if flag.startswith("--")
             )
         result = run_preflight(
             binary_path,

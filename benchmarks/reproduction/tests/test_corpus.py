@@ -34,10 +34,10 @@ def test_complete_population_has_readable_paths_and_unchanged_bytes() -> None:
         for alias in workload["aliases"]:
             assert name in cases[alias["case"]]["workloads"]
             assert alias["order"] >= 0
-    assert len(identities) == 487
+    assert len(identities) == 488
     assert files == set(manifest.path.parent.rglob("*.egg"))
     assert families == {
-        "math-growth": 1,
+        "math-growth": 2,
         "luminal": 7,
         "eggcc": 217,
         "hardboiled": 42,
@@ -56,8 +56,8 @@ def test_renaming_preserves_the_entire_canonical_manifest_by_identity() -> None:
     for case in raw["cases"]:
         case["workloads"] = [names[name] for name in case["workloads"]]
     encoded = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
-    # Original recovery manifest, with only physical paths replaced by identities.
-    assert hashlib.sha256(encoded).hexdigest() == "f0b181e60f42f391f4903363290bd8a5fff93b75e18563b06b8c88537a2bbf80"
+    # Published manifest, including frozen Math12, with physical paths replaced by identities.
+    assert hashlib.sha256(encoded).hexdigest() == "0827a6c4c113d91448cbcb23db68153417ad77dd53b0785eb8b54a294c859037"
 
 
 def test_readable_name_collisions_extend_the_digest_without_replacing_an_input() -> None:
