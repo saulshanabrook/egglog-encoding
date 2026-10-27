@@ -1,6 +1,6 @@
 # Prepared standalone inputs
 
-The manifest and 487 `.egg` files are the published benchmark inputs. Each file
+The manifest and 488 `.egg` files are the published benchmark inputs. Each file
 retains complete graph construction, rules, schedule and ordinary output queries.
 Identical bytes are stored once; source-case aliases and invocation order remain
 in `manifest.json`. Source revisions, adaptations and unavailable cases are kept

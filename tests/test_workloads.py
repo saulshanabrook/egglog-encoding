@@ -187,9 +187,11 @@ def test_egg_workload_command_uses_the_fixed_math_driver_contract() -> None:
     ]
 
 
-def test_egg_treatments_reject_other_workloads_and_fact_directories() -> None:
-    other = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
-    with pytest.raises(ValueError, match="only supports egglog-experimental/tests/math-microbenchmark-rational.egg"):
+def test_egg_treatments_reject_other_workloads_and_fact_directories(tmp_path: Path) -> None:
+    other_path = tmp_path / "other.egg"
+    other_path.write_text("(check (= 1 1))")
+    other = models.FileSpec("other.egg", other_path, targets.sha256_file(other_path))
+    with pytest.raises(ValueError, match="only supports registered Math workloads"):
         validate_engine_workload(other, "egg")
 
     math = models.FileSpec(

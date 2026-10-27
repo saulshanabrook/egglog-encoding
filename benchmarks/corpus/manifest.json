@@ -890,6 +890,16 @@
       "reason": null
     },
     {
+      "id": "math-growth-012",
+      "family": "math-growth",
+      "source": "benchmarks/corpus/math/math-iteration-12.egg",
+      "status": "ready",
+      "workloads": [
+        "math/math-iteration-12.egg"
+      ],
+      "reason": null
+    },
+    {
       "id": "luminal-gemma",
       "family": "luminal",
       "source": "gemma.egg",
@@ -4887,6 +4897,20 @@
       ],
       "adaptations": [
         "original seven Math seeds and 24 rules; simple schedule; iteration-11 equality"
+      ]
+    },
+    {
+      "file": "math/math-iteration-12.egg",
+      "sha256": "sha256:fde0b4a62c8d5904014babd00dfce11fcab429fa26125280ccd4515f9dd6915f",
+      "facts_sha256": "",
+      "aliases": [
+        {
+          "case": "math-growth-012",
+          "order": 0
+        }
+      ],
+      "adaptations": [
+        "original seven Math seeds and 24 rules; simple schedule; new terminal distribution equality absent after11 and established after12 (proof-enabled validation is a separate resource-bounded diagnostic)"
       ]
     },
     {

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 from rich.console import Console
 
-from benchmarking import benchmark, collection, models, processes, targets
+from benchmarking import benchmark, collection, engines, models, processes, targets
 from benchmarking.reports.store import CacheKey, ReportStore
 
 from .report_fixtures import ROOT, make_record, make_target, make_timing_summary, write_report
@@ -958,3 +959,32 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     assert "ETA" not in rendered
     assert "failed after 0.500s: bad rule" in rendered
     assert "abc123: collected 2 fresh runs · 1 successful, 1 failed" in rendered
+
+
+def test_preflight_requires_math12_witness_flags_only_for_fresh_math12(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    egg_binary = ROOT / "egg-math-benchmark"
+    target = replace(make_target(), engine_binaries=(models.EngineBinary("egg", "sha256:egg", egg_binary),))
+    math12 = replace(
+        planned_run(treatment="egg", required=1),
+        file=models.FileSpec("math12.egg", ROOT / "absent.egg", engines.MATH12_WORKLOAD_SHA256),
+    )
+    math11 = planned_run(treatment="egg", required=1)
+    calls: list[tuple[str, ...]] = []
+
+    def preflight(
+        _binary: Path, _checkout: Path, _timeout: int, required_outputs: tuple[str, ...]
+    ) -> processes.TimingResult:
+        calls.append(required_outputs)
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
+
+    monkeypatch.setattr(collection, "run_preflight", preflight)
+    collection.preflight_collection(collection.CollectionPlan(target, (math12,)), 120)
+    cached12 = replace(math12, cached_statuses=("success",), missing_observations=0)
+    collection.preflight_collection(collection.CollectionPlan(target, (cached12, math11)), 120)
+
+    assert calls == [
+        ("--timing-summary", "--memory-limit-bytes", "--iterations", "--check-left", "--check-right"),
+        ("--timing-summary", "--memory-limit-bytes"),
+    ]
