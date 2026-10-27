@@ -139,10 +139,12 @@ def test_bound_copy_receipt_and_incremental_rendering(tmp_path: Path, monkeypatc
             raise figures.subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(figures.subprocess, "run", render)
-    console = Console(file=io.StringIO())
+    stream = io.StringIO()
+    console = Console(file=stream, width=20)
     original = (tmp_path / "chart.vl.json").read_bytes()
     outputs = figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", [], console)
     assert len(outputs) == 6 and len(calls) == 6
+    assert all(str(output) in stream.getvalue().splitlines() for output in outputs)
     receipt = json.loads((tmp_path / "out/runtime.receipt.json").read_bytes())
     other = json.loads((tmp_path / "out/memory.receipt.json").read_bytes())
     assert receipt["selection_sha256"] == other["selection_sha256"]
