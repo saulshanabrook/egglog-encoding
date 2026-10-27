@@ -132,3 +132,27 @@ or modify the JSONL.
   binary when treatment or encoding differs.
 - A request must not contain duplicate file/fact-directory hash pairs; those
   selectors would address the same cached workload observations twice.
+
+## Paper figures
+
+- `./bench.py figures` collects and renders the five paper PDFs through the shared
+  benchmark phases. `--config` selects a flat JSON catalog with global `rounds`
+  and `timeout_sec`, and direct per-figure `spec`, `files`, and `treatments`.
+- The production catalog requests ten executions and a 300-second timeout. Use
+  separate one-round catalogs and temporary reports for synthetic/CLI checks;
+  ordinary benchmark defaults are unchanged. There is no cached-only mode.
+- Reuse compatible observations automatically, merge repeated runtime/memory
+  requests, and refresh current label bindings even with zero fresh runs.
+  Keep raw observations append-only. Scope plots by label and selected physical
+  input/facts/treatment identities; select the newest N rows including failures.
+- Figure collection never acquires sources, regenerates corpus inputs or runs
+  separate validators. Retain selected published input hashes/aliases, strict
+  failures and source blockers. Source blockers are not saved replay counts.
+- The outputs are `disequality-runtime`, `math-runtime`, `math-memory`,
+  `corpus-runtime-cdf`, and `corpus-memory-cdf`, each as PDF/SVG/PNG under
+  `figures/eval/` by default. `--output-dir` can target the paper's
+  `figures/eval/` directory. Preserve bound specs and provenance receipts.
+- Run `make figures-test`; inspect all five exported figures at manuscript width
+  and verify PDF font embedding. Tests must cover latest-N selection, N=1 without
+  intervals, independent Fieller intervals, missing/failure denominators, and
+  the shared baseline-runtime corpus cohort (>=0.2 seconds, no upper cutoff).
