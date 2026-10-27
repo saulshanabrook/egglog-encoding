@@ -78,11 +78,20 @@ collection, sample selection and intervals without changing the catalog.
 Use `--rounds 1` and a temporary report for CLI smoke checks.
 
 The shared collection progress estimates remaining time across all missing runs.
-`ETA ~` uses successful cached and newly measured durations; unseen conditions
-use their mean, or a rough one-second guess until any timing is available.
+`ETA ~` prefers current-binary cached and newly measured durations, then the
+latest successful timing for the same input, facts, treatment and encoding across
+binary versions. Historical timings affect estimates only; sample selection still
+requires the requested executable identity. Truly unseen conditions use the
+remaining plan's known mean, or a rough one-second guess until a timing is
+available; fully cached cases do not inflate that fallback.
 Failures remove skipped repetitions from the estimate. Cached runs contribute
 timing information without counting as elapsed work. Redirected per-run logs
 include the same approximate remaining time. Build and rendering time are excluded.
+
+Preparation phases are named on stderr before input resolution, corpus metadata,
+cache loading and target resolution begin. `-v`/`--verbose` adds their elapsed
+times and known counts, plus per-attempt start lines when output is redirected.
+Each figure reports `Rendering NAME` before rendering and prints all output paths.
 
 ## Selection and statistics
 

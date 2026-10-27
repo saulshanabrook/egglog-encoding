@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.progress import TaskID
 
 from benchmarking import collection, engines, models, processes, targets
+from benchmarking.reports.grouped import grouped_report_path
 from benchmarking.reports.store import CacheKey, ReportStore
 
 from .report_fixtures import ROOT, make_record, make_target, make_timing_summary, write_report
@@ -425,6 +426,60 @@ def test_shared_collection_refreshes_all_aliases_when_every_run_is_cached(
     ]
 
 
+@pytest.mark.parametrize("cached", [0, 1, 2])
+@pytest.mark.parametrize("preflight_failure", [False, True])
+def test_collection_announces_plan_preflight_and_snapshot_before_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: int, preflight_failure: bool
+) -> None:
+    path = tmp_path / "cache[one].jsonl"
+    write_report(path, *[make_record(i, started_at=f"2026-07-04T12:00:0{i}Z") for i in range(cached)])
+    store = ReportStore(path)
+    target = make_target(binary_path=tmp_path / "engine")
+    request = collection.BenchmarkRequest(models.EndpointRequest(target.request, "off"), (FILE_SPEC,))
+    plans = collection.plan_collection(store, (request,), {target.request: target}, 2, 120, False)
+    stream = io.StringIO()
+    console = Console(file=stream, width=120)
+    clock = [0.0]
+    monkeypatch.setattr(collection, "perf_counter", lambda: clock[0])
+
+    def preflight(_plan: collection.CollectionPlan, _timeout: int) -> None:
+        text = stream.getvalue()
+        assert f"{cached}/2 runs cached" in text
+        assert ("Checking executables" in text) is (cached < 2)
+        if cached < 2:
+            assert "2 samples/condition" in text and "timeout 120s" in text
+            clock[0] += 1
+            if preflight_failure:
+                raise ValueError("preflight failed")
+
+    def observe(*_args: object) -> collection.ProcessObservation:
+        assert "Checking executables" in stream.getvalue()
+        clock[0] += 2
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=2), None), make_timing_summary()
+        )
+
+    grouped_report = store.grouped_report
+
+    def snapshot(*args: Any) -> Any:
+        assert f"Writing {grouped_report_path(path)}" in stream.getvalue()
+        clock[0] += 0.5
+        return grouped_report(*args)
+
+    monkeypatch.setattr(collection, "preflight_collection", preflight)
+    monkeypatch.setattr(collection, "run_process", observe)
+    monkeypatch.setattr(store, "grouped_report", snapshot)
+    if preflight_failure and cached < 2:
+        with pytest.raises(ValueError, match="preflight failed"):
+            collection.collect(store, plans, (request,), {target.request: target}, 120, console, verbose=True)
+    else:
+        collection.collect(store, plans, (request,), {target.request: target}, 120, console, verbose=True)
+        assert "wrote 2 observations" in stream.getvalue()
+        assert ("checked executables in 1.0s" in stream.getvalue()) is (cached < 2)
+    assert stream.getvalue().count("runs cached") == 1
+    assert "cache[one]-grouped.json" in stream.getvalue()
+
+
 def test_shared_collection_rejects_conflicting_label_bindings_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -671,8 +726,22 @@ def test_partial_and_forced_plans_show_only_total_work() -> None:
     partial_text = rendered_collection_plan(collection.CollectionPlan(target, (partial,)))
     forced_text = rendered_collection_plan(collection.CollectionPlan(target, (forced,)))
 
-    assert partial_text == "abc123: 4/6 runs cached · collecting 2 fresh"
-    assert forced_text == "abc123: 6/6 runs cached · collecting 6 fresh"
+    assert partial_text == "abc123: 4/6 runs cached · collecting 2 fresh · 6 samples/condition"
+    assert forced_text == "abc123: 6/6 runs cached · collecting 6 fresh · 6 samples/condition"
+
+
+@pytest.mark.parametrize("width", [80, 120])
+def test_fresh_plan_names_samples_and_timeout_without_a_second_progress_counter(width: int) -> None:
+    stream = io.StringIO()
+    console = Console(file=stream, width=width, color_system=None)
+    plan = collection.CollectionPlan(make_target(), (planned_run(required=3, cached=("success",)),))
+    collection.emit_collection_plan(console, plan, timeout_sec=120)
+    text = " ".join(stream.getvalue().split())
+    assert "1/3 runs cached" in text
+    assert "3 samples/condition" in text
+    assert "timeout 120s" in text
+    assert all(len(line) <= width for line in stream.getvalue().splitlines())
+    assert collection.collection_label(plan.runs[0].file, "proofs", "ee") == "file.egg · proofs/ee"
 
 
 def test_collect_rows_appends_process_and_ruleset_timing_together(
@@ -1014,9 +1083,11 @@ def test_collect_rows_rejects_mutated_workload_before_append(
     assert not store.path.exists()
 
 
+@pytest.mark.parametrize("verbose", [False, True])
 def test_redirected_collection_logs_each_run_and_one_status_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    verbose: bool,
 ) -> None:
     target = make_target(binary_path=ROOT / "egglog-experimental")
     plan = collection.CollectionPlan(
@@ -1048,19 +1119,32 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
         None,
     )
     observations = iter((success, failure, timed_out))
-    monkeypatch.setattr(collection, "run_process", lambda *_args: next(observations))
     stream = io.StringIO()
+    calls = 0
+
+    def observe(*_args: object) -> collection.ProcessObservation:
+        nonlocal calls
+        calls += 1
+        if verbose:
+            assert f"[{calls}/3]" in stream.getvalue() and stream.getvalue().endswith(": started\n")
+        return next(observations)
+
+    monkeypatch.setattr(collection, "run_process", observe)
     console = Console(file=stream, width=120, color_system=None, force_terminal=False)
     store = ReportStore(tmp_path / "report.jsonl")
 
-    collection.collect_rows(store, plan, 120, console)
+    collection.collect_rows(store, plan, 120, console, verbose=verbose)
 
-    assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s · ETA ~0:00:02",
-        "  [2/3] file.egg · proofs · 1/1: failed after 0.500s: bad rule more context · ETA ~0:00:01",
-        "  [3/3] other.egg · off · 1/1: timed out after 120 seconds · ETA ~0:00:00",
-        "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
+    completions = [
+        "  [1/3] file.egg · off: succeeded after 0.250s · ETA ~0:00:02",
+        "  [2/3] file.egg · proofs: failed after 0.500s: bad rule more context · ETA ~0:00:01",
+        "  [3/3] other.egg · off: timed out after 120 seconds · ETA ~0:00:00",
     ]
+    expected = [
+        entry for line in completions for entry in ([line.split(":", 1)[0] + ": started", line] if verbose else [line])
+    ]
+    expected.append("abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out")
+    assert stream.getvalue().splitlines() == expected
     assert store.row_count == 3
 
 
@@ -1095,10 +1179,12 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
         plan,
         120,
         console,
+        verbose=True,
     )
 
     rendered = stream.getvalue()
     assert "succeeded after" not in rendered
+    assert ": started" not in rendered
     assert "file.egg" in rendered
     assert "off" in rendered
     assert "ETA ~0:00:00" in rendered

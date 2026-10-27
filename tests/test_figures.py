@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,33 @@ def test_config_help_does_not_expand_files(tmp_path: Path, capsys: pytest.Captur
     text = capsys.readouterr().out
     assert "runtime:" in text and "memory:" in text
     assert "--cached" not in text
+
+
+def test_importing_figures_does_not_import_scipy() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; import benchmarking.figures; assert 'scipy' not in sys.modules"],
+        cwd=figures.ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize("args, code", [(["--help"], 0), (["--rounds", "0"], 2)])
+def test_help_and_argument_errors_have_no_phase_status(
+    args: list[str], code: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        figures.main(args)
+    assert error.value.code == code
+    captured = capsys.readouterr()
+    assert not any(label in captured.out + captured.err for label in ("Resolving inputs", "Loading cache", "Rendering"))
+    if code == 0:
+        assert captured.err == ""
+    else:
+        assert captured.out == ""
 
 
 @pytest.mark.parametrize("rounds", ["0", "-1", "no"])
@@ -228,6 +257,7 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
         bound = Path(command[command.index("--base") - 2])
         bindings.append(json.loads(bound.read_bytes()))
         generated = Path(command[command.index("--base") - 1])
+        assert f"Rendering {generated.stem}" in stream.getvalue()
         generated.write_bytes(b"" if fail_png and generated.suffix == ".png" else b"rendered")
         if fail_png and generated.suffix == ".png" and raise_error:
             raise figures.subprocess.CalledProcessError(1, command)
@@ -235,9 +265,10 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
     monkeypatch.setattr(figures.subprocess, "run", render)
     stream = io.StringIO()
     console = Console(file=stream, width=20)
+    output_dir = tmp_path / "out[red]"
     original = (tmp_path / "chart.vl.json").read_bytes()
     inventory: figures.FigureInventory = {"workloads": [], "unavailable_cases": []}
-    outputs = figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", console, inventory)
+    outputs = figures.render_figures(resolved, config, grouped, report, target, output_dir, console, inventory)
     assert len(outputs) == 6 and len(calls) == 6
     assert all(str(output) in stream.getvalue().splitlines() for output in outputs)
     assert bindings[0] == bindings[3]
@@ -247,11 +278,11 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
     assert params["selected_inputs"][0]["selected_row_indices"] == [1, 2]
     assert bindings[0]["data"]["url"] == grouped_report_path(report).as_uri()
     assert (tmp_path / "chart.vl.json").read_bytes() == original
-    assert set((tmp_path / "out").iterdir()) == set(outputs)
+    assert set((output_dir).iterdir()) == set(outputs)
     assert all(
         command[-2:] == ["--base", str(tmp_path)] or command[-4:-2] == ["--base", str(tmp_path)] for command in calls
     )
-    figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", console, inventory)
+    figures.render_figures(resolved, config, grouped, report, target, output_dir, console, inventory)
     assert len(calls) == 12
 
     # A failing renderer preserves every previous image, including a corrupt
@@ -259,12 +290,12 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
     outputs[2].write_bytes(b"corrupt")
     fail_png = True
     with pytest.raises(figures.subprocess.CalledProcessError if raise_error else ValueError):
-        figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", console, inventory)
+        figures.render_figures(resolved, config, grouped, report, target, output_dir, console, inventory)
     assert outputs[0].read_bytes() == b"rendered"
     assert outputs[2].read_bytes() == b"corrupt"
-    assert set((tmp_path / "out").iterdir()) == set(outputs)
+    assert set((output_dir).iterdir()) == set(outputs)
     fail_png = False
-    figures.render_figures(resolved, config, grouped, report, target, tmp_path / "out", console, inventory)
+    figures.render_figures(resolved, config, grouped, report, target, output_dir, console, inventory)
     assert outputs[2].read_bytes() == b"rendered"
     assert len(calls) == 21
 
@@ -404,6 +435,87 @@ def test_render_keeps_a_label_bound_to_another_executable_missing(
     assert params["selected_inputs"][0]["selected_row_indices"] == []
 
 
+@pytest.mark.parametrize("verbose", [False, True])
+def test_main_announces_preparation_and_fallback_before_each_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verbose: bool
+) -> None:
+    from benchmarking import collection
+    from benchmarking.reports import store as store_module
+
+    config = catalog_fixture(tmp_path)
+    (tmp_path / "one.egg").write_text("(check (= 1 1))")
+    report = tmp_path / "observations[1].jsonl"
+    stream = io.StringIO()
+    console = Console(file=stream, width=200, color_system=None)
+    events = []
+    ticks = iter((10, 11, 20, 22, 30, 33, 40, 44, 50, 55))
+    monkeypatch.setattr(figures, "perf_counter", lambda: next(ticks))
+
+    def make_console(**kwargs: Any) -> Console:
+        assert kwargs["stderr"] is True
+        return console
+
+    def inputs(*args: Any) -> Any:
+        assert "Resolving inputs for 2 figures" in stream.getvalue()
+        events.append("inputs")
+        return original_inputs(*args)
+
+    def metadata(*args: Any) -> Any:
+        assert "Loading corpus metadata" in stream.getvalue()
+        events.append("metadata")
+        return original_metadata(*args)
+
+    class Store(ReportStore):
+        def __init__(self, path: Path) -> None:
+            assert f"Loading cache {report}" in stream.getvalue()
+            events.append("cache")
+            super().__init__(path)
+
+        def grouped_report(self, *args: Any, **kwargs: Any) -> Any:
+            assert f"Writing {grouped_report_path(report)}" in stream.getvalue()
+            events.append("snapshot")
+            return super().grouped_report(*args, **kwargs)
+
+    def targets(requests: Any, *_args: Any) -> Any:
+        assert "Resolving targets" in stream.getvalue()
+        events.append("targets")
+        return {request.endpoint.target: make_target(target_label="figures") for request in requests}
+
+    def collect(*_args: Any, **kwargs: Any) -> Any:
+        assert kwargs["verbose"] is verbose
+        events.append("collect")
+        raise OSError("collection interrupted")
+
+    def snapshot(*args: Any) -> None:
+        assert f"Writing {grouped_report_path(report)}" in stream.getvalue()
+        events.append("write")
+        original_snapshot(*args)
+
+    original_inputs, original_metadata = figures.resolve_figures, figures._figure_inventory
+    original_snapshot = figures.write_grouped_report
+    monkeypatch.setattr(figures, "Console", make_console)
+    monkeypatch.setattr(figures, "resolve_figures", inputs)
+    monkeypatch.setattr(figures, "_figure_inventory", metadata)
+    monkeypatch.setattr(store_module, "ReportStore", Store)
+    monkeypatch.setattr(collection, "resolve_requests", targets)
+    monkeypatch.setattr(collection, "plan_collection", lambda *_args: ())
+    monkeypatch.setattr(collection, "collect", collect)
+    monkeypatch.setattr(figures, "write_grouped_report", snapshot)
+    monkeypatch.setattr(figures, "render_figures", lambda *_args: ())
+    args = ["--config", str(config), "--report", str(report), *(["-v"] if verbose else [])]
+    assert figures.main(args) == 2
+    assert events == ["inputs", "metadata", "cache", "targets", "collect", "snapshot", "write"]
+    text = stream.getvalue()
+    if verbose:
+        assert "1 unique input" in text and "1.0s" in text
+        assert "0 metadata" in text and "2.0s" in text
+        assert "0 observations" in text and "3.0s" in text
+        assert "1 target" in text and "4.0s" in text
+        assert "5.0s" in text
+    else:
+        assert not any(marker in text for marker in ("  resolved", "  loaded", "  wrote"))
+
+
 @pytest.fixture
 def main_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     from benchmarking import collection
@@ -432,7 +544,7 @@ def test_main_rewrites_fresh_partial_snapshot_before_rendering(
     write_report(report, make_record(0, started_at="2026-10-01T00:00:00Z", binary_sha256="old", target_label="figures"))
     write_grouped_report(ReportStore(report).grouped_report(), grouped_report_path(report))
 
-    def interrupted_write(store: ReportStore, _plans: Any, requests: Any, *_args: Any) -> Any:
+    def interrupted_write(store: ReportStore, _plans: Any, requests: Any, *_args: Any, **_kwargs: Any) -> Any:
         store.append(
             make_record(
                 1,
@@ -460,7 +572,7 @@ def test_main_skips_render_when_partial_snapshot_cannot_be_refreshed(
 ) -> None:
     from benchmarking import collection
 
-    def fail_collection(*_args: Any) -> Any:
+    def fail_collection(*_args: Any, **_kwargs: Any) -> Any:
         raise OSError("collection snapshot failure")
 
     def fail_snapshot(*_args: Any) -> Any:
@@ -477,7 +589,7 @@ def test_main_ctrl_c_preserves_collector_snapshot_without_rendering(
 ) -> None:
     from benchmarking import collection
 
-    def interrupted(store: ReportStore, _plans: Any, requests: Any, targets: Any, *_args: Any) -> Any:
+    def interrupted(store: ReportStore, _plans: Any, requests: Any, targets: Any, *_args: Any, **_kwargs: Any) -> Any:
         store.append(
             make_record(
                 0, started_at="2026-10-01T00:00:00Z", target_label="figures", file_sha256=requests[0].files[0].sha256

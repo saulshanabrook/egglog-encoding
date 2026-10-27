@@ -423,6 +423,12 @@ The remaining collection options are:
 - `--format rich|markdown`: final human report format.
 - `--open`: write the complete cache snapshot to an interactive HTML file and
   open it. For the default cache, the output is `.reports.html`.
+- `-v`, `--verbose`: add preparation timings, resolved counts and redirected
+  collection-attempt start lines.
+
+Preparation announces repository setup, cache loading, input resolution and
+target resolution before each phase starts. These messages and all operational
+output go to stderr, keeping Markdown stdout ready to redirect into a report.
 
 Use `./bench.py --help` for the complete option reference.
 

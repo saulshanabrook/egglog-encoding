@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from math import ceil, isfinite
 from pathlib import Path
+from time import perf_counter
 
 from rich.console import Console
 from rich.progress import (
@@ -243,6 +244,8 @@ def collect(
     resolved_targets: Mapping[TargetRequest, ResolvedTarget],
     timeout_sec: int,
     console: Console,
+    *,
+    verbose: bool = False,
 ) -> GroupedReport:
     """Preflight all targets, collect once, and refresh their current grouped labels."""
 
@@ -250,15 +253,26 @@ def collect(
     complete = False
     try:
         for plan in plans:
-            preflight_collection(plan, timeout_sec)
+            emit_collection_plan(console, plan, timeout_sec=timeout_sec)
+        fresh = any(plan.total_missing_observations for plan in plans)
+        if fresh:
+            console.print("Checking executables")
+            started = perf_counter()
         for plan in plans:
-            emit_collection_plan(console, plan)
-        collect_rows(store, plans, timeout_sec, console)
+            preflight_collection(plan, timeout_sec)
+        if fresh and verbose:
+            console.print(f"  checked executables in {perf_counter() - started:.1f}s")
+        collect_rows(store, plans, timeout_sec, console, verbose=verbose)
         complete = True
     finally:
         try:
+            destination = grouped_report_path(store.path)
+            console.print(Text(f"Writing {destination}"), soft_wrap=True)
+            started = perf_counter()
             grouped = store.grouped_report(label_bindings)
-            write_grouped_report(grouped, grouped_report_path(store.path))
+            write_grouped_report(grouped, destination)
+            if verbose:
+                console.print(f"  wrote {store.row_count} observations in {perf_counter() - started:.1f}s")
         except Exception as error:
             if complete:
                 raise
@@ -552,15 +566,13 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
 def collection_label(
     file_spec: FileSpec,
     treatment: Treatment,
-    round_index: int,
-    rounds: int,
     disequality_encoding: DisequalityEncoding = "nee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
     encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
-    return f"{filename} · {treatment}{encoding} · {round_index + 1}/{rounds}"
+    return f"{filename} · {treatment}{encoding}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -588,7 +600,7 @@ def _status_counts_text(status_counts: Counter[Status]) -> str:
     return ", ".join(parts)
 
 
-def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
+def emit_collection_plan(console: Console, plan: CollectionPlan, *, timeout_sec: int | None = None) -> None:
     """Render one compact cache and collection summary to stderr."""
 
     cached_statuses = Counter(status for run in plan.runs for status in run.cached_statuses)
@@ -603,6 +615,12 @@ def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
     if cached_issues:
         cache_text += f" ({_status_counts_text(cached_issues)})"
     action_text = "nothing to collect" if missing == 0 else f"collecting {missing} fresh"
+    if missing:
+        samples = {run.required_rows for run in plan.runs}
+        if len(samples) == 1:
+            action_text += f" · {samples.pop()} samples/condition"
+        if timeout_sec is not None:
+            action_text += f" · timeout {timeout_sec}s"
     console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
 
 
@@ -721,6 +739,8 @@ def collect_rows(
     plan: CollectionPlan | tuple[CollectionPlan, ...],
     timeout_sec: int,
     console: Console,
+    *,
+    verbose: bool = False,
 ) -> None:
     """Run and append every missing observation after caller preflight."""
 
@@ -770,8 +790,6 @@ def collect_rows(
                 label = collection_label(
                     run.file,
                     run.treatment,
-                    round_index,
-                    run.missing_observations,
                     run.disequality_encoding,
                 )
                 if len(plans) > 1:
@@ -787,6 +805,8 @@ def collect_rows(
                     raise ValueError(
                         f"target {target.display_label} needs a fresh {TREATMENT_SPECS[run.treatment].engine} binary"
                     )
+                if verbose and not console.is_terminal:
+                    progress.console.print(Text(f"  [{observation_number}/{total_observations}] {label}: started"))
                 observation = run_process(
                     binary_path,
                     Path(target.row.path),

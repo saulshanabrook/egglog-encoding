@@ -46,6 +46,117 @@ def test_pair_cli_defaults_to_current_checkout_off_vs_checked_proofs() -> None:
     assert candidate == models.EndpointRequest(targets.parse_target("."), "proof-testing")
     assert args.detail == "summary"
     assert args.command == "benchmark"
+    assert not args.verbose
+
+
+@pytest.mark.parametrize("flag", ["-v", "--verbose"])
+def test_pair_cli_accepts_verbose(flag: str) -> None:
+    assert benchmark.parse_benchmark_args([flag]).verbose
+
+
+@pytest.mark.parametrize("argv", [("--help",), ("--rounds", "0")])
+def test_help_and_argument_errors_do_not_start_preparation(
+    argv: tuple[str, ...], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(benchmark, "git_root_for_path", lambda *_a: pytest.fail("arguments must finish first"))
+    with pytest.raises(SystemExit) as error:
+        benchmark.main(argv)
+    output = capsys.readouterr()
+    assert "Preparing repository" not in output.out + output.err
+    if argv == ("--help",):
+        assert error.value.code == 0
+        assert "-v, --verbose" in output.out
+        assert output.err == ""
+    else:
+        assert error.value.code == 2
+        assert output.out == ""
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("verbose", [False, True])
+def test_main_announces_each_preparation_phase_before_work_and_keeps_markdown_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], cached: bool, verbose: bool
+) -> None:
+    monkeypatch.setenv("COLUMNS", "240")
+    path = tmp_path / "[bold]report.jsonl"
+    if cached:
+        write_report(path, make_record(0, started_at="2026-10-27T00:00:00Z"))
+    clock = [0.0]
+    seen: list[str] = []
+    messages: list[str] = []
+    target = make_target()
+    repository_root = tmp_path / "[bold]checkout"
+
+    def repository(_path: Path) -> Path:
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err == "Preparing repository\n"
+        messages.append(output.err)
+        seen.append("repository")
+        clock[0] += 2
+        return repository_root
+
+    def cache(report_path: Path) -> ReportStore:
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert f"Loading cache {path}" in output.err
+        messages.append(output.err)
+        assert seen == ["repository"]
+        seen.append("cache")
+        assert report_path == path
+        clock[0] += 3
+        return ReportStore(report_path)
+
+    def inputs(files: list[str], _cwd: Path, facts: str | None) -> tuple[models.FileSpec, ...]:
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err.endswith("Resolving inputs\n")
+        messages.append(output.err)
+        assert seen == ["repository", "cache"]
+        seen.append("inputs")
+        assert files == ["file.egg"] and facts is None
+        clock[0] += 4
+        return (FILE_SPEC,)
+
+    def resolve(requests: Any, store: ReportStore, *_args: object) -> Any:
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert output.err.endswith("Resolving targets\n")
+        messages.append(output.err)
+        assert seen == ["repository", "cache", "inputs"]
+        seen.append("targets")
+        assert store.row_count == int(cached)
+        clock[0] += 5
+        return {request.endpoint.target: target for request in requests}
+
+    def collect(store: ReportStore, *_args: object, **kwargs: object) -> GroupedReport:
+        assert seen == ["repository", "cache", "inputs", "targets"]
+        assert kwargs == {"verbose": verbose}
+        return store.grouped_report()
+
+    monkeypatch.setattr(benchmark, "git_root_for_path", repository)
+    monkeypatch.setattr(benchmark, "ReportStore", cache)
+    monkeypatch.setattr(benchmark, "resolve_files", inputs)
+    monkeypatch.setattr(benchmark, "resolve_requests", resolve)
+    monkeypatch.setattr(benchmark, "collect", collect)
+    monkeypatch.setattr(benchmark, "perf_counter", lambda: clock[0], raising=False)
+    monkeypatch.setattr(benchmark, "build_report_catalog", lambda *_a: object())
+    monkeypatch.setattr(benchmark, "render_markdown_report_document", lambda *_a: "# Benchmark report")
+    argv = ["--report", str(path), "--format", "markdown", "file.egg"]
+    assert benchmark.main([*argv, *(["--verbose"] if verbose else [])]) == 0
+    output = capsys.readouterr()
+    assert output.out == "# Benchmark report\n"
+    messages.append(output.err)
+    text = "".join(messages)
+    assert (str(repository_root) in text) is verbose
+    for fact in (
+        "repository ready in 2.0s",
+        f"loaded {int(cached)} observations in 3.0s",
+        "resolved 1 workload files in 4.0s",
+        "resolved 1 targets in 5.0s",
+    ):
+        assert (fact in text) is verbose
+    assert not path.exists() or cached
 
 
 def test_compare_target_inherits_candidate_target() -> None:
@@ -315,7 +426,8 @@ def test_main_refreshes_grouped_snapshot_after_partial_collection(
     )
     monkeypatch.setattr(collection, "preflight_collection", lambda *_args: None)
 
-    def collect(store: ReportStore, *_args: object) -> None:
+    def collect(store: ReportStore, *_args: object, verbose: bool = False) -> None:
+        assert not verbose
         store.append(make_record(0, started_at="2026-09-30T00:00:00Z", status="failure"))
         raise failure("collection stopped")
 

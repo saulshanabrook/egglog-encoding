@@ -14,10 +14,10 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any, TypedDict
 
 from rich.console import Console
-from scipy import stats
 
 from benchmarks.reproduction.corpus import MANIFEST_RELATIVE_PATH, VALIDATION_POLICY, load_manifest
 from benchmarks.reproduction.native import NATIVE_ALLOCATION_FAILURE
@@ -188,6 +188,7 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
     )
     parser.add_argument("names", nargs="*", help="configured figure names (default: all)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="flat figure JSON catalog")
+    parser.add_argument("-v", "--verbose", action="store_true", help="show phase timings and per-attempt starts")
     parser.add_argument(
         "--rounds", type=int, default=config.rounds, help="observations per condition (overrides catalog)"
     )
@@ -255,6 +256,8 @@ def render_figures(
     inventory: FigureInventory,
 ) -> tuple[Path, ...]:
     """Bind shared sample selections and render Vega through temporary files."""
+    from scipy import stats
+
     metadata = {(item["file_sha256"], item["fact_directory_sha256"]): item for item in inventory["workloads"]}
     label = target.row.label
     if label is None:
@@ -304,6 +307,7 @@ def render_figures(
         destination = (output_dir or figure.spec.parent).resolve()
         destination.mkdir(parents=True, exist_ok=True)
         outputs = [destination / f"{figure.name}.{extension}" for extension in ("pdf", "svg", "png")]
+        console.print(f"Rendering {figure.name}", markup=False)
         # Render the complete set before replacing any existing image.
         with tempfile.TemporaryDirectory(dir=destination, prefix=f".{figure.name}.") as temporary:
             bound_path = Path(temporary) / f"{figure.name}.vl.json"
@@ -326,10 +330,13 @@ def render_figures(
             for output in outputs:
                 os.replace(Path(temporary) / output.name, output)
         for output in outputs:
-            console.print(str(output), soft_wrap=True)
+            console.print(str(output), soft_wrap=True, markup=False)
             rendered.append(output)
         if incomplete:
-            console.print(f"{figure.name}: {incomplete}/{len(selected_inputs)} incomplete or unsuccessful conditions")
+            console.print(
+                f"{figure.name}: {incomplete}/{len(selected_inputs)} incomplete or unsuccessful conditions",
+                markup=False,
+            )
     return tuple(rendered)
 
 
@@ -343,32 +350,64 @@ def main(argv: Sequence[str] | None = None) -> int:
     console = Console(stderr=True)
     try:
         cwd = Path.cwd()
+        figure_count = len(args.names) or len(config.figures)
+        console.print(
+            f"Resolving inputs for {figure_count} figure{'s' if figure_count != 1 else ''} · "
+            f"{config.rounds} sample{'s' if config.rounds != 1 else ''}/condition"
+        )
+        started = perf_counter()
         figures = resolve_figures(config, args.names, cwd)
-        inventory = _figure_inventory(ROOT, tuple(dict.fromkeys(file for figure in figures for file in figure.files)))
+        all_files = tuple(dict.fromkeys(file for figure in figures for file in figure.files))
+        if args.verbose:
+            input_count = len(all_files)
+            console.print(
+                f"  resolved {input_count} unique input{'s' if input_count != 1 else ''} "
+                f"in {perf_counter() - started:.1f}s"
+            )
+        console.print("Loading corpus metadata")
+        started = perf_counter()
+        inventory = _figure_inventory(ROOT, all_files)
+        if args.verbose:
+            console.print(f"  loaded {len(inventory['workloads'])} metadata records in {perf_counter() - started:.1f}s")
         target_request = parse_target(str(args.target))
         if not target_request.source:
             raise ValueError("figures requires a source target, not a cached label lookup")
         if target_request.label is None:
             target_request = parse_target(f"figures={args.target}")
         report_path = args.report.expanduser().resolve()
+        console.print(f"Loading cache {report_path}", soft_wrap=True, markup=False)
+        started = perf_counter()
         store = ReportStore(report_path)
+        if args.verbose:
+            console.print(f"  loaded {store.row_count} observations in {perf_counter() - started:.1f}s")
         requests = tuple(
             BenchmarkRequest(EndpointRequest(target_request, treatment), figure.files)
             for figure in figures
             for treatment in figure.figure.treatments
         )
+        console.print("Resolving targets")
+        started = perf_counter()
         targets = resolve_requests(requests, store, config.rounds, config.timeout_sec, False, cwd, ROOT, console)
+        if args.verbose:
+            target_count = len(targets)
+            console.print(
+                f"  resolved {target_count} target{'s' if target_count != 1 else ''} in {perf_counter() - started:.1f}s"
+            )
         plans = plan_collection(store, requests, targets, config.rounds, config.timeout_sec, False)
         status = 0
         try:
-            grouped = collect(store, plans, requests, targets, config.timeout_sec, console)
+            grouped = collect(store, plans, requests, targets, config.timeout_sec, console, verbose=args.verbose)
         except KeyboardInterrupt:
             return 130
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             console.print(f"collection error: {error}")
             # A failed snapshot write must not make an older executable look current.
+            console.print(f"Writing {grouped_report_path(report_path)}", soft_wrap=True, markup=False)
+            started = perf_counter()
             grouped = store.grouped_report(current_label_bindings(requests, targets))
             write_grouped_report(grouped, grouped_report_path(report_path))
+            if args.verbose:
+                console.print(f"  wrote grouped snapshot in {perf_counter() - started:.1f}s")
             status = 2
         render_figures(
             figures,
