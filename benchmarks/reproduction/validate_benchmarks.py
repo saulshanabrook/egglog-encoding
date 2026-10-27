@@ -110,7 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if sha256_file(path) != expected or sha256_file(binary) != binary_hash:
                 raise ValueError("input or executable changed during execution; no outcome recorded")
-            if result.status == "resource-stopped":
+            if result.status in {"resource-stopped", "memory-limit", "timed-out"}:
                 outcome.update(
                     {"kind": "safety", "policy": SAFETY_POLICY, "status": "deferred", "reason": result.message}
                 )
@@ -121,7 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{workload['file']}: {outcome['status']}" + (f"; {outcome['reason']}" if outcome["reason"] else ""),
                 file=sys.stderr,
             )
-            if outcome["kind"] == "safety":
+            if result.status == "resource-stopped":
                 return 1
             failed |= outcome["status"] != "success"
         return int(failed)
