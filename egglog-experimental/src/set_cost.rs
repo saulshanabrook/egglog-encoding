@@ -14,9 +14,9 @@
 //! Nodes without an assigned dynamic cost retain their normal tree-additive
 //! cost. Costs must be non-negative.
 //!
-//! With term/proof encoding, top-level `set-cost` on constructors with primitive
-//! arguments is currently unsupported: its argument temporaries become primitive
-//! globals. Assign those costs inside rules instead.
+//! Top-level primitive arguments use the ordinary global-binding support in
+//! term/proof encoding. Proof extraction certifies equality to the selected
+//! result; the assigned costs guide selection but are not an optimality proof.
 
 use crate::{
     Error,

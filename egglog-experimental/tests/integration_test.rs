@@ -616,24 +616,73 @@ fn test_encoded_extract_rejects_explicit_algorithms() {
 }
 
 #[test]
-fn test_set_cost_top_level_primitive_arguments_are_unsupported_with_encoding() {
-    let source = "(with-dynamic-cost (datatype E (Leaf i64))) (set-cost (Leaf 2) 100)";
-    egglog_experimental::new_experimental_egraph()
-        .parse_and_run_program(None, source)
-        .unwrap();
-    for mut egraph in [
-        egglog_experimental::new_experimental_egraph().with_term_encoding_enabled(),
-        egglog_experimental::new_experimental_egraph_with_proofs(),
-        egglog_experimental::new_experimental_egraph_with_proofs().with_proof_testing(),
+fn test_set_cost_top_level_primitive_arguments_preserve_encoded_extraction() {
+    let source = r#"
+        (with-dynamic-cost (datatype E (Leaf i64) (Add E E)))
+        (let input (Leaf 2))
+        (rewrite (Leaf 2) (Add (Leaf 1) (Leaf 1)))
+        (run 1)
+        (extract input)
+        (set-cost (Leaf 2) 100)
+        (set-cost (Leaf 1) 3)
+        (set-cost (Add (Leaf 1) (Leaf 1)) 2)
+        (extract input)
+    "#;
+    for (mode, mut egraph) in [
+        ("ordinary", egglog_experimental::new_experimental_egraph()),
+        (
+            "term",
+            egglog_experimental::new_experimental_egraph().with_term_encoding_enabled(),
+        ),
+        (
+            "recording",
+            egglog_experimental::new_experimental_egraph_with_proofs(),
+        ),
+        (
+            "testing",
+            egglog_experimental::new_experimental_egraph_with_proofs().with_proof_testing(),
+        ),
     ] {
-        let error = egraph.parse_and_run_program(None, source).unwrap_err();
-        assert!(matches!(
-            error,
-            egglog::Error::UnsupportedProofCommand { .. }
-        ));
-        assert!(
-            error.to_string().contains("let binding with a primitive"),
-            "{error}"
+        let outputs = egraph.parse_and_run_program(None, source).unwrap();
+        let results = outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ExtractBest(dag, cost, term) => Some((*cost, dag.to_string(*term))),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            results,
+            [
+                (2, "(Leaf 2)".to_owned()),
+                (10, "(Add (Leaf 1) (Leaf 1))".to_owned())
+            ],
+            "mode={mode}"
+        );
+        let proofs = outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ProveExists {
+                    proof_store,
+                    proof_id,
+                } => Some(
+                    proof_store
+                        .term_dag()
+                        .to_string(proof_store.get(*proof_id).rhs()),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // with_proof_testing checks these proofs; each must certify the term
+        // selected with the costs in effect for that extraction occurrence.
+        assert_eq!(
+            proofs,
+            if mode == "testing" {
+                vec!["(Leaf 2)", "(Add (Leaf 1) (Leaf 1))"]
+            } else {
+                vec![]
+            },
+            "mode={mode}"
         );
     }
 }
