@@ -42,14 +42,15 @@ JSONL report to `/tmp/egglog-encoding-bench-smoke.jsonl`. Override
 intentional changes to Markdown reports and slotted compiler snapshots; review
 the resulting diff before committing it.
 
-Slotted case studies have standalone runners:
+Slotted case studies use the shared benchmark runner and cache:
 
 ```bash
-python3 slotted/eval.py array   # fresh timings; no cache or graph checks
+./bench.py figures slotted-runtime slotted-nested-runtime
 python3 slotted/check.py array  # all treatments, counts, and exact isomorphism
 ```
 
-Both use the same workload selectors and [treatment definitions](slotted/treatments.py).
+The [frozen benchmark inputs](benchmarks/slotted/README.md) retain the upstream
+generators and ordinary goal checks. Graph verification runs separately.
 `array` runs Figure 8's fixed sweep of 0–10 extra function parameters;
 `sdql` runs Table 1's ten kernel/phase combinations. Omit the study to run all
 case studies. See
@@ -136,8 +137,10 @@ Treatments map directly to engine modes:
 | `egg-proof-extraction` | current egg with explanation recording and extraction |
 | `egg-proof-testing` | current egg with extraction and explanation checking |
 | `egg-de`, `egg-ee`, `egg-nee`, `egg-oee` | original parameter-analysis drivers with the named encoding, without proofs |
+| `slotted`, `slotted-no-aliasing` | Egglog's full slotted encoding or nested compatibility mode |
+| `slotted-ref-multi`, `slotted-ref-nested` | native Slotted multipattern/snapshot or nested/syntactic reference, without invariant checks |
 
-The five egglog treatments run `egglog-experimental`. The four Math treatments
+The proof and slotted encoding treatments run `egglog-experimental`. The four Math treatments
 (`egg` and its proof variants) run the separate `egg-math-benchmark` executable and
 support only `egglog-experimental/tests/math-microbenchmark-rational.egg`.
 Results from either proof-extraction treatment are performance evidence only;
@@ -350,7 +353,7 @@ orchestration remains outside the ordinary runner.
 The [paper figures](figures/README.md) use the checked-in
 `benchmarks/corpus/manifest.json` rather than the default workload list.
 Run `./bench.py figures` from this checkout to build the required release engines,
-reuse compatible observations, collect missing runs, and render all five paper
+reuse compatible observations, collect missing runs, and render the configured paper
 figures as PDF, SVG, and PNG. Setup requires the Python environment above, the
 pinned Rust toolchain, and Node.js/npm (`npx`); renderer packages are pinned in
 the command. `./bench.py figures --help` lists configured figure names. Outputs

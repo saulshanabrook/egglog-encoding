@@ -6,6 +6,7 @@ From the code repository root:
 ./bench.py figures
 ./bench.py figures --help
 ./bench.py figures math-runtime math-memory
+./bench.py figures slotted-runtime slotted-nested-runtime
 ./bench.py figures --rounds 3
 ./bench.py figures --config path/to/catalog.json
 ./bench.py figures --output-dir ../extended-egglog-paper/figures/eval
@@ -17,7 +18,7 @@ pinned standalone `npx` packages: Vega 6.4.0, Vega-Lite 6.4.3, Vega CLI 6.4.0,
 Canvas 3.2.3. No npm project or separate PDF converter is required. PDF text uses
 embedded font subsets. The first run may download the pinned renderer packages.
 
-The five PDFs replace the paper's `figures/eval/` placeholders. SVG and 3x PNG
+The configured PDFs replace the paper's `figures/eval/` placeholders. SVG and 3x PNG
 companions, inspectable bound specifications, and provenance receipts are
 written alongside them. Absolute image paths are printed on stderr. The default
 output directory is each authored specification's directory, `figures/eval/`
@@ -94,6 +95,17 @@ times and known counts, plus per-attempt start lines when output is redirected.
 Each figure reports `Rendering NAME` or `NAME: unchanged`; all output paths are
 printed in either case.
 
+## Slotted comparisons
+
+`slotted-runtime` covers all 23 frozen array, SDQL, and logic workloads with the
+full multipattern encoding and native Slotted reference. `slotted-nested-runtime`
+covers the 21 array/SDQL workloads supported by the nested matcher; the two logic
+fixtures require multipattern rules. The nested syntactic-substitution timing
+baseline differs from the encoding's snapshot substitution, so its ratios are
+performance evidence rather than equivalence certificates. Both figures use
+ordinary terminal goals and exclude graph verification. See the
+[slotted input guide](../benchmarks/slotted/README.md) for provenance and treatment details.
+
 ## Selection and statistics
 
 The runner refreshes the shared typed `.reports-grouped.json`, including current
@@ -108,6 +120,8 @@ selects rows applicable to the requested resource bounds. It binds their origina
 row indices into the Vega-Lite specifications. They never borrow missing
 measurements from an older executable.
 Native disequality `.in` and logical Egglog `.egg` inputs remain distinct.
+Slotted's logical `.egg` and physical native `.ref` protocols likewise have
+separate input hashes and executable identities.
 
 The plot uses the newest requested N applicable rows per identity, ordered by
 timestamp and physical row index, including failures. It retains good raw points but
@@ -120,7 +134,7 @@ value is the only statistical scalar supplied by Python: Vega performs means,
 sample variances, ratios, Fieller calculations, cohort selection and ranking.
 
 Whole-process time includes launch, input reading, parsing, lowering, execution
-and requested proof work. Compilation and input conversion occur beforehand.
+and requested proof work. Executable builds and frozen input generation occur beforehand.
 Checked proofs include recording, extraction/materialization and checking.
 Native Egg materializes explanations in memory with explanation-length
 optimization disabled; these timings do not serialize proof files. Egglog does
@@ -176,6 +190,6 @@ make parameter-test
 
 The figure tests use synthetic snapshots without writing the benchmark cache.
 They cover sample counts, means/intervals, missing/failing outcomes, label and
-subset selection, cohort boundaries and coverage. Inspect all five PDFs/PNGs at
+subset selection, cohort boundaries and coverage. Inspect the configured PDFs/PNGs at
 manuscript width for unclipped labels, tails and uncertainty; use `pdffonts` to
 verify embedding. `make check` and `make benchmark-smoke` cover the full project.

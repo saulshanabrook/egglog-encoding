@@ -9,8 +9,8 @@ is the program its egg baseline extracted after saturating. Table 1 compares ext
 costs, and "finds the best program" there means reaching that cost; the tests here ask
 for more, that the input's class comes to contain the target itself.
 `slotted/checks/check-paper-sdql.py` pins the fixtures' hashes and checks that each test
-under `egglog-experimental/tests/slotted/sdql-paper/` is what `test_text` writes for it; `slotted/eval.py` runs
-every workload from those same forms.
+under `egglog-experimental/tests/slotted/sdql-paper/` is what `test_text` writes for it.
+`benchmarks/slotted/generate.py` freezes the same forms for the shared benchmark runner.
 
 The artifact spells a variable `$name`, `name`, or `$var_NN`; its targets are alpha-numbered
 `var_NN`. Every term is closed, so a translation only has to be consistent within one
@@ -58,7 +58,7 @@ TABLE1 = {
 }
 
 # Small full-rule workloads for the regression suite. Larger workloads run through
-# eval.py/check.py; tests/sdql-paper-{batax,mmm}.egg also exercise rule subsets.
+# the shared benchmark runner and check.py; tests/sdql-paper-{batax,mmm}.egg also exercise rule subsets.
 SUITE = (("mmm_sum", "1st"), ("mmm", "1st"))
 
 

@@ -1,4 +1,4 @@
-//! Native allocation protection for the two benchmark executables.
+//! Native allocation protection for the controlled benchmark executables.
 //!
 //! Call [`configure`] before parsing workload arguments or constructing an egraph.
 //! On macOS this bounds additional VM above the startup mapping size; on Linux
@@ -63,7 +63,7 @@ fn allocation_result(pointer: *mut u8) -> *mut u8 {
     pointer
 }
 
-/// Consume the optional native limit before either executable handles its input.
+/// Consume the optional native limit before the executable handles its input.
 ///
 /// The explicit flag also makes older binaries reject guarded invocations instead
 /// of silently ignoring an environment variable. Invalid requests and unsupported

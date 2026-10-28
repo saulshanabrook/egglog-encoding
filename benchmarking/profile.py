@@ -361,7 +361,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
     if binary_path is None:
         raise ValueError(f"target {target.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
-    native_limit = TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg")
+    native_limit = TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg", "slotted")
     workload = workload_command(binary_path, request.file, request.treatment, request.disequality_encoding)
     treatment_label = (
         f"{request.treatment} ({request.disequality_encoding})"

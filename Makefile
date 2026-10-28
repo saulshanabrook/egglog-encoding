@@ -56,12 +56,15 @@ rust-nits: rust-format-check rust-clippy rust-doc-links
 
 rust-format-check:
 	cargo fmt --all -- --check
+	cargo fmt --manifest-path slotted/xmulti/Cargo.toml -- --check
 
 rust-test:
 	cargo test --workspace
+	cargo test --manifest-path slotted/xmulti/Cargo.toml --no-default-features
 
 rust-clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --manifest-path slotted/xmulti/Cargo.toml --no-default-features --all-targets -- -D warnings
 
 # Clippy does not resolve doc links, and plain `cargo doc` skips the private
 # items most of this codebase documents, so a rename leaves stale links behind
@@ -76,8 +79,7 @@ proof-tests:
 # The paper's case studies -- the S4.1 array goal and the S4.2 SDQL workloads -- on the
 # encoding and on the reference through both of its matchers, at the artifact's budgets.
 # Release builds of both binaries, since these are the numbers a graph is drawn from.
-slotted-eval:
-	uv run --locked python slotted/eval.py
+slotted-eval: figures-slotted
 
 # Smoke the runner on small files, not the full local benchmark suite.
 benchmark-smoke:
@@ -118,12 +120,13 @@ update-snapshots:
 format:
 	uv run --locked ruff format .
 	cargo fmt --all
+	cargo fmt --manifest-path slotted/xmulti/Cargo.toml
 
 # Paper figures share one cached collection plan and the standalone Vega toolkit.
 NPX ?= npx --yes
 VEGA = $(NPX) --package=vega@6.4.0 --package=vega-lite@6.4.3 --package=vega-cli@6.4.0 --package=canvas@3.2.3
 
-.PHONY: figures figures-all figures-expanded figures-parameter figures-test figures-expanded-test figures-parameter-test
+.PHONY: figures figures-all figures-expanded figures-parameter figures-slotted figures-test figures-expanded-test figures-parameter-test
 figures figures-all:
 	./bench.py figures
 
@@ -132,6 +135,9 @@ figures-expanded:
 
 figures-parameter:
 	./bench.py figures disequality-runtime
+
+figures-slotted:
+	./bench.py figures slotted-runtime slotted-nested-runtime
 
 figures-test figures-expanded-test figures-parameter-test:
 	cd figures && $(VEGA) node --test eval.test.mjs

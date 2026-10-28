@@ -103,7 +103,7 @@ or modify the JSONL.
 - Bare `./bench.py` compares `proof-testing` with `off`, including proof
   extraction and checking. Recording-only `proofs` and unchecked
   `proof-extraction` remain explicit choices.
-- The five egglog treatments run `egglog-experimental`. The `egg` treatment and
+- The proof and slotted encoding treatments run `egglog-experimental`. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math
   workload at registered cutoffs, including the frozen twelve-round witness.
   Native schedule and witness arguments derive from the complete input identity.
@@ -111,6 +111,10 @@ or modify the JSONL.
   parameter-analysis drivers on `.in` inputs without proofs. Mixed-engine
   comparisons build each required executable, and every cache row identifies
   the executable that actually ran.
+- `slotted-ref-multi` and `slotted-ref-nested` run native `slotted/xmulti` without
+  invariant checks. Frozen `.egg` programs and physical `.ref` protocols live in
+  `benchmarks/slotted/inputs`; retain their generator and separate input hashes.
+  Ordinary goals are timed; graph export and isomorphism remain separate checks.
 - Benchmark inputs should not contain executable `(prove ...)` or
   `(prove-extract ...)` commands. Use `(check ...)` and `(extract ...)` so the
   selected treatment controls proof extraction, and cover strict proof validity
@@ -131,7 +135,7 @@ or modify the JSONL.
 
 ## Paper figures
 
-- `./bench.py figures` collects and renders the five paper PDFs through the shared
+- `./bench.py figures` collects and renders the configured paper PDFs through the shared
   benchmark phases. `--config` selects a flat JSON catalog with global `rounds`
   and `timeout_sec`, and direct per-figure `spec`, `files`, and `treatments`.
 - The production catalog requests ten executions and a 300-second timeout. Use
@@ -145,10 +149,11 @@ or modify the JSONL.
   separate validators. Retain selected published input hashes/aliases, strict
   failures and source blockers. Source blockers are not saved replay counts.
 - The outputs are `disequality-runtime`, `math-runtime`, `math-memory`,
-  `corpus-runtime-cdf`, and `corpus-memory-cdf`, each as PDF/SVG/PNG under
+  `corpus-runtime-cdf`, `corpus-memory-cdf`, `slotted-runtime`, and
+  `slotted-nested-runtime`, each as PDF/SVG/PNG under
   `figures/eval/` by default. `--output-dir` can target the paper's
   `figures/eval/` directory. Preserve bound specs and provenance receipts.
-- Run `make figures-test`; inspect all five exported figures at manuscript width
+- Run `make figures-test`; inspect the configured exported figures at manuscript width
   and verify PDF font embedding. Tests must cover latest-N selection, N=1 without
   intervals, independent Fieller intervals, missing/failure denominators, and
   the shared baseline-runtime corpus cohort (>=0.2 seconds, no upper cutoff).

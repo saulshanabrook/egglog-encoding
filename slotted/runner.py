@@ -1,4 +1,4 @@
-"""Build and time the two executables. Graph export and checking live in verify."""
+"""Run goal checks for slotted correctness comparisons; graph evidence lives in verify."""
 
 import argparse
 import multiprocessing
@@ -17,8 +17,7 @@ from slotted.workloads import add_arguments, workload_label
 ROOT = Path(__file__).resolve().parents[1]
 SCRATCH = ROOT / "target" / "slotted"
 
-#: Release builds of both sides: egglog, and the reference through `xmulti` without the
-#: crate's `checks` feature, the way the paper's experiments ran it.
+#: Release builds for correctness comparisons; xmulti retains invariant checks.
 EGGLOG = ROOT / "target" / "release" / "egglog-experimental"
 #: Maximum actual symmetries exported per reference class, including identity.
 #: Wide classes with small groups remain cheap; exceeding this limit makes the
@@ -27,7 +26,7 @@ GROUP_LIMIT = 100_000
 XMULTI = ROOT / "slotted" / "xmulti" / "target" / "release" / "xmulti"
 BUILDS = (
     ("cargo", "build", "--release", "-p", "egglog-experimental"),
-    ("cargo", "build", "--release", "--no-default-features", "--manifest-path", "slotted/xmulti/Cargo.toml"),
+    ("cargo", "build", "--release", "--manifest-path", "slotted/xmulti/Cargo.toml"),
 )
 
 
@@ -229,7 +228,7 @@ def run_egglog(program, name, row, timeout, progress=quiet_progress, *, config=N
 
 
 def run(workload, side, timeout, progress=quiet_progress, *, config=None):
-    """Execute the same goal-checking program for benchmarking and testing."""
+    """Execute a goal check before collecting its separate graph evidence."""
     row = Row(workload.study, workload.case, side, workload.rounds, workload.rules)
     row.unsupported = workload.unsupported
     if TREATMENTS[side].engine == "reference":

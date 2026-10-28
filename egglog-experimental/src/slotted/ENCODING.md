@@ -1209,10 +1209,9 @@ reach one value. The root keeps the frame's spelling (C11).
 
 # Against the reference
 
-The treatment definitions in `slotted/treatments.py` are shared by the standalone
-benchmark (`slotted/eval.py`) and correctness runner (`slotted/check.py`). They
+The correctness runner (`slotted/check.py`) uses `slotted/treatments.py` to
 specify the engine, matcher, substitution policy, CLI flags, exact comparison
-partner, and timing baseline:
+partner, and paper timing baseline:
 
 | Treatment | Behavior | Role |
 | --- | --- | --- |
@@ -1222,10 +1221,11 @@ partner, and timing baseline:
 | `ref-nested-snapshot` | Reference nested matcher with snapshot substitution | Exact reference for compatibility checks |
 | `ref-nested` | Original nested matcher with syntactic substitution | Timing baseline; graph equality is diagnostic |
 
-Both commands use the same generated programs and rewrite budgets:
+The shared benchmark runner consumes frozen versions of the same generated
+programs and rewrite budgets:
 
 ```bash
-python3 slotted/eval.py array
+./bench.py figures slotted-runtime slotted-nested-runtime
 python3 slotted/check.py array
 python3 slotted/check.py sdql --kernel mmm_sum --phase 1st
 python3 slotted/check.py logic
@@ -1241,18 +1241,17 @@ The SDQL suite selects Table 1's ten kernel/phase combinations.
 budgets come from the paper's artifact or the logic fixture. Unsupported nested
 patterns are reported explicitly; supported treatments still run and must pass.
 
-**Benchmarking.** `eval.py` builds release binaries and collects fresh wall-clock
-timings. It has no cache and does not export graphs or run isomorphism search.
-Its two tables show `egglog` versus `ref-multi`, then `egglog-no-aliasing` versus
-`ref-nested`. CLI selectors remain `encoding` and `encoding-no-aliasing`.
-The default is one sample per treatment; `--samples N` reports the median of N
-fresh samples. Each timed process includes Rust source transformation, execution,
-and its goal check. Completed runs retain their elapsed time even if the goal
-was missed, with failed goals listed after the tables. A cell says `timeout` if
-any of its samples exceeded the limit. `ref-nested-snapshot` is available through
-`--treatments` for diagnostic timings but is not substituted for the original
-nested baseline. These scripts are independent of the proof benchmark cache,
-report UI, and nightly automation.
+**Benchmarking.** `./bench.py figures` builds release binaries, reuses the shared
+append-only observation cache, and renders the configured comparisons. The full
+encoding's `slotted` treatment is compared with `slotted-ref-multi`; the
+compatibility encoding's `slotted-no-aliasing` treatment is timed against the
+original syntactic-substitution `slotted-ref-nested` baseline. Native Slotted is
+an independent implementation, not an Egg fork. Timed processes include input
+parsing/lowering, execution, and the ordinary goal check. Missed goals remain
+failed observations; no graph export or isomorphism search is timed. The
+[slotted input guide](../../../benchmarks/slotted/README.md) describes the frozen
+`.egg`/`.ref` identities, retained generators, complete workload coverage, and
+the semantic difference between the nested timing and correctness baselines.
 
 **Correctness.** `check.py` runs every supported treatment, including the snapshot
 nested reference. Each gets a goal check and a separate input-only graph export
@@ -1435,10 +1434,10 @@ transformation and evaluation in one process.
 | `slotted/xdiff/` | the differential harness against `memoryleak47/slotted-egraphs` |
 | `slotted/xmulti/` | the reference oracle, pinned to an exact revision |
 | `slotted/benchmarks/sdql.py` | the paper's ten SDQL workloads from the artifact: translation, Table 1's numbers, the generated tests |
-| `slotted/eval.py` | standalone timing CLI and tables; fresh samples without graph checking |
+| `benchmarks/slotted/` | frozen benchmark programs, exact native protocols, and retained regeneration entrypoint |
 | `slotted/check.py` | standalone correctness CLI; all supported treatments, counts, and required isomorphism checks |
 | `slotted/treatments.py` | shared treatment definitions, exact comparison pairs, and timing baselines |
-| `slotted/workloads.py` | shared workload selectors, source programs, and reference specs for both runners |
+| `slotted/workloads.py` | shared workload selectors, source programs, and reference specs for freezing and correctness checks |
 | `slotted/runner.py` | builds, progress, subprocess execution, and serial/parallel workload execution |
 | `slotted/verify.py` | untimed graph export, independent raw counts, and calls to the Rust checker |
 | `egraph-isomorphism/` | reusable Rust library and CLI for annotated `egraph-serialize` graphs |

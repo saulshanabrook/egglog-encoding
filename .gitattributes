@@ -9,3 +9,6 @@ benchmarks/corpus/**/*.egg linguist-generated=true -whitespace
 benchmarks/reproduction/patches/*.diff -whitespace
 benchmarks/reproduction/fixtures/** -whitespace
 egglog-experimental/tests/slotted/snapshots/*.snap linguist-generated=true
+
+# Frozen slotted source programs and native reference protocols.
+benchmarks/slotted/inputs/** linguist-generated=true

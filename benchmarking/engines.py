@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-type Engine = Literal["egglog", "egg", "egg-de", "egg-ee", "egg-nee", "egg-oee"]
+type Engine = Literal["egglog", "egg", "egg-de", "egg-ee", "egg-nee", "egg-oee", "slotted"]
 type Treatment = Literal[
     "off",
     "term",
@@ -22,6 +23,10 @@ type Treatment = Literal[
     "egg-ee",
     "egg-nee",
     "egg-oee",
+    "slotted",
+    "slotted-no-aliasing",
+    "slotted-ref-multi",
+    "slotted-ref-nested",
 ]
 
 
@@ -57,6 +62,10 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
     "egg-ee": TreatmentSpec("egg-ee", (), timing_summary=False),
     "egg-nee": TreatmentSpec("egg-nee", (), timing_summary=False),
     "egg-oee": TreatmentSpec("egg-oee", (), timing_summary=False),
+    "slotted": TreatmentSpec("egglog", ("--slotted",)),
+    "slotted-no-aliasing": TreatmentSpec("egglog", ("--slotted", "--slotted-no-aliasing")),
+    "slotted-ref-multi": TreatmentSpec("slotted", ("--matcher", "multi", "--substitution", "snapshot")),
+    "slotted-ref-nested": TreatmentSpec("slotted", ("--matcher", "nested", "--substitution", "syntactic")),
 }
 TREATMENTS = tuple(TREATMENT_SPECS)
 
@@ -106,9 +115,21 @@ def validate_engine_workload(file_spec: WorkloadFile, treatment: Treatment) -> N
 
     engine = TREATMENT_SPECS[treatment].engine
     if engine == "egglog":
+        if treatment == "slotted-no-aliasing" and file_spec.absolute_path.with_suffix(".ref").is_file():
+            reference = json.loads(file_spec.absolute_path.with_suffix(".ref").read_text())
+            if reference["nested"] is None:
+                raise ValueError(f"{file_spec.display_path}: {reference['unsupported_reason']}")
         return
     if file_spec.fact_directory is not None:
         raise ValueError(f"treatment {treatment} does not support --fact-directory")
+    if engine == "slotted":
+        if file_spec.absolute_path.suffix != ".ref":
+            raise ValueError(f"treatment {treatment} requires a frozen slotted .ref workload")
+        reference = json.loads(file_spec.absolute_path.read_text())
+        matcher = TREATMENT_SPECS[treatment].flags[1]
+        if reference[matcher] is None:
+            raise ValueError(f"{file_spec.display_path}: {reference['unsupported_reason']}")
+        return
     if engine != "egg":
         if file_spec.absolute_path.suffix != ".in":
             raise ValueError(f"treatment {treatment} requires a native .in workload")

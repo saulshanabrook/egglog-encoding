@@ -13,7 +13,6 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from slotted import check as C  # noqa: E402
-from slotted import eval as E  # noqa: E402
 from slotted import runner as run  # noqa: E402
 from slotted import verify as V  # noqa: E402
 from slotted import workloads as W  # noqa: E402
@@ -405,7 +404,7 @@ def zero_round_budget():
         rules=44,
         rounds=0,
     )
-    results = run.run_workloads(W.select(args), E.benchmark, config=CHECK_CONFIG, timeout=30, sides=("ref-multi",))
+    results = run.run_workloads(W.select(args), C.check_workload, config=CHECK_CONFIG, timeout=30, sides=("ref-multi",))
     rows = [row for group in results for row in group]
     assert len(rows) == 14
     assert all(r.rounds == 0 and r.goal == "no" for r in rows), rows
@@ -461,7 +460,6 @@ from unittest.mock import patch
 
 compiler = importlib.import_module("slotted.test_program")
 with patch.object(compiler, "compile_source", side_effect=AssertionError("compiled during import")):
-    importlib.import_module("slotted.eval")
     importlib.import_module("slotted.check")
     importlib.import_module("slotted.xdiff.xsdql")
 """
@@ -475,14 +473,12 @@ def separate_timing_and_graph_runs():
     sides = ("ref-multi",)
     timed = subprocess.CompletedProcess([], 0, "GOAL no\nCONFIG substitution=snapshot\n", "")
     dump = subprocess.CompletedProcess([], 2, "SIZES 10 20\n", "REFERENCE_LIMIT: symmetry cap")
-    for counts in (False, True):
-        worker = C.check_workload if counts else E.benchmark
-        with patch.object(subprocess, "run", side_effect=[timed, dump]) as process:
-            (row,) = worker(workload, sides=sides, config=CHECK_CONFIG, timeout=30)
-        assert process.call_count == (2 if counts else 1)
-        assert row.goal == "no" and row.seconds is not None
-        assert (row.classes, row.nodes) == ((10, 20) if counts else (None, None))
-        assert not successful([row], sides)
+    with patch.object(subprocess, "run", side_effect=[timed, dump]) as process:
+        (row,) = C.check_workload(workload, sides=sides, config=CHECK_CONFIG, timeout=30)
+    assert process.call_count == 2
+    assert row.goal == "no" and row.seconds is not None
+    assert (row.classes, row.nodes) == (10, 20)
+    assert not successful([row], sides)
 
     for failed in (
         subprocess.TimeoutExpired("xmulti", 30),

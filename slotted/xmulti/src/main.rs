@@ -49,6 +49,104 @@ use slotted_egraphs::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
+use std::path::PathBuf;
+use std::time::Instant;
+
+#[global_allocator]
+static ALLOCATOR: benchmark_memory::LimitedAllocator = benchmark_memory::LimitedAllocator;
+
+struct Input {
+    source: String,
+    substitution: String,
+    summary: Option<PathBuf>,
+    benchmark: bool,
+}
+
+impl Input {
+    /// The old stdin protocol remains the checker interface. File inputs are
+    /// frozen benchmark specs, with explicit matcher and substitution identity.
+    fn read() -> Result<Option<Self>, String> {
+        let mut args = benchmark_memory::configure(std::env::args_os())
+            .into_iter()
+            .skip(1);
+        let (mut file, mut matcher, mut substitution, mut summary) = (None, None, None, None);
+        while let Some(arg) = args.next() {
+            match arg.to_str() {
+                Some("--help" | "-h") => {
+                    println!("Native Slotted reference\n  [INPUT.ref] --matcher <multi|nested> --substitution <snapshot|syntactic>\n  --timing-summary <PATH>\n  --memory-limit-bytes <N>\nWithout INPUT.ref, read the differential-checker protocol on stdin.");
+                    return Ok(None);
+                }
+                Some("--matcher") => matcher = Some(args.next().ok_or("--matcher needs a value")?),
+                Some("--substitution") => {
+                    substitution = Some(args.next().ok_or("--substitution needs a value")?)
+                }
+                Some("--timing-summary") => {
+                    summary = Some(PathBuf::from(
+                        args.next().ok_or("--timing-summary needs a path")?,
+                    ))
+                }
+                Some(flag) if flag.starts_with('-') => {
+                    return Err(format!("unknown option: {flag}"))
+                }
+                _ if file.is_none() => file = Some(PathBuf::from(arg)),
+                _ => return Err("expected one reference input".into()),
+            }
+        }
+        let benchmark = file.is_some();
+        let source = if let Some(file) = file {
+            if cfg!(feature = "checks") {
+                return Err("timing requires xmulti built with --no-default-features".into());
+            }
+            if ["XMULTI_DEBUG", "XMULTI_DEBUG_RULE", "XMULTI_TRACE"]
+                .iter()
+                .any(|key| std::env::var_os(key).is_some())
+            {
+                return Err("remove XMULTI debugging variables before benchmarking".into());
+            }
+            let matcher = matcher
+                .as_deref()
+                .and_then(|s| s.to_str())
+                .ok_or("file input requires --matcher")?;
+            if !matches!(matcher, "multi" | "nested") {
+                return Err("--matcher must be multi or nested".into());
+            }
+            let data: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(file).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            data[matcher]
+                .as_str()
+                .ok_or_else(|| format!("unsupported matcher: {}", data["unsupported_reason"]))?
+                .to_owned()
+        } else {
+            if matcher.is_some() || summary.is_some() {
+                return Err("--matcher and --timing-summary require a frozen .ref input".into());
+            }
+            let mut source = String::new();
+            std::io::stdin()
+                .read_to_string(&mut source)
+                .map_err(|e| e.to_string())?;
+            source
+        };
+        if benchmark && substitution.is_none() {
+            return Err("file input requires --substitution".into());
+        }
+        let substitution = substitution
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| std::env::var("XMULTI_SUBST").unwrap_or_else(|_| "snapshot".into()));
+        if !matches!(
+            substitution.as_str(),
+            "snapshot" | "syntactic" | "extraction"
+        ) {
+            return Err("unknown substitution policy".into());
+        }
+        Ok(Some(Self {
+            source,
+            substitution,
+            summary,
+            benchmark,
+        }))
+    }
+}
 
 define_language! {
     pub enum L {
@@ -614,9 +712,16 @@ fn goal_reached(eg: &G, start: &AppliedId, goal: &str) -> bool {
 }
 
 fn main() {
-    let mut src = String::new();
-    std::io::stdin().read_to_string(&mut src).unwrap();
-    let spec = parse_spec(&src);
+    let started = Instant::now();
+    let Some(input) = Input::read().unwrap_or_else(|error| {
+        eprintln!("error: {error}");
+        std::process::exit(2);
+    }) else {
+        return;
+    };
+    let spec = parse_spec(&input.source);
+    let parse_time = started.elapsed();
+    let execution_started = Instant::now();
     // Which build answered, so a timing log can tell a checked oracle from a plain one.
     println!(
         "CONFIG checks={}",
@@ -634,7 +739,7 @@ fn main() {
     // class was created with, read at application time; `extraction` the crate's
     // smallest-term method, also at application time.
     CTORS.with(|c| *c.borrow_mut() = spec.ctors.clone());
-    let substitution = std::env::var("XMULTI_SUBST").unwrap_or_else(|_| "snapshot".to_owned());
+    let substitution = input.substitution;
     let mut eg = match substitution.as_str() {
         "syntactic" => G::default(),
         "extraction" => G::with_subst_method::<ExtractionSubst>(()),
@@ -825,12 +930,16 @@ fn main() {
     // mirrors the paper artifact's `lookup_rec_expr` criterion and prevents the
     // expected result from changing which rewrites match.  Existence alone is not
     // enough: the artifact requires the goal to be equivalent to the initial term.
+    let check_started = Instant::now();
+    let mut goals_reached = true;
     for goal in &spec.goals {
         let reached = term_ids
             .first()
             .is_some_and(|start| goal_reached(&eg, start, goal));
         println!("GOAL {}", if reached { "yes" } else { "no" });
+        goals_reached &= reached;
     }
+    let check_time = check_started.elapsed();
 
     if spec.sizes {
         let ids = eg.ids();
@@ -847,6 +956,30 @@ fn main() {
         }
     }
     println!("PARTITION {}", partition(&eg, &spec.probes));
+    if input.benchmark && !goals_reached {
+        eprintln!("terminal equality goal not reached");
+        std::process::exit(1);
+    }
+    if let Some(path) = input.summary {
+        let timing = egglog_reports::TimingSummary {
+            schema_version: egglog_reports::TimingSummary::SCHEMA_VERSION,
+            frontend_parse_ns: parse_time.as_nanos().min(u64::MAX as u128) as u64,
+            commands_check_ns: check_time.as_nanos().min(u64::MAX as u128) as u64,
+            commands_other_ns: execution_started
+                .elapsed()
+                .saturating_sub(check_time)
+                .as_nanos()
+                .min(u64::MAX as u128) as u64,
+            typecheck_ns: 0,
+            frontend_other_ns: 0,
+            frontend_install_ns: 0,
+            commands_actions_ns: 0,
+            native_rebuild_ns: 0,
+            rulesets: vec![],
+        };
+        let file = std::fs::File::create(path).expect("create timing summary");
+        serde_json::to_writer(file, &timing).expect("write timing summary");
+    }
 }
 
 /// Enumerate the complete group generated by the reference's stored generators.

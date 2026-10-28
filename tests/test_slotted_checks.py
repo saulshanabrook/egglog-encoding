@@ -1,4 +1,4 @@
-"""Standalone timing and correctness runners share inputs and treatment policies."""
+"""Slotted correctness checks preserve workload and reference treatment policies."""
 
 from __future__ import annotations
 
@@ -6,13 +6,11 @@ import importlib
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-E = importlib.import_module("slotted.eval")
 C = importlib.import_module("slotted.check")
 V = importlib.import_module("slotted.verify")
 W = importlib.import_module("slotted.workloads")
@@ -148,42 +146,10 @@ def test_checker_runs_every_supported_treatment(study: str, case: str | int, mon
     assert all(row.unsupported == workload.unsupported for row in rows)
 
 
-def test_benchmark_collects_fresh_samples_and_never_exports_graphs(monkeypatch: pytest.MonkeyPatch) -> None:
-    workload = W.array_workload(0)
-    calls = []
-
-    def execute(_workload: Any, side: str, *_args: Any, **_kwargs: Any) -> Any:
-        calls.append(side)
-        return next(r for r in rows_for() if r.side == side)
-
-    monkeypatch.setattr(run, "run", execute)
-    monkeypatch.setattr(V, "collect_graph", lambda *_a, **_k: pytest.fail("benchmark exported a graph"))
-    for _ in range(2):
-        rows = E.benchmark(workload, samples=3)
-        assert len(rows) == 3 * len(T.BENCHMARK_SIDES)
-    assert calls == [side for _ in range(2) for side in T.BENCHMARK_SIDES for _ in range(3)]
-    code = """
-import slotted.eval, sys
-assert not {
-    'slotted.verify', 'slotted.xdiff.isomorphism', 'slotted.test_program',
-    'slotted.xdiff.xarray', 'benchmarking',
-} & sys.modules.keys()
-"""
-    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-def test_timing_tables_and_goal_status_are_separate(capsys: pytest.CaptureFixture[str]) -> None:
+def test_goal_status_is_reported_without_hiding_graph_checks(capsys: pytest.CaptureFixture[str]) -> None:
     workload = W.array_workload(0)
     rows = rows_for(workload)
-    rows[0].goal, rows[0].seconds = "timeout", 300.125
-    output = E.report([workload], [rows], T.BENCHMARK_SIDES)
-    assert "| Array N=0 | timeout | 0.125 |" in output
-    assert "ref-nested-snapshot" not in output
-    assert "Classes" not in output and "Nodes" not in output
     rows[0].goal = "no"
-    rows[0].seconds = 0.125
-    assert E.timing_cell([rows[0]]) == "0.125"
     assert run.goal_errors(rows)
     assert C.report([workload], [rows])
     assert C.ERROR_TITLE in capsys.readouterr().out
@@ -232,13 +198,12 @@ def test_stale_graph_dump_cannot_certify_a_new_run(tmp_path: Path, monkeypatch: 
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("module", [E, C])
-def test_build_failure_has_error_exit_status(module: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_failure_has_error_exit_status(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_build() -> None:
         raise subprocess.CalledProcessError(1, ["cargo", "build"])
 
     monkeypatch.setattr(run, "build", fail_build)
-    assert module.main(["array"]) == 2
+    assert C.main(["array"]) == 2
 
 
 def test_common_graph_export_preserves_duplicate_rows_empty_classes_and_slot_names() -> None:

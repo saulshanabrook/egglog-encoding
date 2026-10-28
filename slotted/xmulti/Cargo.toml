@@ -9,6 +9,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+benchmark-memory = { path = "../../benchmark-memory" }
+egglog-reports = { path = "../../egglog/egglog-reports" }
 egraph-isomorphism = { path = "../../egraph-isomorphism" }
 serde_json = "1.0"
 num-bigint = "0.4"
@@ -43,3 +45,7 @@ slotted-egraphs = { git = "https://github.com/oflatt-claude/slotted-egraphs.git"
 # `make slotted-eval` does. The binary says which it is on its `CONFIG` line.
 default = ["checks"]
 checks = ["slotted-egraphs/checks"]
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"

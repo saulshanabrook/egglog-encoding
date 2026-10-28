@@ -99,7 +99,24 @@ def resolve_files(
             files[index] = replace(
                 file,
                 engine_inputs=tuple(
-                    (spec.engine, native) for spec in TREATMENT_SPECS.values() if spec.engine not in ("egglog", "egg")
+                    (spec.engine, native)
+                    for spec in TREATMENT_SPECS.values()
+                    if spec.engine not in ("egglog", "egg", "slotted")
+                ),
+            )
+        elif file.absolute_path.is_relative_to(Path(__file__).resolve().parents[1] / "benchmarks/slotted/inputs"):
+            reference = file.absolute_path.with_suffix(".ref")
+            files[index] = replace(
+                file,
+                engine_inputs=(
+                    (
+                        "slotted",
+                        FileSpec(
+                            display_path=str(Path(file.display_path).with_suffix(".ref")),
+                            absolute_path=reference,
+                            sha256=sha256_file(reference),
+                        ),
+                    ),
                 ),
             )
     resolved = tuple(files)

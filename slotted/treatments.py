@@ -1,4 +1,4 @@
-"""Treatment configuration shared by benchmarking and correctness tests.
+"""Correctness treatment configuration and the corresponding paper timing baselines.
 
 Each encoding names its exact reference and its timing baseline. The nested
 baseline retains the paper's syntactic substitution; only its snapshot variant
@@ -65,7 +65,6 @@ TREATMENTS = {
 SIDES = tuple(TREATMENTS)
 EXACT_PAIRS = {name: t.exact_reference for name, t in TREATMENTS.items() if t.exact_reference}
 TIMING_PAIRS = {name: t.timing_reference for name, t in TREATMENTS.items() if t.timing_reference}
-BENCHMARK_SIDES = tuple(dict.fromkeys(side for pair in TIMING_PAIRS.items() for side in pair))
 
 
 def description():

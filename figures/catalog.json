@@ -70,6 +70,29 @@
         "term",
         "proof-testing"
       ]
+    },
+    "slotted-runtime": {
+      "spec": "eval/slotted-runtime.vl.json",
+      "files": [
+        "../benchmarks/slotted/inputs/array/*.egg",
+        "../benchmarks/slotted/inputs/sdql/*.egg",
+        "../benchmarks/slotted/inputs/logic/*.egg"
+      ],
+      "treatments": [
+        "slotted-ref-multi",
+        "slotted"
+      ]
+    },
+    "slotted-nested-runtime": {
+      "spec": "eval/slotted-runtime.vl.json",
+      "files": [
+        "../benchmarks/slotted/inputs/array/*.egg",
+        "../benchmarks/slotted/inputs/sdql/*.egg"
+      ],
+      "treatments": [
+        "slotted-ref-nested",
+        "slotted-no-aliasing"
+      ]
     }
   }
 }

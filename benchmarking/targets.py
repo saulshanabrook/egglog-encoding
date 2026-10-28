@@ -240,7 +240,12 @@ def build_target(
         build_args.append("--release")
     else:
         build_args.extend(("--profile", build_profile))
-    if package is None:
+    if engine == "slotted":
+        target_dir = checkout_path / "slotted/xmulti/target"
+        build_args.extend(
+            ("--locked", "--no-default-features", "--manifest-path", str(checkout_path / "slotted/xmulti/Cargo.toml"))
+        )
+    elif package is None:
         native = checkout_path / "benchmarks/disequality/native"
         target_dir = checkout_path / "benchmarks/local/parameter-native/target"
         build_args.extend(
@@ -257,7 +262,7 @@ def build_target(
     else:
         build_args.extend(("-p", package))
     run_text(build_args, cwd=checkout_path, capture_output=False)
-    binary_stem = package or engine
+    binary_stem = "xmulti" if engine == "slotted" else package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
     binary_path = target_dir / build_profile / binary_name
     if not binary_path.is_file():
@@ -334,6 +339,8 @@ def workload_command(
         if disequality_encoding != "nee":
             raise ValueError("disequality encoding selection is only supported by egglog treatments")
         validate_engine_workload(file_spec, treatment)
+        if specification.engine == "slotted":
+            return [str(binary_path), *specification.flags, str(file_spec.absolute_path)]
         if specification.engine != "egg":
             return [str(binary_path), str(file_spec.absolute_path), "100000", "10000"]
         return [str(binary_path), *specification.flags, *math_workload_arguments(file_spec)]

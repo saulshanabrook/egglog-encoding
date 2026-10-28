@@ -5,8 +5,9 @@
     python3 slotted/check.py sdql --kernel mmm_sum --phase 1st
     python3 slotted/check.py logic
 
-Uses the same workload selectors, release binaries, and treatment configuration
-as eval.py. Each treatment gets a goal check and a separate input-only graph
+Uses source workload selectors and a checked reference build. Shared benchmark
+collection uses the frozen inputs under benchmarks/slotted. Each treatment gets
+a goal check and a separate input-only graph
 export. Counts and independently verified isomorphism are both required for the
 exact pairs defined in treatments.py. Other pairs are diagnostic. Reference
 timeouts are explicitly unverified; errors and inconclusive non-timeout evidence

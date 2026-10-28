@@ -556,7 +556,7 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         binary_path = target.binary_path_for(engine_runs[0].treatment)
         if binary_path is None:
             raise ValueError(f"target {target.display_label} needs a fresh {engine} binary")
-        if engine not in ("egglog", "egg"):
+        if engine not in ("egglog", "egg", "slotted"):
             continue
         required_outputs = ["--timing-summary", "--memory-limit-bytes"]
         if engine == "egglog":
@@ -565,13 +565,15 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             required_outputs.extend(
                 flag for run in engine_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
             )
-        else:
+        elif engine == "egg":
             required_outputs.extend(
                 flag
                 for run in engine_runs
                 for flag in MATH_WORKLOAD_ARGUMENTS.get(run.file.sha256, ())
                 if flag.startswith("--")
             )
+        else:
+            required_outputs.extend(("--matcher", "--substitution"))
         result = run_preflight(
             binary_path,
             Path(target.row.path),

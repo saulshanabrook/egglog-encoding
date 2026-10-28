@@ -21,7 +21,7 @@ def native_memory_command(
 ) -> tuple[list[str], dict[str, str]]:
     """Pass explicit protection and the fixed startup policy before native exec.
 
-    Only egglog-experimental and egg-math-benchmark accept this option. An older
+    The controlled Egglog, Math, and native Slotted executables accept this option. An older
     binary must reject it at preflight instead of silently running uncapped.
     Allocation failures record this limit; increasing it permits a cached retry.
     """
