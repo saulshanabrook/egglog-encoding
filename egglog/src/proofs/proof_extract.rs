@@ -771,13 +771,7 @@ impl ExtractionInput<'_> {
             normalizers,
             value_constructors,
         );
-        store
-            .remove_globals(&egraph.proof_check_program)
-            .map_err(|error| {
-                Error::ExtractError(format!(
-                    "cannot resolve extraction evidence globals: {error}"
-                ))
-            })?;
+
         let mut ids = ids.into_iter();
         let mut input_anchor = anchor.map(|_| ids.next().unwrap());
         let mut certificates = Certificates {
