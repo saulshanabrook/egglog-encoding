@@ -266,10 +266,24 @@ test('Slotted empty, failed, zero-baseline and N1 conditions retain workload ide
   assert.equal(find(zero,'slotted_ratio_points').filter(p=>p.opacity!==0).length,0);
   assert.match(zero.svg,/native mean ≤0/);
   const one=await evaluate('slotted-runtime',inputs,treatments.map((t,i)=>group('a',t,[i?4:2])),1);
-  assert.equal(find(one,'slotted_absolute_means').filter(p=>p.opacity!==0).length,2);
+  assert.equal(find(one,'slotted_absolute_means').filter(p=>p.opacity!==0).length,0);
+  assert.deepEqual(find(one,'slotted_runs').map(p=>p.datum.mean),[2,4]);
   assert.equal(find(one,'slotted_absolute_intervals').filter(p=>p.opacity!==0).length,0);
   assert.equal(find(one,'slotted_ratio_intervals').filter(p=>p.opacity!==0).length,0);
-  assert.match(one.svg,/n=1, no CI/);
+  assert.match(one.svg,/Pilot: one requested run\/configuration · no confidence intervals/);
+  assert.doesNotMatch(one.svg,/n=1, no CI/);
+  const resource=await evaluate('slotted-runtime',inputs,[group('a',treatments[0],[null],{status:'timed-out',timeout_sec:300}),
+    group('a',treatments[1],[null],{status:'failure',error_exit_code:86,error_memory_limit_bytes:16*1024**3})],1);
+  assert.match(resource.svg,/native timeout \(300 s\)/);
+  assert.match(resource.svg,/encoding allocation limit \(16 GiB\)/);
+  const rss=await evaluate('slotted-runtime',inputs,treatments.map(t=>group('a',t,[null],{status:'failure',error_message:'process-group RSS limit',error_memory_limit_bytes:10*1024**3})),1);
+  assert.match(rss.svg,/memory limit \(10 GiB\)/);
+  assert.doesNotMatch(rss.svg,/allocation limit/);
+  const ten=await evaluate('slotted-runtime',inputs,treatments.map((t,i)=>group('a',t,Array(10).fill(i?4:2))),10);
+  assert.equal(find(ten,'slotted_absolute_means').length,2);
+  assert.deepEqual(find(ten,'slotted_ratio_intervals').map(p=>[p.datum.ratio_low,p.datum.ratio_high]),[[2,2]]);
+  assert.match(ten.svg,/95% intervals: Student-t/);
+  assert.doesNotMatch(ten.svg,/Pilot:/);
   const unbounded=await evaluate('slotted-runtime',inputs,[group('a',treatments[0],[.1,10]),group('a',treatments[1],[2,4])]);
   assert.equal(find(unbounded,'slotted_ratio_points').filter(p=>p.opacity!==0).length,1);
   assert.equal(find(unbounded,'slotted_ratio_intervals').filter(p=>p.opacity!==0).length,0);
@@ -295,6 +309,47 @@ test('Slotted full catalogs retain distinct readable rows and align the two comp
     for(const mean of find(result,'slotted_absolute_means')) {
       const row=rows.find(p=>p.datum.logical_id===mean.datum.logical_id);
       assert.ok(Math.abs(mean.y+mean.height/2-mean.datum.series_offset-row.y)<1e-8,'absolute and ratio rows drifted');
+    }
+  }
+});
+
+
+test('absolute run jitter remains relative to its mean row in Math and disequality',async()=>{
+  for(const name of ['disequality-runtime','math-runtime','math-memory']) {
+    const treatments=name.startsWith('math')?['egg','egg-proof-testing','off','proof-testing']:['egg-de','egg-ee','egg-nee','egg-oee','off'];
+    const result=await evaluate(name,treatments.map(t=>input('a',t)),treatments.map(t=>group('a',t,[2,4])));
+    const means=find(result,'absolute_means');
+    assert.equal(means.length,treatments.length);
+    for(const run of find(result,'absolute_runs')) {
+      const mean=means.find(m=>m.datum.input_id===run.datum.input_id);
+      assert.ok(Math.abs(run.y-(mean.y+mean.height/2)-run.datum.jitter)<1e-8,`${name}: run jitter displaced from its mean row`);
+      assert.ok(run.bounds.y1>=0&&run.bounds.y2<=treatments.length*(name.startsWith('math')?36:40));
+    }
+    if(name.startsWith('disequality'))for(const status of find(result,'absolute_status')) {
+      const mean=means.find(m=>m.datum.input_id===status.datum.input_id);
+      assert.ok(Math.abs(status.y-mean.y-mean.height/2)<1e-8,'disequality status and mean rows drifted');
+    }
+  }
+});
+
+test('Slotted symlog time axes keep zero, negative confidence bounds and sparse domains visible',async()=>{
+  const treatments=['slotted-ref-multi','slotted'];
+  const inputs=treatments.map(t=>input('a',t,{label:'benchmarks/slotted/inputs/array/goal-2d-4f-N0.egg'}));
+  const cases=[[],treatments.map(t=>group('a',t,[null,null],{status:'timed-out'})),
+    treatments.map(t=>group('a',t,[0,0])),treatments.map(t=>group('a',t,[.001,.001])),
+    treatments.map(t=>group('a',t,[1,3]))];
+  for(const groups of cases) {
+    const result=await evaluate('slotted-runtime',inputs,groups);
+    const labels=result.marks.filter(m=>m.mark.role==='axis-label'&&m.mark.group.datum?.scale==='concat_0_x');
+    assert.ok(labels.length>0,'absolute axis label check did not run');
+    assert.equal(new Set(labels.map(m=>m.text)).size,labels.length,'decimal axis values collapsed to the same label');
+    if(groups[0]?.samples[0].wall_sec===.001)assert.ok(labels.some(m=>m.datum.value>0&&m.opacity!==0),'one-millisecond runtimes need a visible nonzero tick');
+    for(const label of labels)assert.ok(label.bounds.x1>=-.5&&label.bounds.x2<=225.5,`absolute axis label outside its frame: ${label.text}`);
+    for(const run of find(result,'slotted_runs'))assert.ok(Number.isFinite(run.x)&&run.x>=0&&run.x<=225,'zero or positive run absent from time domain');
+    for(const ci of find(result,'slotted_absolute_intervals'))assert.ok(Number.isFinite(ci.x)&&Number.isFinite(ci.x2)&&ci.x>=0&&ci.x2<=225,'confidence interval clipped or lost');
+    if(groups[0]?.samples[0].wall_sec===1) {
+      assert.ok(find(result,'slotted_absolute_intervals').every(ci=>ci.datum.ci_low<0));
+      assert.ok(labels.some(m=>m.datum.value<0),'negative confidence bounds need a negative axis tick');
     }
   }
 });

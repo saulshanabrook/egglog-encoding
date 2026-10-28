@@ -76,10 +76,16 @@
         {
           "name": "absolute_runs",
           "transform": [{"filter": "isValid(datum.value) && !datum.validation_issue"}],
-          "mark": {"type": "point", "filled": true, "opacity": 0.55, "size": 30, "color": "#477b9e"},
+          "mark": {
+            "type": "point",
+            "filled": true,
+            "opacity": 0.55,
+            "size": 30,
+            "color": "#477b9e",
+            "yOffset": {"expr": "datum.jitter"}
+          },
           "encoding": {
             "x": {"field": "value"},
-            "yOffset": {"field": "jitter", "type": "quantitative", "scale": null},
             "tooltip": [
               {"field": "condition"},
               {"field": "value", "format": ".5g"},
