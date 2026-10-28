@@ -223,3 +223,78 @@ test('CDF family dots and direct 50/95 labels keep pooled ranks and intact glyph
     }
   }
 });
+
+test('Slotted compares exact physical endpoint rows per workload with Student-t and Fieller statistics',async()=>{
+  for(const treatments of [['slotted-ref-multi','slotted'],['slotted-ref-nested','slotted-no-aliasing']]) {
+    const inputs=['a','b'].flatMap((id,i)=>treatments.map(t=>input(id+'-'+t,t,{
+      logical_id:id,label:`benchmarks/slotted/inputs/array/goal-2d-4f-N${i?10:2}.egg`,selected_row_indices:[0,2]})));
+    const groups=['a','b'].flatMap(id=>treatments.map((t,i)=>group(id+'-'+t,t,[i?4:2,999,i?4:2])));
+    const result=await evaluate('slotted-runtime',inputs,groups);
+    assert.equal(find(result,'slotted_runs').filter(p=>p.opacity!==0).length,8);
+    assert.deepEqual(find(result,'slotted_absolute_means').filter(p=>p.opacity!==0).map(p=>p.datum.mean),[2,4,2,4]);
+    assert.deepEqual(find(result,'slotted_ratio_points').filter(p=>p.opacity!==0).map(p=>p.datum.ratio),[2,2]);
+    assert.deepEqual(find(result,'slotted_ratio_intervals').filter(p=>p.opacity!==0).map(p=>[p.datum.ratio_low,p.datum.ratio_high]),[[2,2],[2,2]]);
+    for(const guide of find(result,'slotted_equal')) {
+      assert.equal(guide.y,0);
+      assert.equal(guide.y2,guide.mark.group.height);
+      assert.equal(guide.x2??guide.x,guide.x);
+    }
+    const runs=find(result,'slotted_runs').filter(p=>p.opacity!==0);
+    assert.notEqual(runs.find(p=>p.datum.series==='Native Slotted').shape,runs.find(p=>p.datum.series==='Egglog encoding').shape);
+    const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
+    assert.deepEqual(labels.filter(s=>s.startsWith('Array · N=')),['Array · N=2','Array · N=10']);
+    assert.doesNotMatch(result.svg,/ratio_low, ratio_high/);
+    assert.ok(!labels.some(label=>/goal-2d-4f-N|[.]egg$/.test(label)));
+    for(const point of runs)assert.ok(point.bounds.y1>=0&&point.bounds.y2<=2*28,'run outside workload rows');
+  }
+});
+
+test('Slotted empty, failed, zero-baseline and N1 conditions retain workload identity and explicit outcomes',async()=>{
+  const treatments=['slotted-ref-multi','slotted'];
+  const inputs=treatments.map(t=>input('a',t,{label:'benchmarks/slotted/inputs/logic/first-order-logic.egg'}));
+  const empty=await evaluate('slotted-runtime',inputs,[]);
+  assert.equal(find(empty,'slotted_ratio_points').filter(p=>p.opacity!==0).length,0);
+  assert.match(empty.svg,/first-order-logic/);
+  assert.match(empty.svg,/native 0\/2 runs; missing/);
+  assert.match(empty.svg,/encoding 0\/2 runs; missing/);
+  const failed=await evaluate('slotted-runtime',inputs,[group('a',treatments[0],[2,2]),
+    group('a',treatments[1],[null,null],{status:'failure',error_exit_code:86})]);
+  assert.equal(find(failed,'slotted_absolute_means').filter(p=>p.opacity!==0).length,1);
+  assert.equal(find(failed,'slotted_ratio_points').filter(p=>p.opacity!==0).length,0);
+  assert.match(failed.svg,/encoding 2\/2; 2 failed, 2 memory limit/);
+  const zero=await evaluate('slotted-runtime',inputs,treatments.map((t,i)=>group('a',t,[i?2:0,i?2:0])));
+  assert.equal(find(zero,'slotted_ratio_points').filter(p=>p.opacity!==0).length,0);
+  assert.match(zero.svg,/native mean ≤0/);
+  const one=await evaluate('slotted-runtime',inputs,treatments.map((t,i)=>group('a',t,[i?4:2])),1);
+  assert.equal(find(one,'slotted_absolute_means').filter(p=>p.opacity!==0).length,2);
+  assert.equal(find(one,'slotted_absolute_intervals').filter(p=>p.opacity!==0).length,0);
+  assert.equal(find(one,'slotted_ratio_intervals').filter(p=>p.opacity!==0).length,0);
+  assert.match(one.svg,/n=1, no CI/);
+  const unbounded=await evaluate('slotted-runtime',inputs,[group('a',treatments[0],[.1,10]),group('a',treatments[1],[2,4])]);
+  assert.equal(find(unbounded,'slotted_ratio_points').filter(p=>p.opacity!==0).length,1);
+  assert.equal(find(unbounded,'slotted_ratio_intervals').filter(p=>p.opacity!==0).length,0);
+  assert.match(unbounded.svg,/CI unbounded/);
+});
+
+test('Slotted full catalogs retain distinct readable rows and align the two comparison panels',async()=>{
+  const names=[...Array.from({length:11},(_,n)=>`array/goal-2d-4f-N${n}.egg`),
+    ...['batax','mmm','mmm_sum','mttkrp','ttm'].flatMap(k=>[1,2].map(p=>`sdql/${k}_${p===1?'1st':'2nd'}-44rules.egg`)),
+    'logic/first-order-logic.egg','logic/first-order-logic2.egg'];
+  const treatments=['slotted-ref-multi','slotted'];
+  const inputs=names.flatMap((name,i)=>treatments.map(t=>input('case'+i,t,{label:'benchmarks/slotted/inputs/'+name})));
+  const groups=names.flatMap((_,i)=>treatments.map((t,j)=>group('case'+i,t,[j?4:2,j?4:2])));
+  for(const records of [groups,[]]) {
+    const result=await evaluate('slotted-runtime',inputs,records);
+    const rows=find(result,'slotted_status').sort((a,b)=>a.y-b.y);
+    assert.equal(rows.length,23);
+    assert.equal(new Set(rows.map(p=>p.y)).size,23,'workloads collapsed to a shared row');
+    assert.ok(rows.at(-1).y-rows[0].y>=22*16,'plot height does not grow with workload count');
+    const labels=result.marks.filter(p=>p.mark.role==='axis-label'&&rows.some(r=>r.datum.workload===p.text)).sort((a,b)=>a.y-b.y);
+    assert.equal(labels.length,23);
+    for(let i=1;i<labels.length;i++)assert.ok(labels[i-1].bounds.y2<labels[i].bounds.y1,`overlapping workload labels: ${labels[i].text}`);
+    for(const mean of find(result,'slotted_absolute_means')) {
+      const row=rows.find(p=>p.datum.logical_id===mean.datum.logical_id);
+      assert.ok(Math.abs(mean.y+mean.height/2-mean.datum.series_offset-row.y)<1e-8,'absolute and ratio rows drifted');
+    }
+  }
+});

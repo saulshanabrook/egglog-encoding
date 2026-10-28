@@ -1,0 +1,227 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Per-workload Slotted process runtime and encoding/native ratios. The same authored view serves full multipattern and nested comparison catalogs. Bound original rows, arithmetic means, Student-t intervals and independent Fieller intervals remain computed in Vega. No cross-workload aggregate.",
+  "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {"name": "timeout_sec", "value": 300},
+    {"name": "rounds", "value": 10},
+    {"name": "t_critical", "value": 2.2621571628540993},
+    {"name": "selected_inputs", "value": []},
+    {"name": "source_blockers", "value": []}
+  ],
+  "config": {
+    "font": "Arial",
+    "view": {"stroke": null},
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 11,
+      "gridColor": "#e8eaed",
+      "titlePadding": 10,
+      "titleFontWeight": "normal",
+      "grid": false
+    },
+    "legend": {"labelFontSize": 11, "title": null, "orient": "top", "symbolSize": 45},
+    "title": {"anchor": "start", "fontSize": 15, "subtitleFontSize": 10, "subtitlePadding": 8}
+  },
+  "title": {
+    "text": {
+      "expr": "indexof(pluck(selected_inputs,'treatment'),'slotted-ref-nested') >= 0 ? 'Slotted: nested matcher comparison' : 'Slotted: full multipattern comparison'"
+    },
+    "subtitle": {
+      "expr": "[rounds + ' requested runs/configuration · dots: runs; ticks: means · whole-process time', '95% intervals: Student-t (time), independent Fieller (encoding / native)', indexof(pluck(selected_inputs,'treatment'),'slotted-ref-nested') >= 0 ? 'Different substitution policies; timings do not certify equivalence.' : 'Native Slotted and Egglog encoding use deterministic snapshot substitution.']"
+    }
+  },
+  "transform": [
+    {"calculate": "[datum.groups, [null]]", "as": "batches"},
+    {"flatten": ["batches"], "as": ["candidates"]},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {"filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.disequality_encoding === 'nee')"},
+    {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.fact_directory_sha256 + '/' + datum.group.key.treatment : ''", "as": "group_id"},
+    {"aggregate": [{"op": "values", "as": "observed"}]},
+    {"calculate": "pluck(datum.observed, 'group_id')", "as": "group_ids"},
+    {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
+    {"calculate": "selected_inputs", "as": "inputs"},
+    {"flatten": ["inputs"], "as": ["input"]},
+    {"calculate": "datum.input.file_sha256 + '/' + datum.input.fact_directory_sha256 + '/' + datum.input.treatment", "as": "input_id"},
+    {"calculate": "indexof(datum.group_ids, datum.input_id)", "as": "group_index"},
+    {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
+    {"calculate": "isValid(datum.group)", "as": "eligible_group"},
+    {"calculate": "datum.eligible_group ? datum.group.samples : []", "as": "observations"},
+    {"calculate": "datum.eligible_group ? datum.input.selected_row_indices : []", "as": "sample_indices"},
+    {"calculate": "length(datum.sample_indices)", "as": "sample_n"},
+    {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["row_index"]},
+    {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "value"},
+    {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {"calculate": "isValid(datum.run) && (datum.run.error_exit_code === 86 || datum.run.error_message && (indexof(datum.run.error_message, 'process-group RSS') >= 0 || indexof(datum.run.error_message, 'memory-limit') >= 0 || indexof(datum.run.error_message, 'memory limit') >= 0)) ? 1 : 0", "as": "memory_limited"},
+    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "variance", "field": "value", "as": "sample_variance"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}, {"op": "sum", "field": "memory_limited", "as": "memory_limit_n"}], "groupby": ["input_id"]},
+    {"calculate": "datum.sample_n === rounds && datum.valid_n === rounds", "as": "complete"},
+    {"calculate": "datum.complete ? datum.sample_mean : null", "as": "mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.sample_variance / rounds : null", "as": "var_mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean - t_critical * sqrt(datum.var_mean) : null", "as": "ci_low"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean + t_critical * sqrt(datum.var_mean) : null", "as": "ci_high"},
+    {"calculate": "datum.failed_n ? datum.sample_n + '/' + rounds + '; ' + datum.failed_n + ' failed' + (datum.timeout_n ? ', ' + datum.timeout_n + ' timeout' : '') + (datum.memory_limit_n ? ', ' + datum.memory_limit_n + ' memory limit' : '') : !datum.sample_n ? '0/' + rounds + ' runs; missing' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' runs; metric missing' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' runs; partial' : ''", "as": "issue"},
+    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
+    {"calculate": "datum.input.logical_id", "as": "logical_id"},
+    {"calculate": "replace(replace(datum.input.label, regexp('^.*[/]'), ''), regexp('[.]egg$'), '')", "as": "basename"},
+    {"calculate": "indexof(datum.basename,'goal-2d-4f-N') === 0 ? 'Array' : indexof(datum.basename,'-44rules') >= 0 ? 'SDQL' : indexof(datum.basename,'first-order-logic') === 0 ? 'Logic' : 'Other'", "as": "suite"},
+    {"calculate": "replace(datum.basename,regexp('_(1st|2nd)-44rules$'),'')", "as": "kernel"},
+    {"calculate": "datum.suite + ' · ' + (datum.suite === 'Array' ? replace(datum.basename,'goal-2d-4f-N','N=') : datum.suite === 'SDQL' ? ({'batax':'BATAX','mmm':'MMM','mmm_sum':'ΣMMM','mttkrp':'MTTKRP','ttm':'TTM'}[datum.kernel] || datum.kernel) + (indexof(datum.basename,'_1st-') >= 0 ? ' · 1st' : ' · 2nd') : datum.basename)", "as": "workload"},
+    {"calculate": "datum.suite === 'Array' ? toNumber(replace(datum.basename,'goal-2d-4f-N','')) : (datum.suite === 'SDQL' ? 100 : datum.suite === 'Logic' ? 200 : 300) + indexof(pluck(selected_inputs,'logical_id'),datum.logical_id)", "as": "order"},
+    {"calculate": "indexof(datum.input.treatment,'ref-') >= 0 ? 'Native Slotted' : 'Egglog encoding'", "as": "series"},
+    {"calculate": "datum.series === 'Native Slotted' ? -5 : 5", "as": "series_offset"},
+    {"calculate": "datum.series_offset + (datum.run_number % 5 - 2) * 1.3", "as": "run_offset"},
+    {"calculate": "min(0, isValid(datum.ci_low) ? datum.ci_low : 0)", "as": "absolute_low"},
+    {"calculate": "max(0, isValid(datum.value) ? datum.value : 0, isValid(datum.ci_high) ? datum.ci_high : 0)", "as": "absolute_high"},
+    {"extent": "absolute_low", "param": "absolute_low_extent"},
+    {"extent": "absolute_high", "param": "absolute_high_extent"}
+  ],
+  "hconcat": [
+    {
+      "width": 225,
+      "height": {"step": 28},
+      "encoding": {
+        "x": {
+          "type": "quantitative",
+          "title": "Seconds",
+          "scale": {
+            "domain": {
+              "expr": "[min(0, absolute_low_extent[0]), absolute_high_extent[1] > 0 ? absolute_high_extent[1] * 1.05 : 1]"
+            }
+          },
+          "axis": {"format": "~f", "tickCount": 4}
+        },
+        "y": {
+          "field": "workload",
+          "type": "nominal",
+          "sort": {"field": "order", "op": "min"},
+          "title": null,
+          "axis": {"labelLimit": 160, "labelPadding": 5},
+          "bandPosition": 0.5
+        },
+        "yOffset": {"value": {"expr": "14 + datum.series_offset"}},
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "scale": {"domain": ["Native Slotted", "Egglog encoding"], "range": ["#477b9e", "#b36c48"]},
+          "legend": {"orient": "top"}
+        }
+      },
+      "layer": [
+        {
+          "name": "slotted_runs",
+          "mark": {"type": "point", "filled": true, "size": 22, "opacity": 0.45},
+          "encoding": {
+            "x": {"field": "value"},
+            "yOffset": {"value": {"expr": "14 + datum.run_offset"}},
+            "shape": {
+              "field": "series",
+              "type": "nominal",
+              "scale": {"domain": ["Native Slotted", "Egglog encoding"], "range": ["circle", "triangle-up"]},
+              "legend": {"orient": "top"}
+            },
+            "tooltip": [
+              {"field": "input.label"},
+              {"field": "series"},
+              {"field": "value"},
+              {"field": "sample_n"},
+              {"field": "issue"},
+              {"field": "run.row_index"}
+            ]
+          },
+          "transform": [{"filter": "isValid(datum.value)"}]
+        },
+        {
+          "name": "slotted_absolute_intervals",
+          "mark": {"type": "rule", "strokeWidth": 1.4},
+          "encoding": {"x": {"field": "ci_low"}, "x2": {"field": "ci_high"}},
+          "transform": [{"filter": "datum.run_number === 1 && isValid(datum.ci_low)"}]
+        },
+        {
+          "name": "slotted_absolute_means",
+          "mark": {"type": "tick", "thickness": 2, "size": 7},
+          "encoding": {"x": {"field": "mean"}},
+          "transform": [{"filter": "datum.run_number === 1 && datum.complete"}]
+        }
+      ],
+      "title": {"text": "Whole-process runtime", "anchor": "middle", "fontSize": 12}
+    },
+    {
+      "width": 210,
+      "height": {"step": 28},
+      "encoding": {
+        "x": {
+          "type": "quantitative",
+          "title": "Ratio of means",
+          "scale": {"domain": {"expr": "[min(0, ratio_lower_extent[0]), max(1, ratio_upper_extent[1])]"}},
+          "axis": {"labelExpr": "format(datum.value,'~f') + '×'", "tickCount": 4}
+        },
+        "y": {
+          "field": "workload",
+          "type": "nominal",
+          "sort": {"field": "order", "op": "min"},
+          "title": null,
+          "axis": null,
+          "bandPosition": 0.5
+        }
+      },
+      "layer": [
+        {
+          "name": "slotted_equal",
+          "mark": {"type": "rule", "color": "#8c9198", "strokeDash": [3, 3]},
+          "encoding": {"x": {"datum": 1}, "y": {"value": 0}, "y2": {"value": {"expr": "height"}}},
+          "transform": [{"aggregate": [{"op": "count", "as": "rows"}]}]
+        },
+        {
+          "name": "slotted_ratio_intervals",
+          "mark": {"type": "rule", "strokeWidth": 1.4, "color": "#20252b"},
+          "encoding": {"x": {"field": "ratio_low"}, "x2": {"field": "ratio_high"}},
+          "transform": [{"filter": "datum.bounded"}]
+        },
+        {
+          "name": "slotted_ratio_points",
+          "mark": {"type": "point", "filled": true, "size": 30, "color": "#20252b"},
+          "encoding": {"x": {"field": "ratio"}},
+          "transform": [{"filter": "isValid(datum.ratio) && isFinite(datum.ratio)"}]
+        },
+        {
+          "name": "slotted_status",
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "baseline": "middle",
+            "fontSize": 10,
+            "lineHeight": 11,
+            "lineBreak": "\n",
+            "color": "#20252b"
+          },
+          "encoding": {"x": {"value": 224}, "text": {"field": "summary"}}
+        }
+      ],
+      "title": {"text": "Encoding / native runtime", "anchor": "start", "fontSize": 12},
+      "transform": [
+        {"filter": "datum.run_number === 1"},
+        {"aggregate": [{"op": "values", "as": "conditions"}], "groupby": ["logical_id", "suite", "workload", "order"]},
+        {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'Native Slotted')]", "as": "baseline"},
+        {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'Egglog encoding')]", "as": "candidate"},
+        {"calculate": "isValid(datum.baseline) && isValid(datum.candidate) && datum.baseline.complete && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null", "as": "ratio"},
+        {"calculate": "datum.baseline.mean * datum.baseline.mean - t_critical * t_critical * datum.baseline.var_mean", "as": "a"},
+        {"calculate": "datum.candidate.mean * datum.candidate.mean - t_critical * t_critical * datum.candidate.var_mean", "as": "d"},
+        {"calculate": "pow(datum.baseline.mean * datum.candidate.mean,2) - datum.a * datum.d", "as": "radicand"},
+        {"calculate": "isValid(datum.ratio) && isFinite(datum.ratio) && rounds > 1 && datum.a > 0 && datum.radicand >= 0", "as": "bounded"},
+        {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean - sqrt(datum.radicand)) / datum.a : null", "as": "ratio_low"},
+        {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean + sqrt(datum.radicand)) / datum.a : null", "as": "ratio_high"},
+        {"calculate": "!isValid(datum.ratio) ? (!isValid(datum.baseline) ? 'native missing' : !datum.baseline.complete ? 'native ' + datum.baseline.issue : datum.baseline.mean <= 0 ? 'native mean ≤0' : '') + (!isValid(datum.candidate) || !datum.candidate.complete ? '\\nencoding ' + (isValid(datum.candidate) ? datum.candidate.issue : 'missing') : '') : rounds === 1 ? format(datum.ratio,'.3g') + '×; n=1, no CI' : !datum.bounded ? format(datum.ratio,'.3g') + '×; CI unbounded' : format(datum.ratio,'.3g') + '× [' + format(datum.ratio_low,'.3g') + ', ' + format(datum.ratio_high,'.3g') + ']'", "as": "summary"},
+        {"calculate": "max(1, isValid(datum.ratio) ? datum.ratio : 0, isValid(datum.ratio_high) ? datum.ratio_high : 0)", "as": "ratio_upper"},
+        {"calculate": "min(0, isValid(datum.ratio_low) ? datum.ratio_low : 0)", "as": "ratio_lower"},
+        {"extent": "ratio_upper", "param": "ratio_upper_extent"},
+        {"extent": "ratio_lower", "param": "ratio_lower_extent"}
+      ]
+    }
+  ],
+  "spacing": 30,
+  "resolve": {"scale": {"x": "independent", "y": "shared"}, "legend": {"color": "shared", "shape": "shared"}}
+}
