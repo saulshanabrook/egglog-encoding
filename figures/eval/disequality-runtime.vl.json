@@ -1,12 +1,7 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "description": "Paper figure. Sample selection is bound by the shared cache selector; all statistics are performed by the visible Vega transforms. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
-  "data": {
-    "url": "../../.reports-grouped.json",
-    "format": {
-      "type": "json"
-    }
-  },
+  "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
   "params": [
     {"name": "target_label", "value": "figures"},
     {"name": "timeout_sec", "value": 300},
@@ -17,33 +12,20 @@
   ],
   "config": {
     "font": "Arial",
-    "view": {
-      "stroke": null
-    },
+    "view": {"stroke": null},
     "axis": {
       "labelFontSize": 11,
       "titleFontSize": 12,
       "gridColor": "#e8eaed",
-      "titlePadding": 10
+      "titlePadding": 10,
+      "titleFontWeight": "normal"
     },
-    "legend": {
-      "labelFontSize": 11,
-      "title": null,
-      "orient": "top"
-    },
-    "title": {
-      "anchor": "start",
-      "fontSize": 16,
-      "subtitleFontSize": 11,
-      "subtitlePadding": 8
-    }
+    "legend": {"labelFontSize": 11, "title": null, "orient": "top"},
+    "title": {"anchor": "start", "fontSize": 16, "subtitleFontSize": 11, "subtitlePadding": 8}
   },
   "title": {
     "text": "Disequality runtime",
-    "subtitle": [
-      "100,000 equality pairs · 10,000 disequality pairs + six fixed assertions · proofs off",
-      "Dots: process runs. Tick: mean. Error bar: 95% Student-t interval. Lower is better."
-    ]
+    "subtitle": ["100,000 equality pairs · 10,000 disequality pairs + six fixed assertions · proofs off", "Dots: process runs · tick: mean · bar: 95% Student-t interval"]
   },
   "transform": [
     {"calculate": "[datum.groups, [null]]", "as": "batches"},
@@ -89,268 +71,69 @@
   "hconcat": [
     {
       "width": 410,
-      "height": {
-        "step": 40
-      },
+      "height": {"step": 40},
       "layer": [
         {
           "name": "absolute_runs",
-          "transform": [
-            {
-              "filter": "isValid(datum.value) && !datum.validation_issue"
-            }
-          ],
-          "mark": {
-            "type": "point",
-            "filled": true,
-            "opacity": 0.55,
-            "size": 38
-          },
+          "transform": [{"filter": "isValid(datum.value) && !datum.validation_issue"}],
+          "mark": {"type": "point", "filled": true, "opacity": 0.55, "size": 30, "color": "#477b9e"},
           "encoding": {
-            "x": {
-              "field": "value",
-              "type": "quantitative",
-              "title": "Whole-process wall time (s)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "DE · Disegg",
-                "EE · Egg",
-                "NEE · Egg",
-                "OEE · Egg",
-                "NEE · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "DE · Disegg",
-                  "EE · Egg",
-                  "NEE · Egg",
-                  "OEE · Egg",
-                  "NEE · Egglog"
-                ]
-              }
-            },
-            "color": {
-              "field": "condition",
-              "type": "nominal",
-              "legend": null,
-              "scale": {
-                "domain": [
-                  "DE · Disegg",
-                  "EE · Egg",
-                  "NEE · Egg",
-                  "OEE · Egg",
-                  "NEE · Egglog"
-                ],
-                "range": [
-                  "#2a6f97",
-                  "#2a6f97",
-                  "#2a6f97",
-                  "#2a6f97",
-                  "#b75d19"
-                ]
-              }
-            },
-            "yOffset": {
-              "field": "jitter",
-              "type": "quantitative",
-              "scale": null
-            },
+            "x": {"field": "value"},
+            "yOffset": {"field": "jitter", "type": "quantitative", "scale": null},
             "tooltip": [
-              {
-                "field": "condition"
-              },
-              {
-                "field": "value",
-                "format": ".5g"
-              },
-              {
-                "field": "sample_n"
-              },
-              {
-                "field": "run.row_index"
-              }
+              {"field": "condition"},
+              {"field": "value", "format": ".5g"},
+              {"field": "sample_n"},
+              {"field": "run.row_index"}
             ]
           }
         },
         {
           "name": "absolute_intervals",
-          "transform": [
-            {
-              "filter": "datum.run_number === 1 && isValid(datum.ci_low)"
-            }
-          ],
-          "mark": {
-            "type": "rule",
-            "strokeWidth": 2,
-            "color": "#20252b"
-          },
-          "encoding": {
-            "x": {
-              "field": "ci_low",
-              "type": "quantitative",
-              "title": "Whole-process wall time (s)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "x2": {
-              "field": "ci_high"
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "DE · Disegg",
-                "EE · Egg",
-                "NEE · Egg",
-                "OEE · Egg",
-                "NEE · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "DE · Disegg",
-                  "EE · Egg",
-                  "NEE · Egg",
-                  "OEE · Egg",
-                  "NEE · Egglog"
-                ]
-              }
-            }
-          }
+          "transform": [{"filter": "datum.run_number === 1 && isValid(datum.ci_low)"}],
+          "mark": {"type": "rule", "strokeWidth": 2, "color": "#20252b"},
+          "encoding": {"x": {"field": "ci_low"}, "x2": {"field": "ci_high"}}
         },
         {
           "name": "absolute_means",
-          "transform": [
-            {
-              "filter": "datum.run_number === 1 && datum.complete"
-            }
-          ],
-          "mark": {
-            "type": "tick",
-            "thickness": 2.5,
-            "size": 20,
-            "color": "#20252b"
-          },
-          "encoding": {
-            "x": {
-              "field": "mean",
-              "type": "quantitative",
-              "title": "Whole-process wall time (s)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "DE · Disegg",
-                "EE · Egg",
-                "NEE · Egg",
-                "OEE · Egg",
-                "NEE · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "DE · Disegg",
-                  "EE · Egg",
-                  "NEE · Egg",
-                  "OEE · Egg",
-                  "NEE · Egglog"
-                ]
-              }
-            }
-          }
+          "transform": [{"filter": "datum.run_number === 1 && datum.complete"}],
+          "mark": {"type": "tick", "thickness": 2.5, "size": 20, "color": "#20252b"},
+          "encoding": {"x": {"field": "mean"}}
         }
-      ]
+      ],
+      "encoding": {
+        "x": {
+          "field": "value",
+          "type": "quantitative",
+          "title": "Whole-process wall time (s)",
+          "scale": {"domain": {"expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"}},
+          "axis": {"format": "~f", "tickCount": 5, "grid": false}
+        },
+        "y": {
+          "field": "condition",
+          "type": "nominal",
+          "title": null,
+          "axis": {"labelLimit": 180},
+          "scale": {"domain": ["DE · Disegg", "EE · Egg", "NEE · Egg", "OEE · Egg", "NEE · Egglog"]}
+        }
+      }
     },
     {
       "name": "absolute_status",
-      "transform": [
-        {
-          "filter": "datum.run_number === 1"
-        }
-      ],
+      "transform": [{"filter": "datum.run_number === 1"}],
       "width": 270,
-      "height": {
-        "step": 40
-      },
-      "mark": {
-        "type": "text",
-        "align": "left",
-        "fontSize": 10
-      },
+      "height": {"step": 40},
+      "mark": {"type": "text", "align": "left", "fontSize": 10},
       "encoding": {
         "y": {
           "field": "condition",
           "type": "nominal",
-          "sort": [
-            "DE · Disegg",
-            "EE · Egg",
-            "NEE · Egg",
-            "OEE · Egg",
-            "NEE · Egglog"
-          ],
           "axis": null,
-          "scale": {
-            "domain": [
-              "DE · Disegg",
-              "EE · Egg",
-              "NEE · Egg",
-              "OEE · Egg",
-              "NEE · Egglog"
-            ]
-          }
+          "scale": {"domain": ["DE · Disegg", "EE · Egg", "NEE · Egg", "OEE · Egg", "NEE · Egglog"]}
         },
-        "text": {
-          "field": "summary"
-        },
-        "color": {
-          "condition": {
-            "test": "!datum.complete",
-            "value": "#9a3e1c"
-          },
-          "value": "#30363d"
-        },
-        "x": {
-          "value": 0
-        }
+        "text": {"field": "summary"},
+        "color": {"condition": {"test": "!datum.complete", "value": "#9a3e1c"}, "value": "#30363d"},
+        "x": {"value": 0}
       }
     }
   ],

@@ -162,6 +162,34 @@ validation. Collection never acquires sources, regenerates inputs or invokes
 separate validators; those remain under
 [benchmark reproduction](../benchmarks/reproduction/README.md).
 
+## Figure design
+
+The supported manuscript width is **180 mm**. At 85 mm the broad comparisons
+remain visible, but the labels and interval summaries require enlargement.
+These are screen inspections at 96 pixels/inch, not calibrated print tests.
+
+Math and disequality show individual process runs, a mean tick and the complete
+95% interval on shared, zero-based axes. Math's ratio view keeps the 1× reference
+and exact estimate/interval summary. Direct row labels identify configurations;
+dot color carries no additional engine distinction. Status text appears when
+an estimate is unavailable, without reserving a large empty panel on success.
+
+Each corpus figure gives congruence and checked proofs separate columns. Family
+colors identify dots within a pooled ranking; they are not separately normalized
+family CDFs. A linear 0–6× detail enlarges the dense region, and a shorter overview
+retains every measured tail on a shared full-range axis. Its shaded region links
+the two views. Both views use the same ranks and denominator. Direct 50%/95%
+labels appear in the view containing their crossing; an unreached crossing stays
+explicitly unestablished. Valid/cohort counts appear once per treatment, with
+failed/missing counts when needed and one shared population summary. Detailed
+family inventories remain in bound inputs and receipts instead of a second table
+inside the image. Treatment identity, crossings and missingness remain readable
+without hue; identifying every individual family still requires color.
+
+The specifications use native layer inheritance and treatment facets, and compute
+CDF ranks once before applying viewing domains. They remain directly renderable
+Vega-Lite files, without generated plotting code or precomputed statistics.
+
 ## Inspect and hand off
 
 Each generated `.bound.vl.json` changes only declared invocation parameters and
