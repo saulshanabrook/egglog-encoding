@@ -182,9 +182,39 @@ mod tests {
         );
         let mut egraph = EGraph::default();
         let resolved = egraph.resolve_program(None, &source).unwrap();
-        assert!(!crate::program_supports_proofs(
-            &resolved,
-            &egraph.type_info
+        assert!(!egraph.type_info.get_func_type("$value").unwrap().is_global);
+        let ResolvedCommand::Extract(_, input, _) = resolved.last().unwrap() else {
+            panic!("expected the final function-root extraction");
+        };
+        assert!(egraph.type_info.expr_has_function_lookup(input).is_some());
+        // Direct nullary function extraction is supported without treating the
+        // function as a global; its existing output row supplies the evidence.
+        assert!(crate::program_supports_proofs(&resolved, &egraph.type_info));
+        let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+        let outputs = egraph.parse_and_run_program(None, &source).unwrap();
+        let (store, id) = outputs
+            .iter()
+            .rev()
+            .find_map(|output| match output {
+                CommandOutput::ProveExists {
+                    proof_store,
+                    proof_id,
+                } => Some((proof_store, *proof_id)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(store.term_dag().to_string(store.get(id).rhs()), "2");
+        store
+            .clone()
+            .check_proof(id, &egraph.proof_check_program)
+            .unwrap();
+        // A nested custom lookup remains unsupported, unlike a global read.
+        assert!(matches!(
+            egraph.parse_and_run_program(None, "(extract (+ ($value) 0))"),
+            Err(Error::UnsupportedProofCommand {
+                reason: ProofEncodingUnsupportedReason::FunctionLookupInAction,
+                ..
+            })
         ));
     }
 
