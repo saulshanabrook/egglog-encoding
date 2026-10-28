@@ -276,9 +276,10 @@ impl TermLookup<'_> {
                 // that input's value and proof. Prefer live constructor rows
                 // when they remain; endpoint checks still require the source.
                 if let Some(name) = self.globals.get(&key)
-                    && let Some(row) = self
-                        .egraph
-                        .read(|state| state.lookup_proof_values(name, RawValues(vec![])))?
+                    && let Some(table) = self.egraph.global_table(name)
+                    && let Some(row) = self.egraph.read(|state| {
+                        state.lookup_proof_values(table.name(), (S::new(name.clone()),))
+                    })?
                 {
                     (
                         self.canonical(row[0], &sort)?,
@@ -763,7 +764,7 @@ impl ExtractionInput<'_> {
                 value_constructors.insert(head);
             }
         }
-        let (mut store, ids) = proof_store_from_terms(
+        let (store, ids) = proof_store_from_terms(
             names,
             session.dag,
             &evidence_roots,

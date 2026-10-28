@@ -686,7 +686,6 @@ dependencies = [
  "lazy_static",
  "libtest-mimic",
  "log",
- "mimalloc",
  "num",
  "rustc-hash",
  "serde",
@@ -739,7 +738,7 @@ dependencies = [
  "egraph-serialize",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
