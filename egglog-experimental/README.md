@@ -31,6 +31,10 @@ source language into ordinary egglog before evaluating it through the normal CLI
 this crate. See [the source language](src/slotted/LANGUAGE.md) and
 [the encoding](src/slotted/ENCODING.md) for its supported syntax and semantics.
 
+Run `cargo run -p egglog-experimental -- --slotted --proofs file.egg` to print checked
+proofs over source terms. See [Getting proofs](src/slotted/LANGUAGE.md#getting-proofs)
+for usage and [the proof guide](src/slotted/PROOFS.md) for supported forms and the format.
+
 ## Documentation
 
 Check out the crate documentation (built locally) for the current list of implemented extensions, API details, and demo links.

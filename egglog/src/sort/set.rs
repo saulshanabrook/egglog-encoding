@@ -26,7 +26,10 @@ impl ContainerValue for SetContainer {
 
 /// The elements of a `(set-of e0 ...)` term as a Rust `BTreeSet` in AST
 /// order, matching `SetContainer`'s semantics; `None` for any other term.
-fn set_term_to_btreeset<'a>(termdag: &'a TermDag, term: TermId) -> Option<BTreeSet<OrdTerm<'a>>> {
+pub fn set_term_to_btreeset<'a>(
+    termdag: &'a TermDag,
+    term: TermId,
+) -> Option<BTreeSet<OrdTerm<'a>>> {
     match termdag.get(term) {
         Term::App(head, children) if head == "set-of" => {
             Some(children.iter().map(|c| termdag.ord_term(*c)).collect())
@@ -43,7 +46,7 @@ fn set_term_args(set: BTreeSet<OrdTerm<'_>>) -> Vec<TermId> {
 
 /// Canonicalize `elements` to the `(set-of e0 e1 ...)` term form: sorted by
 /// [`TermDag::ast_cmp`] and deduplicated, so proof checking can reproduce it.
-fn normalize_set_term(termdag: &mut TermDag, elements: &[TermId]) -> TermId {
+pub fn normalize_set_term(termdag: &mut TermDag, elements: &[TermId]) -> TermId {
     let set: BTreeSet<_> = elements.iter().map(|e| termdag.ord_term(*e)).collect();
     let elements = set_term_args(set);
     termdag.app("set-of".into(), elements)

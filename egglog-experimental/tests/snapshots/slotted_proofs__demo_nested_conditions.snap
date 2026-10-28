@@ -1,0 +1,21 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (F U) (G U) (H U) (A))
+(let input (F (G (A))))
+(let side (H (A)))
+(rewrite (F (G x)) (H x) :when ((= (G x) y) (H x)) :name "nested")
+(run 1)
+(check (= input side))
+
+Proof:
+(Rule
+  (= (F (G (A))) (H (A)))
+  (name "nested")
+  (premises
+    (Fiat (= (F (G (A))) (F (G (A)))))
+    (Fiat (= (G (A)) (G (A))))
+    (Fiat (= (H (A)) (H (A)))))
+  (substitution (x (A)) (y (G (A)))))

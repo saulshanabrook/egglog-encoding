@@ -1,32 +1,47 @@
 //! An explicit slotted-source to ordinary-egglog pass. Evaluation stays in egglog.
 use super::{
-    maintenance,
+    flatten, maintenance,
     model::*,
     query, rewrite,
-    syntax::{self, Form},
+    syntax::{self, Form, quote},
 };
 use egglog::ast::{ParseError, Span};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Whether to emit native checks or translate proofs of slotted claims.
+pub enum ProofMode {
+    #[default]
+    /// Use the ordinary encoding without proof instrumentation.
+    Disabled,
+    /// Run the proof-compatible encoding with ordinary checks.
+    Check,
+    /// Translate and verify supported equality checks; run ordinary checks for others.
+    Prove,
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 /// Control source-level slotted matching semantics.
 pub struct Options {
     /// Match the reference nested matcher's restriction on non-pattern aliasing.
     pub no_aliasing: bool,
+    /// Select proof instrumentation and claim handling.
+    pub proof_mode: ProofMode,
 }
 
 #[derive(Default)]
 struct Pattern {
-    names: query::PatternNames,
-    atoms: Vec<query::Atom>,
+    names: flatten::PatternNames,
+    atoms: Vec<flatten::Atom>,
     conditions: query::Conditions,
     values: Vec<(String, Term, Option<String>)>,
     patterns: usize,
+    proof_names: query::ProofNames,
 }
 
 impl Pattern {
     fn new(forms: &[Form]) -> Self {
-        fn reserve(form: &Form, names: &mut query::PatternNames) {
+        fn reserve(form: &Form, names: &mut flatten::PatternNames) {
             match form {
                 Form::Atom(name) => names.reserve(name),
                 Form::List(forms) => {
@@ -89,6 +104,9 @@ pub struct Compiler {
     options: Options,
     state: State,
     scopes: Vec<State>,
+    next_rule: usize,
+    used_rule_names: BTreeSet<String>,
+    next_check: usize,
 }
 
 impl Compiler {
@@ -153,7 +171,11 @@ impl Compiler {
             }
         }
         if !sorts.is_empty() && !self.state.initialized {
-            self.emit(&mut out, maintenance::shared(), None);
+            self.emit(
+                &mut out,
+                maintenance::shared(self.options.proof_mode != ProofMode::Disabled),
+                None,
+            );
             self.state.initialized = true;
         }
         for sort in sorts {
@@ -164,7 +186,18 @@ impl Compiler {
                 ));
             }
             let s = Symbols::new(&sort, self.state.lang.carriers.len());
-            self.emit(&mut out, maintenance::carrier(&s), Some(&sort));
+            self.emit(
+                &mut out,
+                maintenance::carrier(&s, self.options.proof_mode != ProofMode::Disabled),
+                Some(&sort),
+            );
+            if self.options.proof_mode != ProofMode::Disabled {
+                out.push(format!(
+                    "(set (SlottedCarrier {} {}) ())",
+                    quote(&sort),
+                    s.index
+                ));
+            }
             self.state.lang.carriers.push(s);
         }
         for f in ctors {
@@ -173,7 +206,11 @@ impl Compiler {
                 .map_err(|e| ParseError(fallback.clone(), e))?;
             self.emit(
                 &mut out,
-                maintenance::constructor(&op, self.state.lang.symbols(&op.sort)),
+                maintenance::constructor(
+                    &op,
+                    self.state.lang.symbols(&op.sort),
+                    self.options.proof_mode != ProofMode::Disabled,
+                ),
                 Some(&op.name),
             );
             self.state.lang.constructors.insert(op.name.clone(), op);
@@ -339,6 +376,16 @@ impl Compiler {
         })
     }
 
+    fn metadata(&self, table: &str, args: &[String]) -> String {
+        if self.options.proof_mode == ProofMode::Disabled {
+            return String::new();
+        }
+        format!(
+            "\n(set ({table} {}) ())",
+            args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")
+        )
+    }
+
     fn command(&mut self, f: &Form) -> Result<String, String> {
         let (head, args) = f.call()?;
         match head {
@@ -369,7 +416,10 @@ impl Compiler {
                     )
                 };
                 self.state.lang.globals.insert(name.into(), t);
-                Ok(encoded)
+                Ok(format!(
+                    "{encoded}{}",
+                    self.metadata("SlottedLetSource", &[name.to_owned(), args[1].render()])
+                ))
             }
             "union" => {
                 if args.len() != 2 {
@@ -377,9 +427,13 @@ impl Compiler {
                 }
                 let (sort, terms) = self.common(args)?;
                 Ok(format!(
-                    "(union {} {})",
+                    "(union {} {}){}",
                     self.state.lang.encode_top(&terms[0], &sort),
-                    self.state.lang.encode_top(&terms[1], &sort)
+                    self.state.lang.encode_top(&terms[1], &sort),
+                    self.metadata(
+                        "SlottedUnionSource",
+                        &[args[0].render(), args[1].render(), sort.clone()]
+                    )
                 ))
             }
             "rewrite" => self.rewrite(args),
@@ -498,6 +552,9 @@ impl Compiler {
             Form::List(_) => {
                 let (head, args) = f.call()?;
                 if head == "subst" {
+                    if self.options.proof_mode == ProofMode::Prove {
+                        return Err("uses subst, which has no proof translation".into());
+                    }
                     if ground || args.len() != 3 {
                         return Err(
                             "subst expects three arguments on a rewrite right-hand side".into()
@@ -605,13 +662,9 @@ impl Compiler {
                 } else {
                     format!("_w{}_", p.patterns)
                 };
-                p.atoms.extend(query::flatten(
-                    &self.state.lang,
-                    &term,
-                    &root,
-                    &tmp,
-                    &mut p.names,
-                )?);
+                let atoms = flatten::flatten(&self.state.lang, &term, &root, &tmp, &mut p.names)?;
+                p.proof_names.patterns.push(flatten::pattern_names(&atoms));
+                p.atoms.extend(atoms);
                 p.patterns += 1;
             }
             Term::Slot(_) | Term::Global(_) => {
@@ -760,9 +813,13 @@ impl Compiler {
         let lhs = self.term(&args[0], false, None)?;
         let mut rhs = self.term(&args[1], false, None)?;
         let mut p = Pattern::new(args);
-        let root = self.pattern_value(&mut p, lhs)?;
+        let root = self.pattern_value(&mut p, lhs.clone())?;
+        if !matches!(lhs, Term::Node(_, _)) {
+            p.proof_names.patterns.insert(0, vec![]);
+        }
         let mut name = None;
         let mut when_seen = false;
+        let mut source = format!("(rewrite {} {}", args[0].render(), args[1].render());
         let mut i = 2;
         while i < args.len() {
             let key = args[i].atom()?;
@@ -788,6 +845,7 @@ impl Compiler {
                     if values.len() != 1 {
                         return Err(":when takes one list of facts".into());
                     }
+                    source.push_str(&format!(" :when {}", values[0].render()));
                     let facts = values[0].list()?;
                     if facts.iter().any(|f| !matches!(f, Form::List(_))) {
                         return Err(":when takes a list of facts".into());
@@ -817,20 +875,164 @@ impl Compiler {
         }
         self.global_terms(&mut p, &mut rhs, None);
         self.finish_pattern(&mut p)?;
-        let result = rewrite::compile(
+        let name = name.unwrap_or_else(|| format!("_slotted_match_{}", self.next_rule));
+        let name = if self.options.proof_mode == ProofMode::Disabled {
+            name
+        } else {
+            let mut unique = name.clone();
+            let mut suffix = self.next_rule;
+            while !self.used_rule_names.insert(unique.clone()) {
+                unique = format!("{name}#{suffix}");
+                suffix += 1;
+            }
+            unique
+        };
+        source.push(')');
+        let flattened = flatten::rewrite(
+            &self.state.lang,
+            &root,
+            &lhs,
+            &rhs,
+            &p.atoms,
+            &p.conditions,
+            p.proof_names,
+        );
+        let (result, proof_names) = rewrite::compile(
             &self.state.lang,
             rewrite::Rewrite {
                 root: &root,
                 atoms: &p.atoms,
                 rhs: &rhs,
                 conditions: p.conditions,
-                name: name.as_deref(),
+                name: Some(&name),
                 ordinal: self.state.rules,
                 nested: self.options.no_aliasing,
             },
+            flattened.names,
         )?;
         self.state.rules += 1;
-        Ok(result)
+        self.next_rule += 1;
+        let recorded_names = if self.options.proof_mode == ProofMode::Prove {
+            format!(
+                "\n(slotted-record \"rule-names\" {} {})",
+                quote(&name),
+                quote(
+                    &serde_json::to_string(&flatten::Rewrite {
+                        source: flattened.source,
+                        names: proof_names
+                    })
+                    .unwrap()
+                ),
+            )
+        } else {
+            String::new()
+        };
+        Ok(format!(
+            "{result}{}{recorded_names}",
+            self.metadata("SlottedRuleSource", &[name, source])
+        ))
+    }
+
+    fn proof_claim(&mut self, fact: &Form) -> Result<Option<String>, String> {
+        fn ground(term: &Term) -> bool {
+            match term {
+                Term::Node(_, args) => args.iter().all(ground),
+                Term::Slot(_) | Term::Global(_) | Term::Payload(_) => true,
+                _ => false,
+            }
+        }
+        let (kind, terms) = fact.call()?;
+        if !matches!(kind, "=" | "renaming-=") || terms.len() != 2 {
+            return Ok(None);
+        }
+        let ts = terms
+            .iter()
+            .map(|t| self.term(t, false, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !ts.iter().all(ground) {
+            return Ok(None);
+        }
+        let mut slots = BTreeSet::new();
+        for term in &ts {
+            term.slot_literals(&mut slots);
+        }
+        for slot in slots {
+            self.state.lang.slot_names.intern(&slot)?;
+        }
+        let mut p = Pattern::new(std::slice::from_ref(fact));
+        let mut roots = Vec::new();
+        let mut patterns = Vec::new();
+        for term in ts {
+            let is_node = matches!(term, Term::Node(_, _));
+            roots.push(self.pattern_value(&mut p, term)?);
+            patterns.push(if is_node {
+                p.proof_names.patterns.last().unwrap().clone()
+            } else {
+                vec![]
+            });
+        }
+        p.conditions.comparisons.push((
+            query::Comparison::parse(kind).unwrap(),
+            roots[0].clone(),
+            roots[1].clone(),
+        ));
+        self.finish_pattern(&mut p)?;
+        let q = self.compile_check(&p)?;
+        p.proof_names.patterns = patterns;
+        p.proof_names.classes = q.classes.iter().cloned().collect();
+        p.proof_names.readings = q.readings.clone();
+        p.proof_names.frame = q.frame.clone();
+        let proof = format!(
+            "(prove-slotted ({kind} {} ({} {}) ({} {}) {} {}) {})",
+            q.sorts[&roots[0]],
+            quote(&terms[0].render()),
+            roots[0],
+            quote(&terms[1].render()),
+            roots[1],
+            quote(
+                &serde_json::to_string(
+                    &self
+                        .state
+                        .lang
+                        .slot_names
+                        .entries()
+                        .collect::<BTreeMap<_, _>>()
+                )
+                .unwrap()
+            ),
+            quote(&serde_json::to_string(&p.proof_names).unwrap()),
+            q.body.join(" "),
+        );
+        Ok(Some(self.refine_check(&q, &proof)?))
+    }
+
+    fn compile_check(&self, p: &Pattern) -> Result<query::Query, String> {
+        let anchor = p.atoms.first().map(|a| a.root.as_str()).or_else(|| {
+            p.conditions
+                .values
+                .first()
+                .map(|(root, _, _)| root.as_str())
+        });
+        query::compile(
+            &self.state.lang,
+            &p.atoms,
+            &p.conditions,
+            "_check_",
+            true,
+            anchor,
+            self.options.no_aliasing,
+        )
+    }
+
+    fn refine_check(&mut self, q: &query::Query, check: &str) -> Result<String, String> {
+        let split = q.split.ok_or("check has no matching frame")?;
+        let ordinal = self.next_check;
+        self.next_check += 1;
+        Ok(format!(
+            "(push)\n(ruleset $$slotted_check)\n(rule ({}) ((Idx {} 0)) :ruleset $$slotted_check :name \"slotted/check/{ordinal}\")\n(run-schedule (run $$slotted_check))\n(run-schedule (saturate (run slotted-refine)))\n{check}\n(pop)",
+            q.body[..split].join(" "),
+            q.length
+        ))
     }
 
     fn check(&mut self, f: &Form, negated: bool) -> Result<String, String> {
@@ -840,6 +1042,13 @@ impl Compiler {
                 return Err("slotted fail takes a check".into());
             }
             return self.check(&args[0], !negated);
+        }
+        if !negated
+            && self.options.proof_mode == ProofMode::Prove
+            && let [fact] = args
+            && let Some(proof) = self.proof_claim(fact)?
+        {
+            return Ok(proof);
         }
         if args.is_empty() {
             return Ok(if negated { "(fail (check))" } else { "(check)" }.into());
@@ -887,21 +1096,16 @@ impl Compiler {
             self.pattern_fact(&mut p, fact)?;
         }
         self.finish_pattern(&mut p)?;
-        let anchor = p.atoms.first().map(|a| a.root.as_str()).or_else(|| {
-            p.conditions
-                .values
-                .first()
-                .map(|(root, _, _)| root.as_str())
-        });
-        let q = query::compile(
-            &self.state.lang,
-            &p.atoms,
-            &p.conditions,
-            "_check_",
-            true,
-            anchor,
-            self.options.no_aliasing,
-        )?;
+        let q = self.compile_check(&p)?;
+        if self.options.proof_mode != ProofMode::Disabled {
+            let check = call("check", q.body.iter().cloned());
+            let check = if negated {
+                format!("(fail {check})")
+            } else {
+                check
+            };
+            return self.refine_check(&q, &check);
+        }
         Ok(super::check::emit(&q, f, !negated))
     }
 }

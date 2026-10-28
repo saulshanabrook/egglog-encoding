@@ -1,24 +1,25 @@
 //! Domain types used by matching and substitution. Egglog represents both kinds
 //! of values as maps; the algorithms distinguish them here.
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 /// A partial mapping of slot names. Edges decoded from external data must also
 /// pass the caller's injectivity check; temporary mappings are built internally.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Renaming(pub(super) BTreeMap<i64, i64>);
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Renaming(pub(crate) BTreeMap<i64, i64>);
 
 impl Renaming {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
-    pub(super) fn insert(&mut self, from: i64, to: i64) {
+    pub(crate) fn insert(&mut self, from: i64, to: i64) {
         self.0.insert(from, to);
     }
-    pub(super) fn remove(&mut self, slot: &i64) {
+    pub(crate) fn remove(&mut self, slot: &i64) {
         self.0.remove(slot);
     }
-    pub(super) fn retain(&mut self, f: impl FnMut(&i64, &mut i64) -> bool) {
+    pub(crate) fn retain(&mut self, f: impl FnMut(&i64, &mut i64) -> bool) {
         self.0.retain(f);
     }
 }
@@ -71,11 +72,11 @@ impl<'a> IntoIterator for &'a Renaming {
 }
 
 /// Public class slots, distinct from an edge's renaming of those slots.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SlotSet(BTreeSet<i64>);
 
 impl SlotSet {
-    pub(super) fn from_identity(map: &Renaming) -> Option<Self> {
+    pub(crate) fn from_identity(map: &Renaming) -> Option<Self> {
         map.iter()
             .all(|(a, b)| a == b)
             .then(|| map.keys().copied().collect())

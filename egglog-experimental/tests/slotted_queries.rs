@@ -5,9 +5,12 @@ const LANGUAGE: &str = "(datatype E (N i64) (F E E) (G E E) (Out E E) (Lam E E :
 
 fn run(source: &str) {
     for no_aliasing in [false, true] {
-        let program = Compiler::new(Options { no_aliasing })
-            .compile(None, &format!("{LANGUAGE}\n{source}"))
-            .unwrap();
+        let program = Compiler::new(Options {
+            no_aliasing,
+            ..Default::default()
+        })
+        .compile(None, &format!("{LANGUAGE}\n{source}"))
+        .unwrap();
         new_egraph().parse_and_run_program(None, &program).unwrap();
     }
 }
@@ -105,7 +108,10 @@ fn a_guard_excludes_capture_of_a_concrete_global() {
 #[test]
 fn checks_use_the_selected_aliasing_policy() {
     for no_aliasing in [false, true] {
-        let mut compiler = Compiler::new(Options { no_aliasing });
+        let mut compiler = Compiler::new(Options {
+            no_aliasing,
+            ..Default::default()
+        });
         let mut graph = new_egraph();
         let source = format!(
             "{LANGUAGE}

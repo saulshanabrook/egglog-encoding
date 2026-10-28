@@ -325,3 +325,15 @@ pub(super) fn fold(op: &str, xs: impl IntoIterator<Item = String>, empty: &str) 
 pub(super) fn names(prefix: &str, n: usize) -> Vec<String> {
     (1..=n).map(|i| format!("{prefix}{i}")).collect()
 }
+
+pub(super) fn source_text(term: &Term) -> String {
+    match term {
+        Term::Slot(s)
+        | Term::Variable(s)
+        | Term::Global(s)
+        | Term::Payload(s)
+        | Term::PayloadVariable(s) => s.clone(),
+        Term::Node(head, args) => call(head, args.iter().map(source_text)),
+        Term::Subst(args) => call("subst", args.iter().map(source_text)),
+    }
+}

@@ -59,12 +59,15 @@ pub use proofs::proof_encoding_helpers::{
 
 /// Read-only proof reconstruction API.
 pub mod proof {
-    pub use crate::proofs::proof_format::{Justification, Proof, ProofId, ProofStore, Proposition};
+    pub use crate::proofs::proof_format::{
+        Justification, Proof, ProofId, ProofStore, Proposition, proof_term_to_string,
+    };
 }
 use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
 use sort::*;
 use std::any::{Any, TypeId};
+use std::cmp::Ordering;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::hash::Hash;
@@ -370,6 +373,12 @@ pub struct EGraph {
 /// Compared to an external function, a user-defined command is more powerful because
 /// it has an exclusive access to the e-graph.
 pub trait UserDefinedCommand: Send + Sync {
+    /// Whether this command can run on a term-encoded e-graph. Opt-in commands
+    /// must use encoded-safe APIs (for example, `run_program`) for database work.
+    fn supports_term_encoding(&self) -> bool {
+        false
+    }
+
     /// Run the command with the given arguments.
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error>;
 }
@@ -470,6 +479,23 @@ impl Default for EGraph {
     }
 }
 
+/// Compare equal literals or distinct literals with recoverable runtime value IDs.
+/// Returns `None` for distinct strings, floats, and boxed integers.
+fn literal_order(termdag: &TermDag, a: TermId, b: TermId) -> Option<Ordering> {
+    use core_relations::BaseValue;
+    let (Term::Lit(x), Term::Lit(y)) = (termdag.get(a), termdag.get(b)) else {
+        return None;
+    };
+    if x == y {
+        return Some(Ordering::Equal);
+    }
+    match (x, y) {
+        (Literal::Int(x), Literal::Int(y)) => Some(x.try_box()?.cmp(&y.try_box()?)),
+        (Literal::Bool(x), Literal::Bool(y)) => Some(x.try_box()?.cmp(&y.try_box()?)),
+        _ => None,
+    }
+}
+
 impl EGraph {
     fn new_inner(num_threads: usize) -> Self {
         let mut parser = Parser::default();
@@ -554,14 +580,27 @@ impl EGraph {
             }
         );
 
-        add_primitive!(&mut eg, "value-eq" = |a: #, b: #| -?> () {
+        // Equal terms have equal values. The ordering validators additionally
+        // require reproducible value ids; they decline on interned values.
+        add_primitive_with_validator!(&mut eg, "value-eq" = |a: #, b: #| -?> () {
             (a == b).then_some(())
+        }, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [a, b] = args else { return None };
+            (a == b).then(|| termdag.lit(Literal::Unit))
         });
-        add_primitive!(&mut eg, "ordering-min" = |a: #, b: #| -> # {
+        add_primitive_with_validator!(&mut eg, "ordering-min" = |a: #, b: #| -> # {
             if a < b { a } else { b }
+        }, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [a, b] = args else { return None };
+            let less = literal_order(termdag, *a, *b)?.is_lt();
+            Some(if less { *a } else { *b })
         });
-        add_primitive!(&mut eg, "ordering-max" = |a: #, b: #| -> # {
+        add_primitive_with_validator!(&mut eg, "ordering-max" = |a: #, b: #| -> # {
             if a > b { a } else { b }
+        }, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [a, b] = args else { return None };
+            let greater = literal_order(termdag, *a, *b)?.is_gt();
+            Some(if greater { *a } else { *b })
         });
         // Whether `ordering-min`/`ordering-max` swap their arguments: 0 when `a`
         // is the max, 1 when `b` is. A top-level `union`'s fiat records this so
@@ -703,6 +742,17 @@ impl EGraph {
             self = self.with_term_encoding_enabled();
         }
         self.proof_state.proofs_enabled = true;
+        self
+    }
+
+    /// Extract unsimplified proofs for translation by an extension.
+    ///
+    /// The extension must verify its translated proof: the ordinary checker and
+    /// simplifier are skipped so the original rule premises remain available.
+    pub fn with_proofs_for_translation(mut self) -> Self {
+        self = self.with_proofs_enabled();
+        self.proof_state.verify_proofs = false;
+        self.proof_state.simplify_proofs = false;
         self
     }
 
@@ -2807,6 +2857,21 @@ impl EGraph {
     }
 
     fn resolve_command_inner(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
+        if let Command::UserDefined(span, name, args) = &command
+            && self
+                .commands
+                .get(name)
+                .is_some_and(|c| c.supports_term_encoding())
+        {
+            return Ok(ResolvedNCommands {
+                desugared: vec![ResolvedNCommand::UserDefined(
+                    span.clone(),
+                    name.clone(),
+                    args.clone(),
+                )],
+                desugared_before_proofs: vec![],
+            });
+        }
         let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
 
         // Add term encoding when it is enabled
@@ -4115,6 +4180,22 @@ mod tests {
                 .iter()
                 .all(|ruleset| !ruleset.name.contains("query_ruleset"))
         );
+    }
+
+    #[test]
+    fn ordering_proofs_require_recoverable_runtime_ids() {
+        let mut terms = TermDag::default();
+        let one = terms.lit(Literal::Int(1));
+        let two = terms.lit(Literal::Int(2));
+        let negative = terms.lit(Literal::Int(-1));
+        let large = terms.lit(Literal::Int(i64::MAX));
+        let a = terms.lit(Literal::String("a".into()));
+        let b = terms.lit(Literal::String("b".into()));
+        assert_eq!(literal_order(&terms, one, two), Some(Ordering::Less));
+        for (lhs, rhs) in [(negative, one), (one, large), (a, b)] {
+            assert_eq!(literal_order(&terms, lhs, rhs), None);
+        }
+        assert_eq!(literal_order(&terms, a, a), Some(Ordering::Equal));
     }
 
     #[derive(Clone)]

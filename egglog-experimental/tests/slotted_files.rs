@@ -62,6 +62,7 @@ fn main() {
             tests.push(Trial::test(name, move || {
                 let mut compiler = Compiler::new(Options {
                     no_aliasing: path.starts_with("egglog-experimental/tests/slotted/nested"),
+                    ..Default::default()
                 });
                 let encoded = compiler.compile(Some(path.display().to_string()), &source)?;
                 let emitted_names = rule_names(&encoded);

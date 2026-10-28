@@ -151,8 +151,12 @@ impl ProofInstrumentor<'_> {
             panic!("Existence proof should be valid before simplification: {e}");
         }
 
-        // simplify the proof
-        let simplified_proof = proof_store.simplify(extra_rule_removed);
+        // Extensions may need the original rule premises for proof translation.
+        let simplified_proof = if !self.egraph.proof_state.simplify_proofs {
+            extra_rule_removed
+        } else {
+            proof_store.simplify(extra_rule_removed)
+        };
 
         // Check the proof after simplification
         if self.egraph.proof_state.verify_proofs {

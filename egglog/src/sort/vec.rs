@@ -37,7 +37,7 @@ impl VecSort {
 
 /// The element terms of a vec's canonical term form (`(vec-of e0 …)`, or
 /// `(vec-empty)` for the empty vec); `None` for any other term.
-fn vec_term_children(termdag: &TermDag, term: TermId) -> Option<Vec<TermId>> {
+pub fn vec_term_children(termdag: &TermDag, term: TermId) -> Option<Vec<TermId>> {
     match termdag.get(term) {
         Term::App(head, children) if head == "vec-of" => Some(children.clone()),
         Term::App(head, _) if head == "vec-empty" => Some(vec![]),
@@ -47,7 +47,7 @@ fn vec_term_children(termdag: &TermDag, term: TermId) -> Option<Vec<TermId>> {
 
 /// Intern the canonical vec term for `children`: `(vec-of e0 ...)`, or
 /// `(vec-empty)` when empty. The inverse of [`vec_term_children`].
-fn vec_term(termdag: &mut TermDag, children: Vec<TermId>) -> TermId {
+pub fn vec_term(termdag: &mut TermDag, children: Vec<TermId>) -> TermId {
     if children.is_empty() {
         termdag.app("vec-empty".into(), vec![])
     } else {

@@ -1,5 +1,6 @@
+use super::flatten::Atom;
 use super::model::*;
-use super::query::{self, Atom, Conditions, Query, names_expr};
+use super::query::{self, Conditions, Query, names_expr};
 use super::syntax::quote;
 
 enum Slots {
@@ -234,7 +235,12 @@ pub(super) struct Rewrite<'a> {
     pub nested: bool,
 }
 
-pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, String> {
+/// Lower a rewrite together with the names needed to reconstruct its proofs.
+pub(super) fn compile(
+    lang: &Language,
+    mut r: Rewrite<'_>,
+    mut names: query::ProofNames,
+) -> Result<(String, query::ProofNames), String> {
     let mut rhs = r.rhs.clone();
     lang.refresh_shadowed(&mut rhs);
     let mut fresh = std::collections::BTreeSet::new();
@@ -279,8 +285,15 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
         }
     };
     let naive = rhs.uses_subst();
+    names.classes = q
+        .classes
+        .iter()
+        .map(|(v, c)| (v.to_owned(), c.clone()))
+        .collect();
+    names.readings = q.readings.clone();
+    names.frame = q.frame.clone();
     let Some(split) = q.split else {
-        return Ok(rule(&q.body, &actions, naive, None, r.name));
+        return Ok((rule(&q.body, &actions, naive, None, r.name), names));
     };
     let relation = format!("_slotted_match_{}", r.ordinal);
     let mut columns = vec![q.refined.clone(), q.length.clone()];
@@ -298,7 +311,7 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
     let row = call(&relation, columns);
     let mut apply_body = vec![row.clone()];
     apply_body.extend_from_slice(&q.body[split..]);
-    Ok([
+    let code = [
         format!("(relation {relation} ({}))", sorts.join(" ")),
         rule(
             &q.body[..split],
@@ -322,5 +335,6 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
             r.name.map(|n| format!("{n}/drain")).as_deref(),
         ),
     ]
-    .join("\n"))
+    .join("\n");
+    Ok((code, names))
 }

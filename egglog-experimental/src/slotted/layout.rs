@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use egglog::{EGraph, Value, ast::FunctionSubtype, sort::S};
+use egglog::{EGraph, Function, Value, ast::FunctionSubtype, sort::S};
 
 use super::model::{Column, Constructor, Symbols};
 
@@ -14,18 +14,38 @@ pub(super) struct Layouts {
     pub constructors: BTreeMap<String, Constructor>,
 }
 
+fn has_kind(graph: &EGraph, function: &Function, kind: FunctionSubtype) -> bool {
+    if !function.is_view() {
+        return function.subtype() == kind;
+    }
+    // Views are physical functions; row readers expose their source table kind.
+    match kind {
+        FunctionSubtype::Constructor => graph
+            .constructor_enodes_while(function.name(), |_| false)
+            .is_ok(),
+        FunctionSubtype::Custom => graph
+            .function_entries_while(function.name(), |_| false)
+            .is_ok(),
+    }
+}
+
+fn has_single_output(function: &Function) -> bool {
+    // An encoded view adds a proof column after its source output.
+    function.func_type().outputs.len() == 1 + usize::from(function.is_view())
+}
+
 fn rows(graph: &EGraph, name: &str, sorts: &[&str]) -> Result<Vec<Vec<Value>>, String> {
     let function = graph
         .get_function(name)
         .ok_or_else(|| format!("missing {name}"))?;
     let schema = function.func_type();
-    if function.subtype() != FunctionSubtype::Custom
+    if !has_kind(graph, function, FunctionSubtype::Custom)
         || schema
             .input
             .iter()
             .map(|s| s.name())
             .ne(sorts.iter().copied())
-        || schema.outputs.len() != 1
+        || !has_single_output(function)
         || schema.output().name() != "Unit"
     {
         return Err(format!("invalid metadata schema for {name}"));
@@ -101,9 +121,9 @@ impl Layouts {
                 .get_function(&name)
                 .ok_or_else(|| format!("missing constructor {name}"))?;
             let schema = function.func_type();
-            if function.subtype() != FunctionSubtype::Constructor
+            if !has_kind(graph, function, FunctionSubtype::Constructor)
                 || schema.input.len() != arity
-                || schema.outputs.len() != 1
+                || !has_single_output(function)
                 || !schema.output().is_eq_sort()
             {
                 return Err(format!("invalid constructor schema for {name}"));
@@ -182,7 +202,7 @@ impl Layouts {
         // Counting only the layouts we happened to find could silently lose a
         // constructor if its metadata row were missing. Check declaration coverage.
         for (name, function) in graph.functions_iter() {
-            if function.subtype() == FunctionSubtype::Constructor
+            if has_kind(graph, function, FunctionSubtype::Constructor)
                 && !function.is_let_binding()
                 && (carriers.contains_key(function.func_type().output().name())
                     || name.starts_with("SlottedVar_"))
@@ -217,9 +237,9 @@ impl Layouts {
                     .get_function(name)
                     .ok_or_else(|| format!("missing {name}"))?;
                 let schema = function.func_type();
-                if function.subtype() != kind
+                if !has_kind(graph, function, kind)
                     || schema.input.iter().map(|s| s.name()).ne(input)
-                    || schema.outputs.len() != 1
+                    || !has_single_output(function)
                     || output.is_some_and(|ty| schema.output().name() != ty)
                 {
                     return Err(format!("invalid invariant table schema for {name}"));

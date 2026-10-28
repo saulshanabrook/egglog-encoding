@@ -32,6 +32,24 @@ impl fmt::Display for ProofId {
     }
 }
 
+/// Print a proof S-expression with let bindings for shared subproofs and terms.
+pub fn proof_term_to_string(dag: &TermDag, proof: TermId) -> String {
+    let mut symbols = SymbolGen::new(String::new());
+    symbols.include_zero(true);
+    let mut buffer = String::new();
+    let root = dag.to_string_with_let_internal(&mut symbols, proof, &mut buffer, |head| {
+        match head {
+            "=" => "prop",
+            "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "Proj"
+            | "ContainerNormalize" | "Eval" | "Equivariance" => "prf",
+            _ => "t",
+        }
+        .to_string()
+    });
+    buffer.push_str(&root);
+    buffer
+}
+
 /// Find the subexpression at pre-order position `idx` in `expr`'s tree (index 0
 /// is `expr` itself). Must mirror the indexing the proof encoder uses to tag
 /// `MergeFnIdx` proofs.
@@ -912,6 +930,11 @@ impl ProofStore {
         &self.id_to_proof[proof_id]
     }
 
+    /// Every proof in the store, by id.
+    pub fn proofs(&self) -> impl Iterator<Item = (ProofId, &Proof)> {
+        self.id_to_proof.iter()
+    }
+
     /// Add a proof, sharing one node per distinct `key`. The e-graph
     /// hash-conses its own proof rows, so the proofs conversion rebuilds in their
     /// place must be shared too — otherwise a subproof reached along several paths
@@ -929,12 +952,10 @@ impl ProofStore {
     /// The string representation is a pretty-printed s-expression block with
     /// let bindings for sub-proofs and sub-terms.
     pub fn proof_to_string(&self, proof_id: ProofId) -> String {
-        let symbol_gen = &mut crate::util::SymbolGen::new("".to_string());
-        let mut buffer = String::new();
-        symbol_gen.include_zero(true);
-        let res = self.print_to_buffer(symbol_gen, proof_id, &mut buffer);
-        buffer.push_str(&res);
-        buffer
+        let mut dag = self.term_dag.clone();
+        let mut cache = HashMap::default();
+        let proof = self.proof_to_term_for_printing(&mut dag, proof_id, &mut cache);
+        proof_term_to_string(&dag, proof)
     }
 
     /// An empty store over `term_dag`.
@@ -1781,28 +1802,6 @@ impl ProofStore {
             .collect();
 
         self.term_dag.app(head.clone(), updated_children)
-    }
-
-    /// Print a proof with the given id, with subproofs and terms
-    /// added as let bindings in `buffer`.
-    /// Returns the printed proof string.
-    fn print_to_buffer(
-        &self,
-        symbol_gen: &mut SymbolGen,
-        proof_id: ProofId,
-        buffer: &mut String,
-    ) -> String {
-        let mut dag = self.term_dag.clone();
-        let mut cache = HashMap::default();
-        let proof_term_id = self.proof_to_term_for_printing(&mut dag, proof_id, &mut cache);
-        dag.to_string_with_let_internal(symbol_gen, proof_term_id, buffer, |constructor| {
-            match constructor {
-                "=" => "prop".to_string(),
-                "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "Proj"
-                | "ContainerNormalize" | "Eval" => "prf".to_string(),
-                _ => "t".to_string(),
-            }
-        })
     }
 
     fn proof_to_term_for_printing(

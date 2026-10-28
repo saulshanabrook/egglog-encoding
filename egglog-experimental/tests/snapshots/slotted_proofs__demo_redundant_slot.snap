@@ -1,0 +1,16 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (Mul U U) (Zero))
+(let input (Mul $a (Zero)))
+(union input (Zero))
+(run 0)
+(check (= (Mul $b (Zero)) (Zero)))
+
+Proof:
+(Equivariance
+  (= (Mul $b (Zero)) (Zero))
+  (Fiat (= (Mul $a (Zero)) (Zero)))
+  (renaming ($a $b) ($b $a)))

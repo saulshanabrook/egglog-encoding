@@ -1,0 +1,17 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (F U))
+(let input (F $a))
+(rewrite (F x) x :name "unwrap")
+(run 1)
+(check (= input $a))
+
+Proof:
+(Rule
+  (= (F $a) $a)
+  (name "unwrap")
+  (premises (Fiat (= (F $a) (F $a))))
+  (substitution (x $a)))

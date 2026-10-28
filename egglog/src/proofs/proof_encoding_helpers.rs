@@ -860,8 +860,8 @@ pub fn file_supports_proofs_with_egraph(path: &Path, mut egraph: EGraph) -> bool
 /// Reasons why a command doesn't support proof encoding
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ProofEncodingUnsupportedReason {
-    #[error("primitive operation lacks a validator function")]
-    PrimitiveWithoutValidator,
+    #[error("primitive `{0}` lacks a validator function")]
+    PrimitiveWithoutValidator(String),
     #[error(
         "a declared index names a user function, which the term/proof encoding replaces with a view whose columns differ; the encoding does not yet rewrite index declarations"
     )]
@@ -960,23 +960,23 @@ pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInf
     true
 }
 
-/// Recursively check if all primitives in an expression have validators
-fn expr_primitives_have_validators(expr: &ResolvedExpr) -> bool {
+/// The name of the first primitive in `expr` without a validator, if any.
+fn expr_primitive_without_validator(expr: &ResolvedExpr) -> Option<String> {
     use crate::ast::GenericExpr;
     use crate::core::ResolvedCall;
 
-    let mut all_valid = true;
+    let mut missing = None;
     expr.walk(
         &mut |e| {
             if let GenericExpr::Call(_, ResolvedCall::Primitive(prim), _) = e
                 && prim.validator().is_none()
             {
-                all_valid = false;
+                missing.get_or_insert_with(|| prim.name().to_owned());
             }
         },
         &mut |_| {},
     );
-    all_valid
+    missing
 }
 
 /// Check if an action contains non-global function lookups in any of its expressions
@@ -1490,16 +1490,18 @@ fn command_supports_proof_encoding_impl(
         return Err(ProofEncodingUnsupportedReason::MergeActionBlock);
     }
     // Check all expressions for primitives without validators
-    let mut all_primitives_have_validators = true;
+    let mut primitive_without_validator = None;
     command.clone().visit_exprs(&mut |expr| {
-        if !expr_primitives_have_validators(&expr) {
-            all_primitives_have_validators = false;
+        if let Some(name) = expr_primitive_without_validator(&expr) {
+            primitive_without_validator.get_or_insert(name);
         }
         expr
     });
 
-    if !all_primitives_have_validators {
-        return Err(ProofEncodingUnsupportedReason::PrimitiveWithoutValidator);
+    if let Some(name) = primitive_without_validator {
+        return Err(ProofEncodingUnsupportedReason::PrimitiveWithoutValidator(
+            name,
+        ));
     }
 
     // Check actions (not queries) for function lookups

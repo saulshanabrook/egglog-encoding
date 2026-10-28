@@ -582,11 +582,11 @@ def rand_term(rng, depth, pool, ctr):
 def subterms(t):
     """Every subterm, root first."""
     out = [t]
-    if t[0] == "app":
+    if t[0] == "App":
         out += subterms(t[1]) + subterms(t[2])
-    elif t[0] == "lam":
+    elif t[0] == "Lam":
         out += subterms(t[2])
-    elif t[0] == "let":
+    elif t[0] == "Let":
         out += subterms(t[2]) + subterms(t[3])
     return out
 

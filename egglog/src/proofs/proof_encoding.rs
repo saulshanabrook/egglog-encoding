@@ -243,6 +243,8 @@ pub(crate) struct EncodingState {
     /// whole-database baseline) instead of `:unsafe-seminaive`, so tests can
     /// assert the two produce the same database.
     pub force_proof_naive: bool,
+    /// Preserve rule premises when an extension translates the extracted proof.
+    pub simplify_proofs: bool,
 }
 
 impl EncodingState {
@@ -260,6 +262,7 @@ impl EncodingState {
             proof_testing: false,
             verify_proofs: true,
             force_proof_naive: false,
+            simplify_proofs: true,
         }
     }
 }

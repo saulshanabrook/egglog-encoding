@@ -1,6 +1,7 @@
 """Reference translation must preserve multipatterns and reject omitted constraints."""
 
 import importlib
+import random
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,17 @@ import pytest
 syntax = importlib.import_module("slotted.reference")
 driver = importlib.import_module("slotted.test_program")
 LANGUAGES = Path(__file__).resolve().parents[1] / "egglog-experimental/tests/slotted/languages"
+
+
+def test_array_fuzzer_probes_nested_rewrite_terms(monkeypatch: pytest.MonkeyPatch) -> None:
+    array = importlib.import_module("slotted.xdiff.xarray")
+    lam = ("Lam", 0, ("App", ("Sym", "f1"), ("var", 0)))
+    argument = ("App", ("Sym", "f2"), ("Sym", "x"))
+    term = ("Let", 1, lam, argument)
+    monkeypatch.setattr(array, "rand_term", lambda *_: term)
+    case = array.rand_case(random.Random(0), 0)
+    assert {term, lam, lam[2], argument, ("Sym", "x")} <= set(case.probes)
+    assert all(probe[0] != "var" for probe in case.probes)
 
 
 @pytest.mark.parametrize(

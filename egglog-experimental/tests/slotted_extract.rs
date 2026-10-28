@@ -1,9 +1,24 @@
 use egglog::CommandOutput;
-use egglog_experimental::slotted::{Compiler, new_egraph};
+use egglog_experimental::slotted::{
+    Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs,
+};
 
 fn extract(source: &str) -> Vec<(u64, String)> {
-    let mut compiler = Compiler::default();
-    let mut graph = new_egraph();
+    let ordinary = extract_with_mode(source, ProofMode::Disabled);
+    assert_eq!(extract_with_mode(source, ProofMode::Prove), ordinary);
+    ordinary
+}
+
+fn extract_with_mode(source: &str, proof_mode: ProofMode) -> Vec<(u64, String)> {
+    let mut compiler = Compiler::new(Options {
+        proof_mode,
+        ..Default::default()
+    });
+    let mut graph = if proof_mode == ProofMode::Disabled {
+        new_egraph()
+    } else {
+        new_egraph_with_proofs()
+    };
     let program = compiler.compile(None, source).unwrap();
     let outputs = graph.parse_and_run_program(None, &program).unwrap();
     let extracted: Vec<_> = outputs

@@ -44,3 +44,22 @@ fn class_slot_bindings_reject_non_identity_maps() -> Result<(), Error> {
     )?;
     Ok(())
 }
+
+#[test]
+fn coset_reps_are_a_vector_sorted_by_content() -> Result<(), Error> {
+    let mut eg = egglog_experimental::slotted::new_egraph();
+    eg.parse_and_run_program(
+        None,
+        r#"
+; S3 on {0, 1, 2}: pinning slot 0 leaves one representative per preimage of 0
+(let $grp (group-close (set-of (map-of 0 1 1 0 2 2) (map-of 0 1 1 2 2 0))))
+(check (= (set-length $grp) 6))
+(let $reps (group-coset-reps $grp (map-of 0 0)))
+(check (= (vec-length $reps) 3))
+(check (= (vec-get $reps 0) (map-of 0 0 1 1 2 2)))
+(check (= (vec-get $reps 1) (map-of 0 1 1 0 2 2)))
+(check (= (vec-get $reps 2) (map-of 0 1 1 2 2 0)))
+"#,
+    )?;
+    Ok(())
+}

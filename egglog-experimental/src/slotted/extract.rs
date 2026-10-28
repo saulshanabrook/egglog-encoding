@@ -2,8 +2,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use egglog::{
-    ArcSort, CommandOutput, EGraph, Enode, Error, Function, Term, TermDag, TermId,
-    UserDefinedCommand, Value,
+    ArcSort, CommandOutput, Context, Core, EGraph, Enode, Error, Function, Read, Term, TermDag,
+    TermId, UserDefinedCommand, Value,
+    api::RawValues,
     ast::{Expr, Literal},
     extract::TreeCostModel,
     sort::MapContainer,
@@ -200,12 +201,44 @@ impl Decoder<'_> {
 pub(super) struct ExtractCommand;
 
 impl UserDefinedCommand for ExtractCommand {
+    fn supports_term_encoding(&self) -> bool {
+        true
+    }
+
     fn update(&self, graph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
         let [root, frame, names @ ..] = args else {
             return Err(error("expected a term and its slot frame"));
         };
-        let (sort, root) = graph.eval_expr(root)?;
-        let (_, frame) = graph.eval_expr(frame)?;
+        let Expr::Var(_, name) = root else {
+            return Err(error("expected a prepared root global"));
+        };
+        let function = graph
+            .get_function(name)
+            .filter(|function| function.is_let_binding() && function.func_type().input.is_empty())
+            .ok_or_else(|| error("expected a prepared root global"))?;
+        let sort = function.func_type().output().clone();
+        let root = graph
+            .read(|state| {
+                if function.is_view() {
+                    state.eclass_of(name, RawValues(vec![]))
+                } else {
+                    state.lookup(name, RawValues(vec![]))
+                }
+            })?
+            .ok_or_else(|| error("prepared root has no value"))?;
+        let renaming_sort = graph
+            .get_sort_by_name("Renaming")
+            .cloned()
+            .ok_or_else(|| error("missing Renaming sort"))?;
+        let frame = graph.typecheck_expr_with_bindings_and_output(
+            frame,
+            &[],
+            renaming_sort,
+            Context::Read,
+        )?;
+        let frame = graph
+            .read(|mut state| state.eval_resolved_expr(&frame, &[]))
+            .ok_or_else(|| error("could not evaluate the slot frame"))?;
         let frame = renaming(graph, frame)?;
         let mut source_names = BTreeMap::new();
         for name in names {

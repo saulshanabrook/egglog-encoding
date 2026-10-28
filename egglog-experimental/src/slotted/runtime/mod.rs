@@ -9,11 +9,12 @@ use std::sync::Arc;
 mod frame;
 mod group;
 mod primitives;
-mod renaming;
+pub(crate) mod renaming;
 mod subst;
+pub(crate) mod terms;
 mod types;
-use frame::*;
-use types::{Renaming, SlotSet};
+pub(crate) use frame::*;
+pub(crate) use types::{Renaming, SlotSet};
 
 fn map_container(data: std::collections::BTreeMap<Value, Value>) -> MapContainer {
     MapContainer::new(data, false, false)

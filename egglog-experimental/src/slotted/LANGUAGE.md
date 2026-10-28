@@ -58,7 +58,8 @@ With no files, the executable reads commands from stdin. Successive inputs
 share declarations, globals, rewrites, and graph state. Include paths are
 relative to the invocation directory. A failed complete REPL input restores
 both compiler and graph state, including changes from earlier commands in that
-input. `--slotted` cannot be combined with term or proof encoding.
+input. `--slotted` cannot be combined with `--term-encoding`, `--proof-testing`,
+or `--proof-extraction`.
 
 ## Sorts and constructors
 
@@ -494,3 +495,14 @@ embedding applications are responsible for restoring both states.
 
 The [encoding description](ENCODING.md) covers the representation and its
 invariants.
+
+## Getting proofs
+
+```text
+egglog-experimental --slotted --proofs source.egg
+```
+
+For supported `=` and `renaming-=` checks, this prints a checked proof using
+source terms and original rewrites, including their `:when` clauses.
+Other predicates use ordinary checks.
+See [the proof guide](PROOFS.md) for supported forms, Rust API usage, and examples.

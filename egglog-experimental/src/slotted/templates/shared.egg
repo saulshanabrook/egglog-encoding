@@ -4,8 +4,8 @@
 ;; Valid indices for each refinement-vector length, shared by equal lengths.
 (ruleset slotted-refine)
 (relation Idx (i64 i64))
-(rule ((Idx _len _i) (= _next (+ (* _i 2) 1)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine)
-(rule ((Idx _len _i) (= _next (+ (* _i 2) 2)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine)
+(rule ((Idx _len _i) (= _next (+ (* _i 2) 1)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine :name "slotted/refine-index/1")
+(rule ((Idx _len _i) (= _next (+ (* _i 2) 2)) (< _next _len)) ((Idx _len _next)) :ruleset slotted-refine :name "slotted/refine-index/2")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; multi-sort slotted machinery
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

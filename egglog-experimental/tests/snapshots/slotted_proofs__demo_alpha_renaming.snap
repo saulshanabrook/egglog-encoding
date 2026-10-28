@@ -1,0 +1,14 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (Lam U U :binder 0))
+(let input (Lam $a $a))
+(run 0)
+(check (= input (Lam $b $b)))
+
+Proof:
+(Claim
+  (= (Lam $a $a) (rename (renaming ($a $b) ($b $a)) (Lam $b $b)))
+  (Fiat (= (Lam $a $a) (Lam $a $a))))

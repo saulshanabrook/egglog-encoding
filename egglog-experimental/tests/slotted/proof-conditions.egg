@@ -1,0 +1,54 @@
+;; Rewrites whose proofs need the match read precisely: a condition pattern told
+;; apart from another row of its constructor by a payload, a condition over
+;; several variables, and a user rule named like the machinery.
+(datatype U (F U) (Num i64) (Pair U U) (Lam U U :binder 0) (App U U) (K U U) (G U) (H U))
+
+;; `a` is the `Num` row with payload 1, not the first `Num` row there is.
+(push)
+(rewrite (F x) (Pair a b) :when ((= a (Num 1)) (= b (Num 2))) :name "pair-up")
+(let f (F $0))
+(let one (Num 1))
+(let two (Num 2))
+(run 2)
+(check (= f (Pair (Num 1) (Num 2))))
+(pop)
+
+;; A `not-free` condition names several variables at once.
+(push)
+(rewrite (App (Lam $z x) y) (K x y) :name "drop" :when ((not-free $z x y)))
+(let t (App (Lam $0 (K $1 $1)) $2))
+(run 1)
+(check (= t (K (K $1 $1) $2)))
+(pop)
+
+;; A user rewrite may be named like the machinery; it is still the user's rule.
+(push)
+(rewrite (G x) (H x) :name "slotted/custom")
+(let g (G $3))
+(run 1)
+(check (= g (H $3)))
+(pop)
+
+;; `free` takes the union of the listed terms' free slots.
+(push)
+(rewrite (K $s (Pair a b)) (H b) :when ((free $s a b)) :name "free-in-second")
+(let k (K $a (Pair $b $a)))
+(run 1)
+(check (= k (H $a)))
+(pop)
+
+;; Exact free names are checked on the matched term.
+(push)
+(rewrite (K $s a) (H a) :when ((free-names-are a $s)) :name "exact-free")
+(let k (K $a (F $a)))
+(run 1)
+(check (= k (H (F $a))))
+(pop)
+
+;; A constructed guard term adds a pattern premise.
+(push)
+(rewrite (Lam $s a) (G a) :when ((free-names-are (Lam $s a))) :name "closed-lambda")
+(let id (Lam $a $a))
+(run 1)
+(check (= id (G $a)))
+(pop)

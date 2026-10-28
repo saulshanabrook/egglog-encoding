@@ -30,7 +30,9 @@
 //! [`Frame::refinements`] enumerates the consistent ways the remaining blocks may be
 //! merged, which is the reference's `final_refine`.
 
+use super::terms::*;
 use super::*;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -74,9 +76,9 @@ impl Name {
 }
 
 /// Atom labels and class variables inhabit different identity domains.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AtomId(Name);
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PVarId(Name);
 
 macro_rules! name_id {
@@ -118,6 +120,19 @@ impl From<&str> for Name {
     }
 }
 
+/// A name is its text: the ordering key is derived from it.
+impl Serialize for Name {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Name {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|text| Name::new(&text))
+    }
+}
+
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -131,7 +146,7 @@ impl fmt::Debug for Name {
 }
 
 /// Where a slot shows up in a match.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 enum Occ {
     /// slot `s` of the e-node matched at the atom with this label
     Node(AtomId, i64),
@@ -152,7 +167,7 @@ impl fmt::Display for Occ {
 }
 
 /// How an occurrence reads its class's slots.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Reading {
     Identity,
     Fixed(Renaming),
@@ -170,7 +185,7 @@ impl Reading {
 }
 
 /// One column of an atom, as the pattern reads it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Binding {
     /// the atom's node is an invocation of this variable's class
     Root {
@@ -199,7 +214,7 @@ pub enum Binding {
 pub type Bd = Boxed<Binding>;
 
 /// A list of pattern variables and literals, by name.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Names(pub Vec<Name>);
 
 pub type Ns = Boxed<Names>;
@@ -209,7 +224,7 @@ pub type Ns = Boxed<Names>;
 /// one is settled by `refinements`, once the rest of the frame has pinned what it can
 /// (C5). A further occurrence of a variable is bound this way, so the match quantifies
 /// over the group without the query enumerating it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Pending {
     atom: AtomId,
     var: PVarId,
@@ -219,7 +234,7 @@ struct Pending {
 }
 
 /// The constraints a match has placed on slots so far, closed.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Frame {
     /// the partition of every occurrence named so far into the pattern's slots: two
     /// occurrences in one block are one slot, and `numbering` gives each block its
@@ -637,6 +652,83 @@ impl Frame {
         self.block_of(occ).map(|i| self.numbering()[i])
     }
 
+    /// The pattern's slot for slot `slot` of the node matched at atom `atom`.
+    pub fn node_slot(&self, atom: &str, slot: i64) -> Option<i64> {
+        let numbers = self.numbering();
+        let occ = Occ::Node(AtomId::new(atom), slot);
+        self.blocks
+            .iter()
+            .position(|b| b.contains(&occ))
+            .map(|i| numbers[i])
+    }
+
+    /// The atom whose node is an invocation of `var`'s class: the one whose node
+    /// occurrences share a block with the variable's class slots. `None` when the
+    /// class has no slots.
+    pub fn atom_of(&self, var: &str) -> Option<String> {
+        let var = PVarId::new(var);
+        for block in &self.blocks {
+            if block
+                .iter()
+                .any(|o| matches!(o, Occ::Var(v, _) if *v == var))
+            {
+                for o in block {
+                    if let Occ::Node(a, _) = o {
+                        return Some(a.as_str().to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The atoms whose node slot `s` shares a block with slot `t` of `var`'s class.
+    pub fn node_atoms_with(&self, var: &str, t: i64, s: i64) -> Vec<String> {
+        let var = PVarId::new(var);
+        let mut out = vec![];
+        for block in &self.blocks {
+            if block
+                .iter()
+                .any(|o| matches!(o, Occ::Var(v, u) if *v == var && *u == t))
+            {
+                for o in block {
+                    if let Occ::Node(a, u) = o
+                        && *u == s
+                    {
+                        out.push(a.as_str().to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The atoms whose node slot `s` shares a block with the literal `lit`.
+    pub fn node_atoms_with_literal(&self, lit: &str, s: i64) -> Vec<String> {
+        let lit = Name::new(lit);
+        let mut out = vec![];
+        for block in &self.blocks {
+            if block.iter().any(|o| matches!(o, Occ::Lit(l) if *l == lit)) {
+                for o in block {
+                    if let Occ::Node(a, u) = o
+                        && *u == s
+                    {
+                        out.push(a.as_str().to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The literals the pattern wrote, by name.
+    pub fn literal_names(&self) -> Vec<String> {
+        self.literals
+            .keys()
+            .map(|n| n.as_str().to_string())
+            .collect()
+    }
+
     /// A variable's renaming into the pattern's slots, or a literal's `{0 -> slot}`.
     pub fn ren(&self, name: &str) -> Option<Renaming> {
         self.renaming(&Name::new(name))
@@ -854,6 +946,54 @@ impl fmt::Display for Frame {
     }
 }
 
+/// The proof term form of a frame: a JSON string literal (see `json_to_term`).
+pub fn frame_to_term(termdag: &mut TermDag, frame: &Frame) -> TermId {
+    json_to_term(termdag, frame)
+}
+
+/// The frame a JSON string literal holds; `None` for any other term.
+pub fn frame_from_term(termdag: &TermDag, id: TermId) -> Option<Fr> {
+    json_from_term(termdag, id).map(Fr::new)
+}
+
+/// The proof term form of a binding: a JSON string literal.
+pub fn binding_to_term(termdag: &mut TermDag, binding: &Binding) -> TermId {
+    json_to_term(termdag, binding)
+}
+
+pub fn binding_from_term(termdag: &TermDag, id: TermId) -> Option<Binding> {
+    json_from_term(termdag, id)
+}
+
+/// The proof term form of a name list: a JSON string literal.
+pub fn names_to_term(termdag: &mut TermDag, names: &Names) -> TermId {
+    json_to_term(termdag, names)
+}
+
+pub fn names_from_term(termdag: &TermDag, id: TermId) -> Option<Names> {
+    json_from_term(termdag, id)
+}
+
+/// Evaluate a pattern or global frame from term-encoded bindings.
+fn atom_validator(
+    kind: AtomKind,
+) -> impl Fn(&mut TermDag, &[TermId]) -> Option<TermId> + Send + Sync + 'static {
+    move |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let (label, rest) = args.split_first()?;
+        let label = string_from_term(termdag, *label)?.to_owned();
+        let bindings: Vec<Binding> = rest
+            .iter()
+            .map(|b| binding_from_term(termdag, *b))
+            .collect::<Option<_>>()?;
+        let frame = match kind {
+            AtomKind::Pattern => Frame::atom(&label, &bindings)?,
+            AtomKind::Nested => Frame::nested_atom(&label, &bindings)?,
+            AtomKind::Globals => Frame::globals(&label, &bindings)?,
+        };
+        Some(frame_to_term(termdag, &frame))
+    }
+}
+
 #[derive(Debug)]
 pub struct FrameSort;
 
@@ -866,8 +1006,28 @@ impl BaseSort for FrameSort {
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
+        // Validators and runtime primitives use the same Frame operations.
+        let frame_validator = |termdag: &mut TermDag, _: &[TermId]| -> Option<TermId> {
+            Some(frame_to_term(termdag, &Frame::default()))
+        };
+        let frame_join_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [a, b] = args else { return None };
+            let (a, b) = (frame_from_term(termdag, *a)?, frame_from_term(termdag, *b)?);
+            Some(frame_to_term(termdag, &a.join(&b)?))
+        };
+        let mint_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [f, xs] = args else { return None };
+            let minted = frame_from_term(termdag, *f)?.mint(&names_from_term(termdag, *xs)?.0)?;
+            Some(frame_to_term(termdag, &minted))
+        };
+        let anchor_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [f, v] = args else { return None };
+            let anchored = frame_from_term(termdag, *f)?.anchored(string_from_term(termdag, *v)?)?;
+            Some(frame_to_term(termdag, &anchored))
+        };
+
         // a frame with no constraints
-        add_primitive!(eg, "frame" = | | -> Fr { Fr::new(Frame::default()) });
+        add_primitive_with_validator!(eg, "frame" = | | -> Fr { Fr::new(Frame::default()) }, frame_validator);
         // one atom's constraints: `(atom "label" binding...)`, the label first because the
         // macro's varargs are of one sort
         let [string, binding, frame] = ["String", "Binding", "Frame"].map(|name| eg.type_info().get_sort_by_name(name).unwrap().clone());
@@ -879,17 +1039,17 @@ impl BaseSort for FrameSort {
                     binding: binding.clone(),
                     frame: frame.clone(),
                 },
-                None,
+                Some(Arc::new(atom_validator(kind))),
             );
         }
         // both frames' constraints, closed; fails where a clique breaks
-        add_primitive!(eg, "frame-join" = |a: Fr, b: Fr| -?> Fr { a.join(&b).map(Fr::new) });
+        add_primitive_with_validator!(eg, "frame-join" = |a: Fr, b: Fr| -?> Fr { a.join(&b).map(Fr::new) }, frame_join_validator);
         // conditions, read after refinement
         // right-hand-side slots the pattern never pinned
-        add_primitive!(eg, "mint" = |f: Fr, xs: Ns| -?> Fr { f.mint(&xs.0.0).map(Fr::new) });
+        add_primitive_with_validator!(eg, "mint" = |f: Fr, xs: Ns| -?> Fr { f.mint(&xs.0.0).map(Fr::new) }, mint_validator);
         // the frame spelled in a variable's slot names -- the rule's root, so that its
         // renaming is the identity
-        add_primitive!(eg, "anchor" = |f: Fr, v: S| -?> Fr { f.anchored(v.as_str()).map(Fr::new) });
+        add_primitive_with_validator!(eg, "anchor" = |f: Fr, v: S| -?> Fr { f.anchored(v.as_str()).map(Fr::new) }, anchor_validator);
     }
 
     fn reconstruct_termdag(
@@ -899,7 +1059,7 @@ impl BaseSort for FrameSort {
         termdag: &mut TermDag,
     ) -> TermId {
         let frame = base_values.unwrap::<Fr>(value);
-        termdag.lit(Literal::String(frame.0.to_string()))
+        frame_to_term(termdag, &frame)
     }
 }
 
@@ -1016,7 +1176,7 @@ impl BaseSort for BindingSort {
         termdag: &mut TermDag,
     ) -> TermId {
         let binding = base_values.unwrap::<Bd>(value);
-        termdag.lit(Literal::String(format!("{:?}", binding.0)))
+        binding_to_term(termdag, &binding.0)
     }
 }
 
@@ -1032,7 +1192,14 @@ impl BaseSort for NamesSort {
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
-        add_primitive!(eg, "names" = [xs: S] -> Ns { Ns::new(Names(xs.map(|s| Name::new(s.as_str())).collect())) });
+        let names_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let names: Vec<Name> = args
+                .iter()
+                .map(|x| string_from_term(termdag, *x).map(Name::new))
+                .collect::<Option<_>>()?;
+            Some(names_to_term(termdag, &Names(names)))
+        };
+        add_primitive_with_validator!(eg, "names" = [xs: S] -> Ns { Ns::new(Names(xs.map(|s| Name::new(s.as_str())).collect())) }, names_validator);
     }
 
     fn reconstruct_termdag(
@@ -1042,8 +1209,7 @@ impl BaseSort for NamesSort {
         termdag: &mut TermDag,
     ) -> TermId {
         let names = base_values.unwrap::<Ns>(value);
-        let text: Vec<&str> = names.0.0.iter().map(|n| n.as_str()).collect();
-        termdag.lit(Literal::String(text.join(" ")))
+        names_to_term(termdag, &names.0)
     }
 }
 
@@ -1392,5 +1558,82 @@ mod tests {
             .unwrap();
         assert!(!slots.contains_key(&g.ren("$x").unwrap()[&0]));
         assert!(slots.contains_key(&g.ren("e1").unwrap()[&0]));
+    }
+
+    #[test]
+    fn frame_terms_round_trip() {
+        let (sum, sing) = sum_sing();
+        let group = Arc::new(vec![m(&[(0, 1), (1, 0)]), m(&[(0, 0), (1, 1)])]);
+        let pending = Frame::atom(
+            "q",
+            &[
+                root("q", &[0, 1]),
+                Binding::Child {
+                    var: "a".into(),
+                    edge: m(&[(0, 0), (1, 1)]),
+                    free_vars: ident(&[0, 1]),
+                    reading: Reading::Group(group),
+                },
+            ],
+        )
+        .unwrap();
+        let frame = sum
+            .join(&sing)
+            .unwrap()
+            .join(&pending)
+            .unwrap()
+            .mint(&["$z".into()])
+            .unwrap()
+            .anchored("p")
+            .unwrap();
+        let mut termdag = TermDag::default();
+        let term = frame_to_term(&mut termdag, &frame);
+        assert!(matches!(termdag.get(term), Term::Lit(Literal::String(_))));
+        assert_eq!(*frame_from_term(&termdag, term).unwrap(), frame);
+        assert_eq!(frame_to_term(&mut termdag, &frame.clone()), term);
+        let other = termdag.lit(Literal::String("{}".into()));
+        assert!(frame_from_term(&termdag, other).is_none());
+    }
+
+    #[test]
+    fn binding_terms_round_trip() {
+        let group = Arc::new(vec![m(&[(0, 1), (1, 0)])]);
+        for binding in [
+            root("p", &[0, 1]),
+            child("a", &[(0, 1)], &[0]),
+            lit("$x", &[(0, 2)]),
+            Binding::Lit {
+                name: "$y".into(),
+                edge: m(&[(0, 0)]),
+                carried: false,
+            },
+            Binding::Leaf { edge: m(&[(0, 3)]) },
+            Binding::Root {
+                var: "r".into(),
+                free_vars: ident(&[0]),
+                reading: Reading::Fixed(m(&[(0, 0)])),
+            },
+            Binding::Child {
+                var: "c".into(),
+                edge: m(&[(0, 0), (1, 1)]),
+                free_vars: ident(&[0, 1]),
+                reading: Reading::Group(group),
+            },
+        ] {
+            let mut termdag = TermDag::default();
+            let term = binding_to_term(&mut termdag, &binding);
+            assert_eq!(binding_from_term(&termdag, term), Some(binding));
+        }
+    }
+
+    #[test]
+    fn names_terms_round_trip() {
+        let names = Names(vec!["a".into(), "$x".into(), "with space".into()]);
+        let mut termdag = TermDag::default();
+        let term = names_to_term(&mut termdag, &names);
+        assert_eq!(names_from_term(&termdag, term), Some(names));
+        let empty = names_to_term(&mut termdag, &Names::default());
+        assert_eq!(names_from_term(&termdag, empty), Some(Names::default()));
+        assert!(names_from_term(&termdag, term) != names_from_term(&termdag, empty));
     }
 }

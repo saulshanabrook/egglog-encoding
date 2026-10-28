@@ -16,6 +16,10 @@ name = "files"
 harness = false
 name = "slotted_files"
 
+[[test]]
+harness = false
+name = "slotted_proof_files"
+
 [[bench]]
 harness = false
 name = "files"
@@ -34,6 +38,7 @@ serde_json = { workspace = true }
 mimalloc = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 smallvec = { workspace = true }
+thiserror = { workspace = true }
 num = "0.4.3"
 lazy_static = "1.4"
 log = "0.4"

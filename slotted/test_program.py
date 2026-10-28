@@ -128,7 +128,7 @@ def run_encoding(program, probes, timeout, *, keep=None):
 
 
 @lru_cache(maxsize=32)
-def compile_source(text):
+def compile_source(text, *, no_aliasing=False):
     with tempfile.TemporaryDirectory(prefix="slotted-source-") as tmp:
         path = Path(tmp) / "source.egg"
         path.write_text(text)
@@ -136,6 +136,7 @@ def compile_source(text):
             [
                 str(EGGLOG),
                 "--slotted",
+                *(["--slotted-no-aliasing"] if no_aliasing else []),
                 "--mode",
                 "desugar",
                 str(path),
@@ -212,7 +213,8 @@ def maintenance():
     return ref.render(next(f for f in ref.parse(text) if f[0] == "run-schedule"))
 
 
-def program(language, lang, rules, terms, unions, probes, rounds, *, defer_probes=False):
+def source_program(language, lang, rules, terms, unions, probes, rounds, *, defer_probes=False):
+    """Build the source input shared by partition and proof tests."""
     source = [f'(include "egglog-experimental/tests/slotted/languages/{language}.egg")', *dict.fromkeys(rules)]
     source.extend(f"(let _t{i} {term(lang, t)})" for i, t in enumerate(terms))
     source.extend(f"(union {term(lang, a)} {term(lang, b)})" for a, b in unions)
@@ -227,7 +229,12 @@ def program(language, lang, rules, terms, unions, probes, rounds, *, defer_probe
     if defer_probes:
         source.extend(probe_terms)
     source.append("(run 0)")
-    encoded = compile_source("\n".join(source))
+    return "\n".join(source) + "\n"
+
+
+def probe_observer(lang, probes):
+    symbols = lang.symbols_for(lang.default_sort)
+    var = f"({symbols.var} 0)"
     # Observations run after the budget, without another rewrite or maintenance round.
     observer = [
         f"""
@@ -241,7 +248,12 @@ def program(language, lang, rules, terms, unions, probes, rounds, *, defer_probe
     ]
     observer.extend(f"(ProbeId {var if t[0] == 'var' else f'$_p{i}'} {i})" for i, t in enumerate(probes))
     observer += ["(run-schedule (saturate (run probes)))", "(print-function SameClass 100000)"]
-    return encoded + "\n".join(observer) + "\n"
+    return "\n".join(observer) + "\n"
+
+
+def program(language, lang, rules, terms, unions, probes, rounds, *, defer_probes=False):
+    source = source_program(language, lang, rules, terms, unions, probes, rounds, defer_probes=defer_probes)
+    return compile_source(source) + probe_observer(lang, probes)
 
 
 def parse_same_class(stdout, n):
