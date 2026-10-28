@@ -643,7 +643,7 @@ impl Snapshot {
         let node = node.refresh_private().apply_slotmap_fresh(&i.m);
         let mut children = Vec::new();
         for child in node.applied_id_occurrences() {
-            children.push(self.term(&child)?);
+            children.push(self.term(child)?);
         }
         Some(RecExpr { node, children })
     }
@@ -758,7 +758,7 @@ fn main() {
     }
 
     // Every rule with both a pattern and an action, compiled once.
-    let compiled: Vec<(usize, MultiPattern<L>, Pattern<L>, Pattern<L>)> = spec
+    let compiled = spec
         .rules
         .iter()
         .enumerate()
@@ -784,7 +784,7 @@ fn main() {
             };
             Some((i, pat, from, to))
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     // Rules given in nested form go through the single-pattern matcher. A spec uses
     // one form or the other, never both, so the two loops do not interact.
