@@ -179,7 +179,10 @@ def test_profile_encodings_are_recorded_and_cached_separately(
     calibrated: list[list[str]] = []
     recorded: list[dict[str, Any]] = []
 
-    def calibrate(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+    def calibrate(
+        command: list[str], checkout_path: Path, timeout_sec: int, *, native_limit: bool = False
+    ) -> processes.TimingResult:
+        assert native_limit
         calibrated.append(command)
         return processes.TimingResult("success", processes.TimingRow(wall_sec=2.0), None)
 
