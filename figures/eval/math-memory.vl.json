@@ -1,12 +1,7 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "description": "Paper figure. Sample selection is bound by the shared cache selector; all statistics are performed by the visible Vega transforms. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
-  "data": {
-    "url": "../../.reports-grouped.json",
-    "format": {
-      "type": "json"
-    }
-  },
+  "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
   "params": [
     {"name": "target_label", "value": "figures"},
     {"name": "timeout_sec", "value": 300},
@@ -17,33 +12,22 @@
   ],
   "config": {
     "font": "Arial",
-    "view": {
-      "stroke": null
-    },
+    "view": {"stroke": null},
     "axis": {
       "labelFontSize": 11,
       "titleFontSize": 12,
       "gridColor": "#e8eaed",
-      "titlePadding": 10
+      "titlePadding": 10,
+      "titleFontWeight": "normal"
     },
-    "legend": {
-      "labelFontSize": 11,
-      "title": null,
-      "orient": "top"
-    },
-    "title": {
-      "anchor": "start",
-      "fontSize": 16,
-      "subtitleFontSize": 11,
-      "subtitlePadding": 8
-    }
+    "legend": {"labelFontSize": 11, "title": null, "orient": "top"},
+    "title": {"anchor": "start", "fontSize": 16, "subtitleFontSize": 11, "subtitlePadding": 8}
   },
   "title": {
     "text": "Math: peak memory",
-    "subtitle": [
-      "Twelve fixed rounds · same four configurations and process executions in runtime and memory figures",
-      "Dots: runs. Absolute intervals: 95% Student-t. Ratio intervals: independent-sample 95% Fieller."
-    ]
+    "subtitle": {
+      "expr": "['Twelve fixed rounds · ' + rounds + ' requested runs/configuration · dots: runs; tick: mean', 'Bars: 95% Student-t (absolute) and independent-sample Fieller (checked / off)', 'Checked: recording + extraction + checking']"
+    }
   },
   "transform": [
     {"calculate": "[datum.groups, [null]]", "as": "batches"},
@@ -92,277 +76,71 @@
   "vconcat": [
     {
       "width": 650,
-      "height": {
-        "step": 36
-      },
+      "height": {"step": 36},
       "layer": [
         {
           "name": "absolute_runs",
-          "transform": [
-            {
-              "filter": "isValid(datum.value) && !datum.validation_issue"
-            }
-          ],
-          "mark": {
-            "type": "point",
-            "filled": true,
-            "opacity": 0.55,
-            "size": 38
-          },
+          "transform": [{"filter": "isValid(datum.value) && !datum.validation_issue"}],
+          "mark": {"type": "point", "filled": true, "opacity": 0.55, "size": 30, "color": "#477b9e"},
           "encoding": {
-            "x": {
-              "field": "value",
-              "type": "quantitative",
-              "title": "Peak process RSS (MiB)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "Off · Egg",
-                "Checked · Egg",
-                "Off · Egglog",
-                "Checked · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "Off · Egg",
-                  "Checked · Egg",
-                  "Off · Egglog",
-                  "Checked · Egglog"
-                ]
-              }
-            },
-            "color": {
-              "field": "engine",
-              "type": "nominal",
-              "scale": {
-                "domain": [
-                  "Egg",
-                  "Egglog"
-                ],
-                "range": [
-                  "#2a6f97",
-                  "#b75d19"
-                ]
-              },
-              "legend": null
-            },
-            "yOffset": {
-              "field": "jitter",
-              "type": "quantitative",
-              "scale": null
-            },
+            "x": {"field": "value"},
+            "yOffset": {"field": "jitter", "type": "quantitative", "scale": null},
             "tooltip": [
-              {
-                "field": "condition"
-              },
-              {
-                "field": "value",
-                "format": ".5g"
-              },
-              {
-                "field": "sample_n"
-              },
-              {
-                "field": "run.row_index"
-              }
+              {"field": "condition"},
+              {"field": "value", "format": ".5g"},
+              {"field": "sample_n"},
+              {"field": "run.row_index"}
             ]
           }
         },
         {
           "name": "absolute_intervals",
-          "transform": [
-            {
-              "filter": "datum.run_number === 1 && isValid(datum.ci_low)"
-            }
-          ],
-          "mark": {
-            "type": "rule",
-            "strokeWidth": 2,
-            "color": "#20252b"
-          },
-          "encoding": {
-            "x": {
-              "field": "ci_low",
-              "type": "quantitative",
-              "title": "Peak process RSS (MiB)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "x2": {
-              "field": "ci_high"
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "Off · Egg",
-                "Checked · Egg",
-                "Off · Egglog",
-                "Checked · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "Off · Egg",
-                  "Checked · Egg",
-                  "Off · Egglog",
-                  "Checked · Egglog"
-                ]
-              }
-            }
-          }
+          "transform": [{"filter": "datum.run_number === 1 && isValid(datum.ci_low)"}],
+          "mark": {"type": "rule", "strokeWidth": 2, "color": "#20252b"},
+          "encoding": {"x": {"field": "ci_low"}, "x2": {"field": "ci_high"}}
         },
         {
           "name": "absolute_means",
-          "transform": [
-            {
-              "filter": "datum.run_number === 1 && datum.complete"
-            }
-          ],
-          "mark": {
-            "type": "tick",
-            "thickness": 2.5,
-            "size": 20,
-            "color": "#20252b"
-          },
-          "encoding": {
-            "x": {
-              "field": "mean",
-              "type": "quantitative",
-              "title": "Peak process RSS (MiB)",
-              "scale": {
-                "domain": {
-                  "expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"
-                }
-              },
-              "axis": {
-                "format": "~g",
-                "tickCount": 5
-              }
-            },
-            "y": {
-              "field": "condition",
-              "type": "nominal",
-              "title": null,
-              "sort": [
-                "Off · Egg",
-                "Checked · Egg",
-                "Off · Egglog",
-                "Checked · Egglog"
-              ],
-              "axis": {
-                "labelLimit": 180
-              },
-              "scale": {
-                "domain": [
-                  "Off · Egg",
-                  "Checked · Egg",
-                  "Off · Egglog",
-                  "Checked · Egglog"
-                ]
-              }
-            }
-          }
+          "transform": [{"filter": "datum.run_number === 1 && datum.complete"}],
+          "mark": {"type": "tick", "thickness": 2.5, "size": 20, "color": "#20252b"},
+          "encoding": {"x": {"field": "mean"}}
         }
-      ]
+      ],
+      "encoding": {
+        "x": {
+          "field": "value",
+          "type": "quantitative",
+          "title": "Peak process RSS (MiB)",
+          "scale": {"domain": {"expr": "[min(0, absolute_low_extent[0]), max(1, absolute_high_extent[1])]"}},
+          "axis": {"format": "~f", "tickCount": 5, "grid": false}
+        },
+        "y": {
+          "field": "condition",
+          "type": "nominal",
+          "title": null,
+          "axis": {"labelLimit": 180},
+          "scale": {"domain": ["Off · Egg", "Checked · Egg", "Off · Egglog", "Checked · Egglog"]}
+        }
+      }
     },
     {
       "transform": [
-        {
-          "filter": "datum.run_number === 1"
-        },
-        {
-          "aggregate": [
-            {
-              "op": "values",
-              "as": "conditions"
-            }
-          ],
-          "groupby": [
-            "engine"
-          ]
-        },
-        {
-          "calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Off')]",
-          "as": "baseline"
-        },
-        {
-          "calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Checked')]",
-          "as": "candidate"
-        },
-        {
-          "calculate": "datum.baseline.complete && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null",
-          "as": "ratio"
-        },
-        {
-          "calculate": "datum.baseline.mean * datum.baseline.mean - t_critical * t_critical * datum.baseline.var_mean",
-          "as": "a"
-        },
-        {
-          "calculate": "datum.candidate.mean * datum.candidate.mean - t_critical * t_critical * datum.candidate.var_mean",
-          "as": "d"
-        },
-        {
-          "calculate": "pow(datum.baseline.mean * datum.candidate.mean,2) - datum.a * datum.d",
-          "as": "radicand"
-        },
-        {
-          "calculate": "isValid(datum.ratio) && rounds > 1 && datum.a > 0 && datum.radicand >= 0",
-          "as": "bounded"
-        },
-        {
-          "calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean - sqrt(datum.radicand)) / datum.a : null",
-          "as": "ratio_low"
-        },
-        {
-          "calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean + sqrt(datum.radicand)) / datum.a : null",
-          "as": "ratio_high"
-        },
-        {
-          "calculate": "datum.engine + ': ' + (!isValid(datum.ratio) ? 'Ratio unavailable: incomplete or invalid sample' : rounds === 1 ? format(datum.ratio,'.3g') + '×; CI unavailable (n=1)' : !datum.bounded ? format(datum.ratio,'.3g') + '×; Fieller interval unbounded or unavailable' : format(datum.ratio,'.3g') + '× [' + format(datum.ratio_low,'.3g') + ', ' + format(datum.ratio_high,'.3g') + ']')",
-          "as": "ratio_summary"
-        },
-        {
-          "calculate": "max(1, isValid(datum.ratio) ? datum.ratio : 0, isValid(datum.ratio_high) ? datum.ratio_high : 0)",
-          "as": "ratio_upper"
-        },
-        {
-          "calculate": "min(0, isValid(datum.ratio_low) ? datum.ratio_low : 0)",
-          "as": "ratio_lower"
-        },
-        {
-          "extent": "ratio_upper",
-          "param": "math_ratio_upper"
-        },
-        {
-          "extent": "ratio_lower",
-          "param": "math_ratio_lower"
-        }
+        {"filter": "datum.run_number === 1"},
+        {"aggregate": [{"op": "values", "as": "conditions"}], "groupby": ["engine"]},
+        {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Off')]", "as": "baseline"},
+        {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Checked')]", "as": "candidate"},
+        {"calculate": "datum.baseline.complete && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null", "as": "ratio"},
+        {"calculate": "datum.baseline.mean * datum.baseline.mean - t_critical * t_critical * datum.baseline.var_mean", "as": "a"},
+        {"calculate": "datum.candidate.mean * datum.candidate.mean - t_critical * t_critical * datum.candidate.var_mean", "as": "d"},
+        {"calculate": "pow(datum.baseline.mean * datum.candidate.mean,2) - datum.a * datum.d", "as": "radicand"},
+        {"calculate": "isValid(datum.ratio) && rounds > 1 && datum.a > 0 && datum.radicand >= 0", "as": "bounded"},
+        {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean - sqrt(datum.radicand)) / datum.a : null", "as": "ratio_low"},
+        {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean + sqrt(datum.radicand)) / datum.a : null", "as": "ratio_high"},
+        {"calculate": "datum.engine + ': ' + (!isValid(datum.ratio) ? 'Ratio unavailable: incomplete or invalid sample' : rounds === 1 ? format(datum.ratio,'.3g') + '×; CI unavailable (n=1)' : !datum.bounded ? format(datum.ratio,'.3g') + '×; Fieller interval unbounded or unavailable' : format(datum.ratio,'.3g') + '× [' + format(datum.ratio_low,'.3g') + ', ' + format(datum.ratio_high,'.3g') + ']')", "as": "ratio_summary"},
+        {"calculate": "max(1, isValid(datum.ratio) ? datum.ratio : 0, isValid(datum.ratio_high) ? datum.ratio_high : 0)", "as": "ratio_upper"},
+        {"calculate": "min(0, isValid(datum.ratio_low) ? datum.ratio_low : 0)", "as": "ratio_lower"},
+        {"extent": "ratio_upper", "param": "math_ratio_upper"},
+        {"extent": "ratio_lower", "param": "math_ratio_lower"}
       ],
       "hconcat": [
         {
@@ -370,146 +148,48 @@
           "height": 110,
           "layer": [
             {
-              "mark": {
-                "type": "rule",
-                "color": "#707780",
-                "strokeDash": [
-                  4,
-                  3
-                ]
-              },
-              "encoding": {
-                "x": {
-                  "datum": 1
-                }
-              }
+              "mark": {"type": "rule", "color": "#707780", "strokeDash": [4, 3]},
+              "encoding": {"x": {"datum": 1}, "y": {"value": 0}, "y2": {"value": 110}}
             },
             {
               "name": "ratio_intervals",
-              "transform": [
-                {
-                  "filter": "datum.bounded"
-                }
-              ],
-              "mark": {
-                "type": "rule",
-                "strokeWidth": 2,
-                "color": "#20252b"
-              },
-              "encoding": {
-                "x": {
-                  "field": "ratio_low",
-                  "type": "quantitative",
-                  "title": "Checked / off (ratio of means)",
-                  "scale": {
-                    "domain": {
-                      "expr": "[min(0,math_ratio_lower[0]), max(1,math_ratio_upper[1])]"
-                    }
-                  },
-                  "axis": {
-                    "labelExpr": "format(datum.value, '~g') + '×'",
-                    "tickCount": 4
-                  }
-                },
-                "x2": {
-                  "field": "ratio_high"
-                },
-                "y": {
-                  "field": "engine",
-                  "type": "nominal",
-                  "sort": [
-                    "Egg",
-                    "Egglog"
-                  ],
-                  "title": null,
-                  "scale": {
-                    "domain": [
-                      "Egg",
-                      "Egglog"
-                    ]
-                  }
-                }
-              }
+              "transform": [{"filter": "datum.bounded"}],
+              "mark": {"type": "rule", "strokeWidth": 2, "color": "#20252b"},
+              "encoding": {"x": {"field": "ratio_low"}, "x2": {"field": "ratio_high"}}
             },
             {
               "name": "ratio_points",
-              "transform": [
-                {
-                  "filter": "isValid(datum.ratio)"
-                }
-              ],
-              "mark": {
-                "type": "point",
-                "filled": true,
-                "size": 75,
-                "color": "#20252b"
-              },
-              "encoding": {
-                "x": {
-                  "field": "ratio",
-                  "type": "quantitative",
-                  "title": "Checked / off (ratio of means)",
-                  "scale": {
-                    "domain": {
-                      "expr": "[min(0,math_ratio_lower[0]), max(1,math_ratio_upper[1])]"
-                    }
-                  },
-                  "axis": {
-                    "labelExpr": "format(datum.value, '~g') + '×'",
-                    "tickCount": 4
-                  }
-                },
-                "y": {
-                  "field": "engine",
-                  "type": "nominal",
-                  "sort": [
-                    "Egg",
-                    "Egglog"
-                  ],
-                  "title": null,
-                  "scale": {
-                    "domain": [
-                      "Egg",
-                      "Egglog"
-                    ]
-                  }
-                }
-              }
+              "transform": [{"filter": "isValid(datum.ratio)"}],
+              "mark": {"type": "point", "filled": true, "size": 75, "color": "#20252b"},
+              "encoding": {"x": {"field": "ratio"}}
             }
-          ]
+          ],
+          "encoding": {
+            "x": {
+              "field": "ratio_low",
+              "type": "quantitative",
+              "title": "Checked / off (ratio of means)",
+              "scale": {"domain": {"expr": "[min(0,math_ratio_lower[0]), max(1,math_ratio_upper[1])]"}},
+              "axis": {"labelExpr": "format(datum.value, '~f') + '×'", "tickCount": 4, "grid": false}
+            },
+            "y": {"field": "engine", "type": "nominal", "title": null, "scale": {"domain": ["Egg", "Egglog"]}}
+          }
         },
         {
           "name": "ratio_status",
           "width": 270,
           "height": 110,
-          "mark": {
-            "type": "text",
-            "align": "left",
-            "fontSize": 10
-          },
+          "mark": {"type": "text", "align": "left", "fontSize": 10},
           "encoding": {
             "y": {
               "field": "engine",
               "type": "nominal",
-              "sort": [
-                "Egg",
-                "Egglog"
-              ],
               "title": null,
               "axis": null,
-              "scale": {
-                "domain": [
-                  "Egg",
-                  "Egglog"
-                ]
-              }
+              "scale": {"domain": ["Egg", "Egglog"]}
             },
-            "text": {
-              "field": "ratio_summary"
-            },
-            "x": {
-              "value": 0
-            }
+            "text": {"field": "ratio_summary"},
+            "x": {"value": 0}
           }
         }
       ]
@@ -517,44 +197,21 @@
     {
       "name": "math_status",
       "transform": [
-        {
-          "filter": "datum.run_number === 1 && datum.issue"
-        }
+        {"filter": "datum.run_number === 1 && datum.issue"},
+        {"aggregate": [{"op": "values", "as": "issues"}]},
+        {"calculate": "join(pluck(datum.issues,'condition_status'),'\\n')", "as": "status"}
       ],
       "width": 650,
       "mark": {
         "type": "text",
         "align": "left",
         "fontSize": 10,
-        "color": "#9a3e1c"
+        "color": "#9a3e1c",
+        "baseline": "top",
+        "lineBreak": "\n"
       },
-      "encoding": {
-        "y": {
-          "field": "condition",
-          "type": "nominal",
-          "sort": [
-            "Off · Egg",
-            "Checked · Egg",
-            "Off · Egglog",
-            "Checked · Egglog"
-          ],
-          "axis": null,
-          "scale": {
-            "domain": [
-              "Off · Egg",
-              "Checked · Egg",
-              "Off · Egglog",
-              "Checked · Egglog"
-            ]
-          }
-        },
-        "text": {
-          "field": "condition_status"
-        },
-        "x": {
-          "value": 0
-        }
-      }
+      "encoding": {"x": {"value": 0}, "y": {"value": 0}, "text": {"field": "status"}},
+      "height": 0
     }
   ],
   "spacing": 18

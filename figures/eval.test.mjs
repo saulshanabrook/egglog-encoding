@@ -54,7 +54,7 @@ test('all five paper specs compile, preserve missing endpoints and render',async
     const m=await evaluate(`math-${metric}`,math.map(t=>input('a',t)),[]);
     assert.equal(find(m,'ratio_status').length,2);
     const c=await evaluate(`corpus-${metric}-cdf`,['off','term','proof-testing'].map(t=>input('a',t)),[]);
-    assert.equal(find(c,'cdf_coverage').length,2);
+    assert.equal(find(c,'cdf_coverage').length,0);
     assert.match(c.svg,/unresolved baseline 1/);
   }
 });
@@ -101,7 +101,7 @@ test('CDF cohort uses >=.2 seconds without upper cutoff, shared denominator and 
     assert.ok(!dots.some(p=>p.datum.workload_id==='fast'));
     assert.match(c.svg,/2\/3 valid/);
     assert.match(c.svg,/95% not established/);
-    assert.match(c.svg,/50% measured coverage/);
+    assert.match(c.svg,/50% coverage ≤/);
   }
 });
 test('strict validation veto applies only to checked proofs, missing RSS cannot change cohort',async()=>{
@@ -136,7 +136,7 @@ test('CDF ties use shared ranks, full tails and exact 95% inverse-CDF thresholds
   const c=await evaluate('corpus-runtime-cdf',inputs,groups);
   const checked=find(c,'cdf_points').filter(p=>p.datum.mode==='Checked proofs');
   assert.deepEqual(checked.map(p=>[p.datum.ratio,p.datum.cdf]),[[2,.5],[2,.5],[4,.75],[1000,1]]);
-  assert.match(c.svg,/95% percentile ≤ 1.00e\+3×|95% percentile ≤ 1e\+3×|95% percentile ≤ 1000×/);
+  assert.equal(find(c,'cdf_thresholds').find(p=>p.datum.percentile===.95).datum.threshold_ratio,1000);
   assert.equal(find(c,'cdf_points_zoom').filter(p=>p.datum.mode==='Checked proofs').length,4);
 });
 
@@ -198,6 +198,28 @@ test('all figures use the bound original row IDs rather than a raw tail or recor
     } else {
       assert.equal(find(empty,'absolute_runs').length,0);
       assert.match(empty.svg,/0\/2 observations/);
+    }
+  }
+});
+
+test('CDF family dots and direct 50/95 labels keep pooled ranks and intact glyph bounds',async()=>{
+  const ids=['a','b','c','d'];
+  const inputs=ids.flatMap((id,i)=>['off','term','proof-testing'].map(t=>input(id,t,{family:i%2?'misaal':'eggcc'})));
+  const groups=ids.flatMap((id,i)=>[group(id,'off',[1,1]),group(id,'term',[2,2]),
+    group(id,'proof-testing',[[2,2,4,1000][i],[2,2,4,1000][i]])]);
+  for(const metric of ['runtime','memory']) {
+    const result=await evaluate(`corpus-${metric}-cdf`,inputs,groups);
+    const points=find(result,'cdf_points');
+    const zoom=find(result,'cdf_points_zoom');
+    assert.deepEqual(zoom.map(p=>[p.datum.workload_id,p.datum.mode,p.datum.ratio,p.datum.cdf]),
+      points.map(p=>[p.datum.workload_id,p.datum.mode,p.datum.ratio,p.datum.cdf]));
+    assert.notEqual(points.find(p=>p.datum.family==='eggcc').fill,points.find(p=>p.datum.family==='misaal').fill);
+    const labels=[...find(result,'cdf_thresholds_zoom'),...find(result,'cdf_thresholds')];
+    assert.equal(labels.length,4);
+    assert.equal(labels.find(p=>p.datum.mode==='Checked proofs'&&p.datum.percentile===.95).datum.threshold_ratio,1000);
+    for(const label of labels) {
+      assert.ok(label.bounds.x1>=0&&label.bounds.x2<=310,`horizontal clipping: ${label.text}`);
+      assert.ok(label.bounds.y1>=0&&label.bounds.y2<=label.mark.group.height,`vertical clipping: ${label.text}`);
     }
   }
 });
