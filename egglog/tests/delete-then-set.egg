@@ -1,0 +1,17 @@
+;; A rule head that deletes a key and sets it again replaces the row: the removal is
+;; applied before the insert, so the merge function never sees the old value.
+;;
+;; The term/proof encoding does not match this yet. It lowers `delete` to a marker row
+;; consumed at the end of maintenance, while `set` goes to the view at once, so the
+;; merge computes `(set-union old new)` first and the deferred delete then drops the
+;; whole row. Under `--term-encoding` or `--proofs` the check below fails, which is why
+;; this file is on the manual proof-disable list in `files.rs`.
+(sort IS (Set i64))
+(function G (i64) IS :merge (set-union old new))
+(set (G 0) (set-of 1 2 3))
+(rule ((= s (G 0)) (set-contains s 3))
+      ((delete (G 0))
+       (set (G 0) (set-of 1 2))))
+(run 1)
+(print-function G 10)
+(check (= (G 0) (set-of 1 2)))

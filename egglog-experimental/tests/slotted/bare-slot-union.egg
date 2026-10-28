@@ -1,0 +1,27 @@
+;;; A bare slot at the top level -- one side of a union or a check -- is the variable
+;;; class under the renaming to that slot, `(Var 3)`, not the class itself, `(Var 0)`.
+;;;
+;;; The difference is everything: `(union (Let $1 $2 $3) $3)` says the let is the
+;;; variable 3, which makes slot 1 redundant in the let's class and nothing else. Spelled
+;;; as the class itself it would say the let is the variable class under the identity,
+;;; and since the two share no slot, every slot would go redundant: every variable one
+;;; variable, every term of one constructor one term.
+(sort U)
+(constructor Let (U U U) U :binder 1)
+(constructor Get (U U) U)
+
+(let t (Get (Let $1 $2 $3) $4))
+(union (Let $1 $2 $3) $3)
+(run 1)
+
+;; the let is variable 3, whatever sits in slot 1
+(let slot_1 $1)
+(let slot_3 $3)
+(check (= (Let slot_1 $2 slot_3) slot_3) (not-free $2 slot_1 slot_3))
+(let slot_5 $5)
+(check (= (Let slot_5 $2 slot_3) slot_3) (not-free $2 slot_5 slot_3))
+(let slot_4 $4)
+(check (= t (Get slot_3 slot_4)))
+;; and variables stay distinct
+(fail (check (= slot_3 slot_4)))
+(fail (check (= (Get slot_3 slot_4) (Get slot_4 slot_3))))

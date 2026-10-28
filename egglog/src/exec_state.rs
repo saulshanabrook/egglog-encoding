@@ -353,6 +353,14 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
 /// matching is **not** checked at this layer.
 #[allow(private_bounds)]
 pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
+    /// Extension-owned scratch data shared by workers reading this execution's
+    /// database snapshot. A new execution (including after rollback) starts empty.
+    /// Mutations are staged until execution finishes, so cached reads do not
+    /// include pending writes. Use a distinct wrapper type for each cache.
+    fn execution_cache<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
+        self.es().execution_cache::<T>()
+    }
+
     /// Look up a function's output value at the given key. Returns
     /// `Ok(None)` if the row is absent. The returned `Value` is raw —
     /// extract a Rust type via [`Core::value_to_base`] for base sorts

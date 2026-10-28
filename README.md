@@ -22,7 +22,7 @@ Hygiene checks and tests can be run independently. `nits` never runs tests:
 
 ```bash
 make nits           # lockfile, formatting checks, linting, and type checking
-make test           # Python and Rust tests
+make test           # Python, Rust, and slotted reference/differential tests
 make python-check   # complete Python validation
 make rust-check     # complete Rust validation
 make python-nits    # Python hygiene only
@@ -38,8 +38,43 @@ make format         # apply Ruff and rustfmt formatting
 `make benchmark-smoke` uses a one-round comparison on small Math and disequality
 fixtures, not the full benchmark suite, and writes its disposable
 JSONL report to `/tmp/egglog-encoding-bench-smoke.jsonl`. Override
-`BENCHMARK_SMOKE_REPORT` to choose another path. `make update-snapshots` is the
-explicit review action for accepting intentional Markdown report changes.
+`BENCHMARK_SMOKE_REPORT` to choose another path. `make update-snapshots` accepts
+intentional changes to Markdown reports and slotted compiler snapshots; review
+the resulting diff before committing it.
+
+Slotted case studies have standalone runners:
+
+```bash
+python3 slotted/eval.py array   # fresh timings; no cache or graph checks
+python3 slotted/check.py array  # all treatments, counts, and exact isomorphism
+```
+
+Both use the same workload selectors and [treatment definitions](slotted/treatments.py).
+`array` runs Figure 8's fixed sweep of 0–10 extra function parameters;
+`sdql` runs Table 1's ten kernel/phase combinations. Omit the study to run all
+case studies. See
+[the reference comparison documentation](egglog-experimental/src/slotted/ENCODING.md#against-the-reference)
+for substitution policies and comparison requirements.
+
+Case-study programs live in `egglog-experimental/benches/slotted/`; regression
+fixtures, shared languages, and compiler snapshots live in
+`egglog-experimental/tests/slotted/`. Artifact inputs and generators live in
+[`slotted/benchmarks/`](slotted/benchmarks/). `make test` (also part of `make check`)
+runs the Rust regressions, reference comparisons, and differential fuzz tests,
+including the benchmarks' shared generators. The
+[source language guide](egglog-experimental/src/slotted/LANGUAGE.md) is also
+included in the Rust documentation for `egglog_experimental::slotted`.
+
+The reusable Rust checker accepts `egraph-serialize` JSON from either engine,
+with optional annotations for slotted graphs:
+
+```bash
+cargo run -p egraph-isomorphism -- left.json right.json
+```
+
+It prints a JSON verdict and a verified isomorphism witness.
+See the crate's [API documentation](egraph-isomorphism/src/lib.rs) for the format
+and comparison policy. `slotted/check.py` builds and invokes this checker.
 
 The root workspace includes both `egglog` and `egglog-experimental`.
 `egglog-experimental` depends on the workspace `egglog` crate, keeping proof

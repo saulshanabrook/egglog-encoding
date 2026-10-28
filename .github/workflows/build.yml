@@ -23,7 +23,6 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
       - run: make python-nits
-      - run: make python-test
 
   rust:
     permissions:
@@ -36,9 +35,10 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup component add clippy rustfmt
+      - uses: astral-sh/setup-uv@v6
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: make rust-nits
-      - run: make rust-test
+      - run: make test
 
   benchmark-smoke:
     permissions:

@@ -41,7 +41,7 @@ impl PurePrim for MapFoldKv {
         // MapContainer orders opaque Values, not logical keys. This order is
         // stable only within the EGraph that owns those Values, so callers
         // should use an order-insensitive callback.
-        for (key, value) in map.data {
+        for (&key, &value) in map.data.iter() {
             accumulator = state.apply_function(&function, &[accumulator, key, value])?;
         }
         Some(accumulator)

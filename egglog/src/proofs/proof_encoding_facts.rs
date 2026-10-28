@@ -10,7 +10,7 @@ use crate::*;
 /// Where a fact being instrumented sits, for the anchors that have to name it.
 ///
 /// A body call reading an element out of a container is recorded by its rule and
-/// its index in that rule's body, which is how proof conversion recovers the
+/// its index in that rule's body, which is how proof lifting recovers the
 /// resolved primitive. Outside a rule body there is nothing to name — those
 /// contexts drop their anchors unread — so the rule is optional.
 #[derive(Clone, Copy)]
@@ -49,10 +49,12 @@ impl ProofInstrumentor<'_> {
             // In proof normal form, this is the only way that function calls appear.
             ResolvedFact::Eq(
                 _span,
-                ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(_), args),
+                ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(func), args),
                 // TODO this could actually be arbitrary pretty easily, it's just nested functions that are hard.
                 ResolvedExpr::Var(_span3, v),
-            ) if head.is_custom_func() => {
+            ) if head.is_custom_func() && (v.sort.is_eq_sort() || !func.is_global) => {
+                // Eq-sort globals retain this direct view read. Primitive globals
+                // have no proof column and use `instrument_fact_expr` instead.
                 let mut new_args = vec![];
                 let mut arg_proofs = vec![];
                 for arg in args {
@@ -178,19 +180,26 @@ impl ProofInstrumentor<'_> {
                 }
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
+                        if func_type.is_global && !func_type.output().is_eq_sort() {
+                            let value = self.fresh_var();
+                            res.push(format!(
+                                "(= {value} ({} {}))",
+                                func_type.name,
+                                ListDisplay(&new_args, " ")
+                            ));
+                            let proof = if self.proofs_enabled() {
+                                self.reflexive_fiat_proof(func_type.output().name(), &value)
+                            } else {
+                                "()".to_string()
+                            };
+                            return (value, proof);
+                        }
                         // Constructors and encoded globals both have the FD view
                         // `(children) -> (eclass, proof)`, so the same view read binds
                         // the e-class + proof.
                         assert!(
                             func_type.subtype == FunctionSubtype::Constructor
-                                || self
-                                    .egraph
-                                    .proof_state
-                                    .original_typechecking
-                                    .as_ref()
-                                    .is_some_and(|source| source
-                                        .type_info
-                                        .is_global(&func_type.name)),
+                                || func_type.is_global,
                             "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 
@@ -275,7 +284,7 @@ impl ProofInstrumentor<'_> {
                                 out.name(),
                                 holders.len(),
                             );
-                            // Conversion runs the primitive's validator on the
+                            // Lifting runs the primitive's validator on the
                             // argument terms, so every argument needs a proof —
                             // including the ones the walk above skipped. The
                             // container's own is the projection's base, filled in

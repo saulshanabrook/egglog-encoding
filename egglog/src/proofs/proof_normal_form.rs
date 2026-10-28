@@ -9,6 +9,9 @@ use egglog_ast::generic_ast::GenericExpr;
 /// directly (see `check_side_condition`) instead of needing a proof for each of a
 /// primitive's arguments — the arguments are already bound elsewhere.
 ///
+/// This runs before encoding. [`super::proof_format::lift_proof`] reconstructs
+/// source-level proofs after execution.
+///
 /// 1. A custom function call becomes its own top-level fact:
 ///    `(= (lower-bound a b) c)`.
 /// 2. A constructor or function argument of a primitive is lifted to a fresh

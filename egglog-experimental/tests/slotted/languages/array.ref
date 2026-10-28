@@ -1,0 +1,8 @@
+;;; Egglog constructors in `array.egg` and their reference spellings.
+;;; See `sdql.ref` for the format.
+
+App          app
+Lam          lam
+Let          let
+Sym          =payload
+Num          =payload

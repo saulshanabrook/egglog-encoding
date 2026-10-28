@@ -23,6 +23,172 @@ mod tests {
     }
 
     #[test]
+    fn primitive_globals_work_in_actions_queries_and_rule_heads() {
+        let source = r#"
+            (datatype Math (Num i64))
+            (relation Result (i64 String bool BigRat))
+            (let $two (+ 1 1))
+            (let $alias $two)
+            (let $text "two")
+            (let $yes true)
+            (let $half (bigrat (bigint 1) (bigint 2)))
+            (let $unit ())
+            (Num $alias)
+            (rule ((= n $two) (= (Num n) term))
+                  ((Result (+ n $alias) $text $yes $half)))
+            (run 1)
+            (check (= $unit ()))
+            (check (= $alias 2))
+            (check (Result 4 "two" true (bigrat (bigint 1) (bigint 2))))
+            (fail (check (= $two 3)))
+            (push)
+            (let $temporary (+ $two 1))
+            (check (= $temporary 3))
+            (pop)
+            (check (= $two 2))
+        "#;
+        for mut egraph in [
+            EGraph::default(),
+            EGraph::new_with_term_encoding(),
+            EGraph::new_with_proofs().with_proof_testing(),
+        ] {
+            egraph.parse_and_run_program(None, source).unwrap();
+        }
+    }
+
+    #[test]
+    fn merge_bodies_read_global_values() {
+        let source = r#"
+            (datatype Math (Num i64) (Neg Math))
+            (Num 0)
+            (let $step 10)
+            (let $fallback (Num 9))
+            (function running (i64) i64 :merge (+ old $step))
+            (set (running 1) 3)
+            (set (running 1) 99)
+            (check (= (running 1) 13))
+            (function pinned (i64) Math :merge $fallback)
+            (set (pinned 1) (Num 1))
+            (set (pinned 1) (Num 2))
+            (check (= (pinned 1) (Num 9)))
+            (function wrapped (i64) Math :merge (Num (+ $step 1)))
+            (set (wrapped 1) (Num 1))
+            (set (wrapped 1) (Num 2))
+            (check (= (wrapped 1) (Num 11)))
+
+            (union $fallback (Num 0))
+            (set (pinned 2) (Num 1))
+            (set (pinned 2) (Num 2))
+            (check (= (pinned 2) (Num 0)))
+            (function nested (i64) Math :merge (Neg $fallback))
+            (set (nested 1) (Num 1))
+            (set (nested 1) (Num 2))
+            (check (= (nested 1) (Neg (Num 0))))
+
+            (sort V (Vec Math))
+            (constructor Holder (V) Math)
+            (function boxes (i64) V :merge (vec-of $fallback))
+            (set (boxes 1) (vec-of (Num 1)))
+            (set (boxes 1) (vec-of (Num 2)))
+            (rule ((= v (boxes 1))) ((Holder v)))
+            (run 1)
+            (check (Holder (vec-of (Num 0))))
+        "#;
+        for mut egraph in [
+            EGraph::default(),
+            EGraph::new_with_term_encoding(),
+            EGraph::new_with_proofs().with_proof_testing(),
+        ] {
+            egraph.parse_and_run_program(None, source).unwrap();
+        }
+    }
+
+    #[test]
+    fn primitive_global_premises_are_checked_against_the_program() {
+        let source = r#"
+            (let $n 2)
+            (relation Result (i64))
+            (rule ((= value $n)) ((Result value)) :name "global-premise")
+            (run 1)
+        "#;
+        let mut egraph = EGraph::new_with_proofs();
+        egraph.parse_and_run_program(None, source).unwrap();
+        let outputs = egraph
+            .parse_and_run_program(None, "(prove (Result 2))")
+            .unwrap();
+        let mut other_program = EGraph::new_with_proofs();
+        other_program
+            .parse_and_run_program(None, &source.replace("$n 2", "$n 3"))
+            .unwrap();
+        let mut proofs_checked = 0;
+        for output in outputs {
+            if let CommandOutput::ProveExists {
+                mut proof_store,
+                proof_id,
+            } = output
+            {
+                proof_store
+                    .check_proof(proof_id, &egraph.proof_check_program)
+                    .unwrap();
+                assert!(
+                    proof_store
+                        .check_proof(proof_id, &other_program.proof_check_program)
+                        .is_err()
+                );
+                proofs_checked += 1;
+            }
+        }
+        assert_eq!(proofs_checked, 1);
+    }
+
+    #[test]
+    fn container_globals_are_rejected_in_popped_scopes_too() {
+        for (sort, value) in [("i64", "1"), ("Math", "(Num 1)")] {
+            let source = format!(
+                "(datatype Math (Num i64)) (sort V (Vec {sort})) \
+                 (push) (let $v (vec-of {value})) (pop)"
+            );
+            assert!(matches!(
+                proof_rejection_reason(&source),
+                ProofEncodingUnsupportedReason::LetBindingWithContainer
+            ));
+            let mut egraph = EGraph::default();
+            let resolved = egraph.resolve_program(None, &source).unwrap();
+            assert!(!crate::program_supports_proofs(
+                &resolved,
+                &egraph.type_info
+            ));
+        }
+    }
+
+    #[test]
+    fn proof_support_recognizes_resolved_globals_after_pop() {
+        let scoped = r#"
+            (datatype Math (Num i64))
+            (push)
+            (let $value 1)
+            (let $term (Num $value))
+            (extract $term)
+            (pop)
+        "#;
+        let mut egraph = EGraph::default();
+        let resolved = egraph.resolve_program(None, scoped).unwrap();
+        assert!(crate::program_supports_proofs(&resolved, &egraph.type_info));
+
+        // Reusing a popped binding's name does not make a new function a global.
+        let source = format!(
+            "{scoped} (function $value () i64 :merge old) \
+             (set ($value) 2) (extract ($value))"
+        );
+        let mut egraph = EGraph::default();
+        let resolved = egraph.resolve_program(None, &source).unwrap();
+        assert!(!crate::program_supports_proofs(
+            &resolved,
+            &egraph.type_info
+        ));
+    }
+
+    #[test]
     fn constructor_merge_reads_a_dirty_view() {
         let source = r#"
             (datatype Bound (IntB i64) (Join Bound Bound) (Other i64))

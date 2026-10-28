@@ -1,0 +1,60 @@
+(sort L) ; the logical sort containing propositions; booleans.
+
+(constructor True () L)
+(constructor False () L)
+
+(constructor Forall (L L) L :binder 0)
+(constructor Implies (L L) L)
+(constructor And (L L) L)
+
+(constructor P (L) L)
+(constructor Q (L) L)
+
+(constructor C () L)
+
+(constructor Identity (L) L)
+
+; 'let x=t in b' = (Let x b t)
+(constructor Let (L L L) L :binder 0)
+
+; general substitution:
+(rewrite (Let $x $x t) t)
+(rewrite (Let $x $b t) $b)
+(rewrite (Let $x (True) t) (True))
+(rewrite (Let $x (False) t) (False))
+(rewrite (Let $x (Forall $y b) t) (Forall $y (Let $x b t)))
+(rewrite (Let $x (Implies a b) t) (Implies (Let $x a t) (Let $x b t)))
+(rewrite (Let $x (And a b) t) (And (Let $x a t) (Let $x b t)))
+(rewrite (Let $x (P a) t) (P (Let $x a t)))
+(rewrite (Let $x (Q a) t) (Q (Let $x a t)))
+(rewrite (Let $x (C) t) (C))
+
+; forall substitution
+(rewrite
+    (True)
+    (Let $x b o)
+    :when (
+        (= t (True))
+        (= t (Forall $x b))
+        (= o (Identity o)) ; here I just want some random object 'o'
+    )
+)
+
+(rewrite
+    (Implies (True) x)
+    x
+)
+
+; axioms:
+; = true (forall x: P(x) -> Q(x))
+(union (True) (Forall $0 (Implies (P $0) (Q $0))))
+
+; = true (P c)
+(union (True) (P (C)))
+(union (C) (Identity (C)))
+
+(run 5)
+
+; goal:
+; = true (Q c)
+(check (= (True) (Q (C))))

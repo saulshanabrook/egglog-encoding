@@ -378,3 +378,32 @@ fn lowered_inserts_share_scalar_counter_reservations() {
         );
     }
 }
+
+#[test]
+fn execution_cache_follows_the_database_view() {
+    use std::sync::{Arc, Mutex};
+    let db = crate::Database::new();
+    let cached = db.with_execution_state(None, |state| {
+        let cached = state.execution_cache::<Mutex<usize>>();
+        *cached.lock().unwrap() = 7;
+        assert!(Arc::ptr_eq(
+            &cached,
+            &state.clone().execution_cache::<Mutex<usize>>()
+        ));
+        assert!(Arc::ptr_eq(
+            &cached,
+            &state
+                .seed()
+                .to_execution_state()
+                .execution_cache::<Mutex<usize>>()
+        ));
+        cached
+    });
+    for database in [&db, &db.clone()] {
+        database.with_execution_state(None, |state| {
+            let fresh = state.execution_cache::<Mutex<usize>>();
+            assert!(!Arc::ptr_eq(&cached, &fresh));
+            assert_eq!(*fresh.lock().unwrap(), 0);
+        });
+    }
+}

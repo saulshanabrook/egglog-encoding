@@ -67,12 +67,10 @@ pub(crate) fn run_merge(
     term_dag: &mut TermDag,
     func_name: &str,
     prog: &[ResolvedNCommand],
+    globals: &HashMap<String, TermId>,
     old_term: TermId,
     new_term: TermId,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
-    let mut subst = HashMap::default();
-    subst.insert("old".to_string(), old_term);
-    subst.insert("new".to_string(), new_term);
     for cmd in prog {
         if let GenericNCommand::Function(func_decl) = cmd
             && func_decl.name == func_name
@@ -84,13 +82,36 @@ pub(crate) fn run_merge(
                     function_name: func_name.to_string(),
                 })
             })?;
-            return eval_expr_with_subst("merge_function", &merge.result, term_dag, &subst);
+            return eval_merge_expr(term_dag, &merge.result, globals, old_term, new_term);
         }
     }
     Err(ProofCheckErrorKind::FunctionNotFound {
         function_name: func_name.to_string(),
     }
     .into())
+}
+
+/// Evaluate a merge using only its referenced bindings, so each merge proof
+/// does not copy every global in the program.
+pub(crate) fn eval_merge_expr(
+    term_dag: &mut TermDag,
+    expr: &ResolvedExpr,
+    globals: &HashMap<String, TermId>,
+    old_term: TermId,
+    new_term: TermId,
+) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
+    let subst = expr
+        .vars()
+        .filter_map(|var| {
+            let value = match var.name.as_str() {
+                "old" => Some(old_term),
+                "new" => Some(new_term),
+                _ => globals.get(&var.name).copied(),
+            };
+            value.map(|value| (var.name, value))
+        })
+        .collect();
+    eval_expr_with_subst("merge_function", expr, term_dag, &subst)
 }
 
 /// Given a sequence of actions, computes:
@@ -815,8 +836,14 @@ impl ProofStore {
                     };
 
                 // Run the merge function to get the expected result
-                let (merged_term_child, mut merged_props) =
-                    run_merge(&mut self.term_dag, function, program, old_term, new_term)?;
+                let (merged_term_child, mut merged_props) = run_merge(
+                    &mut self.term_dag,
+                    function,
+                    program,
+                    &ctx.global_bindings,
+                    old_term,
+                    new_term,
+                )?;
                 // Add f(inputs..., merged_term) to merged_props
                 let mut merged_view_args = input_args.clone();
                 merged_view_args.push(merged_term_child);

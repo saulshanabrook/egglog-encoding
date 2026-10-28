@@ -1,0 +1,9 @@
+;; A partial injection between slot names.
+(sort Renaming (Map i64 i64))
+;; All refinements of one matching frame.
+(sort Frames (Vec Frame))
+;; A class's symmetry group, and one group per child column of a node.
+(sort Group (Set Renaming))
+(sort Groups (Vec Group))
+;; A node's edges in canonical spelling, followed by its renaming and symmetries.
+(sort Renamings (Vec Renaming))

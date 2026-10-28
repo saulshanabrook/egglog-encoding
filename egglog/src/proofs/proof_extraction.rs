@@ -128,11 +128,6 @@ impl ProofInstrumentor<'_> {
         );
         let proof_id = proof_ids[0];
 
-        // Remove globals from the proof
-        if let Result::Err(e) = proof_store.remove_globals(&self.egraph.proof_check_program) {
-            panic!("Failed to remove globals from proof: {e}");
-        }
-
         // If the existence proof is a single-premise rule, strip that wrapping rule
         // and use its premise; otherwise use the proof as-is (an existence proof need
         // not be rule-justified — `check_proof` below validates it either way). Which

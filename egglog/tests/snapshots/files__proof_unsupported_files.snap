@@ -2,7 +2,6 @@
 source: egglog/tests/files.rs
 expression: snapshot
 ---
-before-proofs.egg
 begin-block.egg
 bignum.egg
 complex-merge-prim.egg
@@ -28,13 +27,11 @@ merge_read.egg
 multiset.egg
 naive-action-lookup.egg
 pair.egg
-prims.egg
 python_array_optimize.egg
 rat-pow-eval.egg
 repro-738-fn-sort.egg
 repro-herbie-vanilla.egg
 repro-new-backend-python-vec.egg
-repro-unsound.egg
 repro-vec-unequal.egg
 set.egg
 set_sort_function.egg

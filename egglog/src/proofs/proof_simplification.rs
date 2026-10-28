@@ -1,10 +1,5 @@
 use crate::{
-    Term, TermId,
-    ast::ResolvedNCommand,
-    proofs::{
-        proof_checker::{ProofCheckError, gather_globals},
-        proof_format::{Justification, Proof, ProofId, ProofStore, Proposition},
-    },
+    proofs::proof_format::{Justification, Proof, ProofId, ProofStore, Proposition},
     util::HashMap,
 };
 
@@ -16,56 +11,6 @@ pub(super) struct SimplificationCache {
 }
 
 impl ProofStore {
-    /// Remove globals from a proof by replacing all global variable references
-    /// with their computed values.
-    /// This constructs a map of global names to their terms (without globals),
-    /// then replaces all occurrences of those globals in the proof's term dag.
-    pub fn remove_globals(&mut self, prog: &[ResolvedNCommand]) -> Result<(), ProofCheckError> {
-        // Gather all globals and their values as terms
-        let globals = gather_globals(prog, &mut self.term_dag)?;
-
-        // Replace all global function calls (nullary functions) in the term dag
-        // with their computed values
-        self.replace_global_terms(&globals);
-        Ok(())
-    }
-
-    /// Replace all global function applications in the term dag with their values.
-    fn replace_global_terms(&mut self, globals: &HashMap<String, TermId>) {
-        // We need to rebuild the term dag, replacing global calls as we go
-        // Build a map from old term IDs to new term IDs
-        let mut term_mapping: HashMap<TermId, TermId> = HashMap::default();
-
-        // Process all terms in order (since term dag is built bottom-up)
-        for term_id in 0..self.term_dag.size() {
-            let term = self.term_dag.get(term_id).clone();
-            let new_term_id = match term {
-                Term::Lit(_) | Term::Var(_) => term_id, // Literals and vars don't change
-                Term::App(ref head, ref args) => {
-                    // Check if this is a nullary global function call
-                    if args.is_empty() && globals.contains_key(head) {
-                        // Replace with the global's value, applying the term mapping
-                        let global_term_id = globals[head];
-                        *term_mapping.get(&global_term_id).unwrap_or(&global_term_id)
-                    } else {
-                        // Map the children and reconstruct the term if any changed
-                        let mapped_args: Vec<TermId> = args
-                            .iter()
-                            .map(|&child_id| *term_mapping.get(&child_id).unwrap_or(&child_id))
-                            .collect();
-                        self.term_dag.app(head.clone(), mapped_args)
-                    }
-                }
-            };
-            term_mapping.insert(term_id, new_term_id);
-        }
-
-        // Now update all proofs to use the new term IDs
-        for (_id, proof) in self.id_to_proof.iter_mut() {
-            proof.map_terms_mut(|term_id| *term_mapping.get(&term_id).unwrap_or(&term_id));
-        }
-    }
-
     /// Add a new proof to the store and return its ID.
     fn add_proof(&mut self, proof: Proof) -> ProofId {
         self.id_to_proof.push(proof)
@@ -304,8 +249,9 @@ impl ProofStore {
                 if mapped_old != *old_proof || mapped_new != *new_proof {
                     *old_proof = mapped_old;
                     *new_proof = mapped_new;
-                    // The merge body establishes this conclusion, not an
-                    // equality between its old and new premise rows.
+                    // The conclusion comes from evaluating the merge, not from
+                    // equating its two input rows. Simplifying those premises
+                    // preserves the merge's original conclusion.
                     changed = true;
                 }
             }
@@ -391,47 +337,6 @@ impl ProofStore {
 
         self.id_to_proof[proof_id] = proof;
         proof_id
-    }
-}
-
-impl Proof {
-    fn map_terms_mut<F>(&mut self, mut f: F)
-    where
-        F: FnMut(TermId) -> TermId,
-    {
-        self.proposition.lhs = f(self.proposition.lhs);
-        self.proposition.rhs = f(self.proposition.rhs);
-        match &mut self.justification {
-            Justification::Fiat => {}
-            Justification::Rule {
-                name: _,
-                premise_proofs: _,
-                substitution,
-            } => {
-                for term_id in substitution.values_mut() {
-                    *term_id = f(*term_id);
-                }
-            }
-            Justification::MergeFn {
-                old_proof: _,
-                new_proof: _,
-                function: _,
-            } => {}
-            Justification::Congr {
-                proof: _,
-                child_index: _,
-                child_proof: _,
-            } => {}
-            Justification::Trans(_, _) => {}
-            Justification::Sym(_) => {}
-            Justification::Proj {
-                proof: _,
-                child_index: _,
-            } => {}
-            Justification::ContainerNormalize { proof: _ } => {}
-            // The only term (the result) lives in the proposition, already mapped.
-            Justification::Eval => {}
-        }
     }
 }
 

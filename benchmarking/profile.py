@@ -26,7 +26,7 @@ from native_memory import native_memory_command
 
 from . import samply_analysis
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
-from .models import FileSpec, TargetRequest
+from .models import DisequalityEncoding, FileSpec, TargetRequest
 from .processes import run_command, terminate_process_group
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
 from .workloads import require_workload_unchanged, resolve_files
@@ -68,6 +68,7 @@ class ProfileRequest:
     mode: ProfileMode
     open_after: bool
     force_run: bool
+    disequality_encoding: DisequalityEncoding = "nee"
     top: int = DEFAULT_PROFILE_TOP
     show_summary: bool = True
     output_format: OutputFormat = "rich"
@@ -80,6 +81,7 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
         description="Record or reuse a cached Samply CPU profile for one benchmark workload.",
     )
     parser.add_argument("file", help="benchmark workload file to profile")
+    parser.add_argument("--disequality-encoding", choices=("nee", "ee"), default="nee")
     parser.add_argument(
         "--fact-directory",
         default=None,
@@ -163,6 +165,7 @@ def profile_cache_path(
     treatment: Treatment,
     mode: ProfileMode,
     fact_directory_sha256: str = "",
+    disequality_encoding: DisequalityEncoding = "nee",
 ) -> Path:
     return (
         profiles_dir
@@ -170,7 +173,7 @@ def profile_cache_path(
         / profile_hash_component(binary_sha256)
         / profile_hash_component(file_sha256)
         / (profile_hash_component(fact_directory_sha256) if fact_directory_sha256 else "no-facts")
-        / f"{treatment}-{mode.cache_label}.json.gz"
+        / f"{treatment}-{disequality_encoding}-{mode.cache_label}.json.gz"
     )
 
 
@@ -201,7 +204,7 @@ def calculate_profile_iterations(
 
 def profile_name(
     file_spec: FileSpec,
-    treatment: Treatment,
+    treatment: str,
     mode: ProfileMode,
     iterations: int,
     binary_sha256: str,
@@ -320,6 +323,9 @@ def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
     files = resolve_files([str(args.file)], invocation_cwd, args.fact_directory)
     treatment = cast(Treatment, str(args.treatment))
+    disequality_encoding = cast(DisequalityEncoding, args.disequality_encoding)
+    if TREATMENT_SPECS[treatment].engine != "egglog" and disequality_encoding != "nee":
+        raise ValueError("disequality encoding selection is only supported by egglog treatments")
     file = files[0].for_engine(TREATMENT_SPECS[treatment].engine)
     validate_engine_workload(file, treatment)
     if args.iterations is not None:
@@ -334,6 +340,7 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         file=file,
         target_request=parse_target(str(args.target)),
         treatment=treatment,
+        disequality_encoding=disequality_encoding,
         timeout_sec=int(args.timeout_sec),
         profiles_dir=profiles_dir,
         mode=mode,
@@ -354,8 +361,13 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
     if binary_path is None:
         raise ValueError(f"target {target.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
-    workload = workload_command(binary_path, request.file, request.treatment)
     native_limit = TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg")
+    workload = workload_command(binary_path, request.file, request.treatment, request.disequality_encoding)
+    treatment_label = (
+        f"{request.treatment} ({request.disequality_encoding})"
+        if TREATMENT_SPECS[request.treatment].engine == "egglog"
+        else request.treatment
+    )
     artifact = profile_cache_path(
         request.profiles_dir,
         binary_sha256,
@@ -363,6 +375,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
         request.treatment,
         request.mode,
         request.file.fact_directory_sha256,
+        request.disequality_encoding,
     )
     profile: dict[str, Any] | None = None
     cache_status: Literal["hit", "recorded"] = "recorded"
@@ -384,7 +397,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
                     ("Calibrating", "bold"),
                     " ",
                     request.file.display_path,
-                    f" {request.treatment} for {request.mode.profile_seconds}s",
+                    f" {treatment_label} for {request.mode.profile_seconds}s",
                 )
             )
             calibration = run_command(workload, checkout_path, request.timeout_sec, native_limit=native_limit)
@@ -407,7 +420,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
         assert iterations is not None
         name = profile_name(
             request.file,
-            request.treatment,
+            treatment_label,
             request.mode,
             iterations,
             binary_sha256,
@@ -445,7 +458,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
             artifact=display_artifact,
             cache_status=cache_status,
             workload=request.file.display_path,
-            treatment=request.treatment,
+            treatment=treatment_label,
             top=request.top,
             cpu_summary=summary,
         )

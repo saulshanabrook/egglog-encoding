@@ -298,7 +298,7 @@ impl Head {
     /// Record a subterm's view-row proof as a bridge premise of the rule proofs
     /// minted from here on. A composing position records nothing: it has already
     /// used the proof, and a subterm the head concludes nothing about — a nested
-    /// `change` argument — is not in the array conversion rebuilds.
+    /// `change` argument — is not in the array lifting rebuilds.
     pub(crate) fn record_bridge(&mut self, view_proof: &str) {
         if self.composes() {
             return;

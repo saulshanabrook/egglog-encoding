@@ -1,6 +1,6 @@
 ---
 name: tidy-diff-docs
-description: Clean up the documentation and code comments introduced by a diff before merging. Strips implementation details, performance micro-claims, and restated or duplicate explanations from doc comments while keeping the caller-facing contract intact. Use when reviewing or preparing a PR's doc/regular comments, or when a reviewer asks to tidy up the docs and comments in a change.
+description: Clean up documentation and code comments introduced by a diff before merging. Keeps reference material focused on the current contract and removes edit history, implementation details, and duplicate explanations from public docs. Use when reviewing a PR's documentation or when a reviewer asks to tidy docs and comments.
 ---
 
 # Tidy diff docs
@@ -21,16 +21,35 @@ Two guardrails:
 
 ## Process
 
-1. Collect the changed comments: `git diff main...HEAD` (or the working /
-   staged diff under review). Look at every added or modified comment: the
-   line forms `///`, `//!` and `//`, and the block forms `/** … */`,
+1. Collect the changed documentation and comments: `git diff main...HEAD` (or
+   the working / staged diff under review). Include Markdown and every added
+   or modified comment: line forms `///`, `//!` and `//`, and block forms `/** … */`,
    `/*! … */` and `/* … */`, including multi-line spans.
 2. For each one, apply the rules below.
 3. Re-run `make nits` and the relevant tests. Intra-doc links such as
    `` [`Foo`] `` must still resolve after the edits.
 
-## Strip these from doc comments
+## Match the document's purpose
 
+Use [Diátaxis](https://diataxis.fr/) to distinguish tutorials, how-to guides,
+reference, and explanation. For [reference documentation](https://diataxis.fr/reference/),
+organize around the language or API: syntax, inputs, behavior, constraints,
+and errors. Use neutral descriptions and compact examples. Link to explanation
+or task-oriented guides instead of mixing them into the reference. Preserve
+design reasoning in documents whose purpose is explanation.
+
+## Strip these from public reference and doc comments
+
+- **Invented terminology** — Reuse terms supplied by the user or established in
+  existing code, documentation, or cited references. Do not coin new labels,
+  acronyms, or synonyms for existing concepts. A term introduced by an earlier
+  agent edit is not evidence of established usage; use a plain description when
+  no established term exists.
+- **Edit history** — AI-written docs often narrate the changes the agent just
+  made, including changes relative to earlier versions of the same branch.
+  Describe what exists now for a reader who knows none of that history. For
+  example, replace "now uses the normal CLI" with the command and its behavior;
+  keep historical comparisons for explicitly requested migration or release notes.
 - **Allocation / memory strategy** — "no per-row allocation", "stays off the
   heap", "one allocation, often pooled", "never touches the heap".
 - **Internal data structures** — "backed by a `SmallVec<[_; 8]>`", "wraps a
