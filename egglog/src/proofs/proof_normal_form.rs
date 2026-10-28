@@ -9,7 +9,7 @@ use egglog_ast::generic_ast::GenericExpr;
 /// directly (see `check_side_condition`) instead of needing a proof for each of a
 /// primitive's arguments — the arguments are already bound elsewhere.
 ///
-/// This runs before encoding. [`super::proof_format::lift_proof`] reconstructs
+/// This runs before encoding. [`super::proof_format::proof_store_from_terms`] reconstructs
 /// source-level proofs after execution.
 ///
 /// 1. A custom function call becomes its own top-level fact:
