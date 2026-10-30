@@ -611,6 +611,22 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
+    /// Adapt a source proof to the operand values the view will store.
+    fn canonicalize_operands(
+        &mut self,
+        emit: &mut Emit,
+        source_proof: String,
+        operands: &[Operand],
+    ) -> String {
+        let mut steps = vec![];
+        for (i, operand) in operands.iter().enumerate() {
+            if let Some(connector) = &operand.connector {
+                steps.push((i, self.connector_node(emit, connector)));
+            }
+        }
+        self.canonicalize(source_proof, steps)
+    }
+
     /// Mark two things as equal, adding proof if proofs are enabled. Claims the
     /// head's [`HeadPosition::Union`] columns, writes any proof-relation mints,
     /// and returns the `(set @UF ...)` action, which the caller must emit after
@@ -1823,13 +1839,7 @@ impl<'a> ProofInstrumentor<'a> {
         let fv = self.fresh_term_id(emit.stmts, &func_type.name);
         let view_proof_var = if self.egraph.proof_state.proofs_enabled {
             let own = self.reflexive_for_row(emit);
-            let mut steps = vec![];
-            for (i, arg) in args.iter().enumerate() {
-                if let Some(connector) = &arg.connector {
-                    steps.push((i, self.connector_node(emit, connector)));
-                }
-            }
-            self.canonicalize(own, steps)
+            self.canonicalize_operands(emit, own, args)
         } else {
             "()".to_string()
         };
@@ -1885,13 +1895,7 @@ impl<'a> ProofInstrumentor<'a> {
         // them writes no row for it: lifting recovers it from the column.
         let to_dedup = emit.head.composes().then(|| {
             let nat_prf = self.reflexive_for_justification(emit);
-            let mut steps = vec![];
-            for (i, arg) in args.iter().enumerate() {
-                if let Some(conn) = &arg.connector {
-                    steps.push((i, self.connector_node(emit, conn)));
-                }
-            }
-            self.canonicalize(nat_prf, steps)
+            self.canonicalize_operands(emit, nat_prf, args)
         });
         Natural {
             dedup_args,
