@@ -103,6 +103,36 @@ mod tests {
     }
 
     #[test]
+    fn merge_bodies_distinguish_globals_from_old_and_new() {
+        for (name, expected) in [("old", "(Pick (A) (C))"), ("new", "(Pick (B) (A))")] {
+            let source = format!(
+                r#"
+                (datatype Role (A) (B) (C) (Pick Role Role))
+                (relation Seen (Role))
+                (function local-role (i64) Role :merge (Pick old new))
+                (let {name} (A))
+                (function role (i64) Role :merge (Pick old new))
+                (set (local-role 0) (B))
+                (set (local-role 0) (C))
+                (check (= (local-role 0) (Pick (B) (C))))
+                (set (role 0) (B))
+                (set (role 0) (C))
+                (rule ((= value (role 0))) ((Seen value)))
+                (run 1)
+                (check (Seen {expected}))
+                "#,
+            );
+            for mut egraph in [
+                EGraph::default(),
+                EGraph::new_with_term_encoding(),
+                EGraph::new_with_proofs().with_proof_testing(),
+            ] {
+                egraph.parse_and_run_program(None, &source).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn primitive_global_premises_are_checked_against_the_program() {
         let source = r#"
             (let $n 2)
