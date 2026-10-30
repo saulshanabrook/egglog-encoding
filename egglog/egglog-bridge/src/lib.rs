@@ -1113,7 +1113,7 @@ impl EGraph {
                     SortedWritesTable::new(
                         n_args,
                         n_cols,
-                        Some(ColumnId::from_usize(schema.len())),
+                        ColumnId::from_usize(schema.len()),
                         to_rebuild,
                         merge_fn,
                     )
@@ -1702,7 +1702,7 @@ impl EGraph {
 #[derive(Clone)]
 struct RuleInfo {
     last_run_at: Timestamp,
-    query: rule::Query,
+    query: Arc<rule::Query>,
     cached_plan: Option<CachedPlanInfo>,
     desc: Arc<str>,
 }

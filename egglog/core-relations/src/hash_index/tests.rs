@@ -12,7 +12,7 @@ use crate::{
 use crate::{
     TupleIndex,
     hash_index::ColumnIndex,
-    table_shortcuts::{fill_table, v},
+    table_shortcuts::{fill_table, fill_timestamped_table, v},
     table_spec::{ColumnId, WrappedTable},
 };
 
@@ -49,7 +49,7 @@ fn basic_updates() {
                 vec![v(4), v(5), v(6), v(1)],
             ],
             2,
-            Some(ColumnId::new(3)),
+            ColumnId::new(3),
             |old, new| {
                 assert_eq!(old, new, "no conflicts in this test");
                 None
@@ -122,7 +122,7 @@ fn multi_column_column_index_rebuild_orders_each_value_by_row() {
         let right = if i < 32 { v(7) } else { v(2_000 + i) };
         vec![v(i), left, right]
     });
-    let mut table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+    let mut table = WrappedTable::new(fill_timestamped_table(rows, 1, |old, new| {
         assert_eq!(old, new, "no conflicts in this test");
         None
     }));
@@ -162,7 +162,7 @@ fn multi_column_column_index_rebuild_orders_each_value_by_row() {
 /// otherwise see the row twice.
 #[test]
 fn column_index_posts_a_row_once_per_distinct_value() {
-    let table = WrappedTable::new(fill_table(
+    let table = WrappedTable::new(fill_timestamped_table(
         vec![
             vec![v(0), v(10), v(11)],
             vec![v(1), v(11), v(12)],
@@ -170,7 +170,6 @@ fn column_index_posts_a_row_once_per_distinct_value() {
             vec![v(2), v(13), v(13)],
         ],
         1,
-        None,
         |old, new| {
             assert_eq!(old, new, "no conflicts in this test");
             None
@@ -213,7 +212,7 @@ fn parallel_column_index_posts_a_row_once_per_distinct_value() {
     // One row holding the same value in both indexed columns.
     let dup = v(999_999);
     rows[5] = vec![v(5), dup, dup];
-    let table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+    let table = WrappedTable::new(fill_timestamped_table(rows, 1, |old, new| {
         assert_eq!(old, new, "no conflicts in this test");
         None
     }));
@@ -293,10 +292,11 @@ fn column_index_rebuild_matches_oracle() {
                         row
                     })
                     .collect();
-                let table = WrappedTable::new(fill_table(rows.clone(), 1, None, |old, new| {
-                    assert_eq!(old, new, "unique keys, so no conflicts");
-                    None
-                }));
+                let table =
+                    WrappedTable::new(fill_timestamped_table(rows.clone(), 1, |old, new| {
+                        assert_eq!(old, new, "unique keys, so no conflicts");
+                        None
+                    }));
                 let cols: Vec<ColumnId> = (1..n_cols).map(ColumnId::from_usize).collect();
                 let covered: Vec<usize> = (1..n_cols).collect();
                 let expected = oracle(&rows, &covered);
@@ -354,7 +354,7 @@ fn parallel_column_index_handles_sparse_source_partitions() {
         }
     }
 
-    let table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+    let table = WrappedTable::new(fill_timestamped_table(rows, 1, |old, new| {
         assert_eq!(old, new, "unique keys, so no conflicts");
         None
     }));
@@ -382,7 +382,7 @@ fn physical_shards_partition_index_iteration() {
         let rows = (0..257)
             .map(|i| vec![v(i), v(i % 37), v(10_000 + i)])
             .collect::<Vec<_>>();
-        let table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+        let table = WrappedTable::new(fill_timestamped_table(rows, 1, |old, new| {
             assert_eq!(old, new, "unique keys, so no conflicts");
             None
         }));
@@ -443,7 +443,7 @@ fn positioned_lookups_and_iteration_agree() {
         let rows = (0..257)
             .map(|i| vec![v(i), v(i % 37), v(10_000 + i % 53)])
             .collect::<Vec<_>>();
-        let table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+        let table = WrappedTable::new(fill_timestamped_table(rows, 1, |old, new| {
             assert_eq!(old, new, "unique keys, so no conflicts");
             None
         }));

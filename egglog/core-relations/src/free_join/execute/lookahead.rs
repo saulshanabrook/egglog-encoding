@@ -6,7 +6,6 @@
 //! policy: the initial greedy sort, recursive reordering, this bounded override,
 //! and their interaction with factorization and parallel partitions.
 use super::super::join_tail::for_each_stage_atom;
-use super::super::packed_cache::RootProjectionSlot;
 use super::super::probe::intersect_with_dense_ref;
 use super::*;
 use crate::row_buffer::RowSink;
@@ -56,17 +55,22 @@ fn may_overlap(a: SubsetRef, b: SubsetRef, budget: &mut usize) -> bool {
     }
 }
 
-impl JoinState<'_, '_, '_> {
+impl<'exec> JoinState<'_, '_, 'exec> {
     fn cached_projection(
         &self,
+        atom: &Atom,
         source: &AtomRows,
         col: ColumnId,
         cs: &[Constraint],
-    ) -> Option<RootProjectionSlot> {
-        let AtomRows::Root(root) = source else {
+    ) -> Option<&'exec TrieNode<'exec>> {
+        let AtomRowsKind::Owned(root) = source.kind() else {
             return None;
         };
-        root.cached_projection(col, cs)
+        let family = self.db.tables[atom.table]
+            .successor_families
+            .get(&(col, super::super::packed_cache::canonical_constraints(cs)))?;
+        // SAFETY: this JoinState borrows the run's arena for `'exec`.
+        unsafe { root.cached_projection(*family) }
     }
 
     fn small_keys(
@@ -77,13 +81,12 @@ impl JoinState<'_, '_, '_> {
         cs: &[Constraint],
         budget: &mut usize,
     ) -> Option<Keys> {
-        if let Some(slot) = self.cached_projection(source, col, cs)
-            && let Some(index) = slot.get()
-            && index.len() <= row_limit()
-            && index.len() <= *budget
+        if let Some(index) = self.cached_projection(atom, source, col, cs)
+            && index.values().len() <= row_limit()
+            && index.values().len() <= *budget
         {
-            *budget -= index.len();
-            return Some(Keys((0..index.len()).map(|i| index.value_at(i)).collect()));
+            *budget -= index.values().len();
+            return Some(Keys(index.values().iter().copied().collect()));
         }
         let rows = source.subset();
         if rows.size() > row_limit() || rows.size() > *budget {
@@ -117,9 +120,7 @@ impl JoinState<'_, '_, '_> {
             keys.0.retain(|v| other.0.binary_search(v).is_ok());
             return;
         }
-        if let Some(slot) = self.cached_projection(source, col, cs)
-            && let Some(index) = slot.get()
-        {
+        if let Some(index) = self.cached_projection(atom, source, col, cs) {
             keys.0.retain(|v| {
                 if *budget == 0 {
                     return true;
@@ -294,11 +295,13 @@ impl JoinState<'_, '_, '_> {
                     continue;
                 }
                 let atom = &atoms[scan.atom];
-                if let Some(slot) =
-                    self.cached_projection(&bindings.subsets[scan.atom], scan.column, &scan.cs)
-                    && let Some(index) = slot.get()
-                {
-                    bound = bound.min(index.len());
+                if let Some(index) = self.cached_projection(
+                    atom,
+                    &bindings.subsets[scan.atom],
+                    scan.column,
+                    &scan.cs,
+                ) {
+                    bound = bound.min(index.values().len());
                     // A constrained root's domain is already no larger than
                     // the global column domain, so its catalog cannot help.
                     continue;

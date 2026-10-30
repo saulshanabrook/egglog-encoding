@@ -131,9 +131,9 @@ fn child_unions_preserve_fresh_shapes_and_cosets() {
     }
 }
 
-fn render(form: &Sexp) -> String {
+fn render(form: &Sexp<'_>) -> String {
     match form {
-        Sexp::Atom(s, _) => s.clone(),
+        Sexp::Atom(s, _) => s.as_ref().to_owned(),
         Sexp::Literal(l, _) => l.to_string(),
         Sexp::List(xs, _) => format!("({})", xs.iter().map(render).collect::<Vec<_>>().join(" ")),
     }

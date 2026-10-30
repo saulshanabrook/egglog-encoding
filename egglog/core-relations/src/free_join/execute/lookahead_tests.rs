@@ -4,18 +4,15 @@ use super::*;
 use crate::{
     free_join::{ProcessedConstraints, get_column_index_from_tableinfo},
     query::VarColumnMap,
-    table::SortedWritesTable,
-    table_shortcuts::v,
+    table_shortcuts::{TimestampedTable, v},
 };
 
 fn fixture() -> (Database, TableId, Atom) {
     let mut db = Database::new();
     let table = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             2,
             2,
-            None,
-            vec![],
             Box::new(|_, old, new, _| {
                 assert_eq!(old, new);
                 false
@@ -35,7 +32,7 @@ fn fixture() -> (Database, TableId, Atom) {
         table,
         var_columns: VarColumnMap::default(),
         constraints: ProcessedConstraints {
-            subset: db.get_table(table).all(),
+            subset: db.get_table(table).all().into(),
             fast: with_pool_set(|ps| ps.get()),
             slow: with_pool_set(|ps| ps.get()),
         },
@@ -65,7 +62,7 @@ fn reset_catalog_is_unknown_until_refreshed_and_lookahead_never_builds_it() {
     let arena = SharedArena::new();
     let execution = ExecutionState::new(db.read_only_view(), Default::default());
     let join = JoinState::new(&db, execution.seed(), None, &arena);
-    let source = AtomRows::Root(Arc::new(TrieRoot::new(db.get_table(table).all())));
+    let source = AtomRows::owned(Arc::new(OwnedAtomRows::new(db.get_table(table).all())));
     assert!(
         source.size() > row_limit(),
         "force the existing-catalog path"
@@ -112,7 +109,7 @@ fn reset_catalog_is_unknown_until_refreshed_and_lookahead_never_builds_it() {
 
 #[test]
 fn cached_projection_is_scoped_to_root_column_and_constraints() {
-    let (db, table, atom) = fixture();
+    let (mut db, table, atom) = fixture();
     let column = ColumnId::new(0);
     let lower = [
         Constraint::GtConst {
@@ -138,35 +135,46 @@ fn cached_projection_is_scoped_to_root_column_and_constraints() {
         col: ColumnId::new(1),
         val: v(31),
     }];
+    let lower_family = db.tables[table].successor_family(column, &lower);
+    let upper_family = db.tables[table].successor_family(column, &upper);
+    let unpublished_family = db.tables[table].successor_family(column, &unpublished);
     let arena = SharedArena::new();
     let execution = ExecutionState::new(db.read_only_view(), Default::default());
     let join = JoinState::new(&db, execution.seed(), None, &arena);
-    let root = Arc::new(TrieRoot::new_shared(db.get_table(table).all()));
-    let source = AtomRows::Root(root.clone());
+    let root = Arc::new(OwnedAtomRows::new_shared(db.get_table(table).all()));
+    let source = AtomRows::owned(root.clone());
     assert!(
         source.size() > row_limit(),
         "small-key access must use the cache"
     );
-    let lower_slot = root.projection_slot(column, &lower).unwrap();
-    let upper_slot = root.projection_slot(column, &upper).unwrap();
-    let unpublished_slot = root.projection_slot(column, &unpublished).unwrap();
-    let projection = |range: std::ops::Range<usize>| {
-        super::super::super::packed_cache::RootProjection::from_sorted_pairs(
-            range.map(|n| (v(n), RowId::from_usize(n))).collect(),
-        )
+    let lower_slot = root.packed_root_slot(lower_family, 3).unwrap();
+    let upper_slot = root.packed_root_slot(upper_family, 3).unwrap();
+    let unpublished_slot = root.packed_root_slot(unpublished_family, 3).unwrap();
+    let projection = |constraints: &[Constraint]| {
+        join.build_packed_node(
+            db.get_table(table).as_ref(),
+            root.subset.as_ref(),
+            false,
+            constraints,
+            column,
+            ChildShape::Leaf,
+            true,
+        ) as *const TrieNode as usize
     };
-    assert!(lower_slot.set(projection(1..16)).is_ok());
-    assert!(upper_slot.set(projection(16..32)).is_ok());
+    assert!(lower_slot.set(projection(&lower)).is_ok());
+    assert!(upper_slot.set(projection(&upper)).is_ok());
 
     let reversed = [lower[1].clone(), lower[0].clone()];
-    assert!(Arc::ptr_eq(
-        &join.cached_projection(&source, column, &reversed).unwrap(),
-        &lower_slot,
-    ));
-    assert!(Arc::ptr_eq(
-        &join.cached_projection(&source, column, &upper).unwrap(),
-        &upper_slot,
-    ));
+    assert_eq!(
+        join.cached_projection(&atom, &source, column, &reversed)
+            .unwrap() as *const TrieNode as usize,
+        *lower_slot.get().unwrap(),
+    );
+    assert_eq!(
+        join.cached_projection(&atom, &source, column, &upper)
+            .unwrap() as *const TrieNode as usize,
+        *upper_slot.get().unwrap(),
+    );
     let mut budget = 256;
     assert_eq!(
         join.small_keys(&atom, &source, column, &reversed, &mut budget)
@@ -184,21 +192,26 @@ fn cached_projection_is_scoped_to_root_column_and_constraints() {
     );
 
     assert!(
-        join.cached_projection(&source, column, &unpublished)
+        join.cached_projection(&atom, &source, column, &unpublished)
             .is_none()
     );
     assert!(unpublished_slot.get().is_none());
     assert!(
-        join.cached_projection(&source, ColumnId::new(1), &lower)
+        join.cached_projection(&atom, &source, ColumnId::new(1), &lower)
             .is_none()
     );
-    let other_root = AtomRows::Root(Arc::new(TrieRoot::new_shared(db.get_table(table).all())));
+    let other_root = AtomRows::owned(Arc::new(OwnedAtomRows::new_shared(
+        db.get_table(table).all(),
+    )));
     assert!(
-        join.cached_projection(&other_root, column, &lower)
+        join.cached_projection(&atom, &other_root, column, &lower)
             .is_none()
     );
-    let residual = AtomRows::Root(Arc::new(TrieRoot::new(db.get_table(table).all())));
-    assert!(join.cached_projection(&residual, column, &lower).is_none());
+    let residual = AtomRows::owned(Arc::new(OwnedAtomRows::new(db.get_table(table).all())));
+    assert!(
+        join.cached_projection(&atom, &residual, column, &lower)
+            .is_none()
+    );
 }
 #[test]
 fn promoted_intersection_preserves_every_factorized_payload_row() {
@@ -207,11 +220,9 @@ fn promoted_intersection_preserves_every_factorized_payload_row() {
     let (mut db, facts, _) = fixture();
     let [gate, output] = [1, 2].map(|arity| {
         db.add_table(
-            SortedWritesTable::new(
+            TimestampedTable::new(
                 arity,
                 arity,
-                None,
-                vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new);
                     false
@@ -283,7 +294,7 @@ fn promoted_intersection_preserves_every_factorized_payload_row() {
         for (id, atom) in plan.atoms.iter() {
             let headers: SmallVec<[&JoinHeader; 2]> =
                 plan.header.iter().filter(|h| h.atom == id).collect();
-            bindings.insert_node(id, join.root_node(atom.table, &headers).unwrap());
+            bindings.insert_node(id, join.root_node(atom, &headers).unwrap());
         }
         assert!(join.mixed_probe_order(&plan.stages, &plan.atoms, &mut order, 0, &bindings));
         assert_eq!(order.get(0), intersection_stage);
@@ -448,11 +459,9 @@ fn incumbent_catalog_bound_counts_keys_and_ignores_missing_reset_and_occurrence_
 
     let (mut db, _, mut atom) = fixture();
     let table = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             2,
             2,
-            None,
-            vec![],
             Box::new(|_, old, new, _| {
                 assert_eq!(old, new);
                 false
@@ -469,7 +478,7 @@ fn incumbent_catalog_bound_counts_keys_and_ignores_missing_reset_and_occurrence_
     }
     db.merge_all();
     atom.table = table;
-    atom.constraints.subset = db.get_table(table).all();
+    atom.constraints.subset = db.get_table(table).all().into();
 
     let id = AtomId::from_usize(0);
     let col = ColumnId::from_usize(0);
@@ -511,7 +520,7 @@ fn incumbent_catalog_bound_counts_keys_and_ignores_missing_reset_and_occurrence_
         let execution = ExecutionState::new(db.read_only_view(), Default::default());
         let join = JoinState::new(db, execution.seed(), None, &arena);
         let mut bindings = BindingInfo::default();
-        bindings.insert_node(id, Arc::new(TrieRoot::new(db.get_table(table).all())));
+        bindings.insert_node(id, Arc::new(OwnedAtomRows::new(db.get_table(table).all())));
         join.incumbent_bound(stage, &atoms, &bindings)
     };
 

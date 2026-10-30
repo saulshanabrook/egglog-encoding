@@ -1622,7 +1622,7 @@ impl EGraph {
                 return Err(Error::RuleAlreadyExists(rule.name, rule.span));
             }
             indexmap::map::Entry::Vacant(e) => e.insert(CompiledRule {
-                core: core_rule,
+                core: Arc::new(core_rule),
                 backend_id: rule_id,
                 seminaive,
                 requires_read_context,

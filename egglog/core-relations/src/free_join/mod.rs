@@ -34,8 +34,11 @@ use crate::{
     },
 };
 
-use self::plan::Plan;
+use self::packed_cache::{AccessFamilies, FamilyId, SuccessorSig, canonical_constraints};
+use self::packed_trie::ChildShape;
+use self::plan::{Plan, SharedHeaderSubset};
 use crate::action::{ExecutionState, ExternalContext};
+use crate::common::HashMap;
 
 pub(crate) mod execute;
 pub(crate) mod frame_update;
@@ -79,8 +82,9 @@ define_id!(pub(crate) ActionId, u32, "an identifier picking out the RHS of a rul
 #[derive(Debug)]
 pub(crate) struct ProcessedConstraints {
     /// The subset of the table matching the fast constraints. If there are no
-    /// fast constraints then this is the full table.
-    pub(crate) subset: Subset,
+    /// fast constraints then this is the full table. The result is immutable
+    /// after processing and shared with atom clones and plan headers.
+    pub(crate) subset: SharedHeaderSubset,
     /// The constraints that can be evaluated quickly (O(log(n)) or O(1)).
     pub(crate) fast: Pooled<Vec<Constraint>>,
     /// The constraints that require an O(n) scan to evaluate.
@@ -105,7 +109,7 @@ impl ProcessedConstraints {
 
     pub(crate) fn dummy() -> ProcessedConstraints {
         ProcessedConstraints {
-            subset: Subset::empty(),
+            subset: Subset::empty().into(),
             fast: Pooled::new(Vec::new()),
             slow: Pooled::new(Vec::new()),
         }
@@ -173,9 +177,35 @@ pub struct TableInfo {
     /// mapping each value appearing in any of them to the rows containing it.
     /// The disjunctive counterpart to `indexes`, which keys on the whole tuple.
     pub(crate) occurrence_indexes: IndexCatalog<SmallVec<[ColumnId; 4]>, HashColumnIndex>,
+    /// Every way a built plan indexes rows below this table's shared trie
+    /// nodes, interned in plan-build order; see [`FamilyId`].
+    successor_families: HashMap<SuccessorSig, FamilyId>,
 }
 
 impl TableInfo {
+    /// Intern the family that indexes `column` after applying `constraints`.
+    fn successor_family(&mut self, column: ColumnId, constraints: &[Constraint]) -> FamilyId {
+        let next = FamilyId::from_usize(self.successor_families.len());
+        *self
+            .successor_families
+            .entry((column, canonical_constraints(constraints)))
+            .or_insert(next)
+    }
+
+    /// The child storage of every trie node shared below this table's roots:
+    /// one family per interned successor, or a leaf if no plan indexes below
+    /// them. Plans are built before a rule set runs, so the count is fixed for
+    /// the whole run.
+    pub(crate) fn shared_child_shape(&self) -> ChildShape {
+        if self.successor_families.is_empty() {
+            ChildShape::Leaf
+        } else {
+            ChildShape::Dynamic {
+                families: self.successor_families.len(),
+            }
+        }
+    }
+
     #[doc(hidden)]
     pub fn identity(&self) -> TableIdentity {
         self.identity
@@ -218,6 +248,7 @@ impl Clone for TableInfo {
             indexes: deep_clone_map(&self.indexes, self.table.as_ref()),
             column_indexes: deep_clone_map(&self.column_indexes, self.table.as_ref()),
             occurrence_indexes: deep_clone_map(&self.occurrence_indexes, self.table.as_ref()),
+            successor_families: self.successor_families.clone(),
         }
     }
 }
@@ -938,6 +969,7 @@ impl Database {
             indexes: IndexCatalog::new(),
             column_indexes: IndexCatalog::new(),
             occurrence_indexes: IndexCatalog::new(),
+            successor_families: HashMap::default(),
         });
         self.deps.add_table(res, read_deps, write_deps);
         res
@@ -1033,7 +1065,11 @@ impl Database {
             // Remove this constraint from the slow list.
             false
         });
-        ProcessedConstraints { subset, fast, slow }
+        ProcessedConstraints {
+            subset: subset.into(),
+            fast,
+            slow,
+        }
     }
 
     /// Get direct mutable access to the table.
@@ -1097,7 +1133,27 @@ impl Database {
     }
 
     pub(crate) fn plan_query(&mut self, query: Query) -> Plan {
-        plan::plan_query(query, ColumnCardEst::new(self))
+        let mut plan = plan::plan_query(query, ColumnCardEst::new(self));
+        // Intern the successor family of every indexed access now, so nodes
+        // shared across plans publish their children under ids that are fixed
+        // before any rule set runs.
+        let atoms = plan.atoms();
+        plan.for_each_stages_mut(|stages| {
+            let mut families = Vec::new();
+            stages.for_each_indexed_access(|atom, columns, constraints| {
+                let info = &mut self.tables[atoms[atom].table];
+                let mut access = AccessFamilies::new();
+                access.push(info.successor_family(columns[0], constraints));
+                access.extend(
+                    columns[1..]
+                        .iter()
+                        .map(|column| info.successor_family(*column, &[])),
+                );
+                families.push(access);
+            });
+            stages.set_families(families.into());
+        });
+        plan
     }
 }
 

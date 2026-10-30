@@ -291,7 +291,6 @@ impl Table for DisplacedTable {
                 n_vals: 2,
             },
             uncacheable_columns,
-            allows_delete: false,
         }
     }
 
@@ -550,12 +549,7 @@ impl Table for DisplacedTable {
 impl DisplacedTable {
     fn take_change(&mut self) -> TableChange {
         let changed = mem::take(&mut self.changed);
-        // UF table rows can be updated "in place", so count a change as both
-        // an addition and a removal.
-        TableChange {
-            added: changed,
-            removed: changed,
-        }
+        TableChange { added: changed }
     }
 
     pub fn underlying_uf(&self) -> &UnionFind {
