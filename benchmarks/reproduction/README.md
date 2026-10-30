@@ -65,16 +65,13 @@ has 488 saved inputs: 486 application replays and two standalone Math fixtures.
 Math12 graph parity is an explicit correctness check, separate from collection:
 
 ```sh
-CARGO_BUILD_JOBS=2 cargo test --locked --release -p egg-math-benchmark --no-run --message-format=json
-# Use the test executable path printed in the compiler-artifact JSON:
-uv run --locked python -m benchmarks.validate_math \
-  --test-binary /path/to/egg_math_benchmark-test > /tmp/math12-validation.log
+CARGO_BUILD_JOBS=2 make math-parity
 ```
 
 The ignored Rust test compares Egg and Egglog with proofs off at exactly twelve
 rounds. It checks the frozen equality, logical constructor and class counts,
 and query non-insertion, dropping the native graph before building the Egglog
-graph. The launcher applies the shared sixteen-GiB native allocation limit and
-a 300-second timeout, then leaves success and failure reporting to the normal
-Rust test runner. This large test remains excluded from ordinary Cargo runs;
-benchmark timings come from the regular CLI collection path.
+graph. The check runner supplies the shared sixteen-GiB native allocation limit
+and allocator startup policy, then leaves success and failure reporting to the
+normal Rust test runner. This large test remains excluded from ordinary Cargo
+runs; benchmark timings come from the regular CLI collection path.

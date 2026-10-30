@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import native_memory
 from scripts import check
 
 
@@ -78,6 +79,43 @@ def test_rust_arguments_are_argv_and_do_not_affect_thread_defaults(
         assert command.args[-3:] == ("--test-threads=1", "--skip", "name with `backticks` and $(substitution)")
         assert command.env["RAYON_NUM_THREADS"] == "7"
     assert "proofs/" in commands[-1].args
+
+
+def test_math_parity_runs_only_the_guarded_release_test(
+    commands: list[Command], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_memory, "NATIVE_LIMIT_BYTES", 12345)
+    monkeypatch.setattr(native_memory, "NATIVE_ALLOCATOR_ENV", {"TEST_NATIVE_POLICY": "shared"})
+    assert check.main(["math-parity"]) == 0
+    (command,) = commands
+    assert command.args == (
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "egg-math-benchmark",
+        "--bin",
+        "egg-math-benchmark",
+        "--",
+        "--exact",
+        "tests::math12_graph_parity",
+        "--ignored",
+        "--nocapture",
+    )
+    assert command.env["TEST_NATIVE_POLICY"] == "shared"
+    assert command.env["MATH12_MEMORY_LIMIT_BYTES"] == "12345"
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "target"), [(["-m", "scripts.check"], "math-parity"), (["scripts/check.py"], "rust-test")]
+)
+def test_module_and_existing_script_entrypoints_dry_run(entrypoint: list[str], target: str) -> None:
+    result = subprocess.run(
+        [sys.executable, *entrypoint, "--dry-run", target], cwd=check.ROOT, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert "cargo test" in result.stderr
 
 
 def test_lean_checks_build_the_shared_generator_once(commands: list[Command]) -> None:
@@ -172,7 +210,7 @@ def test_make_forwards_configuration_without_shell_interpolation(tmp_path: Path)
     )
     assert result.returncode == 0, result.stderr
     args, env = json.loads(record.read_text())
-    assert args == ["scripts/check.py", "rust-test"]
+    assert args == ["-m", "scripts.check", "rust-test"]
     assert env["RUST_TEST_ARGS"] == rust_args
     assert env["LEAN_BIN_DIR"] == "lean bins"
     assert env["LEAN_CERTIFICATES"] == "proofs file.json"

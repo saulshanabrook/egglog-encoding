@@ -1,6 +1,6 @@
 # Validation recipes live in scripts/check.py; these names remain public aliases.
 CHECK_TARGETS := \
-	check nits test python-check python-nits rust-check rust-nits proof-tests \
+	check nits test python-check python-nits rust-check rust-nits proof-tests math-parity \
 	lean-check lean-difftest lean-compiled-difftest lean-congruence-test lean-provenance-test \
 	lean-resugar-test \
 	lean-certificate-test lean-update-fixtures lean-egg-test lean-update-egg-snapshots \
@@ -15,7 +15,7 @@ CHECK_TARGETS := \
 export RUST_TEST_ARGS LEAN_BIN_DIR LEAN_CERTIFICATES
 
 $(CHECK_TARGETS):
-	python3 scripts/check.py $@
+	python3 -m scripts.check $@
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
 

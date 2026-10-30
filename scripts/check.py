@@ -132,6 +132,27 @@ class Checks:
     def proof_tests(self) -> None:
         self._run("cargo", "test", "--workspace", "--test", "files", "proofs/", "--", *self._rust_args)
 
+    def math_parity(self) -> None:
+        from native_memory import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES
+
+        self._run(
+            "cargo",
+            "test",
+            "--locked",
+            "--release",
+            "-p",
+            "egg-math-benchmark",
+            "--bin",
+            "egg-math-benchmark",
+            "--",
+            "--exact",
+            "tests::math12_graph_parity",
+            "--ignored",
+            "--nocapture",
+            *self._rust_args,
+            env={**NATIVE_ALLOCATOR_ENV, "MATH12_MEMORY_LIMIT_BYTES": str(NATIVE_LIMIT_BYTES)},
+        )
+
     def lean_check(self) -> None:
         self._lake("build")
         print("Check Lean sources for proof holes", file=sys.stderr, flush=True)

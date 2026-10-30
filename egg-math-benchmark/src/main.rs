@@ -210,13 +210,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bounded paper validation: benchmarks/validate_math.py"]
+    #[ignore = "bounded paper validation: make math-parity"]
     fn math12_graph_parity() {
         let _args = benchmark_memory::configure([
             "math12-graph-parity".into(),
             "--memory-limit-bytes".into(),
-            std::env::var_os("MATH12_MEMORY_LIMIT_BYTES")
-                .expect("launch via benchmarks/validate_math.py"),
+            std::env::var_os("MATH12_MEMORY_LIMIT_BYTES").expect("launch via make math-parity"),
         ]);
         eprintln!("Math12: Egg, proofs off");
         let (_, native, established) =

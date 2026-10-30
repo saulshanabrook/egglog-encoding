@@ -44,6 +44,10 @@ It is a name-filtered subset of `cargo test --workspace`, so do not run it after
 a full workspace test unless you want a focused proof rerun. The Make target
 owns the exact Cargo filter.
 
+`make math-parity` explicitly compares the twelve-round Math graphs across Egg
+and Egglog with proofs off, in release mode under the shared native memory cap.
+This large test is excluded from `make check`.
+
 For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
 machine-readable report path so the run does not read or append to the default
 benchmark cache; runner status and build diagnostics stay on stderr.
