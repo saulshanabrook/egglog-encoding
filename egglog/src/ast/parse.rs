@@ -321,6 +321,17 @@ impl Parser {
         Ok(nested.into_iter().flatten().collect())
     }
 
+    /// Parse one source form and expand its parser macros. An empty expansion is
+    /// `Some(vec![])`; only the end of the source returns `None`.
+    pub(crate) fn parse_next_command(
+        &mut self,
+        ctx: &mut SexpParser<'_>,
+    ) -> Result<Option<Vec<Command>>, ParseError> {
+        ctx.next_sexp()?
+            .map(|form| self.parse_command(&form))
+            .transpose()
+    }
+
     // currently only used for testing, but no reason it couldn't be used elsewhere later
     pub fn get_expr_from_string(
         &mut self,
@@ -1420,6 +1431,17 @@ impl<'a> SexpParser<'a> {
         }
     }
 
+    /// Read one complete form with the ordinary grammar, retaining it for
+    /// parser-macro expansion without re-lexing.
+    pub(crate) fn next_sexp(&mut self) -> Result<Option<Sexp<'a>>, ParseError> {
+        self.advance_past_whitespace();
+        if self.is_at_end() {
+            Ok(None)
+        } else {
+            sexp(self).map(Some)
+        }
+    }
+
     fn current_char(&self) -> Option<char> {
         self.input[self.index..].chars().next()
     }
@@ -1788,6 +1810,161 @@ mod tests {
         };
         assert_eq!(expr.to_string(), "(generated-λ)");
         assert_eq!(expr.span().string(), "(generated :name λ :flag)");
+    }
+
+    #[test]
+    fn incremental_command_parser_preserves_macro_order_and_owned_spans() {
+        use std::sync::Mutex;
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let retained = Arc::new(Mutex::new(Vec::new()));
+        let mut parser = Parser::default();
+        let macro_events = events.clone();
+        let macro_retained = retained.clone();
+        parser.add_command_macro(Arc::new(SimpleMacro::new(
+            "install",
+            move |_, span, parser| {
+                macro_events.lock().unwrap().push("install");
+                macro_retained.lock().unwrap().push(span);
+                let events = macro_events.clone();
+                parser.add_expr_macro(Arc::new(SimpleMacro::new(
+                    "boxed",
+                    move |args, span, parser| {
+                        events.lock().unwrap().push("boxed");
+                        Ok(Expr::Call(
+                            span,
+                            "Box".into(),
+                            map_fallible(args, parser, Parser::parse_expr)?,
+                        ))
+                    },
+                )));
+                let events = macro_events.clone();
+                parser.add_command_macro(Arc::new(SimpleMacro::new(
+                    "emit",
+                    move |args, _, parser| {
+                        events.lock().unwrap().push("emit");
+                        let mut commands = Vec::new();
+                        for arg in args {
+                            commands.extend(parser.parse_command(arg)?);
+                        }
+                        Ok(commands)
+                    },
+                )));
+                Ok(vec![])
+            },
+        )));
+        let source = "(install)\n(emit (boxed \"λ\") (A)); trailing comment";
+        let commands = {
+            let input = source.to_owned();
+            let mut ctx = SexpParser::new(Some("macros.egg".into()), &input);
+            assert!(
+                parser
+                    .parse_next_command(&mut ctx)
+                    .unwrap()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(*events.lock().unwrap(), ["install"]);
+            let commands = parser.parse_next_command(&mut ctx).unwrap().unwrap();
+            assert!(parser.parse_next_command(&mut ctx).unwrap().is_none());
+            commands
+        };
+        drop(parser);
+        assert_eq!(*events.lock().unwrap(), ["install", "emit", "boxed"]);
+        assert_eq!(
+            commands.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["(Box \"λ\")", "(A)"]
+        );
+        let Command::Action(Action::Expr(action_span, Expr::Call(expr_span, _, args))) =
+            &commands[0]
+        else {
+            panic!("expected expanded action");
+        };
+        let Expr::Lit(literal_span, Literal::String(value)) = &args[0] else {
+            panic!("expected retained string literal");
+        };
+        assert_eq!(value, "λ");
+        let retained = retained.lock().unwrap();
+        for (span, text) in [
+            (&retained[0], "(install)"),
+            (action_span, "(boxed \"λ\")"),
+            (expr_span, "(boxed \"λ\")"),
+            (literal_span, "\"λ\""),
+        ] {
+            let Span::Egglog(raw) = span else {
+                panic!("expected source span");
+            };
+            let start = source.find(text).unwrap();
+            assert_eq!(raw.file.name.as_deref(), Some("macros.egg"));
+            assert_eq!(raw.file.contents, source);
+            assert_eq!((raw.i, raw.j), (start, start + text.len()));
+            assert_eq!(span.string(), text);
+        }
+    }
+
+    #[test]
+    fn eager_and_incremental_parsers_preserve_their_error_boundaries() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        for (source, message, range, lexical_error) in [
+            ("(seen)\n)", "unexpected `)`", (7, 8), true),
+            (
+                "(seen)\n\"unterminated",
+                "string is missing end quote",
+                (7, 20),
+                true,
+            ),
+            (
+                "(seen)\nnot-a-command\n(seen)",
+                "expected command",
+                (7, 20),
+                false,
+            ),
+        ] {
+            for incremental in [false, true] {
+                let calls = Arc::new(AtomicUsize::new(0));
+                let macro_calls = calls.clone();
+                let mut parser = Parser::default();
+                parser.add_command_macro(Arc::new(SimpleMacro::new("seen", move |_, _, _| {
+                    macro_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![])
+                })));
+                let error = {
+                    let input = source.to_owned();
+                    let filename = Some("errors.egg".into());
+                    if incremental {
+                        let mut ctx = SexpParser::new(filename, &input);
+                        assert!(
+                            parser
+                                .parse_next_command(&mut ctx)
+                                .unwrap()
+                                .unwrap()
+                                .is_empty()
+                        );
+                        parser.parse_next_command(&mut ctx).unwrap_err()
+                    } else {
+                        parser
+                            .get_program_from_string(filename, &input)
+                            .unwrap_err()
+                    }
+                };
+                drop(parser);
+                // Eager parsing lexes the whole source before expanding macros.
+                // Incremental parsing keeps an already-expanded prefix on error.
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    usize::from(incremental || !lexical_error)
+                );
+                assert_eq!(error.1, message);
+                let Span::Egglog(span) = &error.0 else {
+                    panic!("expected source error span");
+                };
+                assert_eq!(span.file.name.as_deref(), Some("errors.egg"));
+                assert_eq!(span.file.contents, source);
+                assert_eq!((span.i, span.j), range);
+                assert_eq!(error.0.string(), &source[range.0..range.1]);
+            }
+        }
     }
 
     #[test]
