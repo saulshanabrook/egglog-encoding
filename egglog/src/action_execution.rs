@@ -108,15 +108,39 @@ impl<'a> ActionExecutor<'a> {
         result
     }
 
+    fn next_command(&mut self, program: &mut ProgramSource<'_>) -> Result<Option<Command>, Error> {
+        match program {
+            ProgramSource::Commands(commands) => Ok(commands.next()),
+            ProgramSource::Text {
+                parser: source,
+                expanded,
+            } => loop {
+                if let Some(command) = expanded.next() {
+                    return Ok(Some(command));
+                }
+                let parsed = self.committed(|graph| {
+                    let timer = Instant::now();
+                    let parsed = graph.parser.parse_next_command(source);
+                    graph.overall_report.frontend_parse += timer.elapsed();
+                    parsed.map_err(Error::from)
+                })?;
+                match parsed {
+                    Some(commands) => *expanded = commands.into_iter(),
+                    None => return Ok(None),
+                }
+            },
+        }
+    }
+
     pub(super) fn program(
         &mut self,
-        program: Vec<Command>,
+        mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
-        for command in program {
+        while let Some(command) = self.next_command(&mut program)? {
             let callback_free = !self.graph.are_proofs_enabled()
                 && self
                     .graph
@@ -149,8 +173,19 @@ impl<'a> ActionExecutor<'a> {
                         let s = std::fs::read_to_string(file)
                             .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
                         graph.overall_report.frontend_other += include_timer.elapsed();
-                        let included_program =
-                            graph.parse_program_timed(Some(file.clone()), &s?)?;
+                        let s = s?;
+                        let included_program = if graph.are_proofs_enabled() {
+                            ProgramSource::Commands(
+                                graph
+                                    .parse_program_timed(Some(file.clone()), &s)?
+                                    .into_iter(),
+                            )
+                        } else {
+                            ProgramSource::Text {
+                                parser: SexpParser::new(Some(file.clone()), &s),
+                                expanded: Vec::new().into_iter(),
+                            }
+                        };
                         // run program internal on these include commands
                         graph.process_program_internal(included_program, run_commands)
                     })?;
