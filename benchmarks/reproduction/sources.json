@@ -3,8 +3,22 @@
     "artifact": "https://doi.org/10.5281/zenodo.7709794",
     "repository": "https://github.com/pldi23-eqlog-ae/micro-benchmarks",
     "revision": "5360490242ec846d3323f3a8e83e3df78cb81f2f",
-    "iterations": 11,
-    "input": "egglog-experimental/tests/math-microbenchmark-rational.egg"
+    "inputs": [
+      {
+        "iterations": 11,
+        "input": "egglog-experimental/tests/math-microbenchmark-rational.egg",
+        "adaptations": [
+          "original seven Math seeds and 24 rules; simple schedule; iteration-11 equality"
+        ]
+      },
+      {
+        "iterations": 12,
+        "input": "benchmarks/corpus/math/math-iteration-12.egg",
+        "adaptations": [
+          "original seven Math seeds and 24 rules; simple schedule; terminal distribution equality; cross-engine logical graph parity at12 in a separate resource-bounded test"
+        ]
+      }
+    ]
   },
   "luminal": {
     "repository": "https://github.com/saulshanabrook/egglog_repro",

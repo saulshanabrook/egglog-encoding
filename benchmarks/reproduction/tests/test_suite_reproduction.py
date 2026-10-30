@@ -9,6 +9,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -23,7 +24,7 @@ from benchmarks.reproduction.reproduction_process import PilotProcessResult
 def test_full_source_population_and_stable_selection() -> None:
     cases = expected_cases()
     assert Counter(row["family"] for row in cases) == {
-        "math-growth": 1,
+        "math-growth": 2,
         "luminal": 7,
         "eggcc": 191,
         "hardboiled": 42,
@@ -42,6 +43,41 @@ def test_full_source_population_and_stable_selection() -> None:
     }
     with pytest.raises(ValueError, match="unknown"):
         select_cases(cases, ["hardboiled"], ["not-an-input"])
+
+
+def test_math_regeneration_preserves_both_frozen_workloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = reproduction.ROOT
+    sources = json.loads((root / "benchmarks/reproduction/sources.json").read_text())
+    published = suites.load_manifest(root)
+    cases = [case for case in published.cases if case["family"] == "math-growth"]
+    workloads = [row for row in published.workloads if row["aliases"][0]["case"].startswith("math-growth-")]
+    for case in cases:
+        source = tmp_path / case["source"]
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes((root / case["source"]).read_bytes())
+    inventory = tmp_path / "benchmarks/reproduction/sources.json"
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    inventory.write_text(json.dumps(sources))
+    engine = tmp_path / "engine"
+    engine.write_text("engine identity")
+    run = Mock(return_value=PilotProcessResult("success", 0, 0.1, tmp_path / "stdout", tmp_path / "stderr", None))
+    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
+    monkeypatch.setattr(dialegg_capture, "run_complete_command", run)
+    output = tmp_path / "corpus"
+
+    first = reproduction.reproduce(output, ["math-growth"], [], engine)
+    saved = json.loads((output / "manifest.json").read_text())
+    assert [case for case in saved["cases"] if case["family"] == "math-growth"] == cases
+    assert saved["workloads"] == workloads
+    for row in workloads:
+        assert (output / row["file"]).read_bytes() == (published.path.parent / row["file"]).read_bytes()
+    assert reproduction.reproduce(output, ["math-growth"], [], engine) == first
+    assert run.call_count == 2
+
+    before = reproduction.generation_identity("math-growth", sources["math-growth"])
+    frozen = tmp_path / "benchmarks/corpus/math/math-iteration-12.egg"
+    frozen.write_text(frozen.read_text() + "\n; changed frozen input\n")
+    assert reproduction.generation_identity("math-growth", sources["math-growth"]) != before
 
 
 @pytest.fixture
