@@ -3,8 +3,8 @@
 //! The probe layer in `probe.rs` adapts every physical representation of an
 //! atom's current rows to the two operations needed by join execution: look up
 //! one key, or enumerate all keys. A probe may read a persistent table index, a
-//! projection shared for the current ruleset run, a tiny residual index, or an
-//! arena-allocated packed trie. It returns the matching rows in a representation
+//! tiny residual index, or an arena-allocated packed trie shared across plans
+//! when their roots match. It returns the matching rows in a representation
 //! that later stages can refine without copying them. This separation keeps the
 //! stage executor independent of the storage strategy selected for each access.
 //!
@@ -31,8 +31,8 @@ use crate::{
     numeric_id::{DenseIdMap, NumericId},
     offsets::{Offsets, RowId, SortedOffsetVector, Subset},
     parallel_heuristics::{
-        MIN_TOP_INDEX_KEYS_PER_WORKER, action_batch_size, free_join_fork_depth,
-        parallelize_db_level_op, top_index_shape_is_eligible,
+        MIN_TOP_INDEX_KEYS_PER_WORKER, action_batch_size, free_join_can_fork,
+        free_join_fork_min_frames, parallelize_db_level_op, top_index_shape_is_eligible,
     },
     query::{Atom, RuleSet},
     row_buffer::{RowBuffer, TaggedRowBuffer},
@@ -47,7 +47,7 @@ use super::{
         MatchCounter, RetiredLocalStates, SubsetClonePlan, atom_tail_use, estimate_size,
         materialization_is_live_in_tail, sort_plan_by_size,
     },
-    packed_cache::{RootProjection, TrieCache, TrieRoot},
+    packed_cache::{OwnedAtomRows, TrieCache},
     packed_trie::{ChildShape, TrieNode},
     plan::{JoinHeader, JoinStage, JoinStages, MatId, MatScanMode, MatSpec, Plan},
     prepared_index::{
@@ -55,8 +55,8 @@ use super::{
         columns_are_cacheable,
     },
     probe::{
-        AtomRows, LazyArenaHandle, PackedProbe, ProbeIndex, ProbeRequest, Prober,
-        RootProjectionProbe, SortedScalarProbe, seek_sorted_key,
+        AtomRows, AtomRowsKind, CatalogFilter, Descent, LazyArenaHandle, PackedProbe, ProbeIndex,
+        ProbeRequest, Prober, SortedScalarProbe, seek_sorted_key,
     },
     residual_index::{SMALL_RESIDUAL, SmallColumnIndex, SmallExactProbe},
     with_pool_set,
@@ -176,23 +176,20 @@ impl Database {
             return RuleSetReport::default();
         }
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
-        // Trie roots are shared across all plans in this run. Tables are frozen
-        // for the duration, so a given root key always denotes the same subset;
-        // the cache is scoped to (and dropped at the end of) this call. Only
-        // roots used by more than one plan are shared.
-        //
-        // The `mark_shared_roots` pre-pass and the per-atom root-signature work
-        // are a fixed cost paid every call; on small databases (few/cheap index
-        // builds) that cost outweighs the sharing it enables. Gate it on the
-        // database size so small rule-set runs keep the zero-overhead per-plan
-        // path (an empty `shared` set makes `root_node` skip the signature
-        // entirely). The estimate grows over a run, so early/cheap iterations
-        // stay ungated while large ones opt in exactly when sharing pays off.
-        // Enable cross-plan root sharing only when some root is actually reused
-        // across plans. `None` means `root_node` builds fresh per-plan roots with
-        // zero added work — no signature machinery and (crucially on many-core
-        // hosts) no DashMap allocation. The pre-pass is a cheap scan of the plans'
-        // atoms; the shard count is matched to the thread count (see `with_shared`).
+        // Every packed trie node of this run lives in one arena. Nodes below a
+        // shared root are published to every plan, so they must outlive the
+        // plan that built them; the arena is dropped with the trie cache
+        // after all plans finish and before catalog indexes reset.
+        let arena = SharedArena::new();
+        // Trie roots and everything built below them are shared across all
+        // plans in this run. Tables are frozen for the duration, so a given
+        // root key always denotes the same subset; the cache is scoped to (and
+        // dropped at the end of) this call. Only roots used by more than one
+        // plan are shared: `None` means `root_node` builds fresh per-plan roots
+        // with zero added work — no signature machinery and (crucially on
+        // many-core hosts) no DashMap allocation. The pre-pass is a cheap scan
+        // of the plans' atoms; the shard count is matched to the thread count
+        // (see `with_shared`).
         let trie_cache: Option<Arc<TrieCache>> = {
             let shared =
                 TrieCache::compute_shared(rule_set.plans.values().map(|(plan, _, _)| plan));
@@ -221,13 +218,10 @@ impl Database {
                     let exec_state = exec_state.seed();
                     let match_counter = match_counter.clone();
                     let trie_cache = trie_cache.clone();
+                    let arena = &arena;
                     scope.spawn(move |_| {
-                        // The arena and every prepared slot belong to exactly one
-                        // logical query. A nested scope ensures no descendant task
-                        // can retain an arena reference after this job reclaims it.
-                        let arena = SharedArena::new();
                         let search_and_apply_timer = Instant::now();
-                        let join_state = JoinState::new(db, exec_state, trie_cache, &arena);
+                        let join_state = JoinState::new(db, exec_state, trie_cache, arena);
                         let mut binding_info = BindingInfo::default();
                         let mut roots_ready = true;
                         for (id, info) in plan.atoms().iter() {
@@ -377,7 +371,6 @@ impl Database {
                         drop(binding_info);
                         drop(prepared_index);
                         drop(join_state);
-                        drop(arena);
 
                         let mut rule_report: RefMut<'_, Arc<str>, Vec<RuleReport>> =
                             dash_rule_reports.entry(desc).or_default();
@@ -395,6 +388,10 @@ impl Database {
                 .collect();
         } else {
             rule_reports = HashMap::default();
+            // Serial plans share the worker's scratch and arena handle, as in
+            // the original executor. Bindings and prepared index handles stay
+            // plan-local; packed nodes already live for the entire ruleset.
+            let join_state = JoinState::new(self, exec_state.seed(), trie_cache.clone(), &arena);
             // Just run all of the plans in order with a single in-place action
             // buffer.
             let mut action_buf = InPlaceActionBuffer {
@@ -403,10 +400,6 @@ impl Database {
                 batches: Default::default(),
             };
             for (plan, desc, symbol_map) in rule_set.plans.values() {
-                // Serial recursive work is inline, so a lexical block is enough
-                // to prove that every arena reference dies before this query's
-                // arena is reclaimed.
-                let arena = SharedArena::new();
                 let report_plan = match report_level {
                     ReportLevel::TimeOnly => None,
                     ReportLevel::WithPlan | ReportLevel::StageInfo => {
@@ -416,8 +409,6 @@ impl Database {
 
                 let search_and_apply_timer = Instant::now();
                 {
-                    let join_state =
-                        JoinState::new(self, exec_state.seed(), trie_cache.clone(), &arena);
                     let mut binding_info = BindingInfo::default();
                     'eval: {
                         for (id, info) in plan.atoms().iter() {
@@ -428,9 +419,7 @@ impl Database {
                                 None => break 'eval,
                             }
                         }
-                        // See the parallel path above. This also ensures any
-                        // arena addresses in prepared slots are dropped inside
-                        // the arena's lexical lifetime.
+                        // See the parallel path above.
                         let prepared_index = PreparedPlanIndexes::new(self, plan);
                         match (plan, &prepared_index) {
                             (Plan::SinglePlan(plan), PreparedPlanIndexes::Single(prepared)) => {
@@ -506,8 +495,6 @@ impl Database {
                 }
                 let search_and_apply_time = search_and_apply_timer.elapsed();
 
-                drop(arena);
-
                 // TODO: unnecessary cloning in many cases
                 let rule_report = rule_reports.entry(desc.clone()).or_default();
                 rule_report.push(RuleReport {
@@ -533,12 +520,12 @@ impl Database {
             // caused by individual queries.
             reports[i].num_matches = match_counter.read_matches(plan.actions());
         }
-        // No query can use the cross-plan roots after the execution scopes
-        // above have joined. Release their cached projections before merging
-        // table updates so the two allocation peaks do not overlap.
+        // No query can use the shared tries after the execution scopes above
+        // have joined. Release them before merging table updates so the two
+        // allocation peaks do not overlap and no arena address outlives its
+        // catalog index.
         drop(trie_cache);
-        // Every query-local prepared sidecar and arena has been dropped, and
-        // the parallel ruleset scope has joined, before catalog indexes reset.
+        drop(arena);
         let search_and_apply_time = search_and_apply_timer.elapsed();
 
         let merge_timer = Instant::now();
@@ -570,14 +557,13 @@ impl ActionState {
     }
 }
 
-/// Worker-local context for executing one logical join plan.
+/// Worker-local resources for joins in one ruleset run.
 ///
-/// A `JoinState` combines the frozen database view and early-stop state needed
-/// by the query with the allocation and caching resources used while traversing
-/// that query's trie indexes. Recursive calls to [`JoinState::run_plan`] reuse
-/// the same state. Parallel tasks construct their own `JoinState`, sharing the
-/// database, cross-plan root cache, and query arena while retaining independent
-/// arena handles and scratch storage.
+/// Serial plans and recursive calls to [`JoinState::run_plan`] reuse the frozen
+/// database view, early-stop state, allocation handle, and scan/sort scratch.
+/// Parallel tasks construct their own `JoinState`, sharing the database,
+/// cross-plan root cache, and query arena while retaining independent handles
+/// and scratch storage.
 ///
 /// The current variable bindings and atom row subsets are deliberately not
 /// stored here: they describe one recursive branch and live in `BindingInfo`.
@@ -591,10 +577,10 @@ struct JoinState<'db, 'state, 'exec> {
     /// Cached thread-local pool for SortedOffsetVector allocations.
     /// Stored here to avoid a per-call `with_pool_set` TLS access in `get_index`.
     pool: Pool<SortedOffsetVector>,
-    /// Cross-plan trie-root cache for the current `run_rule_set`, or `None` when
-    /// sharing is disabled (small run, or nothing reused across plans).
+    /// Cross-plan trie cache for the current `run_rule_set`, or `None` when
+    /// nothing is reused across plans.
     trie_cache: Option<Arc<TrieCache>>,
-    /// Query-scoped arena shared with any parallel tasks spawned by this plan.
+    /// Run-scoped arena holding every packed trie node of this `run_rule_set`.
     arena: &'exec SharedArena,
     /// This worker's lazily initialized allocation handle into `arena`.
     handle: LazyArenaHandle<'exec>,
@@ -631,13 +617,13 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     /// Roots whose signature is used by more than one plan (see
     /// [`TrieCache::shared`]) are shared through the cache; the rest are built
     /// fresh per plan so the pool can recycle them.
-    fn root_node(&self, table_id: TableId, headers: &[&JoinHeader]) -> Option<Arc<TrieRoot>> {
+    fn root_node(&self, table_id: TableId, headers: &[&JoinHeader]) -> Option<Arc<OwnedAtomRows>> {
         // Fast path: when sharing is disabled this run (small database, or no
         // root reused across plans), skip the root-signature machinery entirely
         // and build a fresh per-plan root — matching the pre-sharing behavior at
         // no added cost.
         let Some(trie_cache) = self.trie_cache.as_ref() else {
-            return Some(Arc::new(TrieRoot::new(
+            return Some(Arc::new(OwnedAtomRows::new(
                 self.build_root_subset(table_id, headers)?,
             )));
         };
@@ -651,7 +637,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
 
         if !trie_cache.shared.contains(&sig) {
             // Not reused across plans: build a fresh, unshared root.
-            return Some(Arc::new(TrieRoot::new(
+            return Some(Arc::new(OwnedAtomRows::new(
                 self.build_root_subset(table_id, headers)?,
             )));
         }
@@ -665,7 +651,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         let node = match trie_cache.roots.entry(key) {
             Entry::Occupied(o) => o.get().clone(),
             Entry::Vacant(v) => {
-                let node = Arc::new(TrieRoot::new_shared(subset));
+                let node = Arc::new(OwnedAtomRows::new_shared(subset));
                 v.insert(node.clone());
                 node
             }
@@ -690,15 +676,16 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     }
 
     /// Build a packed index for one column of `subset` after applying the slow
-    /// `constraints`.
+    /// `constraints`. `shared` marks a node published to every plan of the run.
     ///
     /// `subset_may_contain_stale_rows` describes the source subset, not the
-    /// resulting node. Physical root and dense ranges can contain tombstoned
-    /// row ids, whereas catalog indexes and packed child subsets already
-    /// contain only live rows. When constraints require materializing a
-    /// filtered subset, potentially stale inputs are refined to live rows
-    /// first. With no constraints, the table scan used by
-    /// `TrieNode::build_from_subset` already skips stale rows.
+    /// resulting node. Physical root ranges, dense ranges, and persistent
+    /// catalog groups can contain tombstoned row ids, whereas packed child
+    /// subsets and filtered residuals already contain only live rows. When
+    /// constraints require materializing a filtered subset, potentially stale
+    /// inputs are refined to live rows first. With no constraints, the table
+    /// scan used by `TrieNode::build_from_subset` already skips stale rows.
+    #[allow(clippy::too_many_arguments)]
     fn build_packed_node(
         &self,
         table: WrappedTableRef<'_>,
@@ -707,6 +694,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         constraints: &[Constraint],
         column: ColumnId,
         child_shape: ChildShape,
+        shared: bool,
     ) -> &'exec TrieNode<'exec> {
         if constraints.is_empty() {
             // Table scans already omit stale SortedWritesTable rows, so a
@@ -717,6 +705,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                 subset,
                 column,
                 child_shape,
+                shared,
                 &mut self.packed_scratch.borrow_mut(),
             );
         }
@@ -731,64 +720,14 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             filtered.as_ref(),
             column,
             child_shape,
+            shared,
             &mut self.packed_scratch.borrow_mut(),
         )
     }
 
-    /// Acquire a scalar index shared by plans that project the same root subset.
-    ///
-    /// A root projection groups the root's rows by `column` after applying
-    /// `constraints`. `RootProjection` stores that grouping as immutable sorted
-    /// keys plus the `RowId`s for each key. Shared trie roots own a map from
-    /// `(column, constraints)` to `Arc<OnceLock<RootProjection>>`, so concurrent
-    /// plans build a particular projection at most once.
-    ///
-    /// `prepared` is query-local state for this particular logical index use.
-    /// It retains one clone of the shared `Arc`, keeping the projection alive
-    /// and letting recursive output frames borrow it for `'rows` without doing
-    /// another cache lookup or `Arc` clone. Returns `None` when root sharing is
-    /// disabled or this root has no shared projection map.
-    fn projected_root_index<'rows>(
-        &self,
-        root: &TrieRoot,
-        table: WrappedTableRef<'_>,
-        constraints: &[Constraint],
-        column: ColumnId,
-        prepared: PreparedIndexRef<'rows>,
-    ) -> Option<&'rows RootProjection> {
-        self.trie_cache.as_ref()?;
-        prepared.get_or_init_root_projection(root, column, constraints, || {
-            let filtered = if constraints.is_empty() {
-                None
-            } else {
-                let mut filtered = root.subset.as_ref().to_owned(&self.pool);
-                if table.has_stale_rows() {
-                    filtered = table.refine_live(filtered);
-                }
-                Some(table.refine(filtered, constraints))
-            };
-            let subset = filtered
-                .as_ref()
-                .map_or_else(|| root.subset.as_ref(), Subset::as_ref);
-            let mut pairs = Vec::with_capacity(subset.size());
-            table.for_each_col(subset, column, &mut |row_id, value| {
-                pairs.push((value, row_id));
-            });
-            debug_assert!(
-                pairs.windows(2).all(|pair| pair[0].1 <= pair[1].1),
-                "root projection must preserve RowId order before sorting"
-            );
-            if pairs.len() < 64 {
-                pairs.sort_unstable();
-            } else {
-                let mut sort_scratch =
-                    vec![(Value::new_const(0), RowId::new_const(0)); pairs.len()];
-                crate::hash_index::radix_sort_slice_by_value(&mut pairs, &mut sort_scratch);
-            }
-            RootProjection::from_sorted_pairs(pairs)
-        })
-    }
-
+    /// `shared_child_shape` is the table's child storage for shared nodes
+    /// (see `TableInfo::shared_child_shape`).
+    #[allow(clippy::too_many_arguments)]
     fn packed_index_for_rows<'rows>(
         &self,
         rows: &AtomRows<'rows, 'exec>,
@@ -796,53 +735,100 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         constraints: &[Constraint],
         column: ColumnId,
         child_shape: ChildShape,
+        shared_child_shape: ChildShape,
         prepared: PreparedIndexRef<'rows>,
     ) -> &'exec TrieNode<'exec>
     where
         'exec: 'rows,
     {
-        match rows {
-            AtomRows::Root(root) => {
-                let address = *prepared.state.packed_root.get_or_init(|| {
-                    self.build_packed_node(
-                        table,
-                        root.subset.as_ref(),
-                        true,
-                        constraints,
-                        column,
-                        child_shape,
-                    ) as *const TrieNode<'exec> as usize
+        // Below a shared node or continuation cache, the child is published
+        // under this access's table-wide family with the table's shared shape, so every
+        // plan reaching these rows finds the same node. Otherwise the child is
+        // plan-local, keyed by access id with the plan's own tail shape.
+        let shared_child = |shared: bool| {
+            if shared {
+                (prepared.families[0].index(), shared_child_shape)
+            } else {
+                (prepared.access.index(), child_shape)
+            }
+        };
+        match rows.kind() {
+            AtomRowsKind::Owned(root) if !root.is_plan_root() => self.build_packed_node(
+                table,
+                root.subset.as_ref(),
+                false,
+                constraints,
+                column,
+                child_shape,
+                false,
+            ),
+            AtomRowsKind::Owned(root) => {
+                let shared = root.is_shared();
+                let child_shape = if shared {
+                    shared_child_shape
+                } else {
+                    child_shape
+                };
+                let address = prepared.packed_root(|| {
+                    let build = || {
+                        self.build_packed_node(
+                            table,
+                            root.subset.as_ref(),
+                            true,
+                            constraints,
+                            column,
+                            child_shape,
+                            shared,
+                        ) as *const TrieNode<'exec> as usize
+                    };
+                    if shared {
+                        let ChildShape::Dynamic { families } = shared_child_shape else {
+                            unreachable!("an indexed shared root has successor families")
+                        };
+                        *root
+                            .packed_root_slot(prepared.families[0], families)
+                            .unwrap()
+                            .get_or_init(build)
+                    } else {
+                        build()
+                    }
                 });
                 // SAFETY: the slot is plan-execution scoped and can only be
-                // initialized with a node from this plan's SharedArena.
+                // initialized with a node from the run's SharedArena.
                 let node = unsafe { &*(address as *const TrieNode<'exec>) };
                 assert_eq!(node.child_shape(), child_shape);
                 node
             }
-            AtomRows::Catalog {
+            AtomRowsKind::Catalog {
                 subset,
                 continuation,
             } => {
                 let continuation = continuation
                     .expect("catalog rows needed a continuation slot for a later atom probe");
-                let slot = continuation
-                    .cache
-                    .slot(continuation.position, prepared.access);
+                let shared = continuation.cache.is_shared();
+                let (family, child_shape) = shared_child(shared);
+                let slot = continuation.cache.slot(continuation.position, family);
                 let address = *slot.get_or_init(|| {
-                    self.build_packed_node(table, *subset, false, constraints, column, child_shape)
-                        as *const TrieNode<'exec> as usize
+                    self.build_packed_node(
+                        table,
+                        *subset,
+                        true,
+                        constraints,
+                        column,
+                        child_shape,
+                        shared,
+                    ) as *const TrieNode<'exec> as usize
                 });
-                // SAFETY: root continuation slots are allocated in and only
-                // publish nodes from the same execution arena.
+                // SAFETY: root continuation slots only publish nodes from the
+                // run's SharedArena.
                 let node = unsafe { &*(address as *const TrieNode<'exec>) };
                 assert_eq!(node.child_shape(), child_shape);
                 node
             }
-            AtomRows::Packed(cursor) => cursor.child_index_with(
-                self.handle.get(),
-                prepared.access.index(),
-                child_shape,
-                || {
+            AtomRowsKind::Packed(cursor) => {
+                let shared = cursor.node().is_shared();
+                let (family, child_shape) = shared_child(shared);
+                cursor.child_index_with(self.handle.get(), family, child_shape, || {
                     self.build_packed_node(
                         table,
                         cursor.subset(),
@@ -850,19 +836,21 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                         constraints,
                         column,
                         child_shape,
+                        shared,
                     )
-                },
-            ),
-            AtomRows::Inline(..) => {
+                })
+            }
+            AtomRowsKind::Inline(..) => {
                 unreachable!("inline residuals must use a stack-owned probe")
             }
-            AtomRows::Dense(range) => self.build_packed_node(
+            AtomRowsKind::Dense(range) => self.build_packed_node(
                 table,
                 SubsetRef::Dense(*range),
                 true,
                 constraints,
                 column,
                 child_shape,
+                false,
             ),
         }
     }
@@ -871,7 +859,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
         &'ctx self,
         atoms: &Arc<DenseIdMap<AtomId, Atom>>,
         binding_info: &mut BindingInfo<'rows, 'exec>,
-        request: ProbeRequest<'_, 'rows>,
+        request: ProbeRequest<'ctx, 'rows>,
     ) -> Prober<'ctx, 'rows, 'exec>
     where
         'exec: 'rows,
@@ -892,73 +880,120 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
 
         let table_id = atoms[atom].table;
         let info = &self.db.tables[table_id];
-        let all_cacheable = columns_are_cacheable(info, &cols);
-        let whole_table = info.table.all();
-        let root_range = match &source {
-            AtomRows::Root(root) => match &root.subset {
-                Subset::Dense(range) => Some(*range),
-                Subset::Sparse(_) => None,
-            },
-            _ => None,
-        };
-        // Cached probes borrow their row groups without filtering stale rows
-        // or slow constraints. Even an existence-only match must prove that
-        // at least one valid row remains, so reject either source of invalid
-        // candidates here and let the filtered index paths handle them.
-        let can_use_catalog = root_range.is_some()
-            && all_cacheable
-            && constraints.is_empty()
-            && !info.table.has_stale_rows()
-            && whole_table.size() / 2 < source.size();
-
-        let ix = if cols.len() == 1 && source.size() <= SMALL_RESIDUAL {
-            ProbeIndex::SmallColumn(SmallColumnIndex::new(
+        // Match the original executor's ordering: residual probes do not
+        // consult table-wide catalog metadata or obtain the whole-table range.
+        // A tiny source is cheaper to index on the stack than as a packed
+        // node, unless it has a publication slot: the same packed cursor or
+        // continuation key is typically probed many times per run, so the
+        // packed node built once is reused from the slot.
+        let has_slot = matches!(
+            source.kind(),
+            AtomRowsKind::Packed(_)
+                | AtomRowsKind::Catalog {
+                    continuation: Some(_),
+                    ..
+                }
+        );
+        if cols.len() == 1 && source.size() <= SMALL_RESIDUAL && !has_slot {
+            let ix = ProbeIndex::SmallColumn(SmallColumnIndex::new(
                 info.table.as_ref(),
                 source.subset(),
                 constraints,
                 cols[0],
-            ))
-        } else if let AtomRows::Inline(rows) = &source {
-            ProbeIndex::SmallExact(SmallExactProbe::new(
+            ));
+            return Prober {
+                source,
+                ix,
+                keep_rows,
+            };
+        }
+        if let AtomRowsKind::Inline(rows) = source.kind() {
+            let ix = ProbeIndex::SmallExact(SmallExactProbe::new(
                 info.table.as_ref(),
                 *rows,
                 cols,
                 constraints,
-            ))
-        } else if can_use_catalog {
-            let range = root_range.expect("catalog eligibility requires a dense root");
-            let needs_intersect =
-                !(whole_table.is_dense() && source.subset().bounds() == whole_table.bounds());
-            let intersect_outer = needs_intersect.then_some(range);
+            ));
+            return Prober {
+                source,
+                ix,
+                keep_rows,
+            };
+        }
+        let shared_child_shape = info.shared_child_shape();
+        // Only a dense root can use a table-wide catalog. Residual packed
+        // cursors already select their continuation index, so do not repeat
+        // whole-table metadata work for them (including tiny cached groups).
+        let catalog_intersection = match source.kind() {
+            AtomRowsKind::Owned(root) if constraints.is_empty() || !root.is_shared() => {
+                if let Subset::Dense(range) = &root.subset
+                    && columns_are_cacheable(info, &cols)
+                {
+                    let whole_table = info.table.all();
+                    (whole_table.size() / 2 < source.size()).then(|| {
+                        let needs_intersect = !(whole_table.is_dense()
+                            && root.subset.bounds() == whole_table.bounds());
+                        needs_intersect.then_some(*range)
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        let ix = if let Some(intersect_outer) = catalog_intersection {
+            // Below a shared root, the catalog key positions identify the same
+            // rows for every plan, so the continuation cache is shared too. A
+            // terminal probe never continues, so it skips the lookup.
+            let shared_continuations = match source.kind() {
+                AtomRowsKind::Owned(root)
+                    if terminal_child_shape != ChildShape::Leaf && self.trie_cache.is_some() =>
+                {
+                    prepared.shared_catalog_continuations(root, &cols)
+                }
+                _ => None,
+            };
+            let (continuations, continuation_shape) = if terminal_child_shape == ChildShape::Leaf {
+                (None, ChildShape::Leaf)
+            } else {
+                match shared_continuations {
+                    Some(continuations) => (Some(continuations), shared_child_shape),
+                    None => (Some(prepared.local_continuations()), terminal_child_shape),
+                }
+            };
+            let filter = CatalogFilter {
+                table: info.table.as_ref(),
+                constraints,
+                check_live: info.table.has_stale_rows(),
+            };
             if cols.len() == 1 {
                 let index = prepared.column_index(info, cols[0]);
-                if terminal_child_shape != ChildShape::Leaf {
-                    prepared.state.root_continuations.prepare(
-                        terminal_child_shape,
-                        index.shard_count(),
-                        |shard| index.shard_len(shard),
-                    );
+                if let Some(continuations) = continuations {
+                    continuations.prepare(continuation_shape, index.shard_count(), |shard| {
+                        index.shard_len(shard)
+                    });
                 }
                 ProbeIndex::CachedColumn {
                     intersect_outer,
                     table: index,
-                    continuations: &prepared.state.root_continuations,
+                    continuations,
                     child_shape: terminal_child_shape,
+                    filter,
                 }
             } else {
                 let index = prepared.tuple_index(info, cols.as_slice());
-                if terminal_child_shape != ChildShape::Leaf {
-                    prepared.state.root_continuations.prepare(
-                        terminal_child_shape,
-                        index.shard_count(),
-                        |shard| index.shard_len(shard),
-                    );
+                if let Some(continuations) = continuations {
+                    continuations.prepare(continuation_shape, index.shard_count(), |shard| {
+                        index.shard_len(shard)
+                    });
                 }
                 ProbeIndex::CachedTuple {
                     intersect_outer,
                     table: index,
-                    continuations: &prepared.state.root_continuations,
+                    continuations,
                     child_shape: terminal_child_shape,
+                    filter,
                 }
             }
         } else {
@@ -967,49 +1002,35 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             } else {
                 terminal_child_shape
             };
-            let projected_root = match &source {
-                AtomRows::Root(root) => self.projected_root_index(
-                    root,
-                    info.table.as_ref(),
-                    constraints,
-                    cols[0],
-                    prepared,
-                ),
-                _ => None,
-            };
-            if let Some(first) = projected_root {
-                if first_child_shape != ChildShape::Leaf {
-                    prepared
-                        .state
-                        .root_continuations
-                        .prepare(first_child_shape, 1, |_| first.len());
-                }
-                ProbeIndex::ProjectedRoot(RootProjectionProbe {
-                    first,
-                    columns: cols,
-                    table: info.table.as_ref(),
-                    continuations: &prepared.state.root_continuations,
-                    access: prepared.access,
-                    handle: &self.handle,
-                    scratch: &self.packed_scratch,
-                    terminal_child_shape,
-                })
+            let first = self.packed_index_for_rows(
+                &source,
+                info.table.as_ref(),
+                constraints,
+                cols[0],
+                first_child_shape,
+                shared_child_shape,
+                prepared,
+            );
+            if cols.len() == 1 {
+                ProbeIndex::PackedColumn(first)
             } else {
-                let first = self.packed_index_for_rows(
-                    &source,
-                    info.table.as_ref(),
-                    constraints,
-                    cols[0],
-                    first_child_shape,
-                    prepared,
-                );
+                let descent = if first.is_shared() {
+                    Descent::Shared {
+                        child_shape: shared_child_shape,
+                        families: prepared.families,
+                    }
+                } else {
+                    Descent::Local {
+                        terminal_child_shape,
+                    }
+                };
                 ProbeIndex::Packed(PackedProbe {
                     first,
                     columns: cols,
                     table: info.table.as_ref(),
                     handle: &self.handle,
                     scratch: &self.packed_scratch,
-                    terminal_child_shape,
+                    descent,
                 })
             }
         };
@@ -1027,7 +1048,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
     /// [`Self::run_plan`]. Probers move trie nodes out of `binding_info`, so
     /// restore every node before returning. Persistent catalog indexes use
     /// their physical hash shards, including when a dense timestamp range is
-    /// intersected at probe time. Projected and packed filtered roots use
+    /// intersected at probe time. Packed filtered roots use
     /// disjoint ordinal ranges of the already-built scalar index, avoiding a
     /// scan-and-project handoff copy. Tiny leaders stay on the existing path.
     #[allow(clippy::too_many_arguments)]
@@ -1259,6 +1280,13 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             && let Some(partitions) =
                 self.select_top_partitions::<M>(stages, prepared, atoms, &order, binding_info)
         {
+            log::debug!(
+                "free join action={} stages={} root_rows={} top_partitions={}",
+                action.index(),
+                order.len(),
+                estimate_size(&stages.instrs[order.get(0)], binding_info),
+                partitions.len(),
+            );
             let mut updates = FrameUpdates::with_capacity(0);
             for partition in partitions {
                 let db = self.db;
@@ -1305,6 +1333,16 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             }
             return;
         }
+        log::debug!(
+            "free join action={} stages={} root_rows={} top_partitions=0",
+            action.index(),
+            order.len(),
+            if order.len() == 0 {
+                0
+            } else {
+                estimate_size(&stages.instrs[order.get(0)], binding_info)
+            },
+        );
         self.run_plan(
             stages,
             prepared,
@@ -1396,7 +1434,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                 action,
                 &mut binding_info.bindings,
                 &binding_info.binding_sets,
-                self.exec_state,
+                &self.exec_state,
             );
             return;
         }
@@ -1404,7 +1442,12 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             || estimate_size(&stages.instrs[instr_order.get(cur)], binding_info),
             TopLevelPartition::scan_size,
         );
-        let chunk_size = action_buf.morsel_size(cur, instr_order.len());
+        let mut chunk_size = action_buf.morsel_size(cur, instr_order.len());
+        if action_buf.supports_parallel_drain() {
+            // Even root morsels must accumulate enough successful frames to
+            // amortize a handoff into a wide join tail.
+            chunk_size = chunk_size.max(free_join_fork_min_frames());
+        }
         if cur_size > 32 && cur % 3 == 1 && cur < instr_order.len() - 1 {
             // Re-evaluate the remaining suffix after observing the residuals
             // produced by earlier stages. Packed child families make the
@@ -1494,10 +1537,12 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                 if self.exec_state.should_stop() {
                     return;
                 }
-                // TODO: `supports_parallel_drain` is a hack because currently
-                // `drain_updates_parallel!` is a bit slower because of the additional
-                // `ExecutionState` clone.
-                if cur < free_join_fork_depth() && action_buf.supports_parallel_drain() {
+                // Reject serial buffers first so coarse partition jobs avoid
+                // policy lookups as well as live-state cloning.
+                if action_buf.supports_parallel_drain()
+                    && free_join_can_fork(cur, instr_order.len(), cur_size, $updates.frames())
+                    && action_buf.has_available_parallelism()
+                {
                     drain_updates_parallel!($updates)
                 } else {
                     $updates.drain(|update| match update {
@@ -1520,7 +1565,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                                     action,
                                     &mut binding_info.bindings,
                                     &binding_info.binding_sets,
-                                    self.exec_state,
+                                    &self.exec_state,
                                 );
                             } else {
                                 self.run_plan(
@@ -1548,6 +1593,63 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
             }};
             ($updates:expr, false) => {{
                 drain_updates_body!($updates);
+            }};
+        }
+
+        // A leaf group has already supplied its bindings and can advance
+        // directly. Keep early returns inside the closure so
+        // the caller always restores its cover and factorized binding stack.
+        macro_rules! advance_leaf {
+            () => {{
+                (|| {
+                    if self.exec_state.should_stop() {
+                        return;
+                    }
+                    if cur + 1 >= instr_order.len() {
+                        action_buf.push_bindings_factorized(
+                            action,
+                            &mut binding_info.bindings,
+                            &binding_info.binding_sets,
+                            &self.exec_state,
+                        );
+                    } else {
+                        self.run_plan(
+                            stages,
+                            prepared,
+                            atoms,
+                            action,
+                            instr_order,
+                            leaf_scans,
+                            cur + 1,
+                            None,
+                            remaining_after_current,
+                            binding_info,
+                            action_buf,
+                        );
+                    }
+                })();
+            }};
+        }
+
+        // A singleton has no Cartesian product to defer. Store its values
+        // directly to avoid an Arc and later expansion. Multirow groups
+        // retain factorized execution.
+        macro_rules! bind_leaf_rows {
+            ($rows:expr, $bind:expr) => {{
+                let singleton = $rows.len() == 1;
+                if singleton {
+                    let (_, row) = $rows.iter().next().unwrap();
+                    for ((_, var), value) in $bind.iter().zip(row) {
+                        binding_info.bindings.insert(*var, *value);
+                    }
+                } else {
+                    let vars = $bind.iter().map(|(_, var)| *var).collect();
+                    binding_info.binding_sets.push((vars, Arc::new($rows)));
+                }
+                advance_leaf!();
+                if !singleton {
+                    binding_info.binding_sets.pop();
+                }
             }};
         }
 
@@ -1856,7 +1958,6 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                     let cover_subset = cover_node.subset();
 
                     let proj = ColumnIds::from_iter(bind.iter().map(|(col, _)| *col));
-                    let vars = bind.iter().map(|(_, var)| *var).collect();
                     let mut buf = TaggedRowBuffer::new_inline(bind.len());
                     let (scan_start, scan_size) =
                         cover_scan_bounds(top_partition, cover_subset.size());
@@ -1874,11 +1975,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                         return;
                     }
 
-                    binding_info.binding_sets.push((vars, Arc::new(buf)));
-                    let mut updates = FrameUpdates::with_capacity(1);
-                    updates.finish_frame();
-                    drain_updates!(updates);
-                    binding_info.binding_sets.pop();
+                    bind_leaf_rows!(buf, bind);
                     binding_info.move_back_node(cover_atom, cover_node);
                 } else {
                     let keep_cover = atom_tail_use(
@@ -2078,7 +2175,6 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                     binding_info.materializations.unwrap_val(*cover)
                 };
                 (|| {
-                    let vars: SmallVec<[Variable; 4]> = bind.iter().map(|(_, v)| *v).collect();
                     let mut buf = TaggedRowBuffer::new_inline(bind.len());
                     let mut row_scratch: SmallVec<[Value; 8]> = SmallVec::new();
                     match mode {
@@ -2132,11 +2228,7 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                     if buf.is_empty() {
                         return;
                     }
-                    binding_info.binding_sets.push((vars, Arc::new(buf)));
-                    let mut updates = FrameUpdates::with_capacity(1);
-                    updates.finish_frame();
-                    drain_updates!(updates);
-                    binding_info.binding_sets.pop();
+                    bind_leaf_rows!(buf, bind);
                 })();
                 if restore_materialization {
                     let previous = binding_info.materializations.insert(*cover, cover_mat);
@@ -2252,6 +2344,9 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                                         } else {
                                             updates.rollback();
                                         }
+                                        if updates.frames() >= chunk_size {
+                                            drain_updates!(updates);
+                                        }
                                     }
                                 } else if mode == &MatScanMode::KeyOnly {
                                     for (col, var) in bind.iter() {
@@ -2262,6 +2357,9 @@ impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
                                         updates.finish_frame();
                                     } else {
                                         updates.rollback();
+                                    }
+                                    if updates.frames() >= chunk_size {
+                                        drain_updates!(updates);
                                     }
                                 }
                             }
@@ -2342,7 +2440,7 @@ where
         action: A,
         bindings: &mut DenseIdMap<Variable, Value>,
         binding_sets: &BindingSet,
-        exec_state: ExecutionStateSeed<'scope, '_>,
+        exec_state: &ExecutionStateSeed<'scope, '_>,
     ) {
         expand_binding_sets(self, action, bindings, binding_sets, 0, exec_state);
     }
@@ -2384,7 +2482,7 @@ where
         'rows: 'scope;
 
     /// Run one coarse partition as a global pool job, using a buffer whose
-    /// recursive work and action execution are both serial.  Implementations
+    /// recursive work and action execution are both serial. Implementations
     /// that return `false` from [`Self::supports_global_partition`] execute the
     /// callback inline; the scoped implementations enqueue exactly one job.
     fn recur_global_serial<'local, 'rows>(
@@ -2409,10 +2507,16 @@ where
 
     /// Whether this buffer supports parallel drain operations.
     ///
-    /// When `false`, `drain_updates` will use the serial path even at `cur <= 1`,
-    /// avoiding the per-frame `ExecutionState::clone()` overhead.
+    /// When `false`, `drain_updates` uses the serial path at every depth,
+    /// avoiding scheduling-policy checks and live-state cloning.
     fn supports_parallel_drain(&self) -> bool {
         true
+    }
+
+    /// Advisory pool pressure used only after a batch has enough join work to
+    /// amortize cloning its live state.
+    fn has_available_parallelism(&self) -> bool {
+        false
     }
 
     /// Whether this buffer can enqueue independent top-level partitions.
@@ -2762,6 +2866,10 @@ where
     fn supports_global_partition(&self) -> bool {
         true
     }
+
+    fn has_available_parallelism(&self) -> bool {
+        self.scope.has_available_parallelism()
+    }
 }
 
 fn expand_binding_sets<'scope, 'exec, A: NumericId, BUF: ActionBuffer<'scope, 'exec, A> + ?Sized>(
@@ -2770,7 +2878,7 @@ fn expand_binding_sets<'scope, 'exec, A: NumericId, BUF: ActionBuffer<'scope, 'e
     bindings: &mut DenseIdMap<Variable, Value>,
     binding_sets: &BindingSet,
     idx: usize,
-    exec_state: ExecutionStateSeed<'scope, '_>,
+    exec_state: &ExecutionStateSeed<'scope, '_>,
 ) where
     'exec: 'scope,
 {
@@ -3127,6 +3235,10 @@ where
 
     fn supports_global_partition(&self) -> bool {
         true
+    }
+
+    fn has_available_parallelism(&self) -> bool {
+        self.scope.has_available_parallelism()
     }
 }
 

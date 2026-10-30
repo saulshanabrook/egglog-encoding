@@ -64,12 +64,6 @@ pub struct TableSpec {
     /// These columns should (e.g.) never have indexes built for them, as they
     /// will go out of date too quickly.
     pub uncacheable_columns: DenseIdMap<ColumnId, bool>,
-
-    /// Whether or not deletions are supported for this table.
-    ///
-    /// Tables where this value is false are allowed to panic on calls to
-    /// `stage_remove`.
-    pub allows_delete: bool,
 }
 
 impl TableSpec {
@@ -79,13 +73,11 @@ impl TableSpec {
     }
 }
 
-/// A summary of the kinds of changes that a table underwent after a merge operation.
+/// Whether a table gained rows after a merge operation.
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub struct TableChange {
     /// Whether or not rows were added to the table.
     pub added: bool,
-    /// Whether or not rows were removed from the table.
-    pub removed: bool,
 }
 
 /// A constraint on the values within a row.
@@ -337,6 +329,14 @@ pub trait Table: Any + Send + Sync {
         } else {
             self.refine(owned, cs)
         }
+    }
+
+    /// Whether `subset` contains at least one live row matching `cs`.
+    ///
+    /// Equivalent to checking that [`Table::refine_ref`] with `check_live` set
+    /// returns a nonempty subset; implementors may stop at the first match.
+    fn contains_match(&self, subset: SubsetRef, cs: &[Constraint]) -> bool {
+        self.refine_ref(subset, cs, true).size() != 0
     }
 
     /// An optional method for quickly generating a subset from a constraint.
@@ -637,16 +637,6 @@ impl WrappedTable {
         self.as_ref().scan(subset)
     }
 
-    /// Return the number of rows currently stored in the table.
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    /// Check if the table is empty.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
     pub(crate) fn lookup_row_vectorized(
         &self,
         mask: &mut Mask,
@@ -842,11 +832,6 @@ impl WrappedTableRef<'_> {
     /// Return the contents of the subset as a [`TaggedRowBuffer`].
     pub fn scan(&self, subset: SubsetRef) -> TaggedRowBuffer {
         self.wrapper.scan(self.inner, subset)
-    }
-
-    /// Return the number of rows currently stored in the table.
-    pub fn len(&self) -> usize {
-        self.inner.len()
     }
 
     pub(crate) fn lookup_row_vectorized(

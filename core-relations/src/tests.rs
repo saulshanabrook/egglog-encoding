@@ -9,7 +9,7 @@ use egglog_reports::ReportLevel;
 use crate::numeric_id::NumericId;
 
 use crate::{
-    PlanStrategy, Subset,
+    PlanStrategy,
     action::WriteVal,
     common::Value,
     free_join::{
@@ -19,7 +19,7 @@ use crate::{
     make_external_func,
     query::RuleSetBuilder,
     table::SortedWritesTable,
-    table_shortcuts::v,
+    table_shortcuts::{TimestampedTable, v},
     table_spec::{ColumnId, Constraint},
     uf::DisplacedTable,
 };
@@ -43,11 +43,9 @@ fn run_serial_and_parallel(f: impl Fn() + Send + Sync) {
 
 fn add_set_table(db: &mut Database, arity: usize) -> TableId {
     db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             arity,
             arity,
-            None,
-            vec![],
             Box::new(|_, old, new, _| {
                 assert_eq!(old, new, "set-table keys contain the complete row");
                 false
@@ -276,11 +274,9 @@ fn line_graph_1_gj() {
 
 fn line_graph_1_test(strat: PlanStrategy) {
     let mut db = Database::default();
-    let edge_impl = SortedWritesTable::new(
+    let edge_impl = TimestampedTable::new(
         2,
         2,
-        None,
-        vec![],
         Box::new(move |_, a, b, _| {
             if a != b {
                 panic!("merge not supported")
@@ -338,11 +334,9 @@ fn line_graph_1_test(strat: PlanStrategy) {
 fn prepared_plan_indexes_refresh_across_runs_and_clear() {
     let mut db = Database::default();
     let make_table = |arity| {
-        SortedWritesTable::new(
+        TimestampedTable::new(
             arity,
             arity,
-            None,
-            vec![],
             Box::new(|_, old, new, _| {
                 assert_eq!(old, new, "test tables have unique keys");
                 false
@@ -512,11 +506,9 @@ fn prepared_plan_indexes_preserve_uncacheable_columns() {
     let mut db = Database::default();
     let displaced = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let make_table = || {
-        SortedWritesTable::new(
+        TimestampedTable::new(
             1,
             1,
-            None,
-            vec![],
             Box::new(|_, old, new, _| {
                 assert_eq!(old, new);
                 false
@@ -805,11 +797,9 @@ fn inline_multi_column_exact_probe_matches_oracle_inner() {
     let x_gate = add_set_table(&mut db, 1);
     let driver = add_set_table(&mut db, 3);
     let facts = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             2,
             4,
-            None,
-            vec![],
             Box::new(|_, old, new, out| {
                 if old == new {
                     false
@@ -1099,11 +1089,9 @@ fn shared_root_indexes_are_single_flight_and_execution_scoped() {
 fn shared_root_indexes_are_single_flight_and_execution_scoped_inner() {
     let mut db = Database::default();
     let facts = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             1,
             2,
-            None,
-            vec![],
             Box::new(|_, old, new, out| {
                 if old == new {
                     false
@@ -1190,20 +1178,20 @@ fn shared_root_indexes_are_single_flight_and_execution_scoped_inner() {
 }
 
 #[test]
-fn terminal_shared_root_index_is_probed_without_packed_nodes() {
-    run_serial_and_parallel(terminal_shared_root_index_is_probed_without_packed_nodes_inner);
+fn terminal_shared_root_index_preserves_matches() {
+    run_serial_and_parallel(terminal_shared_root_index_preserves_matches_inner);
 }
 
-fn terminal_shared_root_index_is_probed_without_packed_nodes_inner() {
+fn terminal_shared_root_index_preserves_matches_inner() {
     terminal_shared_root_index_fixture(v(31), 32..128);
 }
 
 #[test]
-fn empty_terminal_shared_root_index_is_probed_without_packed_nodes() {
-    run_serial_and_parallel(empty_terminal_shared_root_index_is_probed_without_packed_nodes_inner);
+fn empty_terminal_shared_root_index_preserves_matches() {
+    run_serial_and_parallel(empty_terminal_shared_root_index_preserves_matches_inner);
 }
 
-fn empty_terminal_shared_root_index_is_probed_without_packed_nodes_inner() {
+fn empty_terminal_shared_root_index_preserves_matches_inner() {
     terminal_shared_root_index_fixture(v(1_000), 0..0);
 }
 
@@ -1287,11 +1275,9 @@ fn packed_root_scan_omits_stale_rows_without_a_slow_constraint() {
 fn packed_root_scan_omits_stale_rows_without_a_slow_constraint_inner() {
     let mut db = Database::default();
     let facts = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             1,
             2,
-            None,
-            vec![],
             Box::new(|_, old, new, out| {
                 if old == new {
                     false
@@ -1360,11 +1346,9 @@ fn small_live_residuals_stay_inline_and_filter_stale_rows() {
 fn small_live_residuals_stay_inline_and_filter_stale_rows_inner() {
     let mut db = Database::default();
     let facts = db.add_table(
-        SortedWritesTable::new(
+        TimestampedTable::new(
             2,
             3,
-            None,
-            vec![],
             Box::new(|_, old, new, out| {
                 if old == new {
                     false
@@ -1717,11 +1701,9 @@ fn gj_top_index_shards_preserve_count_and_materialization_inner() {
     pool.install(|| {
         let mut db = Database::default();
         let make_table = || {
-            SortedWritesTable::new(
+            TimestampedTable::new(
                 2,
                 2,
-                None,
-                vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "test tables have unique keys");
                     false
@@ -1731,11 +1713,9 @@ fn gj_top_index_shards_preserve_count_and_materialization_inner() {
         let left = db.add_table(make_table(), iter::empty(), iter::empty());
         let right = db.add_table(make_table(), iter::empty(), iter::empty());
         let output = db.add_table(
-            SortedWritesTable::new(
+            TimestampedTable::new(
                 2,
                 2,
-                None,
-                vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "materialized pairs are unique");
                     false
@@ -1835,7 +1815,7 @@ fn gj_filtered_top_index_range_fixture(num_threads: usize) -> (usize, Vec<Vec<Va
             SortedWritesTable::new(
                 3,
                 3,
-                Some(ColumnId::new(2)),
+                ColumnId::new(2),
                 vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "left rows are unique");
@@ -1969,7 +1949,7 @@ fn fused_cover_partition_fixture(
             SortedWritesTable::new(
                 3,
                 3,
-                Some(ColumnId::new(2)),
+                ColumnId::new(2),
                 vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "facts are unique");
@@ -2056,7 +2036,7 @@ fn fused_cover_partition_fixture(
                 .find(|header| header.atom == facts_atom)
                 .unwrap();
             assert_eq!(cover_header.subset.size(), expected);
-            let Subset::Dense(range) = &cover_header.subset else {
+            let crate::SubsetRef::Dense(range) = cover_header.subset.as_ref() else {
                 panic!("sorted timestamp filter must produce a dense suffix")
             };
             assert!(
@@ -2086,16 +2066,81 @@ fn fused_cover_partition_fixture(
 }
 
 #[test]
+fn gj_deep_fanout_preserves_bindings_and_materialization() {
+    fn evaluate(workers: usize) -> (usize, Vec<Vec<Value>>, u64) {
+        let pool = egglog_concurrency::ThreadPool::new(workers);
+        pool.install(|| {
+            let mut db = Database::default();
+            let left = add_set_table(&mut db, 5);
+            let right = add_set_table(&mut db, 5);
+            let output = add_set_table(&mut db, 5);
+            const ROWS: usize = 8193;
+            for table in [left, right] {
+                let mut buf = db.new_buffer(table);
+                for i in 0..ROWS {
+                    buf.stage_insert(&[v(7), v(11), v(13), v(i), v(100_000 + i)]);
+                }
+            }
+            db.merge_all();
+
+            let mut rsb = db.new_rule_set();
+            let mut query = rsb.new_rule();
+            query.set_plan_strategy(PlanStrategy::Gj);
+            query.set_no_decomp(true);
+            let vars = (0..5).map(|_| query.new_var()).collect::<Vec<_>>();
+            let args = vars.iter().map(|var| (*var).into()).collect::<Vec<_>>();
+            query.add_atom(left, &args, &[]).unwrap();
+            query.add_atom(right, &args, &[]).unwrap();
+            let mut rule = query.build();
+            rule.insert(output, &args).unwrap();
+            rule.build_with_description("deep-fanout");
+            let rules = rsb.build();
+            let (plan, _, _) = rules.plans.values().next().unwrap();
+            let Plan::SinglePlan(plan) = plan else {
+                panic!("expected a single generic-join plan")
+            };
+            assert_eq!(plan.stages.instrs.len(), 5);
+            for (stage, var) in plan.stages.instrs.iter().zip(&vars) {
+                assert!(
+                    matches!(stage, JoinStage::Intersect { var: actual, .. } if actual == var),
+                    "three singleton prefixes must precede the wide fourth level"
+                );
+            }
+
+            pool.reset_scheduler_metrics();
+            let report = db.run_rule_set(&rules, ReportLevel::TimeOnly, None);
+            let metrics = pool.scheduler_metrics();
+            assert_eq!(report.num_matches("deep-fanout"), ROWS);
+            let rows = table_rows(&db, output);
+            assert_eq!(rows.len(), ROWS);
+            assert_eq!(
+                metrics.local_pushes,
+                metrics.local_pops + metrics.donated_jobs
+            );
+            (
+                report.num_matches("deep-fanout"),
+                rows,
+                metrics.local_pushes,
+            )
+        })
+    }
+
+    let serial = evaluate(1);
+    let parallel = evaluate(4);
+    assert_eq!(parallel.0, serial.0);
+    assert_eq!(parallel.1, serial.1);
+    assert!(parallel.2 > 0, "deep fanout should expose work to the pool");
+}
+
+#[test]
 fn gj_small_top_fallback_uses_local_queue() {
     let pool = egglog_concurrency::ThreadPool::new(4);
     pool.install(|| {
         let mut db = Database::default();
         let make_table = || {
-            SortedWritesTable::new(
+            TimestampedTable::new(
                 3,
                 3,
-                None,
-                vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "test tables have unique keys");
                     false
@@ -2168,11 +2213,9 @@ fn gj_decomposed_small_top_materialization_uses_local_queue() {
     pool.install(|| {
         let mut db = Database::default();
         let make_table = |arity| {
-            SortedWritesTable::new(
+            TimestampedTable::new(
                 arity,
                 arity,
-                None,
-                vec![],
                 Box::new(|_, old, new, _| {
                     assert_eq!(old, new, "test tables have unique keys");
                     false
@@ -2313,11 +2356,9 @@ fn line_graph_2_gj() {
 
 fn line_graph_2_test(strat: PlanStrategy) {
     let mut db = Database::default();
-    let edge_impl = SortedWritesTable::new(
+    let edge_impl = TimestampedTable::new(
         2,
         2,
-        None,
-        vec![],
         Box::new(move |_, a, b, _| {
             if a != b {
                 panic!("merge not supported")
@@ -2385,11 +2426,9 @@ fn line_graph_2_test(strat: PlanStrategy) {
 fn intersection_test(strat: PlanStrategy) {
     let mut db = Database::default();
     let rst = (0..3).map(|_| {
-        SortedWritesTable::new(
+        TimestampedTable::new(
             2,
             2,
-            None,
-            vec![],
             Box::new(move |_, a, b, _| {
                 if a != b {
                     panic!("merge not supported")
@@ -2399,11 +2438,9 @@ fn intersection_test(strat: PlanStrategy) {
             }),
         )
     });
-    let u = SortedWritesTable::new(
+    let u = TimestampedTable::new(
         1,
         1,
-        None,
-        vec![],
         Box::new(move |_, a, b, _| {
             if a != b {
                 panic!("merge not supported")
@@ -3057,7 +3094,7 @@ fn basic_math_egraph() -> MathEgraph {
     let num_impl = SortedWritesTable::new(
         1,
         3,
-        Some(ColumnId::new(2)),
+        ColumnId::new(2),
         vec![],
         Box::new(move |state, a, b, res| {
             if a[1] != b[1] {
@@ -3076,7 +3113,7 @@ fn basic_math_egraph() -> MathEgraph {
     let add_impl = SortedWritesTable::new(
         2,
         4,
-        Some(ColumnId::new(3)),
+        ColumnId::new(3),
         vec![],
         Box::new(move |state, a, b, res| {
             // Capture a backtrace as a string
@@ -3120,11 +3157,9 @@ fn lookup_with_fallback_partial_success_inner() {
     let [f, g, h] = (0..3)
         .map(|_| {
             db.add_table(
-                SortedWritesTable::new(
+                TimestampedTable::new(
                     1,
                     2,
-                    None,
-                    vec![],
                     Box::new(move |_, a, b, _| {
                         if a[0] != b[0] {
                             panic!("merge not supported")
@@ -3223,11 +3258,9 @@ fn call_external_with_fallback_inner() {
     let [f, h] = (0..2)
         .map(|_| {
             db.add_table(
-                SortedWritesTable::new(
+                TimestampedTable::new(
                     1,
                     2,
-                    None,
-                    vec![],
                     Box::new(move |_, a, b, _| {
                         if a[0] != b[0] {
                             panic!("merge not supported")
@@ -3298,25 +3331,25 @@ fn early_stop() {
 }
 
 fn early_stop_inner() {
+    const ROWS: usize = 500_000;
+    const STOP_AFTER: usize = 1000;
     let mut db = Database::default();
 
-    // Create a table with 1M rows.
     let data_table = db.add_table(
-        SortedWritesTable::new(1, 2, None, vec![], Box::new(|_, _, _, _| false)),
+        TimestampedTable::new(1, 2, Box::new(|_, _, _, _| false)),
         iter::empty(),
         iter::empty(),
     );
 
     {
-        // Populate with 0.5M rows.
         let mut buf = db.new_buffer(data_table);
-        for i in 0..500_000 {
+        for i in 0..ROWS {
             buf.stage_insert(&[Value::from_usize(i), Value::from_usize(i)]);
         }
     }
     db.merge_all();
 
-    // External function that triggers early stop after 1000 calls.
+    // External function that triggers early stop after STOP_AFTER calls.
     let call_count = Arc::new(Mutex::new(0usize));
     let call_count_clone = call_count.clone();
     let stop_trigger =
@@ -3324,7 +3357,7 @@ fn early_stop_inner() {
             let mut count = call_count_clone.lock().unwrap();
             *count += 1;
 
-            if *count >= 1000 {
+            if *count >= STOP_AFTER {
                 exec_state.trigger_early_stop();
             }
 
@@ -3349,30 +3382,31 @@ fn early_stop_inner() {
 
     let matches = report.num_matches("early_stop_test");
 
-    // NB: 100K is very loose: this test doesn't appear to flake even with 10K as the upper limit.
-    // This is mostly just there to avoid truly unlikely race conditions where there are a huge
-    // number of matches in flight at once.
+    let final_count = *call_count.lock().unwrap();
+    assert_eq!(matches, final_count);
     assert!(
-        matches < 100_000,
-        "Expected much fewer than 10k matches due to early stopping, got {}, (call_count={})",
-        matches,
-        call_count.lock().unwrap(),
-    );
-    assert!(
-        matches >= 1000,
-        "Expected at least 1000 matches before stopping, got {} (call_count={})",
-        matches,
-        call_count.lock().unwrap(),
+        final_count >= STOP_AFTER,
+        "External function called {final_count} times, should be at least {STOP_AFTER}"
     );
 
-    let final_count = *call_count.lock().unwrap();
+    // Cancellation stops query enumeration, but pending action batches still
+    // finish. This single-table scan runs coarse partitions with one local
+    // action buffer per worker, so allow one full batch per worker after the
+    // stop request. Keep the tighter serial bound: it has no sibling workers
+    // accumulating batches concurrently.
+    let workers = crate::parallel::current_num_threads();
+    let max_calls = if workers == 1 {
+        10_000
+    } else {
+        STOP_AFTER + workers * crate::parallel_heuristics::action_batch_size()
+    };
     assert!(
-        final_count >= 1000,
-        "External function called {final_count} times, should be at least 1000"
+        final_count <= max_calls,
+        "External function called {final_count} times, exceeding the {max_calls} bound for {workers} workers"
     );
     assert!(
-        final_count < 100_000,
-        "External function called {final_count} times, should be much less than 10k"
+        final_count < ROWS,
+        "Early stop must prevent processing the entire table"
     );
 }
 
@@ -3411,4 +3445,129 @@ fn external_context_reaches_external_functions() {
     });
 
     assert_eq!(*seen.lock().unwrap(), vec![Some(7), None, None]);
+}
+
+#[test]
+fn shared_continuations_are_reused_across_plans() {
+    run_serial_and_parallel(|| {
+        shared_continuations_fixture(None);
+        shared_continuations_fixture(Some(Constraint::GtConst {
+            col: ColumnId::new(2),
+            val: v(200),
+        }));
+    });
+}
+
+/// Join `facts(a, b, c)` with a gate on `(a, b)` or on `(a, c)`. Every rule
+/// shares the `facts` root and its first-level index on `a`; the `b` rules
+/// also share the packed index on `b` below each `a`, while the `c` rule
+/// continues the same rows under a different successor family. Without
+/// `slow`, the first level is a persistent catalog index; with it, a shared
+/// root projection.
+fn shared_continuations_fixture(slow: Option<Constraint>) {
+    const KEYS: usize = 40;
+    let mut db = Database::default();
+    let facts = add_set_table(&mut db, 3);
+    let left = add_set_table(&mut db, 2);
+    let right = add_set_table(&mut db, 2);
+    let outputs = (0..3)
+        .map(|_| add_set_table(&mut db, 3))
+        .collect::<Vec<_>>();
+    {
+        let mut facts_buf = db.new_buffer(facts);
+        let mut left_buf = db.new_buffer(left);
+        let mut right_buf = db.new_buffer(right);
+        for a in 0..KEYS {
+            // Enough rows per key that the second level is a packed node
+            // rather than a small residual index.
+            for b in 100..108 {
+                for c in 200..204 {
+                    facts_buf.stage_insert(&[v(a), v(b), v(c)]);
+                }
+            }
+            left_buf.stage_insert(&[v(a), v(100)]);
+            if a % 2 == 0 {
+                right_buf.stage_insert(&[v(a), v(202)]);
+            }
+        }
+    }
+    db.merge_all();
+
+    // (description, gate, gate column of `facts`, output)
+    let rules_b = ("shared-continuation-b", left, 1, outputs[0]);
+    let rules_c = ("shared-continuation-c", right, 2, outputs[1]);
+    let rules_d = ("shared-continuation-d", left, 1, outputs[2]);
+    let build = |db: &mut Database, rules: &[(&str, TableId, usize, TableId)]| {
+        let mut rsb = db.new_rule_set();
+        for &(description, gate, gate_column, output) in rules {
+            let mut query = rsb.new_rule();
+            query.set_plan_strategy(PlanStrategy::Gj);
+            query.set_no_decomp(true);
+            let a = query.new_var_named("a");
+            let b = query.new_var_named("b");
+            let c = query.new_var_named("c");
+            let vars = [a, b, c];
+            query
+                .add_atom(facts, &[a.into(), b.into(), c.into()], slow.as_slice())
+                .unwrap();
+            query
+                .add_atom(gate, &[a.into(), vars[gate_column].into()], &[])
+                .unwrap();
+            let mut rule = query.build();
+            rule.insert(output, &[a.into(), b.into(), c.into()])
+                .unwrap();
+            rule.build_with_description(description);
+        }
+        rsb.build()
+    };
+    let serial = crate::parallel::current_num_threads() == 1;
+    let builds_before = crate::free_join::packed_trie::packed_node_builds();
+    let two_rules = build(&mut db, &[rules_b, rules_c]);
+    db.run_rule_set(&two_rules, ReportLevel::TimeOnly, None);
+    let builds_two = crate::free_join::packed_trie::packed_node_builds() - builds_before;
+    for output in &outputs {
+        db.clear_table(*output);
+    }
+    let three_rules = build(&mut db, &[rules_b, rules_c, rules_d]);
+    let report = db.run_rule_set(&three_rules, ReportLevel::TimeOnly, None);
+    let builds_three =
+        crate::free_join::packed_trie::packed_node_builds() - builds_before - builds_two;
+    if serial {
+        assert!(builds_two > 0, "the fixture must build packed nodes");
+        assert_eq!(
+            builds_three, builds_two,
+            "a plan identical to an earlier one must reuse every shared packed node"
+        );
+    }
+
+    let keeps = |c: usize| slow.is_none() || c > 200;
+    let mut expected_b = Vec::new();
+    let mut expected_c = Vec::new();
+    for a in 0..KEYS {
+        for c in (200..204).filter(|&c| keeps(c)) {
+            expected_b.push(vec![v(a), v(100), v(c)]);
+        }
+        if a % 2 == 0 {
+            for b in 100..108 {
+                expected_c.push(vec![v(a), v(b), v(202)]);
+            }
+        }
+    }
+    expected_b.sort();
+    expected_c.sort();
+    assert_eq!(
+        report.num_matches("shared-continuation-b"),
+        expected_b.len()
+    );
+    assert_eq!(
+        report.num_matches("shared-continuation-c"),
+        expected_c.len()
+    );
+    assert_eq!(
+        report.num_matches("shared-continuation-d"),
+        expected_b.len()
+    );
+    assert_eq!(table_rows(&db, outputs[0]), expected_b);
+    assert_eq!(table_rows(&db, outputs[1]), expected_c);
+    assert_eq!(table_rows(&db, outputs[2]), expected_b);
 }
