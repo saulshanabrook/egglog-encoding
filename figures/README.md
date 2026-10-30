@@ -18,10 +18,9 @@ Canvas 3.2.3. No npm project or separate PDF converter is required. PDF text use
 embedded font subsets. The first run may download the pinned renderer packages.
 
 The five PDFs replace the paper's `figures/eval/` placeholders. SVG and 3x PNG
-companions, inspectable bound specifications, and provenance receipts are
-written alongside them. Absolute image paths are printed on stderr. The default
-output directory is each authored specification's directory, `figures/eval/`
-for the bundled catalog. The paper repository is needed only when selecting it
+companions are written alongside them. Absolute image paths are printed on
+stderr. The default output directory is each authored specification's directory,
+`figures/eval/` for the bundled catalog. The paper repository is needed only when selecting it
 as the output destination.
 
 | Figure | Comparison |
@@ -65,14 +64,14 @@ Runtime and memory views therefore share launches. It reuses compatible cached
 observations and collects only missing observations; there is no separate
 cached/render-only mode. Cached failed conditions are retained rather than
 repeated automatically. Repeating an unchanged completed invocation launches no
-additional measurements and leaves unchanged images alone.
+additional measurements and renders the requested images again.
 
 The default source is this checkout with label `figures`. `--target figures=@main`
 selects another source using the ordinary target syntax; label-only lookups are
 not source targets. `--report /tmp/figure-test.jsonl` isolates test observations.
 Command-line paths resolve relative to the invocation directory. The production
 catalog requests ten runs per condition. `--rounds N` overrides that count for
-collection, sample selection, intervals and receipts without changing the catalog.
+collection, sample selection and intervals without changing the catalog.
 Use `--rounds 1` and a temporary report for CLI smoke checks.
 
 The shared collection progress estimates remaining time across all missing runs.
@@ -90,13 +89,15 @@ belongs to the current grouped artifact; raw label-only lookup remains based on
 recorded observations. Source targets are checked and rebound on each figure
 invocation. An ordinary comparison that assigns the same label/engine to two
 different binaries is rejected before launch. The raw
-`.reports.jsonl` remains append-only. The authored Vega-Lite specifications
-select the requested label, physical input/facts hashes, treatment, encoding and
-timeout. They never borrow missing measurements from an older executable.
+`.reports.jsonl` remains append-only. The runner selects observation row IDs
+through the shared typed report API, using the current executable, physical
+input/facts hashes, treatment, encoding and timeout. The authored Vega-Lite
+specifications use those IDs from the grouped JSON. They never borrow missing
+measurements from an older executable.
 Native disequality `.in` and logical Egglog `.egg` inputs remain distinct.
 
-The plot selects the newest requested N rows per identity, ordered by timestamp
-and physical row index, including failures. It retains good raw points but
+The shared selector chooses the newest requested N rows per identity, ordered by
+timestamp and physical row index, including failures. It retains good raw points but
 reports an estimate only when all N rows succeeded and the metric is finite.
 Partial observations, timeouts and missing RSS remain explicit. With N >= 2,
 absolute mean intervals use Student's t at 95%. N = 1 permits a mean point but
@@ -136,22 +137,21 @@ separate validators; those remain under
 
 ## Inspect and hand off
 
-Each generated `.bound.vl.json` changes only declared invocation parameters and
-the report data URL. The standard parameters are `target_label`, `timeout_sec`,
-`rounds`, `t_critical`, `selected_inputs` and `source_blockers`. Expected inputs
-include physical identities and corpus metadata, not precomputed statistics.
-They scope subset configurations and keep missing conditions visible. The bound
-copy can be rendered directly using the same pinned `npx vl2pdf` command, with
-`--base` set to the authored specification's directory.
+The runner reads each authored specification once and binds its declared
+parameters and grouped JSON URL in a temporary copy. The standard parameters are
+`target_label`, `timeout_sec`, `rounds`, `t_critical`, `selected_inputs` and
+`source_blockers`. Expected inputs include physical identities, selected row IDs
+and corpus metadata. They scope subset configurations and keep missing conditions
+visible; statistics remain in the authored Vega transforms. Vega resolves other
+relative assets from the authored specification's directory.
 
-Each `.receipt.json` records effective settings, source/binary hashes, selected
-row identities and original provenance, metadata, rendering versions and output
-hashes. Historical argv was not stored in the cache: command templates are
-reconstructed, not claimed as recorded argv. Match `selection_sha256` between
-runtime/memory receipts and hand off outputs from one invocation. Preserve the
-validated Math12 boundary evidence and disequality contradiction-agreement test
-results alongside the selected observations. Fill paper result sentences only
-from validated measurements, keeping failed and missing cases visible.
+Each invocation renders temporary PDF/SVG/PNG files and replaces the previous
+images after all three succeed. The raw JSONL and grouped JSON retain observation
+provenance, including source/binary hashes, statuses and row IDs. Preserve these
+with the catalog, authored specifications, validated Math12 boundary evidence and
+disequality contradiction-agreement results when handing off measurements.
+Fill paper result sentences only from validated measurements, keeping failed
+and missing cases visible.
 
 ```sh
 make figures-test

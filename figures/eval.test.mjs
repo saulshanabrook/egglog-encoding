@@ -21,7 +21,11 @@ function group(id, treatment, values, changes={}) {
 }
 async function evaluate(name, inputs, groups, rounds=2) {
   const spec=JSON.parse(await readFile(new URL(`eval/${name}.vl.json`,import.meta.url),'utf8'));
-  for(const p of spec.params) if(p.name==='selected_inputs')p.value=inputs;
+  for(const p of spec.params) if(p.name==='selected_inputs')p.value=inputs.map(input=>({...input,
+    selected_row_indices:input.selected_row_indices??groups.find(g=>g.labels.includes('figures')&&
+      g.key.file_sha256===input.file_sha256&&g.key.fact_directory_sha256===input.fact_directory_sha256&&
+      g.key.treatment===input.treatment&&g.key.timeout_sec===300&&g.key.disequality_encoding==='nee')
+      ?.samples.slice(-rounds).map(row=>row.row_index)??[]}));
     else if(p.name==='rounds')p.value=rounds;
     else if(p.name==='t_critical')p.value=rounds===1?null:12.706204736432095;
   const warnings=[];
@@ -68,6 +72,14 @@ test('newest N observations include failures and never borrow a moved label',asy
   a.labels=[];
   const moved=await evaluate('disequality-runtime',[input('a','off')],[a]);
   assert.equal(find(moved,'absolute_runs').length,0);
+});
+test('bound row IDs choose samples without repeating cache selection in Vega',async()=>{
+  const a=group('a','off',[1,3,100,200]);
+  const selected=await evaluate('disequality-runtime',[input('a','off',{selected_row_indices:[0,1]})],[a]);
+  assert.equal(find(selected,'absolute_means')[0].datum.mean,2);
+  const missing=await evaluate('disequality-runtime',[input('a','off',{selected_row_indices:[]})],[a]);
+  assert.equal(find(missing,'absolute_runs').length,0);
+  assert.match(missing.svg,/0\/2 observations/);
 });
 test('scope excludes unrelated cache groups and one run has a point but no interval',async()=>{
   const d=await evaluate('disequality-runtime',[input('a','off')],[group('a','off',[2]),group('b','off',[99])],1);

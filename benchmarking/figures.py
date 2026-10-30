@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import glob
-import hashlib
 import json
 import os
 import shlex
@@ -12,20 +11,21 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass, replace
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from rich.console import Console
 from scipy import stats
 
-from benchmarks.paper import FigureInventory, figure_inventory
+from benchmarks.reproduction.corpus import MANIFEST_RELATIVE_PATH, VALIDATION_POLICY, load_manifest
 
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment
-from .models import EndpointRequest, FileSpec, ResolvedTarget
+from .models import BenchmarkEndpoint, EndpointRequest, FileSpec, ResolvedTarget, validate_unique_file_identities
 from .reports.grouped import grouped_report_path, write_grouped_report
-from .reports.store import GroupedReport, ObservationGroup
-from .targets import parse_target, sha256_file, workload_command
+from .reports.store import CacheKey, GroupedReport
+from .targets import parse_target
 from .workloads import resolve_files
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +53,75 @@ class FigureConfig:
 class ResolvedFigure:
     figure: Figure
     files: tuple[FileSpec, ...]
+    spec: dict[str, Any]
+
+
+class FigureWorkload(TypedDict):
+    label: str
+    family: str
+    file_sha256: str
+    fact_directory_sha256: str
+    validation_failures: dict[str, str]
+
+
+class FigureInventory(TypedDict):
+    workloads: list[FigureWorkload]
+    unavailable_cases: list[dict[str, Any]]
+
+
+def _figure_inventory(root: Path, timeout_sec: int, selected: Sequence[FileSpec] | None = None) -> FigureInventory:
+    """Project saved corpus metadata without collecting or regenerating inputs."""
+
+    directory = (root / MANIFEST_RELATIVE_PATH).parent.resolve()
+    published = (
+        None if selected is None else [file for file in selected if file.absolute_path.is_relative_to(directory)]
+    )
+    if published == []:
+        return {"workloads": [], "unavailable_cases": []}
+    # Figure selection has already hashed its files. Do not inspect unrelated
+    # prepared inputs when a custom configuration selects a small subset.
+    manifest = load_manifest(root)
+    identities = None if published is None else {(file.sha256, file.fact_directory_sha256) for file in published}
+    registered = {
+        (directory / item["file"]).resolve(): (item["sha256"], item["facts_sha256"]) for item in manifest.workloads
+    }
+    if published is not None and any(
+        registered.get(file.absolute_path) != (file.sha256, file.fact_directory_sha256) for file in published
+    ):
+        raise ValueError("selected published corpus input changed or is unregistered; review its manifest")
+    cases = {case["id"]: case for case in manifest.cases}
+    workloads: dict[tuple[str, str], FigureWorkload] = {}
+    for source in manifest.workloads:
+        identity = (source["sha256"], source["facts_sha256"])
+        if identities is not None and identity not in identities:
+            continue
+        first = source["aliases"][0]
+        case = cases[first["case"]]
+        workloads[identity] = {
+            "label": case["id"] + (f" / call {first['order'] + 1}" if len(case["workloads"]) > 1 else ""),
+            "family": case["family"],
+            "file_sha256": source["sha256"],
+            "fact_directory_sha256": source["facts_sha256"],
+            "validation_failures": {},
+        }
+    for outcome in manifest.outcomes:
+        item = workloads.get((outcome["file_sha256"], outcome["fact_directory_sha256"]))
+        if (
+            item is None
+            or outcome["kind"] != "validation"
+            or outcome["policy"] != VALIDATION_POLICY
+            or outcome["timeout_sec"] != timeout_sec
+        ):
+            continue
+        key = f"{outcome['binary_sha256']}/{timeout_sec}/{outcome['disequality_encoding']}"
+        if outcome["status"] == "success":
+            item["validation_failures"].pop(key, None)
+        else:
+            item["validation_failures"][key] = outcome["reason"] or "Strict proof validation failed"
+    return {
+        "workloads": list(workloads.values()),
+        "unavailable_cases": [case for case in manifest.cases if case["status"] in ("blocked", "pending")],
+    }
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -66,7 +135,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def load_config(path: Path) -> FigureConfig:
-    """Read the deliberately small user-authored catalog without touching workloads."""
+    """Read the figure definitions without touching workloads."""
     path = path.expanduser().resolve()
     data = json.loads(path.read_text(), object_pairs_hook=_unique_object)
     if not isinstance(data, dict) or set(data) != {"rounds", "timeout_sec", "figures"}:
@@ -143,16 +212,20 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
 
 
 def resolve_figures(config: FigureConfig, names: Sequence[str], invocation_cwd: Path) -> tuple[ResolvedFigure, ...]:
-    """Expand each figure independently; never cross unrelated files and treatments."""
+    """Resolve shared inputs once while preserving each figure's ordered scope."""
     result = []
+    inputs: dict[Path, FileSpec] = {}
+    specs: dict[Path, dict[str, Any]] = {}
     for figure in config.figures:
         if names and figure.name not in names:
             continue
-        if not figure.spec.is_file():
-            raise ValueError(f"figure spec does not exist: {figure.spec}")
-        spec = json.loads(figure.spec.read_bytes())
-        if not isinstance(spec, dict) or not isinstance(spec.get("data"), dict) or not spec["data"].get("url"):
-            raise ValueError(f"{figure.name}: specification must declare a primary data.url")
+        if figure.spec not in specs:
+            if not figure.spec.is_file():
+                raise ValueError(f"figure spec does not exist: {figure.spec}")
+            spec = json.loads(figure.spec.read_bytes())
+            if not isinstance(spec, dict) or not isinstance(spec.get("data"), dict) or not spec["data"].get("url"):
+                raise ValueError(f"{figure.name}: specification must declare a primary data.url")
+            specs[figure.spec] = spec
         paths: dict[Path, None] = {}
         for pattern in figure.patterns:
             matches = sorted(glob.glob(str(config.path.parent / pattern), recursive=True))
@@ -160,29 +233,15 @@ def resolve_figures(config: FigureConfig, names: Sequence[str], invocation_cwd: 
                 raise ValueError(f"{figure.name}: file pattern matched nothing: {pattern}")
             for match in matches:
                 path = Path(match).resolve()
-                if not path.is_file():
-                    raise ValueError(f"{figure.name}: not a workload file: {path}")
+                if path not in inputs:
+                    if not path.is_file():
+                        raise ValueError(f"{figure.name}: not a workload file: {path}")
+                    inputs[path] = resolve_files([os.path.relpath(path, invocation_cwd)], invocation_cwd, None)[0]
                 paths[path] = None
-        display_paths = [os.path.relpath(path, invocation_cwd) for path in paths]
-        files = resolve_files(display_paths, invocation_cwd, None)
-        result.append(ResolvedFigure(figure, files))
+        files = tuple(inputs[path] for path in paths)
+        validate_unique_file_identities(files)
+        result.append(ResolvedFigure(figure, files, specs[figure.spec]))
     return tuple(result)
-
-
-def write_if_changed(path: Path, data: bytes) -> None:
-    """Replace derived files atomically while preserving unchanged output mtimes."""
-    if path.is_file() and path.read_bytes() == data:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(data)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def render_figures(
@@ -192,43 +251,28 @@ def render_figures(
     report_path: Path,
     target: ResolvedTarget,
     output_dir: Path | None,
-    invocation: Sequence[str],
     console: Console,
-    inventory: FigureInventory | None = None,
+    inventory: FigureInventory,
 ) -> tuple[Path, ...]:
-    """Bind declared Vega parameters and data, render incrementally, and retain provenance."""
-    all_files = tuple(dict.fromkeys(file for figure in figures for file in figure.files))
-    if inventory is None:
-        inventory = figure_inventory(ROOT, config.timeout_sec, all_files)
-    grouped_digest = sha256_file(grouped_report_path(report_path))
+    """Bind shared sample selections and render Vega through temporary files."""
     metadata = {(item["file_sha256"], item["fact_directory_sha256"]): item for item in inventory["workloads"]}
     label = target.row.label
     if label is None:
         raise ValueError("figure target must have a label")
-    labeled_groups: dict[tuple[str, str, Treatment, str, int], ObservationGroup] = {}
-    for group in grouped.data["groups"]:
-        if label not in group["labels"]:
-            continue
-        key = group["key"]
-        identity = (
-            key["file_sha256"],
-            key["fact_directory_sha256"],
-            key["treatment"],
-            key["disequality_encoding"],
-            key["timeout_sec"],
-        )
-        if identity in labeled_groups:
-            raise ValueError("grouped label addresses multiple executable identities for one input")
-        labeled_groups[identity] = group
+    command = [*shlex.split(os.environ.get("NPX", "npx --yes")), *[f"--package={p}" for p in VEGA_PACKAGES]]
     rendered = []
     for resolved in figures:
         figure = resolved.figure
         selected_inputs = []
-        selections: list[dict[str, Any]] = []
+        incomplete = 0
         for file in resolved.files:
             info = metadata.get((file.sha256, file.fact_directory_sha256))
             for treatment in figure.treatments:
                 physical = file.for_engine(TREATMENT_SPECS[treatment].engine)
+                rows = grouped.latest_records(
+                    CacheKey.for_endpoint(BenchmarkEndpoint(target, treatment), file, config.timeout_sec), config.rounds
+                )
+                incomplete += len(rows) < config.rounds or any(row.record["status"] != "success" for row in rows)
                 selected_inputs.append(
                     {
                         "logical_id": f"{file.sha256}/{file.fact_directory_sha256}",
@@ -237,50 +281,8 @@ def render_figures(
                         "file_sha256": physical.sha256,
                         "fact_directory_sha256": physical.fact_directory_sha256,
                         "treatment": treatment,
+                        "selected_row_indices": [row.row_index for row in rows],
                         "validation_failures": info["validation_failures"] if info else {},
-                    }
-                )
-                selected_group = labeled_groups.get(
-                    (physical.sha256, physical.fact_directory_sha256, treatment, "nee", config.timeout_sec)
-                )
-                rows = selected_group["samples"][-config.rounds :] if selected_group is not None else []
-                try:
-                    binary_path = target.binary_path_for(treatment)
-                except ValueError:
-                    binary_path = None
-                template_binary = binary_path or Path(f"<{TREATMENT_SPECS[treatment].engine}-executable>")
-                selections.append(
-                    {
-                        "logical_path": file.display_path,
-                        "physical_path": physical.display_path,
-                        "treatment": treatment,
-                        "reconstructed_workload_command": workload_command(template_binary, file, treatment),
-                        "requested_rows": config.rounds,
-                        "selected_rows": len(rows),
-                        "rows": [
-                            {
-                                key: row.get(key)
-                                for key in (
-                                    "row_index",
-                                    "started_at",
-                                    "status",
-                                    "binary_sha256",
-                                    "file_sha256",
-                                    "fact_directory_sha256",
-                                    "treatment",
-                                    "disequality_encoding",
-                                    "timeout_sec",
-                                    "target_label",
-                                    "target_source",
-                                    "target_git_ref",
-                                    "target_git_sha",
-                                    "target_is_dirty",
-                                    "file_path",
-                                    "fact_directory_path",
-                                )
-                            }
-                            for row in rows
-                        ],
                     }
                 )
         bindings = {
@@ -291,87 +293,40 @@ def render_figures(
             "selected_inputs": selected_inputs,
             "source_blockers": inventory["unavailable_cases"],
         }
-        spec = json.loads(figure.spec.read_bytes())
+        spec = deepcopy(resolved.spec)
         for parameter in spec.get("params", []):
             if parameter.get("name") in bindings:
                 parameter["value"] = bindings[parameter["name"]]
         spec["data"]["url"] = grouped_report_path(report_path).as_uri()
         destination = (output_dir or figure.spec.parent).resolve()
-        bound_path = destination / f"{figure.name}.bound.vl.json"
-        receipt_path = destination / f"{figure.name}.receipt.json"
-        encoded_spec = json.dumps(spec, ensure_ascii=False, indent=2).encode() + b"\n"
-        write_if_changed(bound_path, encoded_spec)
-        selected_bytes = json.dumps(selections, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        # The source snapshot is complete; this receipt records selection/provenance,
-        # not computed plotting statistics or a second observation cache.
-        receipt = {
-            "figure": figure.name,
-            "config": str(config.path),
-            "spec": str(figure.spec),
-            "invocation": ["./bench.py", "figures", *invocation],
-            "rounds": config.rounds,
-            "timeout_sec": config.timeout_sec,
-            "target": asdict(target.row),
-            "engine_binaries": [asdict(b) for b in target.engine_binaries],
-            "selection_sha256": hashlib.sha256(selected_bytes).hexdigest(),
-            "selected_observations": selections,
-            "corpus_metadata": inventory,
-            "report": str(report_path),
-            "grouped_report": str(grouped_report_path(report_path)),
-            "renderer_packages": VEGA_PACKAGES,
-            "timing_boundary": "Whole process: launch, input I/O, parsing/lowering, execution, requested proof work.",
-            "proof_output": "Native Egg materializes explanations in memory; timed runs do not serialize proof files.",
-            "commands": "Historical argv is not stored; templates use treatment and physical input.",
-        }
-        fingerprint = hashlib.sha256(
-            encoded_spec + grouped_digest.encode() + json.dumps(VEGA_PACKAGES).encode()
-        ).hexdigest()
-        receipt["render_sha256"] = fingerprint
-        try:
-            previous = json.loads(receipt_path.read_bytes())
-        except (OSError, ValueError):
-            previous = {}
-        command = [*shlex.split(os.environ.get("NPX", "npx --yes")), *[f"--package={p}" for p in VEGA_PACKAGES]]
+        destination.mkdir(parents=True, exist_ok=True)
         outputs = [destination / f"{figure.name}.{extension}" for extension in ("pdf", "svg", "png")]
-        unchanged = previous.get("render_sha256") == fingerprint and all(
-            output.is_file()
-            and previous.get("outputs", {}).get(str(output)) == sha256_file(output).removeprefix("sha256:")
-            for output in outputs
-        )
-        if not unchanged:
-            # A failed renderer must not replace one member of an otherwise
-            # coherent PDF/SVG/PNG set or make an empty image look cached.
-            with tempfile.TemporaryDirectory(dir=destination, prefix=f".{figure.name}.") as temporary:
-                pending = []
-                for output in outputs:
-                    generated = Path(temporary) / output.name
-                    args = [
-                        *command,
-                        "vl2" + output.suffix[1:],
-                        str(bound_path),
-                        str(generated),
-                        "--base",
-                        str(figure.spec.parent),
-                    ]
-                    if output.suffix == ".png":
-                        args += ["-s", "3"]
-                    subprocess.run(args, cwd=ROOT, check=True, stdout=sys.stderr, stderr=sys.stderr)
-                    if not generated.is_file() or not generated.stat().st_size:
-                        raise ValueError(f"renderer produced no image: {output}")
-                    pending.append((generated, output))
-                for generated, output in pending:
-                    os.replace(generated, output)
-        receipt["outputs"] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in outputs}
-        write_if_changed(receipt_path, json.dumps(receipt, default=str, ensure_ascii=False, indent=2).encode() + b"\n")
+        # Render the complete set before replacing any existing image.
+        with tempfile.TemporaryDirectory(dir=destination, prefix=f".{figure.name}.") as temporary:
+            bound_path = Path(temporary) / f"{figure.name}.vl.json"
+            bound_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n")
+            for output in outputs:
+                generated = Path(temporary) / output.name
+                args = [
+                    *command,
+                    "vl2" + output.suffix[1:],
+                    str(bound_path),
+                    str(generated),
+                    "--base",
+                    str(figure.spec.parent),
+                ]
+                if output.suffix == ".png":
+                    args += ["-s", "3"]
+                subprocess.run(args, cwd=ROOT, check=True, stdout=sys.stderr, stderr=sys.stderr)
+                if not generated.is_file() or not generated.stat().st_size:
+                    raise ValueError(f"renderer produced no image: {output}")
+            for output in outputs:
+                os.replace(Path(temporary) / output.name, output)
         for output in outputs:
             console.print(str(output), soft_wrap=True)
             rendered.append(output)
-        incomplete = sum(
-            len(selection["rows"]) < config.rounds or any(row["status"] != "success" for row in selection["rows"])
-            for selection in selections
-        )
         if incomplete:
-            console.print(f"{figure.name}: {incomplete}/{len(selections)} incomplete or unsuccessful conditions")
+            console.print(f"{figure.name}: {incomplete}/{len(selected_inputs)} incomplete or unsuccessful conditions")
     return tuple(rendered)
 
 
@@ -386,7 +341,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cwd = Path.cwd()
         figures = resolve_figures(config, args.names, cwd)
-        inventory = figure_inventory(
+        inventory = _figure_inventory(
             ROOT, config.timeout_sec, tuple(dict.fromkeys(file for figure in figures for file in figure.files))
         )
         target_request = parse_target(str(args.target))
@@ -421,7 +376,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             report_path,
             targets[target_request],
             args.output_dir.expanduser().resolve() if args.output_dir else None,
-            raw,
             console,
             inventory,
         )

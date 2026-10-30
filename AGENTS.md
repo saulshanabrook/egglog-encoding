@@ -151,7 +151,9 @@ or modify the JSONL.
 - The outputs are `disequality-runtime`, `math-runtime`, `math-memory`,
   `corpus-runtime-cdf`, and `corpus-memory-cdf`, each as PDF/SVG/PNG under
   `figures/eval/` by default. `--output-dir` can target the paper's
-  `figures/eval/` directory. Preserve bound specs and provenance receipts.
+  `figures/eval/` directory. Render through temporary bound specs and image files;
+  replace the previous images only after every format succeeds. Observation
+  provenance remains in the raw JSONL and grouped JSON.
 - Run `make figures-test`; inspect all five exported figures at manuscript width
   and verify PDF font embedding. Tests must cover latest-N selection, N=1 without
   intervals, independent Fieller intervals, missing/failure denominators, and

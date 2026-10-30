@@ -1,6 +1,6 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-  "description": "Paper figure. All sample selection and statistics are performed by the visible Vega transforms. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
+  "description": "Paper figure. Shared cache selection supplies row IDs; the visible Vega transforms compute statistics. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
   "data": {
     "url": "../../.reports-grouped.json",
     "format": {
@@ -64,11 +64,12 @@
     {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
     {"calculate": "isValid(datum.group)", "as": "eligible_group"},
     {"calculate": "datum.eligible_group ? datum.group.samples : []", "as": "observations"},
-    {"calculate": "slice(datum.observations, max(0, length(datum.observations) - rounds))", "as": "samples"},
-    {"calculate": "length(datum.samples)", "as": "sample_n"},
+    {"calculate": "datum.eligible_group ? datum.input.selected_row_indices : []", "as": "sample_indices"},
+    {"calculate": "length(datum.sample_indices)", "as": "sample_n"},
     {"calculate": "datum.input.treatment === 'proof-testing' && datum.eligible_group && datum.input.validation_failures ? datum.input.validation_failures[datum.group.key.binary_sha256 + '/' + timeout_sec + '/nee'] || '' : ''", "as": "validation_issue"},
-    {"calculate": "datum.sample_n ? datum.samples : [null]", "as": "runs"},
-    {"flatten": ["runs"], "as": ["run"]},
+    {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["row_index"]},
+    {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},
     {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "value"},
     {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
     {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},

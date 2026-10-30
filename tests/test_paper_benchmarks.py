@@ -5,17 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from benchmarks import paper
+from benchmarking.figures import _figure_inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def corpus_fixture(root: Path) -> paper.Corpus:
+def corpus_fixture(root: Path) -> dict[str, Any]:
     directory = root / "benchmarks/corpus"
-    corpus: paper.Corpus = {"cases": [], "workloads": []}
+    corpus: dict[str, Any] = {"sources": {}, "cases": [], "workloads": []}
     sources = [
         ("math", (ROOT / "egglog-experimental/tests/math-microbenchmark-rational.egg").read_bytes()),
         ("eggcc", b"(datatype Expr (A))\n(let root (A))\n(extract root)\n"),
@@ -58,7 +59,7 @@ def corpus_fixture(root: Path) -> paper.Corpus:
 
 def test_inventory_keeps_source_blockers_separate(tmp_path: Path) -> None:
     corpus = corpus_fixture(tmp_path)
-    inventory = paper.figure_inventory(tmp_path, 300)
+    inventory = _figure_inventory(tmp_path, 300)
     assert len(inventory["workloads"]) == 3
     assert inventory["unavailable_cases"][0]["reason"] == "Source dependency is unavailable"
     assert inventory["workloads"][0]["file_sha256"] == corpus["workloads"][0]["sha256"]
@@ -66,7 +67,7 @@ def test_inventory_keeps_source_blockers_separate(tmp_path: Path) -> None:
     assert not (tmp_path / "benchmarks/local/figure-inventory.json").exists()
     corpus["cases"][-1]["reason"] = "New source evidence"
     (tmp_path / "benchmarks/corpus/manifest.json").write_text(json.dumps(corpus))
-    assert paper.figure_inventory(tmp_path, 300)["unavailable_cases"][0]["reason"] == "New source evidence"
+    assert _figure_inventory(tmp_path, 300)["unavailable_cases"][0]["reason"] == "New source evidence"
 
 
 def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) -> None:
@@ -86,12 +87,12 @@ def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) ->
     path = tmp_path / "benchmarks/corpus/.local/outcomes.json"
     path.parent.mkdir()
     path.write_text(json.dumps([outcome]))
-    assert paper.figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {
+    assert _figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {
         "sha256:engine/300/nee": "Strict replay failed",
     }
-    assert paper.figure_inventory(tmp_path, 120)["workloads"][0]["validation_failures"] == {}
+    assert _figure_inventory(tmp_path, 120)["workloads"][0]["validation_failures"] == {}
     path.write_text(json.dumps([outcome, {**outcome, "status": "success"}]))
-    assert paper.figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {}
+    assert _figure_inventory(tmp_path, 300)["workloads"][0]["validation_failures"] == {}
 
 
 def test_metadata_only_validates_selected_corpus_inputs(tmp_path: Path) -> None:
@@ -100,20 +101,26 @@ def test_metadata_only_validates_selected_corpus_inputs(tmp_path: Path) -> None:
     corpus = corpus_fixture(tmp_path)
     item = corpus["workloads"][0]
     directory = tmp_path / "benchmarks/corpus"
+    item["aliases"].append({"case": "eggcc", "order": 1})
+    corpus["cases"][1]["workloads"].append(item["file"])
+    manifest = directory / "manifest.json"
+    manifest.write_text(json.dumps(corpus))
+    published = manifest.read_bytes()
     (directory / corpus["workloads"][1]["file"]).unlink()
     selected = FileSpec(item["file"], (directory / item["file"]).resolve(), item["sha256"])
-    inventory = paper.figure_inventory(tmp_path, 300, [selected])
+    inventory = _figure_inventory(tmp_path, 300, [selected])
     assert len(inventory["workloads"]) == 1
-    assert inventory["workloads"][0]["aliases"] == item["aliases"]
+    assert inventory["workloads"][0]["label"] == "math"
+    assert inventory["workloads"][0]["family"] == "math"
+    assert manifest.read_bytes() == published
     with pytest.raises(ValueError, match="unregistered"):
-        paper.figure_inventory(tmp_path, 300, [FileSpec(item["file"], selected.absolute_path, "changed")])
+        _figure_inventory(tmp_path, 300, [FileSpec(item["file"], selected.absolute_path, "changed")])
     # Matching another published file's bytes does not authorize replacing
     # this path's pinned workload identity.
     with pytest.raises(ValueError, match="unregistered"):
-        paper.figure_inventory(
+        _figure_inventory(
             tmp_path, 300, [FileSpec(item["file"], selected.absolute_path, corpus["workloads"][1]["sha256"])]
         )
     assert (
-        paper.figure_inventory(tmp_path, 300, [FileSpec("custom.egg", tmp_path / "custom.egg", "custom")])["workloads"]
-        == []
+        _figure_inventory(tmp_path, 300, [FileSpec("custom.egg", tmp_path / "custom.egg", "custom")])["workloads"] == []
     )
