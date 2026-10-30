@@ -72,7 +72,6 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
         check: bool,
         stdout: Any | None = None,
         stderr: Any | None = None,
-        text: bool = True,
     ) -> None:
         calls.append(args)
         assert cwd == tmp_path
