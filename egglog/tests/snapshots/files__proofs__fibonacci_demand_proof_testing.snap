@@ -3,33 +3,33 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let prf0 (Fiat (= () ())))
-(let t0 (premises (Fiat (= (Fib 7) (Fib 7))) prf0))
-(let t1 (substitution (@rewrite_var__1 (Fib 7)) (x 7)))
-(let t2
+(let prf (Fiat (= () ())))
+(let t (premises (Fiat (= (Fib 7) (Fib 7))) prf))
+(let t_1 (substitution (@rewrite_var___1 (Fib 7)) (x 7)))
+(let t_2
   (premises
                               (Rule
                                 (= (Fib 5) (Fib 5))
                                 (name
                                   "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                t0
-                                t1)
-                              prf0))
-(let t3 (substitution (@rewrite_var__1 (Fib 5)) (x 5)))
-(let t4
+                                t
+                                t_1)
+                              prf))
+(let t_3 (substitution (@rewrite_var___1 (Fib 5)) (x 5)))
+(let t_4
   (premises
                                                 (Rule
                                                   (= (Fib 3) (Fib 3))
                                                   (name
                                                     "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                  t2
-                                                  t3)
-                                                prf0))
-(let t5
+                                                  t_2
+                                                  t_3)
+                                                prf))
+(let t_5
   (substitution
-                                                (@rewrite_var__1 (Fib 3))
+                                                (@rewrite_var___1 (Fib 3))
                                                 (x 3)))
-(let prf1
+(let prf_1
   (Rule
                                                 (= (Fib 1) (Num 1))
                                                 (name
@@ -39,27 +39,27 @@ expression: proof_snapshot
                                                     (= (Fib 1) (Fib 1))
                                                     (name
                                                       "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                    t4
-                                                    t5)
-                                                  prf0)
+                                                    t_4
+                                                    t_5)
+                                                  prf)
                                                 (substitution
-                                                  (@rewrite_var__2 (Fib 1))
+                                                  (@rewrite_var___2 (Fib 1))
                                                   (x 1))))
-(let t6
+(let t_6
   (premises
                                                             (Rule
                                                               (= (Fib 2) (Fib 2))
                                                               (name
                                                                 "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                              t4
-                                                              t5)
-                                                            prf0))
-(let t7
+                                                              t_4
+                                                              t_5)
+                                                            prf))
+(let t_7
   (substitution
-                                                            (@rewrite_var__1
+                                                            (@rewrite_var___1
                                                               (Fib 2))
                                                             (x 2)))
-(let prf2
+(let prf_2
   (Rule
                                                   (= (Fib 2) (Num 1))
                                                   (name
@@ -79,9 +79,9 @@ expression: proof_snapshot
                                                             (Add (Fib 1) (Fib 0)))
                                                           (name
                                                             "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                          t6
-                                                          t7)
-                                                        prf1
+                                                          t_6
+                                                          t_7)
+                                                        prf_1
                                                         0)
                                                       (Rule
                                                         (= (Fib 0) (Num 0))
@@ -92,11 +92,11 @@ expression: proof_snapshot
                                                             (= (Fib 0) (Fib 0))
                                                             (name
                                                               "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                            t6
-                                                            t7)
-                                                          prf0)
+                                                            t_6
+                                                            t_7)
+                                                          prf)
                                                         (substitution
-                                                          (@rewrite_var__2
+                                                          (@rewrite_var___2
                                                             (Fib 0))
                                                           (x 0)))
                                                       1))
@@ -104,7 +104,7 @@ expression: proof_snapshot
                                                     (@rewrite_var__ (Fib 2))
                                                     (a 1)
                                                     (b 0))))
-(let prf3
+(let prf_3
   (Rule
                                     (= (Fib 3) (Num 2))
                                     (name
@@ -120,22 +120,22 @@ expression: proof_snapshot
                                               (= (Fib 3) (Add (Fib 2) (Fib 1)))
                                               (name
                                                 "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                              t4
-                                              t5)
+                                              t_4
+                                              t_5)
                                             (Trans
                                               (= (Fib 1) (Fib 2))
-                                              prf1
-                                              (Sym (= (Num 1) (Fib 2)) prf2))
+                                              prf_1
+                                              (Sym (= (Num 1) (Fib 2)) prf_2))
                                             1)
-                                          prf2
+                                          prf_2
                                           0)
-                                        prf2
+                                        prf_2
                                         1))
                                     (substitution
                                       (@rewrite_var__ (Fib 3))
                                       (a 1)
                                       (b 1))))
-(let prf4
+(let prf_4
   (Rule
                             (= (Fib 4) (Num 3))
                             (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -153,16 +153,18 @@ expression: proof_snapshot
                                         (= (Fib 4) (Fib 4))
                                         (name
                                           "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                        t2
-                                        t3)
-                                      prf0)
-                                    (substitution (@rewrite_var__1 (Fib 4)) (x 4)))
-                                  prf3
+                                        t_2
+                                        t_3)
+                                      prf)
+                                    (substitution
+                                      (@rewrite_var___1 (Fib 4))
+                                      (x 4)))
+                                  prf_3
                                   0)
-                                prf2
+                                prf_2
                                 1))
                             (substitution (@rewrite_var__ (Fib 4)) (a 2) (b 1))))
-(let prf5
+(let prf_5
   (Rule
                     (= (Fib 5) (Num 5))
                     (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -175,11 +177,11 @@ expression: proof_snapshot
                             (= (Fib 5) (Add (Fib 4) (Fib 3)))
                             (name
                               "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                            t2
-                            t3)
-                          prf4
+                            t_2
+                            t_3)
+                          prf_4
                           0)
-                        prf3
+                        prf_3
                         1))
                     (substitution (@rewrite_var__ (Fib 5)) (a 3) (b 2))))
 (Rule
@@ -194,8 +196,8 @@ expression: proof_snapshot
           (= (Fib 7) (Add (Fib 6) (Fib 5)))
           (name
             "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-          t0
-          t1)
+          t
+          t_1)
         (Rule
           (= (Fib 6) (Num 8))
           (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -213,48 +215,48 @@ expression: proof_snapshot
                       (= (Fib 6) (Fib 6))
                       (name
                         "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                      t0
-                      t1)
-                    prf0)
-                  (substitution (@rewrite_var__1 (Fib 6)) (x 6)))
-                prf5
+                      t
+                      t_1)
+                    prf)
+                  (substitution (@rewrite_var___1 (Fib 6)) (x 6)))
+                prf_5
                 0)
-              prf4
+              prf_4
               1))
           (substitution (@rewrite_var__ (Fib 6)) (a 5) (b 3)))
         0)
-      prf5
+      prf_5
       1))
   (substitution (@rewrite_var__ (Fib 7)) (a 8) (b 5)))
 )
 (
-(let prf0 (Fiat (= () ())))
-(let t0 (premises (Fiat (= (Fib 7) (Fib 7))) prf0))
-(let t1 (substitution (@rewrite_var__1 (Fib 7)) (x 7)))
-(let t2
+(let prf (Fiat (= () ())))
+(let t (premises (Fiat (= (Fib 7) (Fib 7))) prf))
+(let t_1 (substitution (@rewrite_var___1 (Fib 7)) (x 7)))
+(let t_2
   (premises
                               (Rule
                                 (= (Fib 5) (Fib 5))
                                 (name
                                   "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                t0
-                                t1)
-                              prf0))
-(let t3 (substitution (@rewrite_var__1 (Fib 5)) (x 5)))
-(let t4
+                                t
+                                t_1)
+                              prf))
+(let t_3 (substitution (@rewrite_var___1 (Fib 5)) (x 5)))
+(let t_4
   (premises
                                                 (Rule
                                                   (= (Fib 3) (Fib 3))
                                                   (name
                                                     "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                  t2
-                                                  t3)
-                                                prf0))
-(let t5
+                                                  t_2
+                                                  t_3)
+                                                prf))
+(let t_5
   (substitution
-                                                (@rewrite_var__1 (Fib 3))
+                                                (@rewrite_var___1 (Fib 3))
                                                 (x 3)))
-(let prf1
+(let prf_1
   (Rule
                                                 (= (Fib 1) (Num 1))
                                                 (name
@@ -264,27 +266,27 @@ expression: proof_snapshot
                                                     (= (Fib 1) (Fib 1))
                                                     (name
                                                       "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                    t4
-                                                    t5)
-                                                  prf0)
+                                                    t_4
+                                                    t_5)
+                                                  prf)
                                                 (substitution
-                                                  (@rewrite_var__2 (Fib 1))
+                                                  (@rewrite_var___2 (Fib 1))
                                                   (x 1))))
-(let t6
+(let t_6
   (premises
                                                             (Rule
                                                               (= (Fib 2) (Fib 2))
                                                               (name
                                                                 "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                              t4
-                                                              t5)
-                                                            prf0))
-(let t7
+                                                              t_4
+                                                              t_5)
+                                                            prf))
+(let t_7
   (substitution
-                                                            (@rewrite_var__1
+                                                            (@rewrite_var___1
                                                               (Fib 2))
                                                             (x 2)))
-(let prf2
+(let prf_2
   (Rule
                                                   (= (Fib 2) (Num 1))
                                                   (name
@@ -304,9 +306,9 @@ expression: proof_snapshot
                                                             (Add (Fib 1) (Fib 0)))
                                                           (name
                                                             "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                          t6
-                                                          t7)
-                                                        prf1
+                                                          t_6
+                                                          t_7)
+                                                        prf_1
                                                         0)
                                                       (Rule
                                                         (= (Fib 0) (Num 0))
@@ -317,11 +319,11 @@ expression: proof_snapshot
                                                             (= (Fib 0) (Fib 0))
                                                             (name
                                                               "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                                            t6
-                                                            t7)
-                                                          prf0)
+                                                            t_6
+                                                            t_7)
+                                                          prf)
                                                         (substitution
-                                                          (@rewrite_var__2
+                                                          (@rewrite_var___2
                                                             (Fib 0))
                                                           (x 0)))
                                                       1))
@@ -329,7 +331,7 @@ expression: proof_snapshot
                                                     (@rewrite_var__ (Fib 2))
                                                     (a 1)
                                                     (b 0))))
-(let prf3
+(let prf_3
   (Rule
                                     (= (Fib 3) (Num 2))
                                     (name
@@ -345,22 +347,22 @@ expression: proof_snapshot
                                               (= (Fib 3) (Add (Fib 2) (Fib 1)))
                                               (name
                                                 "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                              t4
-                                              t5)
+                                              t_4
+                                              t_5)
                                             (Trans
                                               (= (Fib 1) (Fib 2))
-                                              prf1
-                                              (Sym (= (Num 1) (Fib 2)) prf2))
+                                              prf_1
+                                              (Sym (= (Num 1) (Fib 2)) prf_2))
                                             1)
-                                          prf2
+                                          prf_2
                                           0)
-                                        prf2
+                                        prf_2
                                         1))
                                     (substitution
                                       (@rewrite_var__ (Fib 3))
                                       (a 1)
                                       (b 1))))
-(let prf4
+(let prf_4
   (Rule
                             (= (Fib 4) (Num 3))
                             (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -378,16 +380,18 @@ expression: proof_snapshot
                                         (= (Fib 4) (Fib 4))
                                         (name
                                           "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                                        t2
-                                        t3)
-                                      prf0)
-                                    (substitution (@rewrite_var__1 (Fib 4)) (x 4)))
-                                  prf3
+                                        t_2
+                                        t_3)
+                                      prf)
+                                    (substitution
+                                      (@rewrite_var___1 (Fib 4))
+                                      (x 4)))
+                                  prf_3
                                   0)
-                                prf2
+                                prf_2
                                 1))
                             (substitution (@rewrite_var__ (Fib 4)) (a 2) (b 1))))
-(let prf5
+(let prf_5
   (Rule
                     (= (Fib 5) (Num 5))
                     (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -400,11 +404,11 @@ expression: proof_snapshot
                             (= (Fib 5) (Add (Fib 4) (Fib 3)))
                             (name
                               "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                            t2
-                            t3)
-                          prf4
+                            t_2
+                            t_3)
+                          prf_4
                           0)
-                        prf3
+                        prf_3
                         1))
                     (substitution (@rewrite_var__ (Fib 5)) (a 3) (b 2))))
 (Rule
@@ -419,8 +423,8 @@ expression: proof_snapshot
           (= (Fib 7) (Add (Fib 6) (Fib 5)))
           (name
             "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-          t0
-          t1)
+          t
+          t_1)
         (Rule
           (= (Fib 6) (Num 8))
           (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -438,17 +442,17 @@ expression: proof_snapshot
                       (= (Fib 6) (Fib 6))
                       (name
                         "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
-                      t0
-                      t1)
-                    prf0)
-                  (substitution (@rewrite_var__1 (Fib 6)) (x 6)))
-                prf5
+                      t
+                      t_1)
+                    prf)
+                  (substitution (@rewrite_var___1 (Fib 6)) (x 6)))
+                prf_5
                 0)
-              prf4
+              prf_4
               1))
           (substitution (@rewrite_var__ (Fib 6)) (a 5) (b 3)))
         0)
-      prf5
+      prf_5
       1))
   (substitution (@rewrite_var__ (Fib 7)) (a 8) (b 5)))
 )

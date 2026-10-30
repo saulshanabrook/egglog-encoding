@@ -37,7 +37,6 @@ fn appends_preserve_rows_duplicates_and_deltas() {
 
     let spec = table.spec();
     assert_eq!(spec.schema, TableSchema::Flat { n_cols: 3 });
-    assert!(!spec.allows_delete);
     assert!(!table.has_stale_rows());
 
     stage(&table, &[[v(1), v(2), v(3)], [v(1), v(2), v(3)]]);

@@ -2,8 +2,8 @@ use crate::{util::HashMap, *};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Names {
-    seen: HashMap<String, Span>,
-    global_aliases: HashMap<String, (String, Span)>,
+    seen: IndexMap<String, Span>,
+    global_aliases: IndexMap<String, (String, Span)>,
 }
 
 impl Names {
@@ -58,47 +58,44 @@ impl Names {
             ResolvedNCommand::UnstableCombinedRuleset(span, name, _args) => {
                 self.check(name.clone(), span.clone())
             }
-            ResolvedNCommand::NormRule { rule, .. } => {
-                let mut inner = self.clone();
-                inner.check_shadowing_query(&rule.body)?;
+            ResolvedNCommand::NormRule { rule, .. } => self.with_scope(|names| {
+                names.check_shadowing_query(&rule.body)?;
                 for action in rule.head.iter() {
-                    inner.check_shadowing_action(action)?;
+                    names.check_shadowing_action(action)?;
                 }
                 Ok(())
-            }
+            }),
             ResolvedNCommand::CoreAction(ResolvedAction::Let(span, name, _)) => {
                 self.check(name.name.clone(), span.clone())?;
                 self.track_global_alias(&name.name, span);
                 Ok(())
             }
             ResolvedNCommand::CoreAction(action) => self.check_shadowing_action(action),
-            ResolvedNCommand::CoreActions(actions) => {
-                let mut inner = self.clone();
+            ResolvedNCommand::CoreActions(actions) => self.with_scope(|names| {
                 for action in actions.iter() {
-                    inner.check_shadowing_action(action)?;
+                    names.check_shadowing_action(action)?;
                 }
                 Ok(())
-            }
+            }),
             ResolvedNCommand::LetBegin(span, name, actions) => {
                 self.check(name.name.clone(), span.clone())?;
                 self.track_global_alias(&name.name, span);
-                let mut inner = self.clone();
-                for action in actions.iter() {
-                    inner.check_shadowing_action(action)?;
-                }
-                Ok(())
+                self.with_scope(|names| {
+                    for action in actions.iter() {
+                        names.check_shadowing_action(action)?;
+                    }
+                    Ok(())
+                })
             }
-            ResolvedNCommand::Check(_span, query) => {
-                let mut inner = self.clone();
-                inner.check_shadowing_query(query)
+            ResolvedNCommand::Check(_, query) => {
+                self.with_scope(|names| names.check_shadowing_query(query))
             }
-            ResolvedNCommand::Fail(_span, commands) => {
-                let mut inner = self.clone();
+            ResolvedNCommand::Fail(_, commands) => self.with_scope(|names| {
                 for command in commands {
-                    inner.check_shadowing(command)?;
+                    names.check_shadowing(command)?;
                 }
                 Ok(())
-            }
+            }),
             ResolvedNCommand::Extract(..) | ResolvedNCommand::ProveExtract(..) => Ok(()),
             ResolvedNCommand::RunSchedule(..) => Ok(()),
             ResolvedNCommand::PrintOverallStatistics(..) => Ok(()),
@@ -111,6 +108,21 @@ impl Names {
             ResolvedNCommand::Pop(..) => Ok(()),
             ResolvedNCommand::UserDefined(..) => Ok(()),
         }
+    }
+
+    /// Run a check in a temporary scope. Checks only append fresh names, so
+    /// truncating restores the enclosing scope on success or error, including
+    /// nested `fail` commands.
+    fn with_scope(
+        &mut self,
+        check: impl FnOnce(&mut Self) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let seen_len = self.seen.len();
+        let aliases_len = self.global_aliases.len();
+        let result = check(self);
+        self.seen.truncate(seen_len);
+        self.global_aliases.truncate(aliases_len);
+        result
     }
 
     fn check_shadowing_query(&mut self, query: &[ResolvedFact]) -> Result<(), Error> {
@@ -155,5 +167,38 @@ impl Names {
         } else {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_fail_preserves_global_aliases() {
+        let mut names = Names::default();
+        names.check("$kept".into(), span!()).unwrap();
+        names.track_global_alias("$kept", &span!());
+        let declaration = ResolvedNCommand::CoreAction(ResolvedAction::Let(
+            span!(),
+            ResolvedVar {
+                name: "$temporary".into(),
+                sort: I64Sort.to_arcsort(),
+                is_global_ref: false,
+            },
+            ResolvedExpr::Lit(span!(), Literal::Int(1)),
+        ));
+        let nested = ResolvedNCommand::Fail(
+            span!(),
+            vec![ResolvedNCommand::Fail(span!(), vec![declaration])],
+        );
+        names.check_shadowing(&nested).unwrap();
+        names.check_shadowing(&nested).unwrap();
+        names.check_pattern_name("temporary", &span!()).unwrap();
+        assert!(matches!(
+            names.check_pattern_name("kept", &span!()),
+            Err(Error::Shadowing(message, _, _))
+                if message == "pattern variable `kept` conflicts with global `$kept`"
+        ));
     }
 }

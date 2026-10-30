@@ -301,8 +301,7 @@ fn lowered_inserts_share_scalar_counter_reservations() {
     use crate::{
         action::{Bindings, Instr, QueryEntry, WriteVal},
         free_join::{Database, Variable},
-        table::SortedWritesTable,
-        table_shortcuts::v,
+        table_shortcuts::{TimestampedTable, v},
         table_spec::ColumnId,
     };
 
@@ -311,7 +310,7 @@ fn lowered_inserts_share_scalar_counter_reservations() {
         let mut db = Database::default();
         let counter = db.add_reservable_counter(reservation_size);
         let table = db.add_table(
-            SortedWritesTable::new(1, 3, None, vec![], Box::new(|_, _, _, _| false)),
+            TimestampedTable::new(1, 3, Box::new(|_, _, _, _| false)),
             std::iter::empty(),
             std::iter::empty(),
         );

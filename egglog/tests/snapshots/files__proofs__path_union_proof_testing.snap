@@ -3,22 +3,22 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (edge (mk 5) (mk 6)))
+(let t (edge (mk 5) (mk 6)))
 (Congr
-  (= t0 (edge (mk 3) (mk 6)))
-  (Fiat (= t0 t0))
+  (= t (edge (mk 3) (mk 6)))
+  (Fiat (= t t))
   (Sym (= (mk 5) (mk 3)) (Fiat (= (mk 3) (mk 5))))
   0)
 )
 (
-(let t0 (path (mk 1) (mk 6)))
-(let t1 (path (mk 1) (mk 3)))
-(let t2 (path (mk 1) (mk 2)))
-(let t3 (edge (mk 1) (mk 2)))
-(let t4 (edge (mk 2) (mk 3)))
-(let t5 (edge (mk 5) (mk 6)))
+(let t (path (mk 1) (mk 6)))
+(let t_1 (path (mk 1) (mk 3)))
+(let t_2 (path (mk 1) (mk 2)))
+(let t_3 (edge (mk 1) (mk 2)))
+(let t_4 (edge (mk 2) (mk 3)))
+(let t_5 (edge (mk 5) (mk 6)))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((path x y)
        (edge y z))
@@ -26,7 +26,7 @@ expression: proof_snapshot
          )")
   (premises
     (Rule
-      (= t1 t1)
+      (= t_1 t_1)
       (name
         "(rule ((path x y)
        (edge y z))
@@ -34,18 +34,18 @@ expression: proof_snapshot
          )")
       (premises
         (Rule
-          (= t2 t2)
+          (= t_2 t_2)
           (name
             "(rule ((edge x y))
       ((path x y))
          )")
-          (premises (Fiat (= t3 t3)))
+          (premises (Fiat (= t_3 t_3)))
           (substitution (x (mk 1)) (y (mk 2))))
-        (Fiat (= t4 t4)))
+        (Fiat (= t_4 t_4)))
       (substitution (x (mk 1)) (y (mk 2)) (z (mk 3))))
     (Congr
-      (= t5 (edge (mk 3) (mk 6)))
-      (Fiat (= t5 t5))
+      (= t_5 (edge (mk 3) (mk 6)))
+      (Fiat (= t_5 t_5))
       (Sym (= (mk 5) (mk 3)) (Fiat (= (mk 3) (mk 5))))
       0))
   (substitution (x (mk 1)) (y (mk 3)) (z (mk 6))))

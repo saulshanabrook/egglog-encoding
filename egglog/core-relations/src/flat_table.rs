@@ -136,7 +136,6 @@ impl Table for FlatTable {
                 n_cols: self.rows.arity(),
             },
             uncacheable_columns: Default::default(),
-            allows_delete: false,
         }
     }
 
@@ -223,10 +222,7 @@ impl Table for FlatTable {
             submitted.push(rows);
         }
         if submitted.is_empty() {
-            return TableChange {
-                added: false,
-                removed: false,
-            };
+            return TableChange { added: false };
         }
 
         let added = submitted
@@ -248,10 +244,7 @@ impl Table for FlatTable {
         });
         self.rows = writer.finish();
 
-        TableChange {
-            added: added > 0,
-            removed: false,
-        }
+        TableChange { added: added > 0 }
     }
 
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {

@@ -570,6 +570,7 @@ dependencies = [
  "im-rc",
  "indexmap",
  "insta",
+ "itoa",
  "libtest-mimic",
  "log",
  "mimalloc",
@@ -605,7 +606,6 @@ name = "egglog-bridge"
 version = "2.0.0"
 dependencies = [
  "anyhow",
- "dyn-clone",
  "egglog-concurrency",
  "egglog-core-relations",
  "egglog-numeric-id",
@@ -682,11 +682,13 @@ dependencies = [
  "fixedbitset",
  "glob",
  "hashbrown 0.16.1",
+ "indexmap",
  "insta",
  "lazy_static",
  "libtest-mimic",
  "log",
  "num",
+ "rand_mt",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -1542,6 +1544,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rand_mt"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab79b42e3c44cf58883b476bbcfa5750130c28cb0c6a9bcbc76ad820aed05873"
 
 [[package]]
 name = "rand_xorshift"

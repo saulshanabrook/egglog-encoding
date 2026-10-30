@@ -3,35 +3,35 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (P 7 1 (NonTerm "S")))
-(let t1 (Prod (NonTerm "S") (NonTerm "NP") (NonTerm "VP")))
-(let t2 (P 1 1 (NonTerm "NP")))
-(let t3 (End (NonTerm "NP") "she"))
-(let t4 (P 6 2 (NonTerm "VP")))
-(let t5 (Prod (NonTerm "VP") (NonTerm "VP") (NonTerm "PP")))
-(let t6 (P 3 2 (NonTerm "VP")))
-(let t7 (Prod (NonTerm "VP") (NonTerm "V") (NonTerm "NP")))
-(let t8 (P 1 2 (NonTerm "V")))
-(let t9 (End (NonTerm "V") "eats"))
-(let t10 (P 2 3 (NonTerm "NP")))
-(let t11 (Prod (NonTerm "NP") (NonTerm "DET") (NonTerm "N")))
-(let prf0 (Fiat (= t11 t11)))
-(let t12 (P 1 3 (NonTerm "DET")))
-(let t13 (End (NonTerm "DET") "a"))
-(let prf1 (Fiat (= t13 t13)))
-(let prf2 (Fiat (= "a" "a")))
-(let t14 (P 1 4 (NonTerm "N")))
-(let t15 (End (NonTerm "N") "fish"))
-(let t16 (P 3 5 (NonTerm "PP")))
-(let t17 (Prod (NonTerm "PP") (NonTerm "P") (NonTerm "NP")))
-(let t18 (P 1 5 (NonTerm "P")))
-(let t19 (End (NonTerm "P") "with"))
-(let t20 (P 2 6 (NonTerm "NP")))
-(let t21 (P 1 6 (NonTerm "DET")))
-(let t22 (P 1 7 (NonTerm "N")))
-(let t23 (End (NonTerm "N") "fork"))
+(let t (P 7 1 (NonTerm "S")))
+(let t_1 (Prod (NonTerm "S") (NonTerm "NP") (NonTerm "VP")))
+(let t_2 (P 1 1 (NonTerm "NP")))
+(let t_3 (End (NonTerm "NP") "she"))
+(let t_4 (P 6 2 (NonTerm "VP")))
+(let t_5 (Prod (NonTerm "VP") (NonTerm "VP") (NonTerm "PP")))
+(let t_6 (P 3 2 (NonTerm "VP")))
+(let t_7 (Prod (NonTerm "VP") (NonTerm "V") (NonTerm "NP")))
+(let t_8 (P 1 2 (NonTerm "V")))
+(let t_9 (End (NonTerm "V") "eats"))
+(let t_10 (P 2 3 (NonTerm "NP")))
+(let t_11 (Prod (NonTerm "NP") (NonTerm "DET") (NonTerm "N")))
+(let prf (Fiat (= t_11 t_11)))
+(let t_12 (P 1 3 (NonTerm "DET")))
+(let t_13 (End (NonTerm "DET") "a"))
+(let prf_1 (Fiat (= t_13 t_13)))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_14 (P 1 4 (NonTerm "N")))
+(let t_15 (End (NonTerm "N") "fish"))
+(let t_16 (P 3 5 (NonTerm "PP")))
+(let t_17 (Prod (NonTerm "PP") (NonTerm "P") (NonTerm "NP")))
+(let t_18 (P 1 5 (NonTerm "P")))
+(let t_19 (End (NonTerm "P") "with"))
+(let t_20 (P 2 6 (NonTerm "NP")))
+(let t_21 (P 1 6 (NonTerm "DET")))
+(let t_22 (P 1 7 (NonTerm "N")))
+(let t_23 (End (NonTerm "N") "fork"))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -39,9 +39,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
   (premises
-    (Fiat (= t1 t1))
+    (Fiat (= t_1 t_1))
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -49,12 +49,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
       (premises
-        (Fiat (= t3 t3))
+        (Fiat (= t_3 t_3))
         (Fiat (= (getString 1 "she") (getString 1 "she")))
         (Fiat (= "she" "she")))
       (substitution (a "NP") (s "she") (pos 1) (@n "she")))
     (Rule
-      (= t4 t4)
+      (= t_4 t_4)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -62,9 +62,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        (Fiat (= t5 t5))
+        (Fiat (= t_5 t_5))
         (Rule
-          (= t6 t6)
+          (= t_6 t_6)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -72,9 +72,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
           (premises
-            (Fiat (= t7 t7))
+            (Fiat (= t_7 t_7))
             (Rule
-              (= t8 t8)
+              (= t_8 t_8)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -82,12 +82,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                (Fiat (= t9 t9))
+                (Fiat (= t_9 t_9))
                 (Fiat (= (getString 2 "eats") (getString 2 "eats")))
                 (Fiat (= "eats" "eats")))
               (substitution (a "V") (s "eats") (pos 2) (@n "eats")))
             (Rule
-              (= t10 t10)
+              (= t_10 t_10)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -95,9 +95,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
               (premises
-                prf0
+                prf
                 (Rule
-                  (= t12 t12)
+                  (= t_12 t_12)
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -105,12 +105,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf1
+                    prf_1
                     (Fiat (= (getString 3 "a") (getString 3 "a")))
-                    prf2)
+                    prf_2)
                   (substitution (a "DET") (s "a") (pos 3) (@n "a")))
                 (Rule
-                  (= t14 t14)
+                  (= t_14 t_14)
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -118,14 +118,14 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    (Fiat (= t15 t15))
+                    (Fiat (= t_15 t_15))
                     (Fiat (= (getString 4 "fish") (getString 4 "fish")))
                     (Fiat (= "fish" "fish")))
                   (substitution (a "N") (s "fish") (pos 4) (@n "fish"))))
               (substitution (a "NP") (b "DET") (c "N") (p1 1) (s 3) (p2 1))))
           (substitution (a "VP") (b "V") (c "NP") (p1 1) (s 2) (p2 2)))
         (Rule
-          (= t16 t16)
+          (= t_16 t_16)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -133,9 +133,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
           (premises
-            (Fiat (= t17 t17))
+            (Fiat (= t_17 t_17))
             (Rule
-              (= t18 t18)
+              (= t_18 t_18)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -143,12 +143,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                (Fiat (= t19 t19))
+                (Fiat (= t_19 t_19))
                 (Fiat (= (getString 5 "with") (getString 5 "with")))
                 (Fiat (= "with" "with")))
               (substitution (a "P") (s "with") (pos 5) (@n "with")))
             (Rule
-              (= t20 t20)
+              (= t_20 t_20)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -156,9 +156,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
               (premises
-                prf0
+                prf
                 (Rule
-                  (= t21 t21)
+                  (= t_21 t_21)
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -166,12 +166,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf1
+                    prf_1
                     (Fiat (= (getString 6 "a") (getString 6 "a")))
-                    prf2)
+                    prf_2)
                   (substitution (a "DET") (s "a") (pos 6) (@n "a")))
                 (Rule
-                  (= t22 t22)
+                  (= t_22 t_22)
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -179,7 +179,7 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    (Fiat (= t23 t23))
+                    (Fiat (= t_23 t_23))
                     (Fiat (= (getString 7 "fork") (getString 7 "fork")))
                     (Fiat (= "fork" "fork")))
                   (substitution (a "N") (s "fork") (pos 7) (@n "fork"))))
@@ -189,162 +189,162 @@ expression: proof_snapshot
   (substitution (a "S") (b "NP") (c "VP") (p1 1) (s 1) (p2 6)))
 )
 (
-(let t0 (B 7 1 (NonTerm "S")))
-(let t1 (NT "NP" (T "DET" "a") (T "N" "fish")))
-(let t2 (NT "VP" (T "V" "eats") t1))
-(let t3 (NT "NP" (T "DET" "a") (T "N" "fork")))
-(let t4 (NT "PP" (T "P" "with") t3))
-(let t5 (NT "VP" t2 t4))
-(let t6 (B 6 2 (NonTerm "VP")))
-(let t7 (B 1 1 (NonTerm "NP")))
-(let t8 (Prod (NonTerm "S") (NonTerm "NP") (NonTerm "VP")))
-(let t9 (End (NonTerm "NP") "she"))
-(let t10
+(let t (B 7 1 (NonTerm "S")))
+(let t_1 (NT "NP" (T "DET" "a") (T "N" "fish")))
+(let t_2 (NT "VP" (T "V" "eats") t_1))
+(let t_3 (NT "NP" (T "DET" "a") (T "N" "fork")))
+(let t_4 (NT "PP" (T "P" "with") t_3))
+(let t_5 (NT "VP" t_2 t_4))
+(let t_6 (B 6 2 (NonTerm "VP")))
+(let t_7 (B 1 1 (NonTerm "NP")))
+(let t_8 (Prod (NonTerm "S") (NonTerm "NP") (NonTerm "VP")))
+(let t_9 (End (NonTerm "NP") "she"))
+(let t_10
   (premises
-              (Fiat (= t9 t9))
+              (Fiat (= t_9 t_9))
               (Fiat (= (getString 1 "she") (getString 1 "she")))
               (Fiat (= "she" "she"))))
-(let t11 (substitution (a "NP") (s "she") (pos 1) (@n "she")))
-(let t12 (Prod (NonTerm "VP") (NonTerm "VP") (NonTerm "PP")))
-(let t13 (B 3 2 (NonTerm "VP")))
-(let t14 (Prod (NonTerm "VP") (NonTerm "V") (NonTerm "NP")))
-(let t15 (B 1 2 (NonTerm "V")))
-(let t16 (End (NonTerm "V") "eats"))
-(let t17
+(let t_11 (substitution (a "NP") (s "she") (pos 1) (@n "she")))
+(let t_12 (Prod (NonTerm "VP") (NonTerm "VP") (NonTerm "PP")))
+(let t_13 (B 3 2 (NonTerm "VP")))
+(let t_14 (Prod (NonTerm "VP") (NonTerm "V") (NonTerm "NP")))
+(let t_15 (B 1 2 (NonTerm "V")))
+(let t_16 (End (NonTerm "V") "eats"))
+(let t_17
   (premises
-                      (Fiat (= t16 t16))
+                      (Fiat (= t_16 t_16))
                       (Fiat (= (getString 2 "eats") (getString 2 "eats")))
                       (Fiat (= "eats" "eats"))))
-(let t18 (substitution (a "V") (s "eats") (pos 2) (@n "eats")))
-(let t19 (B 2 3 (NonTerm "NP")))
-(let t20 (Prod (NonTerm "NP") (NonTerm "DET") (NonTerm "N")))
-(let prf0 (Fiat (= t20 t20)))
-(let t21 (B 1 3 (NonTerm "DET")))
-(let t22 (End (NonTerm "DET") "a"))
-(let prf1 (Fiat (= t22 t22)))
-(let prf2 (Fiat (= "a" "a")))
-(let t23
+(let t_18 (substitution (a "V") (s "eats") (pos 2) (@n "eats")))
+(let t_19 (B 2 3 (NonTerm "NP")))
+(let t_20 (Prod (NonTerm "NP") (NonTerm "DET") (NonTerm "N")))
+(let prf (Fiat (= t_20 t_20)))
+(let t_21 (B 1 3 (NonTerm "DET")))
+(let t_22 (End (NonTerm "DET") "a"))
+(let prf_1 (Fiat (= t_22 t_22)))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_23
   (premises
-                          prf1
+                          prf_1
                           (Fiat (= (getString 3 "a") (getString 3 "a")))
-                          prf2))
-(let t24 (substitution (a "DET") (s "a") (pos 3) (@n "a")))
-(let t25 (B 1 4 (NonTerm "N")))
-(let t26 (End (NonTerm "N") "fish"))
-(let t27
+                          prf_2))
+(let t_24 (substitution (a "DET") (s "a") (pos 3) (@n "a")))
+(let t_25 (B 1 4 (NonTerm "N")))
+(let t_26 (End (NonTerm "N") "fish"))
+(let t_27
   (premises
-                          (Fiat (= t26 t26))
+                          (Fiat (= t_26 t_26))
                           (Fiat (= (getString 4 "fish") (getString 4 "fish")))
                           (Fiat (= "fish" "fish"))))
-(let t28 (substitution (a "N") (s "fish") (pos 4) (@n "fish")))
-(let t29
+(let t_28 (substitution (a "N") (s "fish") (pos 4) (@n "fish")))
+(let t_29
   (premises
-                      prf0
+                      prf
                       (Rule
-                        (= t21 t21)
+                        (= t_21 t_21)
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                        t23
-                        t24)
+                        t_23
+                        t_24)
                       (Rule
-                        (= t25 t25)
+                        (= t_25 t_25)
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                        t27
-                        t28)))
-(let t30 (f1 t21))
-(let t31
+                        t_27
+                        t_28)))
+(let t_30 (f1 t_21))
+(let t_31
   (substitution
                       (a "NP")
                       (b "DET")
                       (c "N")
-                      t30
+                      t_30
                       (p1 1)
                       (s 3)
-                      (f2 t25)
+                      (f2 t_25)
                       (p2 1)))
-(let t32
+(let t_32
   (premises
-                  (Fiat (= t14 t14))
+                  (Fiat (= t_14 t_14))
                   (Rule
-                    (= t15 t15)
+                    (= t_15 t_15)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t17
-                    t18)
+                    t_17
+                    t_18)
                   (Rule
-                    (= t19 t19)
+                    (= t_19 t_19)
                     (name
                       "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                    t29
-                    t31)))
-(let t33
+                    t_29
+                    t_31)))
+(let t_33
   (substitution
                   (a "VP")
                   (b "V")
                   (c "NP")
-                  (f1 t15)
+                  (f1 t_15)
                   (p1 1)
                   (s 2)
-                  (f2 t19)
+                  (f2 t_19)
                   (p2 2)))
-(let t34 (B 3 5 (NonTerm "PP")))
-(let t35 (Prod (NonTerm "PP") (NonTerm "P") (NonTerm "NP")))
-(let t36 (B 1 5 (NonTerm "P")))
-(let t37 (End (NonTerm "P") "with"))
-(let t38
+(let t_34 (B 3 5 (NonTerm "PP")))
+(let t_35 (Prod (NonTerm "PP") (NonTerm "P") (NonTerm "NP")))
+(let t_36 (B 1 5 (NonTerm "P")))
+(let t_37 (End (NonTerm "P") "with"))
+(let t_38
   (premises
-                      (Fiat (= t37 t37))
+                      (Fiat (= t_37 t_37))
                       (Fiat (= (getString 5 "with") (getString 5 "with")))
                       (Fiat (= "with" "with"))))
-(let t39 (substitution (a "P") (s "with") (pos 5) (@n "with")))
-(let t40 (B 2 6 (NonTerm "NP")))
-(let t41 (B 1 6 (NonTerm "DET")))
-(let prf3
+(let t_39 (substitution (a "P") (s "with") (pos 5) (@n "with")))
+(let t_40 (B 2 6 (NonTerm "NP")))
+(let t_41 (B 1 6 (NonTerm "DET")))
+(let prf_3
   (Rule
-                          (= t21 (T "DET" "a"))
+                          (= t_21 (T "DET" "a"))
                           (name
                             "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                          t23
-                          t24))
-(let t42 (B 1 7 (NonTerm "N")))
-(let t43 (End (NonTerm "N") "fork"))
-(let t44
+                          t_23
+                          t_24))
+(let t_42 (B 1 7 (NonTerm "N")))
+(let t_43 (End (NonTerm "N") "fork"))
+(let t_44
   (premises
-                          (Fiat (= t43 t43))
+                          (Fiat (= t_43 t_43))
                           (Fiat (= (getString 7 "fork") (getString 7 "fork")))
                           (Fiat (= "fork" "fork"))))
-(let t45 (substitution (a "N") (s "fork") (pos 7) (@n "fork")))
-(let t46
+(let t_45 (substitution (a "N") (s "fork") (pos 7) (@n "fork")))
+(let t_46
   (premises
-                      prf0
+                      prf
                       (Trans
-                        (= t21 t41)
-                        prf3
+                        (= t_21 t_41)
+                        prf_3
                         (Sym
-                          (= (T "DET" "a") t41)
+                          (= (T "DET" "a") t_41)
                           (Rule
-                            (= t41 (T "DET" "a"))
+                            (= t_41 (T "DET" "a"))
                             (name
                               "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -352,102 +352,102 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                             (premises
-                              prf1
+                              prf_1
                               (Fiat (= (getString 6 "a") (getString 6 "a")))
-                              prf2)
+                              prf_2)
                             (substitution (a "DET") (s "a") (pos 6) (@n "a")))))
                       (Rule
-                        (= t42 t42)
+                        (= t_42 t_42)
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                        t44
-                        t45)))
-(let t47
+                        t_44
+                        t_45)))
+(let t_47
   (substitution
                       (a "NP")
                       (b "DET")
                       (c "N")
-                      t30
+                      t_30
                       (p1 1)
                       (s 6)
-                      (f2 t42)
+                      (f2 t_42)
                       (p2 1)))
-(let t48
+(let t_48
   (premises
-                  (Fiat (= t35 t35))
+                  (Fiat (= t_35 t_35))
                   (Rule
-                    (= t36 t36)
+                    (= t_36 t_36)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t38
-                    t39)
+                    t_38
+                    t_39)
                   (Rule
-                    (= t40 t40)
+                    (= t_40 t_40)
                     (name
                       "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                    t46
-                    t47)))
-(let t49
+                    t_46
+                    t_47)))
+(let t_49
   (substitution
                   (a "PP")
                   (b "P")
                   (c "NP")
-                  (f1 t36)
+                  (f1 t_36)
                   (p1 1)
                   (s 5)
-                  (f2 t40)
+                  (f2 t_40)
                   (p2 2)))
-(let t50
+(let t_50
   (premises
-              (Fiat (= t12 t12))
+              (Fiat (= t_12 t_12))
               (Rule
-                (= t13 t13)
+                (= t_13 t_13)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t32
-                t33)
+                t_32
+                t_33)
               (Rule
-                (= t34 t34)
+                (= t_34 t_34)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t48
-                t49)))
-(let t51
+                t_48
+                t_49)))
+(let t_51
   (substitution
               (a "VP")
               (b "VP")
               (c "PP")
-              (f1 t13)
+              (f1 t_13)
               (p1 3)
               (s 2)
-              (f2 t34)
+              (f2 t_34)
               (p2 3)))
 (Congr
-  (= t0 (NT "S" (T "NP" "she") t5))
+  (= t (NT "S" (T "NP" "she") t_5))
   (Congr
-    (= t0 (NT "S" (T "NP" "she") t6))
+    (= t (NT "S" (T "NP" "she") t_6))
     (Rule
-      (= t0 (NT "S" t7 t6))
+      (= t (NT "S" t_7 t_6))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -455,194 +455,194 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t8 t8))
+        (Fiat (= t_8 t_8))
         (Rule
-          (= t7 t7)
+          (= t_7 t_7)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          t10
-          t11)
+          t_10
+          t_11)
         (Rule
-          (= t6 t6)
+          (= t_6 t_6)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t50
-          t51))
+          t_50
+          t_51))
       (substitution
         (a "S")
         (b "NP")
         (c "VP")
-        (f1 t7)
+        (f1 t_7)
         (p1 1)
         (s 1)
-        (f2 t6)
+        (f2 t_6)
         (p2 6)))
     (Rule
-      (= t7 (T "NP" "she"))
+      (= t_7 (T "NP" "she"))
       (name
         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-      t10
-      t11)
+      t_10
+      t_11)
     1)
   (Congr
-    (= t6 t5)
+    (= t_6 t_5)
     (Congr
-      (= t6 (NT "VP" t2 t34))
+      (= t_6 (NT "VP" t_2 t_34))
       (Rule
-        (= t6 (NT "VP" t13 t34))
+        (= t_6 (NT "VP" t_13 t_34))
         (name
           "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-        t50
-        t51)
+        t_50
+        t_51)
       (Congr
-        (= t13 t2)
+        (= t_13 t_2)
         (Congr
-          (= t13 (NT "VP" (T "V" "eats") t19))
+          (= t_13 (NT "VP" (T "V" "eats") t_19))
           (Rule
-            (= t13 (NT "VP" t15 t19))
+            (= t_13 (NT "VP" t_15 t_19))
             (name
               "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-            t32
-            t33)
+            t_32
+            t_33)
           (Rule
-            (= t15 (T "V" "eats"))
+            (= t_15 (T "V" "eats"))
             (name
               "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-            t17
-            t18)
+            t_17
+            t_18)
           1)
         (Congr
-          (= t19 t1)
+          (= t_19 t_1)
           (Congr
-            (= t19 (NT "NP" (T "DET" "a") t25))
+            (= t_19 (NT "NP" (T "DET" "a") t_25))
             (Rule
-              (= t19 (NT "NP" t21 t25))
+              (= t_19 (NT "NP" t_21 t_25))
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-              t29
-              t31)
-            prf3
+              t_29
+              t_31)
+            prf_3
             1)
           (Rule
-            (= t25 (T "N" "fish"))
+            (= t_25 (T "N" "fish"))
             (name
               "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-            t27
-            t28)
+            t_27
+            t_28)
           2)
         2)
       1)
     (Congr
-      (= t34 t4)
+      (= t_34 t_4)
       (Congr
-        (= t34 (NT "PP" (T "P" "with") t40))
+        (= t_34 (NT "PP" (T "P" "with") t_40))
         (Rule
-          (= t34 (NT "PP" t36 t40))
+          (= t_34 (NT "PP" t_36 t_40))
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t48
-          t49)
+          t_48
+          t_49)
         (Rule
-          (= t36 (T "P" "with"))
+          (= t_36 (T "P" "with"))
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          t38
-          t39)
+          t_38
+          t_39)
         1)
       (Congr
-        (= t40 t3)
+        (= t_40 t_3)
         (Congr
-          (= t40 (NT "NP" (T "DET" "a") t42))
+          (= t_40 (NT "NP" (T "DET" "a") t_42))
           (Rule
-            (= t40 (NT "NP" t21 t42))
+            (= t_40 (NT "NP" t_21 t_42))
             (name
               "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-            t46
-            t47)
-          prf3
+            t_46
+            t_47)
+          prf_3
           1)
         (Rule
-          (= t42 (T "N" "fork"))
+          (= t_42 (T "N" "fork"))
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          t44
-          t45)
+          t_44
+          t_45)
         2)
       2)
     2)
   2)
 )
 (
-(let t0 (P 5 1 (NonTerm "S")))
-(let t1 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
-(let t2 (P 3 1 (NonTerm "B")))
-(let t3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let t4 (P 2 1 (NonTerm "C")))
-(let t5 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let prf0 (Fiat (= t5 t5)))
-(let t6 (P 1 1 (NonTerm "A")))
-(let t7 (End (NonTerm "A") "a"))
-(let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= "a" "a")))
-(let t8 (P 1 2 (NonTerm "B")))
-(let t9 (End (NonTerm "B") "b"))
-(let prf3 (Fiat (= t9 t9)))
-(let prf4 (Fiat (= "b" "b")))
-(let t10 (P 1 3 (NonTerm "C")))
-(let t11 (End (NonTerm "C") "a"))
-(let t12 (P 2 4 (NonTerm "C")))
-(let t13 (P 1 4 (NonTerm "A")))
-(let t14 (P 1 5 (NonTerm "B")))
+(let t (P 5 1 (NonTerm "S")))
+(let t_1 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
+(let t_2 (P 3 1 (NonTerm "B")))
+(let t_3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let t_4 (P 2 1 (NonTerm "C")))
+(let t_5 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let prf (Fiat (= t_5 t_5)))
+(let t_6 (P 1 1 (NonTerm "A")))
+(let t_7 (End (NonTerm "A") "a"))
+(let prf_1 (Fiat (= t_7 t_7)))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_8 (P 1 2 (NonTerm "B")))
+(let t_9 (End (NonTerm "B") "b"))
+(let prf_3 (Fiat (= t_9 t_9)))
+(let prf_4 (Fiat (= "b" "b")))
+(let t_10 (P 1 3 (NonTerm "C")))
+(let t_11 (End (NonTerm "C") "a"))
+(let t_12 (P 2 4 (NonTerm "C")))
+(let t_13 (P 1 4 (NonTerm "A")))
+(let t_14 (P 1 5 (NonTerm "B")))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -650,9 +650,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
   (premises
-    (Fiat (= t1 t1))
+    (Fiat (= t_1 t_1))
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -660,9 +660,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        (Fiat (= t3 t3))
+        (Fiat (= t_3 t_3))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -670,9 +670,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
           (premises
-            prf0
+            prf
             (Rule
-              (= t6 t6)
+              (= t_6 t_6)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -680,12 +680,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf1
+                prf_1
                 (Fiat (= (getString 1 "a") (getString 1 "a")))
-                prf2)
+                prf_2)
               (substitution (a "A") (s "a") (pos 1) (@n "a")))
             (Rule
-              (= t8 t8)
+              (= t_8 t_8)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -693,13 +693,13 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf3
+                prf_3
                 (Fiat (= (getString 2 "b") (getString 2 "b")))
-                prf4)
+                prf_4)
               (substitution (a "B") (s "b") (pos 2) (@n "b"))))
           (substitution (a "C") (b "A") (c "B") (p1 1) (s 1) (p2 1)))
         (Rule
-          (= t10 t10)
+          (= t_10 t_10)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -707,13 +707,13 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises
-            (Fiat (= t11 t11))
+            (Fiat (= t_11 t_11))
             (Fiat (= (getString 3 "a") (getString 3 "a")))
-            prf2)
+            prf_2)
           (substitution (a "C") (s "a") (pos 3) (@n "a"))))
       (substitution (a "B") (b "C") (c "C") (p1 2) (s 1) (p2 1)))
     (Rule
-      (= t12 t12)
+      (= t_12 t_12)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -721,118 +721,127 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        prf0
+        prf
         (Rule
-          (= t13 t13)
+          (= t_13 t_13)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf2)
+          (premises prf_1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf_2)
           (substitution (a "A") (s "a") (pos 4) (@n "a")))
         (Rule
-          (= t14 t14)
+          (= t_14 t_14)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf3 (Fiat (= (getString 5 "b") (getString 5 "b"))) prf4)
+          (premises prf_3 (Fiat (= (getString 5 "b") (getString 5 "b"))) prf_4)
           (substitution (a "B") (s "b") (pos 5) (@n "b"))))
       (substitution (a "C") (b "A") (c "B") (p1 1) (s 4) (p2 1))))
   (substitution (a "S") (b "B") (c "C") (p1 3) (s 1) (p2 2)))
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "C" (T "A" "a") (T "B" "b")))
-(let t2 (NT "B" t1 (T "C" "a")))
-(let t3 (B 2 1 (NonTerm "C")))
-(let t4 (B 3 1 (NonTerm "B")))
-(let t5 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
-(let t6 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let t7 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let prf0 (Fiat (= t7 t7)))
-(let t8 (B 1 1 (NonTerm "A")))
-(let t9 (End (NonTerm "A") "a"))
-(let prf1 (Fiat (= t9 t9)))
-(let prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf3 (Fiat (= "a" "a")))
-(let t10 (premises prf1 prf2 prf3))
-(let t11 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let t12 (B 1 2 (NonTerm "B")))
-(let t13 (End (NonTerm "B") "b"))
-(let prf4 (Fiat (= t13 t13)))
-(let prf5 (Fiat (= "b" "b")))
-(let t14
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "C" (T "A" "a") (T "B" "b")))
+(let t_2 (NT "B" t_1 (T "C" "a")))
+(let t_3 (B 2 1 (NonTerm "C")))
+(let t_4 (B 3 1 (NonTerm "B")))
+(let t_5 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
+(let t_6 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let t_7 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let prf (Fiat (= t_7 t_7)))
+(let t_8 (B 1 1 (NonTerm "A")))
+(let t_9 (End (NonTerm "A") "a"))
+(let prf_1 (Fiat (= t_9 t_9)))
+(let prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_10 (premises prf_1 prf_2 prf_3))
+(let t_11 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let t_12 (B 1 2 (NonTerm "B")))
+(let t_13 (End (NonTerm "B") "b"))
+(let prf_4 (Fiat (= t_13 t_13)))
+(let prf_5 (Fiat (= "b" "b")))
+(let t_14
   (premises
-                      prf4
+                      prf_4
                       (Fiat (= (getString 2 "b") (getString 2 "b")))
-                      prf5))
-(let t15 (substitution (a "B") (s "b") (pos 2) (@n "b")))
-(let t16
+                      prf_5))
+(let t_15 (substitution (a "B") (s "b") (pos 2) (@n "b")))
+(let t_16
   (premises
-                  prf0
+                  prf
                   (Rule
-                    (= t8 t8)
+                    (= t_8 t_8)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t10
-                    t11)
+                    t_10
+                    t_11)
                   (Rule
-                    (= t12 t12)
+                    (= t_12 t_12)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t14
-                    t15)))
-(let t17 (f1 t8))
-(let t18 (f2 t12))
-(let t19 (substitution (a "C") (b "A") (c "B") t17 (p1 1) (s 1) t18 (p2 1)))
-(let t20 (B 1 1 (NonTerm "C")))
-(let t21 (B 1 3 (NonTerm "C")))
-(let t22 (End (NonTerm "C") "a"))
-(let prf6 (Fiat (= t22 t22)))
-(let prf7
+                    t_14
+                    t_15)))
+(let t_17 (f1 t_8))
+(let t_18 (f2 t_12))
+(let t_19
+  (substitution
+                  (a "C")
+                  (b "A")
+                  (c "B")
+                  t_17
+                  (p1 1)
+                  (s 1)
+                  t_18
+                  (p2 1)))
+(let t_20 (B 1 1 (NonTerm "C")))
+(let t_21 (B 1 3 (NonTerm "C")))
+(let t_22 (End (NonTerm "C") "a"))
+(let prf_6 (Fiat (= t_22 t_22)))
+(let prf_7
   (Rule
-                  (= t20 (T "C" "a"))
+                  (= t_20 (T "C" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  (premises prf6 prf2 prf3)
+                  (premises prf_6 prf_2 prf_3)
                   (substitution (a "C") (s "a") (pos 1) (@n "a"))))
-(let t23
+(let t_23
   (premises
-              (Fiat (= t6 t6))
+              (Fiat (= t_6 t_6))
               (Rule
-                (= t3 t3)
+                (= t_3 t_3)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t16
-                t19)
+                t_16
+                t_19)
               (Trans
-                (= t20 t21)
-                prf7
+                (= t_20 t_21)
+                prf_7
                 (Sym
-                  (= (T "C" "a") t21)
+                  (= (T "C" "a") t_21)
                   (Rule
-                    (= t21 (T "C" "a"))
+                    (= t_21 (T "C" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -840,69 +849,69 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf6
+                      prf_6
                       (Fiat (= (getString 3 "a") (getString 3 "a")))
-                      prf3)
+                      prf_3)
                     (substitution (a "C") (s "a") (pos 3) (@n "a")))))))
-(let t24
+(let t_24
   (substitution
               (a "B")
               (b "C")
               (c "C")
-              (f1 t3)
+              (f1 t_3)
               (p1 2)
               (s 1)
-              (f2 t20)
+              (f2 t_20)
               (p2 1)))
-(let t25 (B 2 4 (NonTerm "C")))
-(let t26 (NT "C" t8 t12))
-(let prf8
+(let t_25 (B 2 4 (NonTerm "C")))
+(let t_26 (NT "C" t_8 t_12))
+(let prf_8
   (Rule
-              (= t3 t26)
+              (= t_3 t_26)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-              t16
-              t19))
-(let t27 (B 1 4 (NonTerm "A")))
-(let prf9
+              t_16
+              t_19))
+(let t_27 (B 1 4 (NonTerm "A")))
+(let prf_9
   (Rule
-                      (= t8 (T "A" "a"))
+                      (= t_8 (T "A" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                      t10
-                      t11))
-(let t28 (B 1 5 (NonTerm "B")))
-(let prf10
+                      t_10
+                      t_11))
+(let t_28 (B 1 5 (NonTerm "B")))
+(let prf_10
   (Rule
-                      (= t12 (T "B" "b"))
+                      (= t_12 (T "B" "b"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                      t14
-                      t15))
-(let prf11
+                      t_14
+                      t_15))
+(let prf_11
   (Congr
-            (= t3 t1)
-            (Congr (= t3 (NT "C" (T "A" "a") t12)) prf8 prf9 1)
-            prf10
+            (= t_3 t_1)
+            (Congr (= t_3 (NT "C" (T "A" "a") t_12)) prf_8 prf_9 1)
+            prf_10
             2))
 (Congr
-  (= t0 (NT "S" t2 t1))
+  (= t (NT "S" t_2 t_1))
   (Congr
-    (= t0 (NT "S" t2 t3))
+    (= t (NT "S" t_2 t_3))
     (Rule
-      (= t0 (NT "S" t4 t3))
+      (= t (NT "S" t_4 t_3))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -910,24 +919,24 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t5 t5))
+        (Fiat (= t_5 t_5))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t23
-          t24)
+          t_23
+          t_24)
         (Trans
-          (= t3 t25)
-          prf8
+          (= t_3 t_25)
+          prf_8
           (Sym
-            (= t26 t25)
+            (= t_26 t_25)
             (Rule
-              (= t25 t26)
+              (= t_25 t_26)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -935,14 +944,14 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
               (premises
-                prf0
+                prf
                 (Trans
-                  (= t8 t27)
-                  prf9
+                  (= t_8 t_27)
+                  prf_9
                   (Sym
-                    (= (T "A" "a") t27)
+                    (= (T "A" "a") t_27)
                     (Rule
-                      (= t27 (T "A" "a"))
+                      (= t_27 (T "A" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -950,17 +959,17 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                       (premises
-                        prf1
+                        prf_1
                         (Fiat (= (getString 4 "a") (getString 4 "a")))
-                        prf3)
+                        prf_3)
                       (substitution (a "A") (s "a") (pos 4) (@n "a")))))
                 (Trans
-                  (= t12 t28)
-                  prf10
+                  (= t_12 t_28)
+                  prf_10
                   (Sym
-                    (= (T "B" "b") t28)
+                    (= (T "B" "b") t_28)
                     (Rule
-                      (= t28 (T "B" "b"))
+                      (= t_28 (T "B" "b"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -968,132 +977,148 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                       (premises
-                        prf4
+                        prf_4
                         (Fiat (= (getString 5 "b") (getString 5 "b")))
-                        prf5)
+                        prf_5)
                       (substitution (a "B") (s "b") (pos 5) (@n "b"))))))
-              (substitution (a "C") (b "A") (c "B") t17 (p1 1) (s 4) t18 (p2 1))))))
-      (substitution (a "S") (b "B") (c "C") (f1 t4) (p1 3) (s 1) (f2 t3) (p2 2)))
+              (substitution
+                (a "C")
+                (b "A")
+                (c "B")
+                t_17
+                (p1 1)
+                (s 4)
+                t_18
+                (p2 1))))))
+      (substitution
+        (a "S")
+        (b "B")
+        (c "C")
+        (f1 t_4)
+        (p1 3)
+        (s 1)
+        (f2 t_3)
+        (p2 2)))
     (Congr
-      (= t4 t2)
+      (= t_4 t_2)
       (Congr
-        (= t4 (NT "B" t1 t20))
+        (= t_4 (NT "B" t_1 t_20))
         (Rule
-          (= t4 (NT "B" t3 t20))
+          (= t_4 (NT "B" t_3 t_20))
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t23
-          t24)
-        prf11
+          t_23
+          t_24)
+        prf_11
         1)
-      prf7
+      prf_7
       2)
     1)
-  prf11
+  prf_11
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "C" (T "A" "a") (T "B" "b")))
-(let t2 (NT "B" t1 (T "C" "a")))
-(let t3 (NT "A" t2 (T "A" "a")))
-(let t4 (B 1 2 (NonTerm "B")))
-(let t5 (B 4 1 (NonTerm "A")))
-(let t6 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
-(let t7 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
-(let t8 (B 3 1 (NonTerm "B")))
-(let t9 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let t10 (B 2 1 (NonTerm "C")))
-(let t11 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let t12 (B 1 1 (NonTerm "A")))
-(let t13 (End (NonTerm "A") "a"))
-(let prf0 (Fiat (= t13 t13)))
-(let prf1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf2 (Fiat (= "a" "a")))
-(let t14 (premises prf0 prf1 prf2))
-(let t15 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let t16 (End (NonTerm "B") "b"))
-(let prf3 (Fiat (= t16 t16)))
-(let prf4 (Fiat (= "b" "b")))
-(let t17
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "C" (T "A" "a") (T "B" "b")))
+(let t_2 (NT "B" t_1 (T "C" "a")))
+(let t_3 (NT "A" t_2 (T "A" "a")))
+(let t_4 (B 1 2 (NonTerm "B")))
+(let t_5 (B 4 1 (NonTerm "A")))
+(let t_6 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
+(let t_7 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
+(let t_8 (B 3 1 (NonTerm "B")))
+(let t_9 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let t_10 (B 2 1 (NonTerm "C")))
+(let t_11 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let t_12 (B 1 1 (NonTerm "A")))
+(let t_13 (End (NonTerm "A") "a"))
+(let prf (Fiat (= t_13 t_13)))
+(let prf_1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_14 (premises prf prf_1 prf_2))
+(let t_15 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let t_16 (End (NonTerm "B") "b"))
+(let prf_3 (Fiat (= t_16 t_16)))
+(let prf_4 (Fiat (= "b" "b")))
+(let t_17
   (premises
-                          prf3
+                          prf_3
                           (Fiat (= (getString 2 "b") (getString 2 "b")))
-                          prf4))
-(let t18 (substitution (a "B") (s "b") (pos 2) (@n "b")))
-(let t19
+                          prf_4))
+(let t_18 (substitution (a "B") (s "b") (pos 2) (@n "b")))
+(let t_19
   (premises
-                      (Fiat (= t11 t11))
+                      (Fiat (= t_11 t_11))
                       (Rule
-                        (= t12 t12)
+                        (= t_12 t_12)
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                        t14
-                        t15)
+                        t_14
+                        t_15)
                       (Rule
-                        (= t4 t4)
+                        (= t_4 t_4)
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                        t17
-                        t18)))
-(let t20 (f2 t4))
-(let t21
+                        t_17
+                        t_18)))
+(let t_20 (f2 t_4))
+(let t_21
   (substitution
                       (a "C")
                       (b "A")
                       (c "B")
-                      (f1 t12)
+                      (f1 t_12)
                       (p1 1)
                       (s 1)
-                      t20
+                      t_20
                       (p2 1)))
-(let t22 (B 1 1 (NonTerm "C")))
-(let t23 (B 1 3 (NonTerm "C")))
-(let t24 (End (NonTerm "C") "a"))
-(let prf5 (Fiat (= t24 t24)))
-(let prf6
+(let t_22 (B 1 1 (NonTerm "C")))
+(let t_23 (B 1 3 (NonTerm "C")))
+(let t_24 (End (NonTerm "C") "a"))
+(let prf_5 (Fiat (= t_24 t_24)))
+(let prf_6
   (Rule
-                      (= t22 (T "C" "a"))
+                      (= t_22 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                      (premises prf5 prf1 prf2)
+                      (premises prf_5 prf_1 prf_2)
                       (substitution (a "C") (s "a") (pos 1) (@n "a"))))
-(let t25
+(let t_25
   (premises
-                  (Fiat (= t9 t9))
+                  (Fiat (= t_9 t_9))
                   (Rule
-                    (= t10 t10)
+                    (= t_10 t_10)
                     (name
                       "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                    t19
-                    t21)
+                    t_19
+                    t_21)
                   (Trans
-                    (= t22 t23)
-                    prf6
+                    (= t_22 t_23)
+                    prf_6
                     (Sym
-                      (= (T "C" "a") t23)
+                      (= (T "C" "a") t_23)
                       (Rule
-                        (= t23 (T "C" "a"))
+                        (= t_23 (T "C" "a"))
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -1101,52 +1126,52 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                         (premises
-                          prf5
+                          prf_5
                           (Fiat (= (getString 3 "a") (getString 3 "a")))
-                          prf2)
+                          prf_2)
                         (substitution (a "C") (s "a") (pos 3) (@n "a")))))))
-(let t26
+(let t_26
   (substitution
                   (a "B")
                   (b "C")
                   (c "C")
-                  (f1 t10)
+                  (f1 t_10)
                   (p1 2)
                   (s 1)
-                  (f2 t22)
+                  (f2 t_22)
                   (p2 1)))
-(let t27 (B 1 4 (NonTerm "A")))
-(let prf7
+(let t_27 (B 1 4 (NonTerm "A")))
+(let prf_7
   (Rule
-                  (= t12 (T "A" "a"))
+                  (= t_12 (T "A" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  t14
-                  t15))
-(let t28
+                  t_14
+                  t_15))
+(let t_28
   (premises
-              (Fiat (= t7 t7))
+              (Fiat (= t_7 t_7))
               (Rule
-                (= t8 t8)
+                (= t_8 t_8)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t25
-                t26)
+                t_25
+                t_26)
               (Trans
-                (= t12 t27)
-                prf7
+                (= t_12 t_27)
+                prf_7
                 (Sym
-                  (= (T "A" "a") t27)
+                  (= (T "A" "a") t_27)
                   (Rule
-                    (= t27 (T "A" "a"))
+                    (= t_27 (T "A" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -1154,38 +1179,38 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf0
+                      prf
                       (Fiat (= (getString 4 "a") (getString 4 "a")))
-                      prf2)
+                      prf_2)
                     (substitution (a "A") (s "a") (pos 4) (@n "a")))))))
-(let t29
+(let t_29
   (substitution
               (a "A")
               (b "B")
               (c "A")
-              (f1 t8)
+              (f1 t_8)
               (p1 3)
               (s 1)
-              (f2 t12)
+              (f2 t_12)
               (p2 1)))
-(let t30 (B 1 5 (NonTerm "B")))
-(let prf8
+(let t_30 (B 1 5 (NonTerm "B")))
+(let prf_8
   (Rule
-              (= t4 (T "B" "b"))
+              (= t_4 (T "B" "b"))
               (name
                 "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-              t17
-              t18))
+              t_17
+              t_18))
 (Congr
-  (= t0 (NT "S" t3 (T "B" "b")))
+  (= t (NT "S" t_3 (T "B" "b")))
   (Congr
-    (= t0 (NT "S" t3 t4))
+    (= t (NT "S" t_3 t_4))
     (Rule
-      (= t0 (NT "S" t5 t4))
+      (= t (NT "S" t_5 t_4))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1193,24 +1218,24 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t6 t6))
+        (Fiat (= t_6 t_6))
         (Rule
-          (= t5 t5)
+          (= t_5 t_5)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t28
-          t29)
+          t_28
+          t_29)
         (Trans
-          (= t4 t30)
-          prf8
+          (= t_4 t_30)
+          prf_8
           (Sym
-            (= (T "B" "b") t30)
+            (= (T "B" "b") t_30)
             (Rule
-              (= t30 (T "B" "b"))
+              (= t_30 (T "B" "b"))
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1218,128 +1243,128 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf3
+                prf_3
                 (Fiat (= (getString 5 "b") (getString 5 "b")))
-                prf4)
+                prf_4)
               (substitution (a "B") (s "b") (pos 5) (@n "b"))))))
-      (substitution (a "S") (b "A") (c "B") (f1 t5) (p1 4) (s 1) t20 (p2 1)))
+      (substitution (a "S") (b "A") (c "B") (f1 t_5) (p1 4) (s 1) t_20 (p2 1)))
     (Congr
-      (= t5 t3)
+      (= t_5 t_3)
       (Congr
-        (= t5 (NT "A" t2 t12))
+        (= t_5 (NT "A" t_2 t_12))
         (Rule
-          (= t5 (NT "A" t8 t12))
+          (= t_5 (NT "A" t_8 t_12))
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t28
-          t29)
+          t_28
+          t_29)
         (Congr
-          (= t8 t2)
+          (= t_8 t_2)
           (Congr
-            (= t8 (NT "B" t1 t22))
+            (= t_8 (NT "B" t_1 t_22))
             (Rule
-              (= t8 (NT "B" t10 t22))
+              (= t_8 (NT "B" t_10 t_22))
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-              t25
-              t26)
+              t_25
+              t_26)
             (Congr
-              (= t10 t1)
+              (= t_10 t_1)
               (Congr
-                (= t10 (NT "C" (T "A" "a") t4))
+                (= t_10 (NT "C" (T "A" "a") t_4))
                 (Rule
-                  (= t10 (NT "C" t12 t4))
+                  (= t_10 (NT "C" t_12 t_4))
                   (name
                     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-                  t19
-                  t21)
-                prf7
+                  t_19
+                  t_21)
+                prf_7
                 1)
-              prf8
+              prf_8
               2)
             1)
-          prf6
+          prf_6
           2)
         1)
-      prf7
+      prf_7
       2)
     1)
-  prf8
+  prf_8
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
-(let t2 (B 3 1 (NonTerm "B")))
-(let t3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let t4 (B 2 1 (NonTerm "C")))
-(let t5 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let prf0 (Fiat (= t5 t5)))
-(let t6 (B 1 1 (NonTerm "A")))
-(let t7 (End (NonTerm "A") "a"))
-(let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf3 (Fiat (= "a" "a")))
-(let t8 (premises prf1 prf2 prf3))
-(let t9 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let t10 (B 1 2 (NonTerm "B")))
-(let t11 (End (NonTerm "B") "b"))
-(let prf4 (Fiat (= t11 t11)))
-(let prf5 (Fiat (= "b" "b")))
-(let t12
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
+(let t_2 (B 3 1 (NonTerm "B")))
+(let t_3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let t_4 (B 2 1 (NonTerm "C")))
+(let t_5 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let prf (Fiat (= t_5 t_5)))
+(let t_6 (B 1 1 (NonTerm "A")))
+(let t_7 (End (NonTerm "A") "a"))
+(let prf_1 (Fiat (= t_7 t_7)))
+(let prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_8 (premises prf_1 prf_2 prf_3))
+(let t_9 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let t_10 (B 1 2 (NonTerm "B")))
+(let t_11 (End (NonTerm "B") "b"))
+(let prf_4 (Fiat (= t_11 t_11)))
+(let prf_5 (Fiat (= "b" "b")))
+(let t_12
   (premises
-                  prf4
+                  prf_4
                   (Fiat (= (getString 2 "b") (getString 2 "b")))
-                  prf5))
-(let t13 (substitution (a "B") (s "b") (pos 2) (@n "b")))
-(let t14
+                  prf_5))
+(let t_13 (substitution (a "B") (s "b") (pos 2) (@n "b")))
+(let t_14
   (premises
-              prf0
+              prf
               (Rule
-                (= t6 t6)
+                (= t_6 t_6)
                 (name
                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                t8
-                t9)
+                t_8
+                t_9)
               (Rule
-                (= t10 t10)
+                (= t_10 t_10)
                 (name
                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                t12
-                t13)))
-(let t15 (f1 t6))
-(let t16 (f2 t10))
-(let t17 (substitution (a "C") (b "A") (c "B") t15 (p1 1) (s 1) t16 (p2 1)))
-(let t18 (B 1 1 (NonTerm "C")))
-(let t19 (B 1 3 (NonTerm "C")))
-(let t20 (End (NonTerm "C") "a"))
-(let prf6 (Fiat (= t20 t20)))
-(let t21 (B 2 4 (NonTerm "C")))
-(let t22 (NT "C" t6 t10))
-(let t23 (B 1 4 (NonTerm "A")))
-(let t24 (B 1 5 (NonTerm "B")))
+                t_12
+                t_13)))
+(let t_15 (f1 t_6))
+(let t_16 (f2 t_10))
+(let t_17 (substitution (a "C") (b "A") (c "B") t_15 (p1 1) (s 1) t_16 (p2 1)))
+(let t_18 (B 1 1 (NonTerm "C")))
+(let t_19 (B 1 3 (NonTerm "C")))
+(let t_20 (End (NonTerm "C") "a"))
+(let prf_6 (Fiat (= t_20 t_20)))
+(let t_21 (B 2 4 (NonTerm "C")))
+(let t_22 (NT "C" t_6 t_10))
+(let t_23 (B 1 4 (NonTerm "A")))
+(let t_24 (B 1 5 (NonTerm "B")))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1347,9 +1372,9 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
   (premises
-    (Fiat (= t1 t1))
+    (Fiat (= t_1 t_1))
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1357,33 +1382,33 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t3 t3))
+        (Fiat (= t_3 t_3))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t14
-          t17)
+          t_14
+          t_17)
         (Trans
-          (= t18 t19)
+          (= t_18 t_19)
           (Rule
-            (= t18 (T "C" "a"))
+            (= t_18 (T "C" "a"))
             (name
               "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-            (premises prf6 prf2 prf3)
+            (premises prf_6 prf_2 prf_3)
             (substitution (a "C") (s "a") (pos 1) (@n "a")))
           (Sym
-            (= (T "C" "a") t19)
+            (= (T "C" "a") t_19)
             (Rule
-              (= t19 (T "C" "a"))
+              (= t_19 (T "C" "a"))
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1391,35 +1416,35 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf6
+                prf_6
                 (Fiat (= (getString 3 "a") (getString 3 "a")))
-                prf3)
+                prf_3)
               (substitution (a "C") (s "a") (pos 3) (@n "a"))))))
       (substitution
         (a "B")
         (b "C")
         (c "C")
-        (f1 t4)
+        (f1 t_4)
         (p1 2)
         (s 1)
-        (f2 t18)
+        (f2 t_18)
         (p2 1)))
     (Trans
-      (= t4 t21)
+      (= t_4 t_21)
       (Rule
-        (= t4 t22)
+        (= t_4 t_22)
         (name
           "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-        t14
-        t17)
+        t_14
+        t_17)
       (Sym
-        (= t22 t21)
+        (= t_22 t_21)
         (Rule
-          (= t21 t22)
+          (= t_21 t_22)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1427,23 +1452,23 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
           (premises
-            prf0
+            prf
             (Trans
-              (= t6 t23)
+              (= t_6 t_23)
               (Rule
-                (= t6 (T "A" "a"))
+                (= t_6 (T "A" "a"))
                 (name
                   "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-                t8
-                t9)
+                t_8
+                t_9)
               (Sym
-                (= (T "A" "a") t23)
+                (= (T "A" "a") t_23)
                 (Rule
-                  (= t23 (T "A" "a"))
+                  (= t_23 (T "A" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1451,26 +1476,26 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf1
+                    prf_1
                     (Fiat (= (getString 4 "a") (getString 4 "a")))
-                    prf3)
+                    prf_3)
                   (substitution (a "A") (s "a") (pos 4) (@n "a")))))
             (Trans
-              (= t10 t24)
+              (= t_10 t_24)
               (Rule
-                (= t10 (T "B" "b"))
+                (= t_10 (T "B" "b"))
                 (name
                   "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-                t12
-                t13)
+                t_12
+                t_13)
               (Sym
-                (= (T "B" "b") t24)
+                (= (T "B" "b") t_24)
                 (Rule
-                  (= t24 (T "B" "b"))
+                  (= t_24 (T "B" "b"))
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1478,33 +1503,33 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf4
+                    prf_4
                     (Fiat (= (getString 5 "b") (getString 5 "b")))
-                    prf5)
+                    prf_5)
                   (substitution (a "B") (s "b") (pos 5) (@n "b"))))))
-          (substitution (a "C") (b "A") (c "B") t15 (p1 1) (s 4) t16 (p2 1))))))
-  (substitution (a "S") (b "B") (c "C") (f1 t2) (p1 3) (s 1) (f2 t4) (p2 2)))
+          (substitution (a "C") (b "A") (c "B") t_15 (p1 1) (s 4) t_16 (p2 1))))))
+  (substitution (a "S") (b "B") (c "C") (f1 t_2) (p1 3) (s 1) (f2 t_4) (p2 2)))
 )
 (
-(let t0 (P 5 1 (NonTerm "S")))
-(let t1 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
-(let t2 (P 3 1 (NonTerm "A")))
-(let t3 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
-(let t4 (P 2 1 (NonTerm "B")))
-(let t5 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf0 (Fiat (= t5 t5)))
-(let t6 (P 1 1 (NonTerm "C")))
-(let t7 (End (NonTerm "C") "a"))
-(let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= "a" "a")))
-(let t8 (P 1 2 (NonTerm "C")))
-(let t9 (P 1 3 (NonTerm "A")))
-(let t10 (End (NonTerm "A") "a"))
-(let t11 (P 2 4 (NonTerm "B")))
-(let t12 (P 1 4 (NonTerm "C")))
-(let t13 (P 1 5 (NonTerm "C")))
+(let t (P 5 1 (NonTerm "S")))
+(let t_1 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
+(let t_2 (P 3 1 (NonTerm "A")))
+(let t_3 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
+(let t_4 (P 2 1 (NonTerm "B")))
+(let t_5 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf (Fiat (= t_5 t_5)))
+(let t_6 (P 1 1 (NonTerm "C")))
+(let t_7 (End (NonTerm "C") "a"))
+(let prf_1 (Fiat (= t_7 t_7)))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_8 (P 1 2 (NonTerm "C")))
+(let t_9 (P 1 3 (NonTerm "A")))
+(let t_10 (End (NonTerm "A") "a"))
+(let t_11 (P 2 4 (NonTerm "B")))
+(let t_12 (P 1 4 (NonTerm "C")))
+(let t_13 (P 1 5 (NonTerm "C")))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1512,9 +1537,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
   (premises
-    (Fiat (= t1 t1))
+    (Fiat (= t_1 t_1))
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1522,9 +1547,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        (Fiat (= t3 t3))
+        (Fiat (= t_3 t_3))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1532,9 +1557,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
           (premises
-            prf0
+            prf
             (Rule
-              (= t6 t6)
+              (= t_6 t_6)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1542,12 +1567,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf1
+                prf_1
                 (Fiat (= (getString 1 "a") (getString 1 "a")))
-                prf2)
+                prf_2)
               (substitution (a "C") (s "a") (pos 1) (@n "a")))
             (Rule
-              (= t8 t8)
+              (= t_8 t_8)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1555,13 +1580,13 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf1
+                prf_1
                 (Fiat (= (getString 2 "a") (getString 2 "a")))
-                prf2)
+                prf_2)
               (substitution (a "C") (s "a") (pos 2) (@n "a"))))
           (substitution (a "B") (b "C") (c "C") (p1 1) (s 1) (p2 1)))
         (Rule
-          (= t9 t9)
+          (= t_9 t_9)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1569,13 +1594,13 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises
-            (Fiat (= t10 t10))
+            (Fiat (= t_10 t_10))
             (Fiat (= (getString 3 "a") (getString 3 "a")))
-            prf2)
+            prf_2)
           (substitution (a "A") (s "a") (pos 3) (@n "a"))))
       (substitution (a "A") (b "B") (c "A") (p1 2) (s 1) (p2 1)))
     (Rule
-      (= t11 t11)
+      (= t_11 t_11)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1583,50 +1608,50 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        prf0
+        prf
         (Rule
-          (= t12 t12)
+          (= t_12 t_12)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf2)
+          (premises prf_1 (Fiat (= (getString 4 "a") (getString 4 "a"))) prf_2)
           (substitution (a "C") (s "a") (pos 4) (@n "a")))
         (Rule
-          (= t13 t13)
+          (= t_13 t_13)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf1 (Fiat (= (getString 5 "a") (getString 5 "a"))) prf2)
+          (premises prf_1 (Fiat (= (getString 5 "a") (getString 5 "a"))) prf_2)
           (substitution (a "C") (s "a") (pos 5) (@n "a"))))
       (substitution (a "B") (b "C") (c "C") (p1 1) (s 4) (p2 1))))
   (substitution (a "S") (b "A") (c "B") (p1 3) (s 1) (p2 2)))
 )
 (
-(let t0 (P 5 1 (NonTerm "A")))
-(let t1 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
-(let prf0 (Fiat (= t1 t1)))
-(let t2 (P 2 1 (NonTerm "B")))
-(let t3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf1 (Fiat (= t3 t3)))
-(let t4 (P 1 1 (NonTerm "C")))
-(let t5 (End (NonTerm "C") "a"))
-(let prf2 (Fiat (= t5 t5)))
-(let prf3 (Fiat (= "a" "a")))
-(let t6 (P 1 2 (NonTerm "C")))
-(let t7 (P 3 3 (NonTerm "A")))
-(let t8 (P 2 3 (NonTerm "B")))
-(let t9 (P 1 3 (NonTerm "C")))
-(let t10 (P 1 4 (NonTerm "C")))
-(let t11 (P 1 5 (NonTerm "A")))
-(let t12 (End (NonTerm "A") "a"))
+(let t (P 5 1 (NonTerm "A")))
+(let t_1 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
+(let prf (Fiat (= t_1 t_1)))
+(let t_2 (P 2 1 (NonTerm "B")))
+(let t_3 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf_1 (Fiat (= t_3 t_3)))
+(let t_4 (P 1 1 (NonTerm "C")))
+(let t_5 (End (NonTerm "C") "a"))
+(let prf_2 (Fiat (= t_5 t_5)))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_6 (P 1 2 (NonTerm "C")))
+(let t_7 (P 3 3 (NonTerm "A")))
+(let t_8 (P 2 3 (NonTerm "B")))
+(let t_9 (P 1 3 (NonTerm "C")))
+(let t_10 (P 1 4 (NonTerm "C")))
+(let t_11 (P 1 5 (NonTerm "A")))
+(let t_12 (End (NonTerm "A") "a"))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1634,9 +1659,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
   (premises
-    prf0
+    prf
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1644,30 +1669,30 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        prf1
+        prf_1
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))) prf3)
+          (premises prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))) prf_3)
           (substitution (a "C") (s "a") (pos 1) (@n "a")))
         (Rule
-          (= t6 t6)
+          (= t_6 t_6)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-          (premises prf2 (Fiat (= (getString 2 "a") (getString 2 "a"))) prf3)
+          (premises prf_2 (Fiat (= (getString 2 "a") (getString 2 "a"))) prf_3)
           (substitution (a "C") (s "a") (pos 2) (@n "a"))))
       (substitution (a "B") (b "C") (c "C") (p1 1) (s 1) (p2 1)))
     (Rule
-      (= t7 t7)
+      (= t_7 t_7)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1675,9 +1700,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
       (premises
-        prf0
+        prf
         (Rule
-          (= t8 t8)
+          (= t_8 t_8)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (P p1 s (NonTerm b))
@@ -1685,9 +1710,9 @@ expression: proof_snapshot
       ((P (+ p1 p2) s (NonTerm a)))
          )")
           (premises
-            prf1
+            prf_1
             (Rule
-              (= t9 t9)
+              (= t_9 t_9)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1695,12 +1720,12 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf2
+                prf_2
                 (Fiat (= (getString 3 "a") (getString 3 "a")))
-                prf3)
+                prf_3)
               (substitution (a "C") (s "a") (pos 3) (@n "a")))
             (Rule
-              (= t10 t10)
+              (= t_10 t_10)
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1708,13 +1733,13 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf2
+                prf_2
                 (Fiat (= (getString 4 "a") (getString 4 "a")))
-                prf3)
+                prf_3)
               (substitution (a "C") (s "a") (pos 4) (@n "a"))))
           (substitution (a "B") (b "C") (c "C") (p1 1) (s 3) (p2 1)))
         (Rule
-          (= t11 t11)
+          (= t_11 t_11)
           (name
             "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -1722,87 +1747,87 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
           (premises
-            (Fiat (= t12 t12))
+            (Fiat (= t_12 t_12))
             (Fiat (= (getString 5 "a") (getString 5 "a")))
-            prf3)
+            prf_3)
           (substitution (a "A") (s "a") (pos 5) (@n "a"))))
       (substitution (a "A") (b "B") (c "A") (p1 2) (s 3) (p2 1))))
   (substitution (a "A") (b "B") (c "A") (p1 2) (s 1) (p2 3)))
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "B" (T "C" "a") (T "C" "a")))
-(let t2 (NT "C" (T "A" "a") t1))
-(let t3 (NT "B" t2 (T "C" "a")))
-(let t4 (B 4 1 (NonTerm "B")))
-(let t5 (B 1 1 (NonTerm "A")))
-(let t6 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
-(let t7 (End (NonTerm "A") "a"))
-(let prf0 (Fiat (= t7 t7)))
-(let prf1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf2 (Fiat (= "a" "a")))
-(let t8 (premises prf0 prf1 prf2))
-(let t9 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let prf3
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "B" (T "C" "a") (T "C" "a")))
+(let t_2 (NT "C" (T "A" "a") t_1))
+(let t_3 (NT "B" t_2 (T "C" "a")))
+(let t_4 (B 4 1 (NonTerm "B")))
+(let t_5 (B 1 1 (NonTerm "A")))
+(let t_6 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
+(let t_7 (End (NonTerm "A") "a"))
+(let prf (Fiat (= t_7 t_7)))
+(let prf_1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_8 (premises prf prf_1 prf_2))
+(let t_9 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let prf_3
   (Rule
-            (= t5 t5)
+            (= t_5 t_5)
             (name
               "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-            t8
-            t9))
-(let t10 (B 4 2 (NonTerm "B")))
-(let t11 (B 3 1 (NonTerm "C")))
-(let t12 (B 1 1 (NonTerm "C")))
-(let t13 (NT "B" t11 t12))
-(let t14 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf4 (Fiat (= t14 t14)))
-(let t15 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let prf5 (Fiat (= t15 t15)))
-(let t16 (B 2 1 (NonTerm "B")))
-(let t17 (B 2 2 (NonTerm "B")))
-(let t18 (NT "B" t12 t12))
-(let t19 (End (NonTerm "C") "a"))
-(let prf6 (Fiat (= t19 t19)))
-(let t20 (premises prf6 prf1 prf2))
-(let t21 (substitution (a "C") (s "a") (pos 1) (@n "a")))
-(let t22 (B 1 2 (NonTerm "C")))
-(let prf7
+            t_8
+            t_9))
+(let t_10 (B 4 2 (NonTerm "B")))
+(let t_11 (B 3 1 (NonTerm "C")))
+(let t_12 (B 1 1 (NonTerm "C")))
+(let t_13 (NT "B" t_11 t_12))
+(let t_14 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf_4 (Fiat (= t_14 t_14)))
+(let t_15 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let prf_5 (Fiat (= t_15 t_15)))
+(let t_16 (B 2 1 (NonTerm "B")))
+(let t_17 (B 2 2 (NonTerm "B")))
+(let t_18 (NT "B" t_12 t_12))
+(let t_19 (End (NonTerm "C") "a"))
+(let prf_6 (Fiat (= t_19 t_19)))
+(let t_20 (premises prf_6 prf_1 prf_2))
+(let t_21 (substitution (a "C") (s "a") (pos 1) (@n "a")))
+(let t_22 (B 1 2 (NonTerm "C")))
+(let prf_7
   (Rule
-                              (= t12 (T "C" "a"))
+                              (= t_12 (T "C" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                              t20
-                              t21))
-(let prf8 (Fiat (= (getString 2 "a") (getString 2 "a"))))
-(let prf9
+                              t_20
+                              t_21))
+(let prf_8 (Fiat (= (getString 2 "a") (getString 2 "a"))))
+(let prf_9
   (Trans
-                            (= t12 t22)
-                            prf7
+                            (= t_12 t_22)
+                            prf_7
                             (Sym
-                              (= (T "C" "a") t22)
+                              (= (T "C" "a") t_22)
                               (Rule
-                                (= t22 (T "C" "a"))
+                                (= t_22 (T "C" "a"))
                                 (name
                                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                                (premises prf6 prf8 prf2)
+                                (premises prf_6 prf_8 prf_2)
                                 (substitution (a "C") (s "a") (pos 2) (@n "a"))))))
-(let t23 (f1 t12))
-(let t24 (f2 t12))
-(let prf10
+(let t_23 (f1 t_12))
+(let t_24 (f2 t_12))
+(let prf_10
   (Rule
-                        (= t16 t18)
+                        (= t_16 t_18)
                         (name
                           "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -1810,36 +1835,36 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
                         (premises
-                          prf4
+                          prf_4
                           (Rule
-                            (= t12 t12)
+                            (= t_12 t_12)
                             (name
                               "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                            t20
-                            t21)
-                          prf9)
+                            t_20
+                            t_21)
+                          prf_9)
                         (substitution
                           (a "B")
                           (b "C")
                           (c "C")
-                          t23
+                          t_23
                           (p1 1)
                           (s 1)
-                          t24
+                          t_24
                           (p2 1))))
-(let t25 (B 1 3 (NonTerm "C")))
-(let prf11
+(let t_25 (B 1 3 (NonTerm "C")))
+(let prf_11
   (Trans
-                              (= t12 t25)
-                              prf7
+                              (= t_12 t_25)
+                              prf_7
                               (Sym
-                                (= (T "C" "a") t25)
+                                (= (T "C" "a") t_25)
                                 (Rule
-                                  (= t25 (T "C" "a"))
+                                  (= t_25 (T "C" "a"))
                                   (name
                                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -1847,58 +1872,58 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                                   (premises
-                                    prf6
+                                    prf_6
                                     (Fiat (= (getString 3 "a") (getString 3 "a")))
-                                    prf2)
+                                    prf_2)
                                   (substitution (a "C") (s "a") (pos 3) (@n "a"))))))
-(let t26
+(let t_26
   (premises
-                    prf5
-                    prf3
+                    prf_5
+                    prf_3
                     (Trans
-                      (= t16 t17)
-                      prf10
+                      (= t_16 t_17)
+                      prf_10
                       (Sym
-                        (= t18 t17)
+                        (= t_18 t_17)
                         (Rule
-                          (= t17 t18)
+                          (= t_17 t_18)
                           (name
                             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                          (premises prf4 prf9 prf11)
+                          (premises prf_4 prf_9 prf_11)
                           (substitution
                             (a "B")
                             (b "C")
                             (c "C")
-                            t23
+                            t_23
                             (p1 1)
                             (s 2)
-                            t24
+                            t_24
                             (p2 1)))))))
-(let t27 (f1 t5))
-(let t28 (f2 t16))
-(let t29
+(let t_27 (f1 t_5))
+(let t_28 (f2 t_16))
+(let t_29
   (substitution
                     (a "C")
                     (b "A")
                     (c "B")
-                    t27
+                    t_27
                     (p1 1)
                     (s 1)
-                    t28
+                    t_28
                     (p2 2)))
-(let t30 (B 1 4 (NonTerm "C")))
-(let prf12
+(let t_30 (B 1 4 (NonTerm "C")))
+(let prf_12
   (Trans
-                  (= t12 t30)
-                  prf7
+                  (= t_12 t_30)
+                  prf_7
                   (Sym
-                    (= (T "C" "a") t30)
+                    (= (T "C" "a") t_30)
                     (Rule
-                      (= t30 (T "C" "a"))
+                      (= t_30 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -1906,14 +1931,14 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                       (premises
-                        prf6
+                        prf_6
                         (Fiat (= (getString 4 "a") (getString 4 "a")))
-                        prf2)
+                        prf_2)
                       (substitution (a "C") (s "a") (pos 4) (@n "a"))))))
-(let t31 (f1 t11))
-(let prf13
+(let t_31 (f1 t_11))
+(let prf_13
   (Rule
-              (= t4 t13)
+              (= t_4 t_13)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -1921,52 +1946,52 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
               (premises
-                prf4
+                prf_4
                 (Rule
-                  (= t11 t11)
+                  (= t_11 t_11)
                   (name
                     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                  t26
-                  t29)
-                prf12)
-              (substitution (a "B") (b "C") (c "C") t31 (p1 3) (s 1) t24 (p2 1))))
-(let t32 (B 3 2 (NonTerm "C")))
-(let t33 (NT "C" t5 t16))
-(let prf14
+                  t_26
+                  t_29)
+                prf_12)
+              (substitution (a "B") (b "C") (c "C") t_31 (p1 3) (s 1) t_24 (p2 1))))
+(let t_32 (B 3 2 (NonTerm "C")))
+(let t_33 (NT "C" t_5 t_16))
+(let prf_14
   (Rule
-                      (= t11 t33)
+                      (= t_11 t_33)
                       (name
                         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                      t26
-                      t29))
-(let t34 (B 1 2 (NonTerm "A")))
-(let prf15
+                      t_26
+                      t_29))
+(let t_34 (B 1 2 (NonTerm "A")))
+(let prf_15
   (Rule
-                              (= t5 (T "A" "a"))
+                              (= t_5 (T "A" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                              t8
-                              t9))
-(let t35 (B 2 3 (NonTerm "B")))
-(let t36 (B 1 5 (NonTerm "C")))
+                              t_8
+                              t_9))
+(let t_35 (B 2 3 (NonTerm "B")))
+(let t_36 (B 1 5 (NonTerm "C")))
 (Congr
-  (= t0 (NT "S" (T "A" "a") t3))
+  (= t (NT "S" (T "A" "a") t_3))
   (Congr
-    (= t0 (NT "S" (T "A" "a") t4))
+    (= t (NT "S" (T "A" "a") t_4))
     (Rule
-      (= t0 (NT "S" t5 t4))
+      (= t (NT "S" t_5 t_4))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1974,15 +1999,15 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t6 t6))
-        prf3
+        (Fiat (= t_6 t_6))
+        prf_3
         (Trans
-          (= t4 t10)
-          prf13
+          (= t_4 t_10)
+          prf_13
           (Sym
-            (= t13 t10)
+            (= t_13 t_10)
             (Rule
-              (= t10 t13)
+              (= t_10 t_13)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -1990,14 +2015,14 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
               (premises
-                prf4
+                prf_4
                 (Trans
-                  (= t11 t32)
-                  prf14
+                  (= t_11 t_32)
+                  prf_14
                   (Sym
-                    (= t33 t32)
+                    (= t_33 t_32)
                     (Rule
-                      (= t32 t33)
+                      (= t_32 t_33)
                       (name
                         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2005,61 +2030,61 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
                       (premises
-                        prf5
+                        prf_5
                         (Trans
-                          (= t5 t34)
-                          prf15
+                          (= t_5 t_34)
+                          prf_15
                           (Sym
-                            (= (T "A" "a") t34)
+                            (= (T "A" "a") t_34)
                             (Rule
-                              (= t34 (T "A" "a"))
+                              (= t_34 (T "A" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-                              (premises prf0 prf8 prf2)
+                              (premises prf prf_8 prf_2)
                               (substitution (a "A") (s "a") (pos 2) (@n "a")))))
                         (Trans
-                          (= t16 t35)
-                          prf10
+                          (= t_16 t_35)
+                          prf_10
                           (Sym
-                            (= t18 t35)
+                            (= t_18 t_35)
                             (Rule
-                              (= t35 t18)
+                              (= t_35 t_18)
                               (name
                                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-                              (premises prf4 prf11 prf12)
+                              (premises prf_4 prf_11 prf_12)
                               (substitution
                                 (a "B")
                                 (b "C")
                                 (c "C")
-                                t23
+                                t_23
                                 (p1 1)
                                 (s 3)
-                                t24
+                                t_24
                                 (p2 1))))))
                       (substitution
                         (a "C")
                         (b "A")
                         (c "B")
-                        t27
+                        t_27
                         (p1 1)
                         (s 2)
-                        t28
+                        t_28
                         (p2 2)))))
                 (Trans
-                  (= t12 t36)
-                  prf7
+                  (= t_12 t_36)
+                  prf_7
                   (Sym
-                    (= (T "C" "a") t36)
+                    (= (T "C" "a") t_36)
                     (Rule
-                      (= t36 (T "C" "a"))
+                      (= t_36 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2067,69 +2092,77 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                       (premises
-                        prf6
+                        prf_6
                         (Fiat (= (getString 5 "a") (getString 5 "a")))
-                        prf2)
+                        prf_2)
                       (substitution (a "C") (s "a") (pos 5) (@n "a"))))))
-              (substitution (a "B") (b "C") (c "C") t31 (p1 3) (s 2) t24 (p2 1))))))
-      (substitution (a "S") (b "A") (c "B") t27 (p1 1) (s 1) (f2 t4) (p2 4)))
-    prf15
+              (substitution
+                (a "B")
+                (b "C")
+                (c "C")
+                t_31
+                (p1 3)
+                (s 2)
+                t_24
+                (p2 1))))))
+      (substitution (a "S") (b "A") (c "B") t_27 (p1 1) (s 1) (f2 t_4) (p2 4)))
+    prf_15
     1)
   (Congr
-    (= t4 t3)
+    (= t_4 t_3)
     (Congr
-      (= t4 (NT "B" t2 t12))
-      prf13
+      (= t_4 (NT "B" t_2 t_12))
+      prf_13
       (Congr
-        (= t11 t2)
-        (Congr (= t11 (NT "C" (T "A" "a") t16)) prf14 prf15 1)
+        (= t_11 t_2)
+        (Congr (= t_11 (NT "C" (T "A" "a") t_16)) prf_14 prf_15 1)
         (Congr
-          (= t16 t1)
-          (Congr (= t16 (NT "B" (T "C" "a") t12)) prf10 prf7 1)
-          prf7
+          (= t_16 t_1)
+          (Congr (= t_16 (NT "B" (T "C" "a") t_12)) prf_10 prf_7 1)
+          prf_7
           2)
         2)
       1)
-    prf7
+    prf_7
     2)
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "B" (T "C" "a") (T "C" "a")))
-(let t2 (NT "C" (T "A" "a") t1))
-(let t3 (B 3 1 (NonTerm "C")))
-(let t4 (B 2 1 (NonTerm "B")))
-(let t5 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
-(let t6 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf0 (Fiat (= t6 t6)))
-(let t7 (B 1 1 (NonTerm "C")))
-(let t8 (End (NonTerm "C") "a"))
-(let prf1 (Fiat (= t8 t8)))
-(let prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf3 (Fiat (= "a" "a")))
-(let t9 (premises prf1 prf2 prf3))
-(let t10 (substitution (a "C") (s "a") (pos 1) (@n "a")))
-(let t11 (B 1 2 (NonTerm "C")))
-(let prf4
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "B" (T "C" "a") (T "C" "a")))
+(let t_2 (NT "C" (T "A" "a") t_1))
+(let t_3 (B 3 1 (NonTerm "C")))
+(let t_4 (B 2 1 (NonTerm "B")))
+(let t_5 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
+(let t_6 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf (Fiat (= t_6 t_6)))
+(let t_7 (B 1 1 (NonTerm "C")))
+(let t_8 (End (NonTerm "C") "a"))
+(let prf_1 (Fiat (= t_8 t_8)))
+(let prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_9 (premises prf_1 prf_2 prf_3))
+(let t_10 (substitution (a "C") (s "a") (pos 1) (@n "a")))
+(let t_11 (B 1 2 (NonTerm "C")))
+(let prf_4
   (Rule
-                  (= t7 (T "C" "a"))
+                  (= t_7 (T "C" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  t9
-                  t10))
-(let prf5
+                  t_9
+                  t_10))
+(let prf_5
   (Trans
-                (= t7 t11)
-                prf4
+                (= t_7 t_11)
+                prf_4
                 (Sym
-                  (= (T "C" "a") t11)
+                  (= (T "C" "a") t_11)
                   (Rule
-                    (= t11 (T "C" "a"))
+                    (= t_11 (T "C" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2137,56 +2170,56 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf1
+                      prf_1
                       (Fiat (= (getString 2 "a") (getString 2 "a")))
-                      prf3)
+                      prf_3)
                     (substitution (a "C") (s "a") (pos 2) (@n "a"))))))
-(let t12
+(let t_12
   (premises
-              prf0
+              prf
               (Rule
-                (= t7 t7)
+                (= t_7 t_7)
                 (name
                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                t9
-                t10)
-              prf5))
-(let t13 (f1 t7))
-(let t14 (f2 t7))
-(let t15 (substitution (a "B") (b "C") (c "C") t13 (p1 1) (s 1) t14 (p2 1)))
-(let t16 (B 3 3 (NonTerm "C")))
-(let t17 (B 1 1 (NonTerm "A")))
-(let t18 (NT "C" t17 t4))
-(let t19 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let prf6 (Fiat (= t19 t19)))
-(let t20 (End (NonTerm "A") "a"))
-(let prf7 (Fiat (= t20 t20)))
-(let t21 (premises prf7 prf2 prf3))
-(let t22 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let t23 (B 2 2 (NonTerm "B")))
-(let t24 (NT "B" t7 t7))
-(let prf8
+                t_9
+                t_10)
+              prf_5))
+(let t_13 (f1 t_7))
+(let t_14 (f2 t_7))
+(let t_15 (substitution (a "B") (b "C") (c "C") t_13 (p1 1) (s 1) t_14 (p2 1)))
+(let t_16 (B 3 3 (NonTerm "C")))
+(let t_17 (B 1 1 (NonTerm "A")))
+(let t_18 (NT "C" t_17 t_4))
+(let t_19 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let prf_6 (Fiat (= t_19 t_19)))
+(let t_20 (End (NonTerm "A") "a"))
+(let prf_7 (Fiat (= t_20 t_20)))
+(let t_21 (premises prf_7 prf_2 prf_3))
+(let t_22 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let t_23 (B 2 2 (NonTerm "B")))
+(let t_24 (NT "B" t_7 t_7))
+(let prf_8
   (Rule
-                    (= t4 t24)
+                    (= t_4 t_24)
                     (name
                       "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                    t12
-                    t15))
-(let t25 (B 1 3 (NonTerm "C")))
-(let prf9 (Fiat (= (getString 3 "a") (getString 3 "a"))))
-(let t26 (f1 t17))
-(let t27 (f2 t4))
-(let prf10
+                    t_12
+                    t_15))
+(let t_25 (B 1 3 (NonTerm "C")))
+(let prf_9 (Fiat (= (getString 3 "a") (getString 3 "a"))))
+(let t_26 (f1 t_17))
+(let t_27 (f2 t_4))
+(let prf_10
   (Rule
-              (= t3 t18)
+              (= t_3 t_18)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -2194,24 +2227,24 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
               (premises
-                prf6
+                prf_6
                 (Rule
-                  (= t17 t17)
+                  (= t_17 t_17)
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  t21
-                  t22)
+                  t_21
+                  t_22)
                 (Trans
-                  (= t4 t23)
-                  prf8
+                  (= t_4 t_23)
+                  prf_8
                   (Sym
-                    (= t24 t23)
+                    (= t_24 t_23)
                     (Rule
-                      (= t23 t24)
+                      (= t_23 t_24)
                       (name
                         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -2219,55 +2252,60 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
                       (premises
-                        prf0
-                        prf5
+                        prf
+                        prf_5
                         (Trans
-                          (= t7 t25)
-                          prf4
+                          (= t_7 t_25)
+                          prf_4
                           (Sym
-                            (= (T "C" "a") t25)
+                            (= (T "C" "a") t_25)
                             (Rule
-                              (= t25 (T "C" "a"))
+                              (= t_25 (T "C" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                              (premises prf1 prf9 prf3)
+                              (premises prf_1 prf_9 prf_3)
                               (substitution (a "C") (s "a") (pos 3) (@n "a"))))))
                       (substitution
                         (a "B")
                         (b "C")
                         (c "C")
-                        t13
+                        t_13
                         (p1 1)
                         (s 2)
-                        t14
+                        t_14
                         (p2 1))))))
-              (substitution (a "C") (b "A") (c "B") t26 (p1 1) (s 1) t27 (p2 2))))
-(let t28 (B 1 3 (NonTerm "A")))
-(let prf11
+              (substitution (a "C") (b "A") (c "B") t_26 (p1 1) (s 1) t_27 (p2 2))))
+(let t_28 (B 1 3 (NonTerm "A")))
+(let prf_11
   (Rule
-                      (= t17 (T "A" "a"))
+                      (= t_17 (T "A" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                      t21
-                      t22))
-(let t29 (B 2 4 (NonTerm "B")))
-(let t30 (B 1 4 (NonTerm "C")))
-(let t31 (B 1 5 (NonTerm "C")))
-(let prf12 (Congr (= t4 t1) (Congr (= t4 (NT "B" (T "C" "a") t7)) prf8 prf4 1) prf4 2))
-(Congr
-  (= t0 (NT "S" t1 t2))
+                      t_21
+                      t_22))
+(let t_29 (B 2 4 (NonTerm "B")))
+(let t_30 (B 1 4 (NonTerm "C")))
+(let t_31 (B 1 5 (NonTerm "C")))
+(let prf_12
   (Congr
-    (= t0 (NT "S" t1 t3))
+        (= t_4 t_1)
+        (Congr (= t_4 (NT "B" (T "C" "a") t_7)) prf_8 prf_4 1)
+        prf_4
+        2))
+(Congr
+  (= t (NT "S" t_1 t_2))
+  (Congr
+    (= t (NT "S" t_1 t_3))
     (Rule
-      (= t0 (NT "S" t4 t3))
+      (= t (NT "S" t_4 t_3))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2275,24 +2313,24 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t5 t5))
+        (Fiat (= t_5 t_5))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t12
-          t15)
+          t_12
+          t_15)
         (Trans
-          (= t3 t16)
-          prf10
+          (= t_3 t_16)
+          prf_10
           (Sym
-            (= t18 t16)
+            (= t_18 t_16)
             (Rule
-              (= t16 t18)
+              (= t_16 t_18)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2300,29 +2338,29 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
               (premises
-                prf6
+                prf_6
                 (Trans
-                  (= t17 t28)
-                  prf11
+                  (= t_17 t_28)
+                  prf_11
                   (Sym
-                    (= (T "A" "a") t28)
+                    (= (T "A" "a") t_28)
                     (Rule
-                      (= t28 (T "A" "a"))
+                      (= t_28 (T "A" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-                      (premises prf7 prf9 prf3)
+                      (premises prf_7 prf_9 prf_3)
                       (substitution (a "A") (s "a") (pos 3) (@n "a")))))
                 (Trans
-                  (= t4 t29)
-                  prf8
+                  (= t_4 t_29)
+                  prf_8
                   (Sym
-                    (= t24 t29)
+                    (= t_24 t_29)
                     (Rule
-                      (= t29 t24)
+                      (= t_29 t_24)
                       (name
                         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2330,14 +2368,14 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
                       (premises
-                        prf0
+                        prf
                         (Trans
-                          (= t7 t30)
-                          prf4
+                          (= t_7 t_30)
+                          prf_4
                           (Sym
-                            (= (T "C" "a") t30)
+                            (= (T "C" "a") t_30)
                             (Rule
-                              (= t30 (T "C" "a"))
+                              (= t_30 (T "C" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2345,17 +2383,17 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                               (premises
-                                prf1
+                                prf_1
                                 (Fiat (= (getString 4 "a") (getString 4 "a")))
-                                prf3)
+                                prf_3)
                               (substitution (a "C") (s "a") (pos 4) (@n "a")))))
                         (Trans
-                          (= t7 t31)
-                          prf4
+                          (= t_7 t_31)
+                          prf_4
                           (Sym
-                            (= (T "C" "a") t31)
+                            (= (T "C" "a") t_31)
                             (Rule
-                              (= t31 (T "C" "a"))
+                              (= t_31 (T "C" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2363,75 +2401,95 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                               (premises
-                                prf1
+                                prf_1
                                 (Fiat (= (getString 5 "a") (getString 5 "a")))
-                                prf3)
+                                prf_3)
                               (substitution (a "C") (s "a") (pos 5) (@n "a"))))))
                       (substitution
                         (a "B")
                         (b "C")
                         (c "C")
-                        t13
+                        t_13
                         (p1 1)
                         (s 4)
-                        t14
+                        t_14
                         (p2 1))))))
-              (substitution (a "C") (b "A") (c "B") t26 (p1 1) (s 3) t27 (p2 2))))))
-      (substitution (a "S") (b "B") (c "C") (f1 t4) (p1 2) (s 1) (f2 t3) (p2 3)))
-    prf12
+              (substitution
+                (a "C")
+                (b "A")
+                (c "B")
+                t_26
+                (p1 1)
+                (s 3)
+                t_27
+                (p2 2))))))
+      (substitution
+        (a "S")
+        (b "B")
+        (c "C")
+        (f1 t_4)
+        (p1 2)
+        (s 1)
+        (f2 t_3)
+        (p2 3)))
+    prf_12
     1)
-  (Congr (= t3 t2) (Congr (= t3 (NT "C" (T "A" "a") t4)) prf10 prf11 1) prf12 2)
+  (Congr
+    (= t_3 t_2)
+    (Congr (= t_3 (NT "C" (T "A" "a") t_4)) prf_10 prf_11 1)
+    prf_12
+    2)
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "B" (T "C" "a") (T "C" "a")))
-(let t2 (NT "A" t1 (T "A" "a")))
-(let t3 (B 2 1 (NonTerm "B")))
-(let t4 (B 3 1 (NonTerm "A")))
-(let t5 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
-(let t6 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
-(let t7 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf0 (Fiat (= t7 t7)))
-(let t8 (B 1 1 (NonTerm "C")))
-(let t9 (End (NonTerm "C") "a"))
-(let prf1 (Fiat (= t9 t9)))
-(let prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf3 (Fiat (= "a" "a")))
-(let t10 (premises prf1 prf2 prf3))
-(let t11 (substitution (a "C") (s "a") (pos 1) (@n "a")))
-(let t12 (B 1 2 (NonTerm "C")))
-(let prf4
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "B" (T "C" "a") (T "C" "a")))
+(let t_2 (NT "A" t_1 (T "A" "a")))
+(let t_3 (B 2 1 (NonTerm "B")))
+(let t_4 (B 3 1 (NonTerm "A")))
+(let t_5 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
+(let t_6 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
+(let t_7 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf (Fiat (= t_7 t_7)))
+(let t_8 (B 1 1 (NonTerm "C")))
+(let t_9 (End (NonTerm "C") "a"))
+(let prf_1 (Fiat (= t_9 t_9)))
+(let prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_10 (premises prf_1 prf_2 prf_3))
+(let t_11 (substitution (a "C") (s "a") (pos 1) (@n "a")))
+(let t_12 (B 1 2 (NonTerm "C")))
+(let prf_4
   (Rule
-                      (= t8 (T "C" "a"))
+                      (= t_8 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                      t10
-                      t11))
-(let t13
+                      t_10
+                      t_11))
+(let t_13
   (premises
-                  prf0
+                  prf
                   (Rule
-                    (= t8 t8)
+                    (= t_8 t_8)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t10
-                    t11)
+                    t_10
+                    t_11)
                   (Trans
-                    (= t8 t12)
-                    prf4
+                    (= t_8 t_12)
+                    prf_4
                     (Sym
-                      (= (T "C" "a") t12)
+                      (= (T "C" "a") t_12)
                       (Rule
-                        (= t12 (T "C" "a"))
+                        (= t_12 (T "C" "a"))
                         (name
                           "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2439,48 +2497,57 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                         (premises
-                          prf1
+                          prf_1
                           (Fiat (= (getString 2 "a") (getString 2 "a")))
-                          prf3)
+                          prf_3)
                         (substitution (a "C") (s "a") (pos 2) (@n "a")))))))
-(let t14 (f1 t8))
-(let t15 (f2 t8))
-(let t16 (substitution (a "B") (b "C") (c "C") t14 (p1 1) (s 1) t15 (p2 1)))
-(let t17 (B 1 1 (NonTerm "A")))
-(let t18 (B 1 3 (NonTerm "A")))
-(let t19 (End (NonTerm "A") "a"))
-(let prf5 (Fiat (= t19 t19)))
-(let prf6
+(let t_14 (f1 t_8))
+(let t_15 (f2 t_8))
+(let t_16
+  (substitution
+                  (a "B")
+                  (b "C")
+                  (c "C")
+                  t_14
+                  (p1 1)
+                  (s 1)
+                  t_15
+                  (p2 1)))
+(let t_17 (B 1 1 (NonTerm "A")))
+(let t_18 (B 1 3 (NonTerm "A")))
+(let t_19 (End (NonTerm "A") "a"))
+(let prf_5 (Fiat (= t_19 t_19)))
+(let prf_6
   (Rule
-                  (= t17 (T "A" "a"))
+                  (= t_17 (T "A" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  (premises prf5 prf2 prf3)
+                  (premises prf_5 prf_2 prf_3)
                   (substitution (a "A") (s "a") (pos 1) (@n "a"))))
-(let t20
+(let t_20
   (premises
-              (Fiat (= t6 t6))
+              (Fiat (= t_6 t_6))
               (Rule
-                (= t3 t3)
+                (= t_3 t_3)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t13
-                t16)
+                t_13
+                t_16)
               (Trans
-                (= t17 t18)
-                prf6
+                (= t_17 t_18)
+                prf_6
                 (Sym
-                  (= (T "A" "a") t18)
+                  (= (T "A" "a") t_18)
                   (Rule
-                    (= t18 (T "A" "a"))
+                    (= t_18 (T "A" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2488,47 +2555,47 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf5
+                      prf_5
                       (Fiat (= (getString 3 "a") (getString 3 "a")))
-                      prf3)
+                      prf_3)
                     (substitution (a "A") (s "a") (pos 3) (@n "a")))))))
-(let t21
+(let t_21
   (substitution
               (a "A")
               (b "B")
               (c "A")
-              (f1 t3)
+              (f1 t_3)
               (p1 2)
               (s 1)
-              (f2 t17)
+              (f2 t_17)
               (p2 1)))
-(let t22 (B 2 4 (NonTerm "B")))
-(let t23 (NT "B" t8 t8))
-(let prf7
+(let t_22 (B 2 4 (NonTerm "B")))
+(let t_23 (NT "B" t_8 t_8))
+(let prf_7
   (Rule
-              (= t3 t23)
+              (= t_3 t_23)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-              t13
-              t16))
-(let t24 (B 1 4 (NonTerm "C")))
-(let t25 (B 1 5 (NonTerm "C")))
-(let prf8
+              t_13
+              t_16))
+(let t_24 (B 1 4 (NonTerm "C")))
+(let t_25 (B 1 5 (NonTerm "C")))
+(let prf_8
   (Congr
-            (= t3 t1)
-            (Congr (= t3 (NT "B" (T "C" "a") t8)) prf7 prf4 1)
-            prf4
+            (= t_3 t_1)
+            (Congr (= t_3 (NT "B" (T "C" "a") t_8)) prf_7 prf_4 1)
+            prf_4
             2))
 (Congr
-  (= t0 (NT "S" t2 t1))
+  (= t (NT "S" t_2 t_1))
   (Congr
-    (= t0 (NT "S" t2 t3))
+    (= t (NT "S" t_2 t_3))
     (Rule
-      (= t0 (NT "S" t4 t3))
+      (= t (NT "S" t_4 t_3))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2536,24 +2603,24 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t5 t5))
+        (Fiat (= t_5 t_5))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t20
-          t21)
+          t_20
+          t_21)
         (Trans
-          (= t3 t22)
-          prf7
+          (= t_3 t_22)
+          prf_7
           (Sym
-            (= t23 t22)
+            (= t_23 t_22)
             (Rule
-              (= t22 t23)
+              (= t_22 t_23)
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2561,14 +2628,14 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
               (premises
-                prf0
+                prf
                 (Trans
-                  (= t8 t24)
-                  prf4
+                  (= t_8 t_24)
+                  prf_4
                   (Sym
-                    (= (T "C" "a") t24)
+                    (= (T "C" "a") t_24)
                     (Rule
-                      (= t24 (T "C" "a"))
+                      (= t_24 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2576,17 +2643,17 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                       (premises
-                        prf1
+                        prf_1
                         (Fiat (= (getString 4 "a") (getString 4 "a")))
-                        prf3)
+                        prf_3)
                       (substitution (a "C") (s "a") (pos 4) (@n "a")))))
                 (Trans
-                  (= t8 t25)
-                  prf4
+                  (= t_8 t_25)
+                  prf_4
                   (Sym
-                    (= (T "C" "a") t25)
+                    (= (T "C" "a") t_25)
                     (Rule
-                      (= t25 (T "C" "a"))
+                      (= t_25 (T "C" "a"))
                       (name
                         "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2594,79 +2661,95 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                       (premises
-                        prf1
+                        prf_1
                         (Fiat (= (getString 5 "a") (getString 5 "a")))
-                        prf3)
+                        prf_3)
                       (substitution (a "C") (s "a") (pos 5) (@n "a"))))))
-              (substitution (a "B") (b "C") (c "C") t14 (p1 1) (s 4) t15 (p2 1))))))
-      (substitution (a "S") (b "A") (c "B") (f1 t4) (p1 3) (s 1) (f2 t3) (p2 2)))
+              (substitution
+                (a "B")
+                (b "C")
+                (c "C")
+                t_14
+                (p1 1)
+                (s 4)
+                t_15
+                (p2 1))))))
+      (substitution
+        (a "S")
+        (b "A")
+        (c "B")
+        (f1 t_4)
+        (p1 3)
+        (s 1)
+        (f2 t_3)
+        (p2 2)))
     (Congr
-      (= t4 t2)
+      (= t_4 t_2)
       (Congr
-        (= t4 (NT "A" t1 t17))
+        (= t_4 (NT "A" t_1 t_17))
         (Rule
-          (= t4 (NT "A" t3 t17))
+          (= t_4 (NT "A" t_3 t_17))
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t20
-          t21)
-        prf8
+          t_20
+          t_21)
+        prf_8
         1)
-      prf6
+      prf_6
       2)
     1)
-  prf8
+  prf_8
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (NT "B" (T "C" "a") (T "C" "a")))
-(let t2 (NT "C" (T "A" "a") t1))
-(let t3 (NT "B" t2 (T "C" "a")))
-(let t4 (B 1 1 (NonTerm "C")))
-(let t5 (B 4 1 (NonTerm "B")))
-(let t6 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
-(let t7 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf0 (Fiat (= t7 t7)))
-(let t8 (B 3 1 (NonTerm "C")))
-(let t9 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
-(let t10 (B 1 1 (NonTerm "A")))
-(let t11 (End (NonTerm "A") "a"))
-(let prf1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf2 (Fiat (= "a" "a")))
-(let t12 (premises (Fiat (= t11 t11)) prf1 prf2))
-(let t13 (substitution (a "A") (s "a") (pos 1) (@n "a")))
-(let t14 (B 2 1 (NonTerm "B")))
-(let t15 (B 2 2 (NonTerm "B")))
-(let t16 (NT "B" t4 t4))
-(let t17 (End (NonTerm "C") "a"))
-(let prf3 (Fiat (= t17 t17)))
-(let t18 (premises prf3 prf1 prf2))
-(let t19 (substitution (a "C") (s "a") (pos 1) (@n "a")))
-(let t20 (B 1 2 (NonTerm "C")))
-(let prf4
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (NT "B" (T "C" "a") (T "C" "a")))
+(let t_2 (NT "C" (T "A" "a") t_1))
+(let t_3 (NT "B" t_2 (T "C" "a")))
+(let t_4 (B 1 1 (NonTerm "C")))
+(let t_5 (B 4 1 (NonTerm "B")))
+(let t_6 (Prod (NonTerm "S") (NonTerm "B") (NonTerm "C")))
+(let t_7 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf (Fiat (= t_7 t_7)))
+(let t_8 (B 3 1 (NonTerm "C")))
+(let t_9 (Prod (NonTerm "C") (NonTerm "A") (NonTerm "B")))
+(let t_10 (B 1 1 (NonTerm "A")))
+(let t_11 (End (NonTerm "A") "a"))
+(let prf_1 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_2 (Fiat (= "a" "a")))
+(let t_12 (premises (Fiat (= t_11 t_11)) prf_1 prf_2))
+(let t_13 (substitution (a "A") (s "a") (pos 1) (@n "a")))
+(let t_14 (B 2 1 (NonTerm "B")))
+(let t_15 (B 2 2 (NonTerm "B")))
+(let t_16 (NT "B" t_4 t_4))
+(let t_17 (End (NonTerm "C") "a"))
+(let prf_3 (Fiat (= t_17 t_17)))
+(let t_18 (premises prf_3 prf_1 prf_2))
+(let t_19 (substitution (a "C") (s "a") (pos 1) (@n "a")))
+(let t_20 (B 1 2 (NonTerm "C")))
+(let prf_4
   (Rule
-                            (= t4 (T "C" "a"))
+                            (= t_4 (T "C" "a"))
                             (name
                               "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                            t18
-                            t19))
-(let prf5
+                            t_18
+                            t_19))
+(let prf_5
   (Trans
-                          (= t4 t20)
-                          prf4
+                          (= t_4 t_20)
+                          prf_4
                           (Sym
-                            (= (T "C" "a") t20)
+                            (= (T "C" "a") t_20)
                             (Rule
-                              (= t20 (T "C" "a"))
+                              (= t_20 (T "C" "a"))
                               (name
                                 "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2674,15 +2757,15 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                               (premises
-                                prf3
+                                prf_3
                                 (Fiat (= (getString 2 "a") (getString 2 "a")))
-                                prf2)
+                                prf_2)
                               (substitution (a "C") (s "a") (pos 2) (@n "a"))))))
-(let t21 (f1 t4))
-(let t22 (f2 t4))
-(let prf6
+(let t_21 (f1 t_4))
+(let t_22 (f2 t_4))
+(let prf_6
   (Rule
-                      (= t14 t16)
+                      (= t_14 t_16)
                       (name
                         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -2690,48 +2773,48 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
                       (premises
-                        prf0
+                        prf
                         (Rule
-                          (= t4 t4)
+                          (= t_4 t_4)
                           (name
                             "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                          t18
-                          t19)
-                        prf5)
+                          t_18
+                          t_19)
+                        prf_5)
                       (substitution
                         (a "B")
                         (b "C")
                         (c "C")
-                        t21
+                        t_21
                         (p1 1)
                         (s 1)
-                        t22
+                        t_22
                         (p2 1))))
-(let t23 (B 1 3 (NonTerm "C")))
-(let t24
+(let t_23 (B 1 3 (NonTerm "C")))
+(let t_24
   (premises
-                  (Fiat (= t9 t9))
+                  (Fiat (= t_9 t_9))
                   (Rule
-                    (= t10 t10)
+                    (= t_10 t_10)
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                    t12
-                    t13)
+                    t_12
+                    t_13)
                   (Trans
-                    (= t14 t15)
-                    prf6
+                    (= t_14 t_15)
+                    prf_6
                     (Sym
-                      (= t16 t15)
+                      (= t_16 t_15)
                       (Rule
-                        (= t15 t16)
+                        (= t_15 t_16)
                         (name
                           "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
@@ -2739,15 +2822,15 @@ expression: proof_snapshot
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
                         (premises
-                          prf0
-                          prf5
+                          prf
+                          prf_5
                           (Trans
-                            (= t4 t23)
-                            prf4
+                            (= t_4 t_23)
+                            prf_4
                             (Sym
-                              (= (T "C" "a") t23)
+                              (= (T "C" "a") t_23)
                               (Rule
-                                (= t23 (T "C" "a"))
+                                (= t_23 (T "C" "a"))
                                 (name
                                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2755,50 +2838,50 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                                 (premises
-                                  prf3
+                                  prf_3
                                   (Fiat (= (getString 3 "a") (getString 3 "a")))
-                                  prf2)
+                                  prf_2)
                                 (substitution (a "C") (s "a") (pos 3) (@n "a"))))))
                         (substitution
                           (a "B")
                           (b "C")
                           (c "C")
-                          t21
+                          t_21
                           (p1 1)
                           (s 2)
-                          t22
+                          t_22
                           (p2 1)))))))
-(let t25
+(let t_25
   (substitution
                   (a "C")
                   (b "A")
                   (c "B")
-                  (f1 t10)
+                  (f1 t_10)
                   (p1 1)
                   (s 1)
-                  (f2 t14)
+                  (f2 t_14)
                   (p2 2)))
-(let t26 (B 1 4 (NonTerm "C")))
-(let t27
+(let t_26 (B 1 4 (NonTerm "C")))
+(let t_27
   (premises
-              prf0
+              prf
               (Rule
-                (= t8 t8)
+                (= t_8 t_8)
                 (name
                   "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
          (= f1 (B p1 s (NonTerm b)))
          (= f2 (B p2 (+ s p1) (NonTerm c))))
         ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
            )")
-                t24
-                t25)
+                t_24
+                t_25)
               (Trans
-                (= t4 t26)
-                prf4
+                (= t_4 t_26)
+                prf_4
                 (Sym
-                  (= (T "C" "a") t26)
+                  (= (T "C" "a") t_26)
                   (Rule
-                    (= t26 (T "C" "a"))
+                    (= t_26 (T "C" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2806,18 +2889,27 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf3
+                      prf_3
                       (Fiat (= (getString 4 "a") (getString 4 "a")))
-                      prf2)
+                      prf_2)
                     (substitution (a "C") (s "a") (pos 4) (@n "a")))))))
-(let t28 (substitution (a "B") (b "C") (c "C") (f1 t8) (p1 3) (s 1) t22 (p2 1)))
-(let t29 (B 1 5 (NonTerm "C")))
+(let t_28
+  (substitution
+              (a "B")
+              (b "C")
+              (c "C")
+              (f1 t_8)
+              (p1 3)
+              (s 1)
+              t_22
+              (p2 1)))
+(let t_29 (B 1 5 (NonTerm "C")))
 (Congr
-  (= t0 (NT "S" t3 (T "C" "a")))
+  (= t (NT "S" t_3 (T "C" "a")))
   (Congr
-    (= t0 (NT "S" t3 t4))
+    (= t (NT "S" t_3 t_4))
     (Rule
-      (= t0 (NT "S" t5 t4))
+      (= t (NT "S" t_5 t_4))
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2825,24 +2917,24 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t6 t6))
+        (Fiat (= t_6 t_6))
         (Rule
-          (= t5 t5)
+          (= t_5 t_5)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t27
-          t28)
+          t_27
+          t_28)
         (Trans
-          (= t4 t29)
-          prf4
+          (= t_4 t_29)
+          prf_4
           (Sym
-            (= (T "C" "a") t29)
+            (= (T "C" "a") t_29)
             (Rule
-              (= t29 (T "C" "a"))
+              (= t_29 (T "C" "a"))
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -2850,110 +2942,110 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf3
+                prf_3
                 (Fiat (= (getString 5 "a") (getString 5 "a")))
-                prf2)
+                prf_2)
               (substitution (a "C") (s "a") (pos 5) (@n "a"))))))
-      (substitution (a "S") (b "B") (c "C") (f1 t5) (p1 4) (s 1) t22 (p2 1)))
+      (substitution (a "S") (b "B") (c "C") (f1 t_5) (p1 4) (s 1) t_22 (p2 1)))
     (Congr
-      (= t5 t3)
+      (= t_5 t_3)
       (Congr
-        (= t5 (NT "B" t2 t4))
+        (= t_5 (NT "B" t_2 t_4))
         (Rule
-          (= t5 (NT "B" t8 t4))
+          (= t_5 (NT "B" t_8 t_4))
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t27
-          t28)
+          t_27
+          t_28)
         (Congr
-          (= t8 t2)
+          (= t_8 t_2)
           (Congr
-            (= t8 (NT "C" (T "A" "a") t14))
+            (= t_8 (NT "C" (T "A" "a") t_14))
             (Rule
-              (= t8 (NT "C" t10 t14))
+              (= t_8 (NT "C" t_10 t_14))
               (name
                 "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-              t24
-              t25)
+              t_24
+              t_25)
             (Rule
-              (= t10 (T "A" "a"))
+              (= t_10 (T "A" "a"))
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-              t12
-              t13)
+              t_12
+              t_13)
             1)
           (Congr
-            (= t14 t1)
-            (Congr (= t14 (NT "B" (T "C" "a") t4)) prf6 prf4 1)
-            prf4
+            (= t_14 t_1)
+            (Congr (= t_14 (NT "B" (T "C" "a") t_4)) prf_6 prf_4 1)
+            prf_4
             2)
           2)
         1)
-      prf4
+      prf_4
       2)
     1)
-  prf4
+  prf_4
   2)
 )
 (
-(let t0 (B 5 1 (NonTerm "S")))
-(let t1 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
-(let t2 (B 3 1 (NonTerm "A")))
-(let t3 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
-(let t4 (B 2 1 (NonTerm "B")))
-(let t5 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
-(let prf0 (Fiat (= t5 t5)))
-(let t6 (B 1 1 (NonTerm "C")))
-(let t7 (End (NonTerm "C") "a"))
-(let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
-(let prf3 (Fiat (= "a" "a")))
-(let t8 (premises prf1 prf2 prf3))
-(let t9 (substitution (a "C") (s "a") (pos 1) (@n "a")))
-(let t10 (B 1 2 (NonTerm "C")))
-(let prf4
+(let t (B 5 1 (NonTerm "S")))
+(let t_1 (Prod (NonTerm "S") (NonTerm "A") (NonTerm "B")))
+(let t_2 (B 3 1 (NonTerm "A")))
+(let t_3 (Prod (NonTerm "A") (NonTerm "B") (NonTerm "A")))
+(let t_4 (B 2 1 (NonTerm "B")))
+(let t_5 (Prod (NonTerm "B") (NonTerm "C") (NonTerm "C")))
+(let prf (Fiat (= t_5 t_5)))
+(let t_6 (B 1 1 (NonTerm "C")))
+(let t_7 (End (NonTerm "C") "a"))
+(let prf_1 (Fiat (= t_7 t_7)))
+(let prf_2 (Fiat (= (getString 1 "a") (getString 1 "a"))))
+(let prf_3 (Fiat (= "a" "a")))
+(let t_8 (premises prf_1 prf_2 prf_3))
+(let t_9 (substitution (a "C") (s "a") (pos 1) (@n "a")))
+(let t_10 (B 1 2 (NonTerm "C")))
+(let prf_4
   (Rule
-                  (= t6 (T "C" "a"))
+                  (= t_6 (T "C" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                  t8
-                  t9))
-(let t11
+                  t_8
+                  t_9))
+(let t_11
   (premises
-              prf0
+              prf
               (Rule
-                (= t6 t6)
+                (= t_6 t_6)
                 (name
                   "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
         ((P 1 pos (NonTerm a))
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
-                t8
-                t9)
+                t_8
+                t_9)
               (Trans
-                (= t6 t10)
-                prf4
+                (= t_6 t_10)
+                prf_4
                 (Sym
-                  (= (T "C" "a") t10)
+                  (= (T "C" "a") t_10)
                   (Rule
-                    (= t10 (T "C" "a"))
+                    (= t_10 (T "C" "a"))
                     (name
                       "(rule ((End (NonTerm a) s)
          (= s (getString pos)))
@@ -2961,23 +3053,23 @@ expression: proof_snapshot
          (union (B 1 pos (NonTerm a)) (T a s)))
            )")
                     (premises
-                      prf1
+                      prf_1
                       (Fiat (= (getString 2 "a") (getString 2 "a")))
-                      prf3)
+                      prf_3)
                     (substitution (a "C") (s "a") (pos 2) (@n "a")))))))
-(let t12 (f1 t6))
-(let t13 (f2 t6))
-(let t14 (substitution (a "B") (b "C") (c "C") t12 (p1 1) (s 1) t13 (p2 1)))
-(let t15 (B 1 1 (NonTerm "A")))
-(let t16 (B 1 3 (NonTerm "A")))
-(let t17 (End (NonTerm "A") "a"))
-(let prf5 (Fiat (= t17 t17)))
-(let t18 (B 2 4 (NonTerm "B")))
-(let t19 (NT "B" t6 t6))
-(let t20 (B 1 4 (NonTerm "C")))
-(let t21 (B 1 5 (NonTerm "C")))
+(let t_12 (f1 t_6))
+(let t_13 (f2 t_6))
+(let t_14 (substitution (a "B") (b "C") (c "C") t_12 (p1 1) (s 1) t_13 (p2 1)))
+(let t_15 (B 1 1 (NonTerm "A")))
+(let t_16 (B 1 3 (NonTerm "A")))
+(let t_17 (End (NonTerm "A") "a"))
+(let prf_5 (Fiat (= t_17 t_17)))
+(let t_18 (B 2 4 (NonTerm "B")))
+(let t_19 (NT "B" t_6 t_6))
+(let t_20 (B 1 4 (NonTerm "C")))
+(let t_21 (B 1 5 (NonTerm "C")))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2985,9 +3077,9 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
   (premises
-    (Fiat (= t1 t1))
+    (Fiat (= t_1 t_1))
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -2995,33 +3087,33 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
       (premises
-        (Fiat (= t3 t3))
+        (Fiat (= t_3 t_3))
         (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-          t11
-          t14)
+          t_11
+          t_14)
         (Trans
-          (= t15 t16)
+          (= t_15 t_16)
           (Rule
-            (= t15 (T "A" "a"))
+            (= t_15 (T "A" "a"))
             (name
               "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
       ((P 1 pos (NonTerm a))
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
-            (premises prf5 prf2 prf3)
+            (premises prf_5 prf_2 prf_3)
             (substitution (a "A") (s "a") (pos 1) (@n "a")))
           (Sym
-            (= (T "A" "a") t16)
+            (= (T "A" "a") t_16)
             (Rule
-              (= t16 (T "A" "a"))
+              (= t_16 (T "A" "a"))
               (name
                 "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -3029,35 +3121,35 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
               (premises
-                prf5
+                prf_5
                 (Fiat (= (getString 3 "a") (getString 3 "a")))
-                prf3)
+                prf_3)
               (substitution (a "A") (s "a") (pos 3) (@n "a"))))))
       (substitution
         (a "A")
         (b "B")
         (c "A")
-        (f1 t4)
+        (f1 t_4)
         (p1 2)
         (s 1)
-        (f2 t15)
+        (f2 t_15)
         (p2 1)))
     (Trans
-      (= t4 t18)
+      (= t_4 t_18)
       (Rule
-        (= t4 t19)
+        (= t_4 t_19)
         (name
           "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
        (= f2 (B p2 (+ s p1) (NonTerm c))))
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
-        t11
-        t14)
+        t_11
+        t_14)
       (Sym
-        (= t19 t18)
+        (= t_19 t_18)
         (Rule
-          (= t18 t19)
+          (= t_18 t_19)
           (name
             "(rule ((Prod (NonTerm a) (NonTerm b) (NonTerm c))
        (= f1 (B p1 s (NonTerm b)))
@@ -3065,14 +3157,14 @@ expression: proof_snapshot
       ((union (B (+ p1 p2) s (NonTerm a)) (NT a f1 f2)))
          )")
           (premises
-            prf0
+            prf
             (Trans
-              (= t6 t20)
-              prf4
+              (= t_6 t_20)
+              prf_4
               (Sym
-                (= (T "C" "a") t20)
+                (= (T "C" "a") t_20)
                 (Rule
-                  (= t20 (T "C" "a"))
+                  (= t_20 (T "C" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -3080,17 +3172,17 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf1
+                    prf_1
                     (Fiat (= (getString 4 "a") (getString 4 "a")))
-                    prf3)
+                    prf_3)
                   (substitution (a "C") (s "a") (pos 4) (@n "a")))))
             (Trans
-              (= t6 t21)
-              prf4
+              (= t_6 t_21)
+              prf_4
               (Sym
-                (= (T "C" "a") t21)
+                (= (T "C" "a") t_21)
                 (Rule
-                  (= t21 (T "C" "a"))
+                  (= t_21 (T "C" "a"))
                   (name
                     "(rule ((End (NonTerm a) s)
        (= s (getString pos)))
@@ -3098,10 +3190,10 @@ expression: proof_snapshot
        (union (B 1 pos (NonTerm a)) (T a s)))
          )")
                   (premises
-                    prf1
+                    prf_1
                     (Fiat (= (getString 5 "a") (getString 5 "a")))
-                    prf3)
+                    prf_3)
                   (substitution (a "C") (s "a") (pos 5) (@n "a"))))))
-          (substitution (a "B") (b "C") (c "C") t12 (p1 1) (s 4) t13 (p2 1))))))
-  (substitution (a "S") (b "A") (c "B") (f1 t2) (p1 3) (s 1) (f2 t4) (p2 2)))
+          (substitution (a "B") (b "C") (c "C") t_12 (p1 1) (s 4) t_13 (p2 1))))))
+  (substitution (a "S") (b "A") (c "B") (f1 t_2) (p1 3) (s 1) (f2 t_4) (p2 2)))
 )

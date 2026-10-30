@@ -62,7 +62,7 @@ pub struct ProofConstructorNames {
 /// A lowered rule plus the execution options needed to rebuild it for scheduling.
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledRule {
-    pub(crate) core: ResolvedCoreRule,
+    pub(crate) core: Arc<ResolvedCoreRule>,
     pub(crate) backend_id: egglog_bridge::RuleId,
     /// Whether this rule's query uses delta evaluation.
     pub(crate) seminaive: bool,
@@ -1768,14 +1768,14 @@ where
     /// (Typechecking preserves the original AST this way,
     /// and allows terms and proof instrumentation to do the same).
     pub(crate) fn to_query(
-        &self,
+        facts: &[GenericFact<Head, Leaf>],
         typeinfo: &TypeInfo,
         fresh_gen: &mut impl FreshGen<Head, Leaf>,
     ) -> (Query<HeadOrEq<Head>, Leaf>, Vec<MappedFact<Head, Leaf>>) {
         let mut atoms = vec![];
-        let mut new_body = vec![];
+        let mut new_body = Vec::with_capacity(facts.len());
 
-        for fact in self.0.iter() {
+        for fact in facts {
             match fact {
                 GenericFact::Eq(span, e1, e2) => {
                     // Tuple destructure: `(= (values v...) (f a...))` (in either order), where `f`
@@ -1785,15 +1785,13 @@ where
                         let mut atom_args = vec![];
                         let mut mapped_inputs = vec![];
                         for arg in td.func_args {
-                            let (child_atoms, mexpr) = arg.to_query(typeinfo, fresh_gen);
-                            atoms.extend(child_atoms);
+                            let mexpr = arg.to_query(typeinfo, fresh_gen, &mut atoms);
                             atom_args.push(mexpr.get_corresponding_var_or_lit(typeinfo));
                             mapped_inputs.push(mexpr);
                         }
                         let mut mapped_values = vec![];
                         for v in td.values_args {
-                            let (child_atoms, mexpr) = v.to_query(typeinfo, fresh_gen);
-                            atoms.extend(child_atoms);
+                            let mexpr = v.to_query(typeinfo, fresh_gen, &mut atoms);
                             atom_args.push(mexpr.get_corresponding_var_or_lit(typeinfo));
                             mapped_values.push(mexpr);
                         }
@@ -1824,8 +1822,7 @@ where
                     } else {
                         let mut to_equate = vec![];
                         let mut process = |expr: &GenericExpr<Head, Leaf>| {
-                            let (child_atoms, expr) = expr.to_query(typeinfo, fresh_gen);
-                            atoms.extend(child_atoms);
+                            let expr = expr.to_query(typeinfo, fresh_gen, &mut atoms);
                             to_equate.push(expr.get_corresponding_var_or_lit(typeinfo));
                             expr
                         };
@@ -1840,8 +1837,7 @@ where
                     }
                 }
                 GenericFact::Fact(expr) => {
-                    let (child_atoms, expr) = expr.to_query(typeinfo, fresh_gen);
-                    atoms.extend(child_atoms);
+                    let expr = expr.to_query(typeinfo, fresh_gen, &mut atoms);
                     new_body.push(GenericFact::Fact(expr));
                 }
             }

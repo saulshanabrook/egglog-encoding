@@ -3,33 +3,33 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
-(let t1 (g* t0 t0))
-(let prf0
+(let t (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
+(let t_1 (g* t t))
+(let prf
   (Rule
-            (= t0 (IConst))
+            (= t (IConst))
             (name "(rewrite (g* $A (g* $A (g* $A $A))) $I)")
             (premises
               (Rule
-                (= t0 (g* (AConst) (g* (AConst) (g* (AConst) (AConst)))))
+                (= t (g* (AConst) (g* (AConst) (g* (AConst) (AConst)))))
                 (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
-                (premises (Fiat (= t0 t0)))
+                (premises (Fiat (= t t)))
                 (substitution
-                  (@rewrite_var__ t0)
+                  (@rewrite_var__ t)
                   (a (AConst))
                   (b (AConst))
                   (c (g* (AConst) (AConst))))))
-            (substitution (@rewrite_var__4 t0))))
+            (substitution (@rewrite_var___4 t))))
 (Rule
-  (= t1 (IConst))
+  (= t_1 (IConst))
   (name "(rewrite (g* $I a) a)")
   (premises
     (Congr
-      (= t1 (g* (IConst) (IConst)))
-      (Congr (= t1 (g* (IConst) t0)) (Fiat (= t1 t1)) prf0 0)
-      prf0
+      (= t_1 (g* (IConst) (IConst)))
+      (Congr (= t_1 (g* (IConst) t)) (Fiat (= t_1 t_1)) prf 0)
+      prf
       1))
-  (substitution (@rewrite_var__2 t1) (a (IConst))))
+  (substitution (@rewrite_var___2 t_1) (a (IConst))))
 )
 (
 (Fiat (= () ()))

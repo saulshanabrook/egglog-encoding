@@ -44,7 +44,11 @@
 //! reduce the number of passes over the data. A `JoinHeader` is prepended to each plan to apply constant constraints and
 //! pre-filter the driving relation before the main join loop begins.
 //!
-use std::{collections::BTreeMap, iter, mem, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    iter, mem,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     TableId,
@@ -54,11 +58,13 @@ use crate::{
 };
 use egglog_numeric_id::define_id;
 use fixedbitset::FixedBitSet;
+
+use super::packed_cache::AccessFamilies;
 use smallvec::{SmallVec, smallvec};
 
 use crate::{
     common::{HashMap, HashSet, IndexSet},
-    offsets::Subset,
+    offsets::{OffsetRange, Subset, SubsetRef},
     pool::Pooled,
     query::{Atom, OccurrenceKey, Query, VarColumnMap},
     table_spec::Constraint,
@@ -97,21 +103,54 @@ pub(crate) enum MatScanMode {
     Lookup(SmallVec<[Variable; 16]>),
 }
 
+/// Immutable row storage shared by processed constraints and their headers.
+/// Dense timestamp ranges stay inline; sparse offsets are owned independently
+/// of the table indexes that produced them.
+#[derive(Debug, Clone)]
+pub(crate) enum SharedHeaderSubset {
+    Dense(OffsetRange),
+    Sparse(Arc<Subset>),
+}
+
+impl From<Subset> for SharedHeaderSubset {
+    fn from(subset: Subset) -> Self {
+        match subset {
+            Subset::Dense(range) => Self::Dense(range),
+            subset @ Subset::Sparse(_) => Self::Sparse(Arc::new(subset)),
+        }
+    }
+}
+
+impl SharedHeaderSubset {
+    pub(crate) fn as_ref(&self) -> SubsetRef<'_> {
+        match self {
+            Self::Dense(range) => SubsetRef::Dense(*range),
+            Self::Sparse(subset) => subset.as_ref().as_ref(),
+        }
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        self.as_ref().size()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.size() == 0
+    }
+}
+
 /// Join headers evaluate constraints on a single atom; they prune the search space before the rest
 /// of the join plan is executed.
 pub(crate) struct JoinHeader {
     pub atom: AtomId,
-    /// We currently aren't using these at all. The plan is to use this to
-    /// dedup plan stages later (it also helps for debugging).
-    #[allow(unused)]
+    /// Fast constraints used to refresh cached plans and identify reusable headers.
     pub constraints: Pooled<Vec<Constraint>>,
     /// A pre-computed table subset that we can use to filter the table,
-    /// given these constaints.
+    /// given these constraints.
     ///
     /// Why use the constraints at all? Because we want to use them to
     /// discover common plan nodes from different queries (subsets can be
     /// large).
-    pub subset: Subset,
+    pub subset: SharedHeaderSubset,
 }
 
 impl std::fmt::Debug for JoinHeader {
@@ -266,6 +305,19 @@ impl Plan {
             Plan::DecomposedPlan(p) => &p.header,
         }
     }
+
+    /// Visit every stage block of the plan.
+    pub(crate) fn for_each_stages_mut(&mut self, mut f: impl FnMut(&mut JoinStages)) {
+        match self {
+            Plan::SinglePlan(p) => f(&mut p.stages),
+            Plan::DecomposedPlan(p) => {
+                for (stages, _) in &mut p.stages.blocks {
+                    f(stages);
+                }
+                f(&mut p.result_block);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -276,15 +328,39 @@ pub(crate) struct SinglePlan {
     pub actions: ActionId,
 }
 
+/// Instructions and immutable index analysis shared by cached-plan clones.
+/// Seminaive variants change their headers, not this program.
 #[derive(Debug, Clone)]
-pub(crate) struct JoinStages {
-    pub instrs: Arc<Vec<JoinStage>>,
-    /// Bounded lookahead only permutes ordinary mixed/fused stages. Keep
-    /// this immutable eligibility test out of the recursive executor.
+pub(crate) struct JoinStages(Arc<JoinStageData>);
+
+#[derive(Debug)]
+pub(crate) struct JoinStageData {
+    pub instrs: Vec<JoinStage>,
+    /// Bounded lookahead only permutes ordinary mixed/fused stages.
     pub(super) supports_lookahead: bool,
+    /// Successor families in `for_each_indexed_access` order, assigned before
+    /// the plan is shared. They remain fixed across executions.
+    pub families: Box<[AccessFamilies]>,
+    /// Analyze only blocks that execute, then reuse their immutable layout.
+    /// Catalog handles and arena addresses belong to each execution instead.
+    pub(super) prepared_layout: OnceLock<Option<Box<super::prepared_index::PreparedJoinLayout>>>,
+}
+
+impl std::ops::Deref for JoinStages {
+    type Target = JoinStageData;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl JoinStages {
+    fn into_instrs(self) -> Vec<JoinStage> {
+        match Arc::try_unwrap(self.0) {
+            Ok(data) => data.instrs,
+            Err(shared) => shared.instrs.clone(),
+        }
+    }
+
     pub(crate) fn new(instrs: Vec<JoinStage>) -> Self {
         let supports_lookahead = instrs
             .iter()
@@ -292,9 +368,41 @@ impl JoinStages {
             && !instrs
                 .iter()
                 .any(|s| matches!(s, JoinStage::FusedIntersectMat { .. }));
-        Self {
-            instrs: Arc::new(instrs),
+        Self(Arc::new(JoinStageData {
+            instrs,
             supports_lookahead,
+            families: Box::new([]),
+            prepared_layout: OnceLock::new(),
+        }))
+    }
+
+    pub(super) fn set_families(&mut self, families: Box<[AccessFamilies]>) {
+        let data =
+            Arc::get_mut(&mut self.0).expect("families are assigned before a plan is shared");
+        assert!(data.prepared_layout.get().is_none());
+        data.families = families;
+    }
+
+    /// Visit every indexed access as `(atom, columns, constraints)`, in the
+    /// order prepared index slots are assigned. Cover scans are not indexed.
+    pub(crate) fn for_each_indexed_access(
+        &self,
+        mut f: impl FnMut(AtomId, &[ColumnId], &[Constraint]),
+    ) {
+        for stage in self.instrs.iter() {
+            match stage {
+                JoinStage::Intersect { scans, .. } => {
+                    for scan in scans {
+                        f(scan.atom, std::slice::from_ref(&scan.column), &scan.cs);
+                    }
+                }
+                JoinStage::FusedIntersect { to_intersect, .. }
+                | JoinStage::FusedIntersectMat { to_intersect, .. } => {
+                    for (scan, _) in to_intersect {
+                        f(scan.to_index.atom, &scan.to_index.vars, &scan.constraints);
+                    }
+                }
+            }
         }
     }
 }
@@ -1097,9 +1205,8 @@ fn fuse_last_stage(
     }
 
     // Fuse the instructions
-    let mut instrs = Arc::unwrap_or_clone(last_block.0.instrs);
+    let mut instrs = last_block.0.into_instrs();
     instrs.extend(result_block.instrs[1..].iter().cloned());
-
     (blocks, JoinStages::new(instrs))
 }
 
@@ -1115,7 +1222,7 @@ fn fuse_last_stage(
 ///     yield
 /// ```
 fn loop_lifting(stages: JoinStages) -> JoinStages {
-    let mut instrs = Arc::unwrap_or_clone(stages.instrs);
+    let mut instrs = stages.into_instrs();
     for i in 1..instrs.len() {
         if let JoinStage::FusedIntersectMat {
             cover: _,

@@ -3,10 +3,10 @@ source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
 (
-(let t0 (TupleT (TCons (StateT) (TNil))))
-(let t1 (FunctionHasType "main" t0 t0))
+(let t (TupleT (TCons (StateT) (TNil))))
+(let t_1 (FunctionHasType "main" t t))
 (Rule
-  (= t1 t1)
+  (= t_1 t_1)
   (name
     "(rule ()
       ((let __tmp0 (StateT))
