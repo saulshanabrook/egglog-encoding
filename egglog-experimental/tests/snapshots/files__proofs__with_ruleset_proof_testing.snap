@@ -13,10 +13,10 @@ expression: snapshot
   (substitution))
 )
 (
-(let t0 (Add (Num 2) (Num 3)))
+(let t (Add (Num 2) (Num 3)))
 (Rule
-  (= t0 (Add (Num 3) (Num 2)))
+  (= t (Add (Num 3) (Num 2)))
   (name "(rewrite (Add a b) (Add b a) :ruleset optimization)")
-  (premises (Fiat (= t0 t0)))
-  (substitution (@rewrite_var__ t0) (a (Num 2)) (b (Num 3))))
+  (premises (Fiat (= t t)))
+  (substitution (@rewrite_var__ t) (a (Num 2)) (b (Num 3))))
 )

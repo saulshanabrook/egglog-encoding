@@ -3,8 +3,8 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let prf0 (Fiat (= (right 0) (right 0))))
-(let prf1
+(let prf (Fiat (= (right 0) (right 0))))
+(let prf_1
   (Rule
                                         (= (left 1) (left 1))
                                         (name
@@ -14,9 +14,9 @@ expression: proof_snapshot
           :ruleset step-left )")
                                         (premises
                                           (Fiat (= (left 0) (left 0)))
-                                          prf0)
+                                          prf)
                                         (substitution (x 0))))
-(let prf2
+(let prf_2
   (Rule
                                         (= (right 1) (right 1))
                                         (name
@@ -25,9 +25,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                        (premises prf1 prf0 (Fiat (= 1 1)))
+                                        (premises prf_1 prf (Fiat (= 1 1)))
                                         (substitution (x 1) (y 0))))
-(let prf3
+(let prf_3
   (Rule
                                     (= (left 2) (left 2))
                                     (name
@@ -35,9 +35,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                                    (premises prf1 prf2)
+                                    (premises prf_1 prf_2)
                                     (substitution (x 1))))
-(let prf4
+(let prf_4
   (Rule
                                     (= (right 2) (right 2))
                                     (name
@@ -46,9 +46,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                    (premises prf3 prf2 (Fiat (= 2 2)))
+                                    (premises prf_3 prf_2 (Fiat (= 2 2)))
                                     (substitution (x 2) (y 1))))
-(let prf5
+(let prf_5
   (Rule
                                 (= (left 3) (left 3))
                                 (name
@@ -56,9 +56,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                                (premises prf3 prf4)
+                                (premises prf_3 prf_4)
                                 (substitution (x 2))))
-(let prf6
+(let prf_6
   (Rule
                                 (= (right 3) (right 3))
                                 (name
@@ -67,9 +67,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                (premises prf5 prf4 (Fiat (= 3 3)))
+                                (premises prf_5 prf_4 (Fiat (= 3 3)))
                                 (substitution (x 3) (y 2))))
-(let prf7
+(let prf_7
   (Rule
                             (= (left 4) (left 4))
                             (name
@@ -77,9 +77,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                            (premises prf5 prf6)
+                            (premises prf_5 prf_6)
                             (substitution (x 3))))
-(let prf8
+(let prf_8
   (Rule
                             (= (right 4) (right 4))
                             (name
@@ -88,9 +88,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                            (premises prf7 prf6 (Fiat (= 4 4)))
+                            (premises prf_7 prf_6 (Fiat (= 4 4)))
                             (substitution (x 4) (y 3))))
-(let prf9
+(let prf_9
   (Rule
                         (= (left 5) (left 5))
                         (name
@@ -98,9 +98,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                        (premises prf7 prf8)
+                        (premises prf_7 prf_8)
                         (substitution (x 4))))
-(let prf10
+(let prf_10
   (Rule
                         (= (right 5) (right 5))
                         (name
@@ -109,9 +109,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                        (premises prf9 prf8 (Fiat (= 5 5)))
+                        (premises prf_9 prf_8 (Fiat (= 5 5)))
                         (substitution (x 5) (y 4))))
-(let prf11
+(let prf_11
   (Rule
                     (= (left 6) (left 6))
                     (name
@@ -119,9 +119,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                    (premises prf9 prf10)
+                    (premises prf_9 prf_10)
                     (substitution (x 5))))
-(let prf12
+(let prf_12
   (Rule
                     (= (right 6) (right 6))
                     (name
@@ -130,9 +130,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                    (premises prf11 prf10 (Fiat (= 6 6)))
+                    (premises prf_11 prf_10 (Fiat (= 6 6)))
                     (substitution (x 6) (y 5))))
-(let prf13
+(let prf_13
   (Rule
                 (= (left 7) (left 7))
                 (name
@@ -140,9 +140,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                (premises prf11 prf12)
+                (premises prf_11 prf_12)
                 (substitution (x 6))))
-(let prf14
+(let prf_14
   (Rule
                 (= (right 7) (right 7))
                 (name
@@ -151,9 +151,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                (premises prf13 prf12 (Fiat (= 7 7)))
+                (premises prf_13 prf_12 (Fiat (= 7 7)))
                 (substitution (x 7) (y 6))))
-(let prf15
+(let prf_15
   (Rule
             (= (left 8) (left 8))
             (name
@@ -161,9 +161,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-            (premises prf13 prf14)
+            (premises prf_13 prf_14)
             (substitution (x 7))))
-(let prf16
+(let prf_16
   (Rule
             (= (right 8) (right 8))
             (name
@@ -172,9 +172,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-            (premises prf15 prf14 (Fiat (= 8 8)))
+            (premises prf_15 prf_14 (Fiat (= 8 8)))
             (substitution (x 8) (y 7))))
-(let prf17
+(let prf_17
   (Rule
         (= (left 9) (left 9))
         (name
@@ -182,7 +182,7 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-        (premises prf15 prf16)
+        (premises prf_15 prf_16)
         (substitution (x 8))))
 (Rule
   (= (left 10) (left 10))
@@ -192,7 +192,7 @@ expression: proof_snapshot
       ((left (+ x 1)))
         :ruleset step-left )")
   (premises
-    prf17
+    prf_17
     (Rule
       (= (right 9) (right 9))
       (name
@@ -201,13 +201,13 @@ expression: proof_snapshot
        (= x (+ y 1)))
       ((right x))
         :ruleset step-right )")
-      (premises prf17 prf16 (Fiat (= 9 9)))
+      (premises prf_17 prf_16 (Fiat (= 9 9)))
       (substitution (x 9) (y 8))))
   (substitution (x 9)))
 )
 (
-(let prf0 (Fiat (= (right 0) (right 0))))
-(let prf1
+(let prf (Fiat (= (right 0) (right 0))))
+(let prf_1
   (Rule
                                         (= (left 1) (left 1))
                                         (name
@@ -217,9 +217,9 @@ expression: proof_snapshot
           :ruleset step-left )")
                                         (premises
                                           (Fiat (= (left 0) (left 0)))
-                                          prf0)
+                                          prf)
                                         (substitution (x 0))))
-(let prf2
+(let prf_2
   (Rule
                                         (= (right 1) (right 1))
                                         (name
@@ -228,9 +228,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                        (premises prf1 prf0 (Fiat (= 1 1)))
+                                        (premises prf_1 prf (Fiat (= 1 1)))
                                         (substitution (x 1) (y 0))))
-(let prf3
+(let prf_3
   (Rule
                                     (= (left 2) (left 2))
                                     (name
@@ -238,9 +238,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                                    (premises prf1 prf2)
+                                    (premises prf_1 prf_2)
                                     (substitution (x 1))))
-(let prf4
+(let prf_4
   (Rule
                                     (= (right 2) (right 2))
                                     (name
@@ -249,9 +249,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                    (premises prf3 prf2 (Fiat (= 2 2)))
+                                    (premises prf_3 prf_2 (Fiat (= 2 2)))
                                     (substitution (x 2) (y 1))))
-(let prf5
+(let prf_5
   (Rule
                                 (= (left 3) (left 3))
                                 (name
@@ -259,9 +259,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                                (premises prf3 prf4)
+                                (premises prf_3 prf_4)
                                 (substitution (x 2))))
-(let prf6
+(let prf_6
   (Rule
                                 (= (right 3) (right 3))
                                 (name
@@ -270,9 +270,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                                (premises prf5 prf4 (Fiat (= 3 3)))
+                                (premises prf_5 prf_4 (Fiat (= 3 3)))
                                 (substitution (x 3) (y 2))))
-(let prf7
+(let prf_7
   (Rule
                             (= (left 4) (left 4))
                             (name
@@ -280,9 +280,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                            (premises prf5 prf6)
+                            (premises prf_5 prf_6)
                             (substitution (x 3))))
-(let prf8
+(let prf_8
   (Rule
                             (= (right 4) (right 4))
                             (name
@@ -291,9 +291,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                            (premises prf7 prf6 (Fiat (= 4 4)))
+                            (premises prf_7 prf_6 (Fiat (= 4 4)))
                             (substitution (x 4) (y 3))))
-(let prf9
+(let prf_9
   (Rule
                         (= (left 5) (left 5))
                         (name
@@ -301,9 +301,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                        (premises prf7 prf8)
+                        (premises prf_7 prf_8)
                         (substitution (x 4))))
-(let prf10
+(let prf_10
   (Rule
                         (= (right 5) (right 5))
                         (name
@@ -312,9 +312,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                        (premises prf9 prf8 (Fiat (= 5 5)))
+                        (premises prf_9 prf_8 (Fiat (= 5 5)))
                         (substitution (x 5) (y 4))))
-(let prf11
+(let prf_11
   (Rule
                     (= (left 6) (left 6))
                     (name
@@ -322,9 +322,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                    (premises prf9 prf10)
+                    (premises prf_9 prf_10)
                     (substitution (x 5))))
-(let prf12
+(let prf_12
   (Rule
                     (= (right 6) (right 6))
                     (name
@@ -333,9 +333,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                    (premises prf11 prf10 (Fiat (= 6 6)))
+                    (premises prf_11 prf_10 (Fiat (= 6 6)))
                     (substitution (x 6) (y 5))))
-(let prf13
+(let prf_13
   (Rule
                 (= (left 7) (left 7))
                 (name
@@ -343,9 +343,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-                (premises prf11 prf12)
+                (premises prf_11 prf_12)
                 (substitution (x 6))))
-(let prf14
+(let prf_14
   (Rule
                 (= (right 7) (right 7))
                 (name
@@ -354,9 +354,9 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-                (premises prf13 prf12 (Fiat (= 7 7)))
+                (premises prf_13 prf_12 (Fiat (= 7 7)))
                 (substitution (x 7) (y 6))))
-(let prf15
+(let prf_15
   (Rule
             (= (left 8) (left 8))
             (name
@@ -364,9 +364,9 @@ expression: proof_snapshot
          (right x))
         ((left (+ x 1)))
           :ruleset step-left )")
-            (premises prf13 prf14)
+            (premises prf_13 prf_14)
             (substitution (x 7))))
-(let prf16
+(let prf_16
   (Rule
             (= (right 8) (right 8))
             (name
@@ -375,7 +375,7 @@ expression: proof_snapshot
          (= x (+ y 1)))
         ((right x))
           :ruleset step-right )")
-            (premises prf15 prf14 (Fiat (= 8 8)))
+            (premises prf_15 prf_14 (Fiat (= 8 8)))
             (substitution (x 8) (y 7))))
 (Rule
   (= (right 9) (right 9))
@@ -393,9 +393,9 @@ expression: proof_snapshot
        (right x))
       ((left (+ x 1)))
         :ruleset step-left )")
-      (premises prf15 prf16)
+      (premises prf_15 prf_16)
       (substitution (x 8)))
-    prf16
+    prf_16
     (Fiat (= 9 9)))
   (substitution (x 9) (y 8)))
 )

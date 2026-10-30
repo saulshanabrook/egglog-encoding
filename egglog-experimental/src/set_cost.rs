@@ -271,13 +271,16 @@ impl Macro<Vec<Command>> for CustomExtract {
         parser: &mut Parser,
     ) -> Result<Vec<Command>, ParseError> {
         let args = map_fallible(args, parser, Parser::parse_expr)?;
-        // Keep ordinary extraction visible to proof-testing desugaring. Only
-        // explicit extractor selection needs the experimental command.
-        let (selector_args, _) = crate::effsafe_extract::split_include_subsumed(&args);
-        if matches!(
-            selector_args.last_chunk::<2>(),
-            Some([Expr::Var(_, keyword), Expr::Var(..)]) if keyword == ":extractor"
-        ) {
+        // Keep ordinary extraction visible to proof-testing desugaring.
+        // Experimental options are validated by the extension command.
+        let (selector_args, include_subsumed) =
+            crate::effsafe_extract::split_include_subsumed(&args);
+        if include_subsumed
+            || matches!(
+                selector_args.last_chunk::<2>(),
+                Some([Expr::Var(_, keyword), Expr::Var(..)]) if keyword == ":extractor"
+            )
+        {
             return Ok(vec![Command::UserDefined(span, "extract".into(), args)]);
         }
         match args.as_slice() {

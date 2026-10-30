@@ -3,27 +3,27 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (premises (Fiat (= (Go) (Go)))))
-(let t1 (set-of (Id (N 1)) (Id (N 2)) (N 3)))
-(let t2 (HoldsSet t1))
-(let t3 (set-of (N 1) (N 2)))
-(let t4 (set-of (Id (N 1)) (Id (N 2)) (N 1)))
-(let prf0
+(let t (premises (Fiat (= (Go) (Go)))))
+(let t_1 (set-of (Id (N 1)) (Id (N 2)) (N 3)))
+(let t_2 (HoldsSet t_1))
+(let t_3 (set-of (N 1) (N 2)))
+(let t_4 (set-of (Id (N 1)) (Id (N 2)) (N 1)))
+(let prf
   (Rule
-            (= t2 t2)
+            (= t_2 t_2)
             (name
               "(rule ((Go))
         ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
            )")
-            t0
+            t
             (substitution)))
-(let prf1
+(let prf_1
   (Congr
-          (= t2 (HoldsSet t4))
-          prf0
+          (= t_2 (HoldsSet t_4))
+          prf
           (Congr
-            (= t1 t4)
-            (Proj (= t1 t1) prf0 0)
+            (= t_1 t_4)
+            (Proj (= t_1 t_1) prf 0)
             (Sym
               (= (N 3) (N 1))
               (Rule
@@ -32,7 +32,7 @@ expression: proof_snapshot
                   "(rule ((Go))
         ((union (N 1) (N 3)))
            )")
-                t0
+                t
                 (substitution)))
             2)
           0))
@@ -46,7 +46,7 @@ expression: proof_snapshot
         "(rule ((Go))
       ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
          )")
-      t0
+      t
       (substitution))
     (Rule
       (= (N 2) (N 2))
@@ -54,19 +54,19 @@ expression: proof_snapshot
         "(rule ((Go))
       ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
          )")
-      t0
+      t
       (substitution))
     (Eval)
     (Congr
-      (= t2 (HoldsSet t3))
-      prf1
+      (= t_2 (HoldsSet t_3))
+      prf_1
       (ContainerNormalize
-        (= t4 t3)
+        (= t_4 t_3)
         (Congr
-          (= t4 (set-of (N 1) (N 2) (N 1)))
+          (= t_4 (set-of (N 1) (N 2) (N 1)))
           (Congr
-            (= t4 (set-of (N 1) (Id (N 2)) (N 1)))
-            (Proj (= t4 t4) prf1 0)
+            (= t_4 (set-of (N 1) (Id (N 2)) (N 1)))
+            (Proj (= t_4 t_4) prf_1 0)
             (Rule
               (= (Id (N 1)) (N 1))
               (name "(rewrite (Id x) x)")
@@ -77,7 +77,7 @@ expression: proof_snapshot
                     "(rule ((Go))
       ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
          )")
-                  t0
+                  t
                   (substitution)))
               (substitution (@rewrite_var__ (Id (N 1))) (x (N 1))))
             0)
@@ -91,84 +91,84 @@ expression: proof_snapshot
                   "(rule ((Go))
       ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
          )")
-                t0
+                t
                 (substitution)))
             (substitution (@rewrite_var__ (Id (N 2))) (x (N 2))))
           1))
       0))
-  (substitution (@v (N 1)) (@v1 (N 2)) (@v2 t3)))
+  (substitution (@v (N 1)) (@v_1 (N 2)) (@v_2 t_3)))
 )
 (
-(let t0 (Add (Num 51) (Num 52)))
-(let t1 (Add (Num 52) (Num 51)))
-(let t2 (premises (Fiat (= (Go) (Go)))))
-(let prf0
+(let t (Add (Num 51) (Num 52)))
+(let t_1 (Add (Num 52) (Num 51)))
+(let t_2 (premises (Fiat (= (Go) (Go)))))
+(let prf
   (Sym
-        (= t0 t1)
+        (= t t_1)
         (Rule
-          (= t1 t0)
+          (= t_1 t)
           (name
             "(rule ((Go))
         ((union (Add (Num 52) (Num 51)) (Add (Num 51) (Num 52))))
            )")
-          t2
+          t_2
           (substitution))))
-(let t3 (set-of t0))
-(let t4 (HoldsExpr t3))
-(let t5 (set-of t1))
-(let prf1
+(let t_3 (set-of t))
+(let t_4 (HoldsExpr t_3))
+(let t_5 (set-of t_1))
+(let prf_1
   (Rule
-          (= t4 t4)
+          (= t_4 t_4)
           (name
             "(rule ((Go))
         ((HoldsExpr (set-of (Add (Num 51) (Num 52)))))
            )")
-          t2
+          t_2
           (substitution)))
 (Rule
-  (= (@ExistsConstructor1) (@ExistsConstructor1))
-  (name "@prove_exists_rule1")
+  (= (@ExistsConstructor_1) (@ExistsConstructor_1))
+  (name "@prove_exists_rule_1")
   (premises
-    prf0
+    prf
     (Eval)
     (Congr
-      (= t4 (HoldsExpr t5))
-      prf1
-      (Congr (= t3 t5) (Proj (= t3 t3) prf1 0) prf0 0)
+      (= t_4 (HoldsExpr t_5))
+      prf_1
+      (Congr (= t_3 t_5) (Proj (= t_3 t_3) prf_1 0) prf 0)
       0))
-  (substitution (@v3 t1) (@v4 t5)))
+  (substitution (@v_3 t_1) (@v_4 t_5)))
 )
 (
-(let t0 (premises (Fiat (= (Go) (Go)))))
-(let prf0
+(let t (premises (Fiat (= (Go) (Go)))))
+(let prf
   (Rule
         (= (N 11) (N 11))
         (name
           "(rule ((Go))
         ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
            )")
-        t0
+        t
         (substitution)))
-(let t1 (multiset-of (Id (N 11)) (Id (N 12)) (N 13)))
-(let t2 (HoldsBag t1))
-(let t3 (multiset-of (N 11) (N 11) (N 12)))
-(let t4 (multiset-of (Id (N 11)) (Id (N 12)) (N 11)))
-(let prf1
+(let t_1 (multiset-of (Id (N 11)) (Id (N 12)) (N 13)))
+(let t_2 (HoldsBag t_1))
+(let t_3 (multiset-of (N 11) (N 11) (N 12)))
+(let t_4 (multiset-of (Id (N 11)) (Id (N 12)) (N 11)))
+(let prf_1
   (Rule
-            (= t2 t2)
+            (= t_2 t_2)
             (name
               "(rule ((Go))
         ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
            )")
-            t0
+            t
             (substitution)))
-(let prf2
+(let prf_2
   (Congr
-          (= t2 (HoldsBag t4))
-          prf1
+          (= t_2 (HoldsBag t_4))
+          prf_1
           (Congr
-            (= t1 t4)
-            (Proj (= t1 t1) prf1 0)
+            (= t_1 t_4)
+            (Proj (= t_1 t_1) prf_1 0)
             (Sym
               (= (N 13) (N 11))
               (Rule
@@ -177,35 +177,35 @@ expression: proof_snapshot
                   "(rule ((Go))
         ((union (N 11) (N 13)))
            )")
-                t0
+                t
                 (substitution)))
             2)
           0))
 (Rule
-  (= (@ExistsConstructor2) (@ExistsConstructor2))
-  (name "@prove_exists_rule2")
+  (= (@ExistsConstructor_2) (@ExistsConstructor_2))
+  (name "@prove_exists_rule_2")
   (premises
-    prf0
-    prf0
+    prf
+    prf
     (Rule
       (= (N 12) (N 12))
       (name
         "(rule ((Go))
       ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
          )")
-      t0
+      t
       (substitution))
     (Eval)
     (Congr
-      (= t2 (HoldsBag t3))
-      prf2
+      (= t_2 (HoldsBag t_3))
+      prf_2
       (ContainerNormalize
-        (= t4 t3)
+        (= t_4 t_3)
         (Congr
-          (= t4 (multiset-of (N 11) (N 12) (N 11)))
+          (= t_4 (multiset-of (N 11) (N 12) (N 11)))
           (Congr
-            (= t4 (multiset-of (N 11) (Id (N 12)) (N 11)))
-            (Proj (= t4 t4) prf2 0)
+            (= t_4 (multiset-of (N 11) (Id (N 12)) (N 11)))
+            (Proj (= t_4 t_4) prf_2 0)
             (Rule
               (= (Id (N 11)) (N 11))
               (name "(rewrite (Id x) x)")
@@ -216,7 +216,7 @@ expression: proof_snapshot
                     "(rule ((Go))
       ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
          )")
-                  t0
+                  t
                   (substitution)))
               (substitution (@rewrite_var__ (Id (N 11))) (x (N 11))))
             0)
@@ -230,44 +230,44 @@ expression: proof_snapshot
                   "(rule ((Go))
       ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
          )")
-                t0
+                t
                 (substitution)))
             (substitution (@rewrite_var__ (Id (N 12))) (x (N 12))))
           1))
       0))
-  (substitution (@v5 (N 11)) (@v6 (N 11)) (@v7 (N 12)) (@v8 t3)))
+  (substitution (@v_5 (N 11)) (@v_6 (N 11)) (@v_7 (N 12)) (@v_8 t_3)))
 )
 (
-(let t0 (premises (Fiat (= (Go) (Go)))))
-(let prf0
+(let t (premises (Fiat (= (Go) (Go)))))
+(let prf
   (Rule
         (= (N 23) (N 23))
         (name
           "(rule ((Go))
         ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
            )")
-        t0
+        t
         (substitution)))
-(let t1 (map-of (Id (N 22)) (N 24) (N 21) (N 23)))
-(let t2 (HoldsMap t1))
-(let t3 (map-of (N 21) (N 23) (N 22) (N 23)))
-(let t4 (map-of (Id (N 22)) (N 23) (N 21) (N 23)))
-(let prf1
+(let t_1 (map-of (Id (N 22)) (N 24) (N 21) (N 23)))
+(let t_2 (HoldsMap t_1))
+(let t_3 (map-of (N 21) (N 23) (N 22) (N 23)))
+(let t_4 (map-of (Id (N 22)) (N 23) (N 21) (N 23)))
+(let prf_1
   (Rule
-            (= t2 t2)
+            (= t_2 t_2)
             (name
               "(rule ((Go))
         ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
            )")
-            t0
+            t
             (substitution)))
-(let prf2
+(let prf_2
   (Congr
-          (= t2 (HoldsMap t4))
-          prf1
+          (= t_2 (HoldsMap t_4))
+          prf_1
           (Congr
-            (= t1 t4)
-            (Proj (= t1 t1) prf1 0)
+            (= t_1 t_4)
+            (Proj (= t_1 t_1) prf_1 0)
             (Sym
               (= (N 24) (N 23))
               (Rule
@@ -276,13 +276,13 @@ expression: proof_snapshot
                   "(rule ((Go))
         ((union (N 23) (N 24)))
            )")
-                t0
+                t
                 (substitution)))
             1)
           0))
 (Rule
-  (= (@ExistsConstructor3) (@ExistsConstructor3))
-  (name "@prove_exists_rule3")
+  (= (@ExistsConstructor_3) (@ExistsConstructor_3))
+  (name "@prove_exists_rule_3")
   (premises
     (Rule
       (= (N 21) (N 21))
@@ -290,27 +290,27 @@ expression: proof_snapshot
         "(rule ((Go))
       ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
          )")
-      t0
+      t
       (substitution))
-    prf0
+    prf
     (Rule
       (= (N 22) (N 22))
       (name
         "(rule ((Go))
       ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
          )")
-      t0
+      t
       (substitution))
-    prf0
+    prf
     (Eval)
     (Congr
-      (= t2 (HoldsMap t3))
-      prf2
+      (= t_2 (HoldsMap t_3))
+      prf_2
       (ContainerNormalize
-        (= t4 t3)
+        (= t_4 t_3)
         (Congr
-          (= t4 (map-of (N 22) (N 23) (N 21) (N 23)))
-          (Proj (= t4 t4) prf2 0)
+          (= t_4 (map-of (N 22) (N 23) (N 21) (N 23)))
+          (Proj (= t_4 t_4) prf_2 0)
           (Rule
             (= (Id (N 22)) (N 22))
             (name "(rewrite (Id x) x)")
@@ -321,42 +321,42 @@ expression: proof_snapshot
                   "(rule ((Go))
       ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
          )")
-                t0
+                t
                 (substitution)))
             (substitution (@rewrite_var__ (Id (N 22))) (x (N 22))))
           0))
       0))
   (substitution
-    (@v9 (N 21))
-    (@v10 (N 23))
-    (@v11 (N 22))
-    (@v12 (N 23))
-    (@v13 t3)))
+    (@v_9 (N 21))
+    (@v_10 (N 23))
+    (@v_11 (N 22))
+    (@v_12 (N 23))
+    (@v_13 t_3)))
 )
 (
-(let t0 (premises (Fiat (= (Go) (Go)))))
-(let prf0
+(let t (premises (Fiat (= (Go) (Go)))))
+(let prf
   (Rule
         (= (N 31) (N 31))
         (name
           "(rule ((Go))
         ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
            )")
-        t0
+        t
         (substitution)))
-(let t1 (vec-of (Id (N 31)) (Id (N 31)) (N 32)))
-(let t2 (HoldsVec t1))
-(let t3 (vec-of (N 31) (N 31) (N 32)))
-(let prf1
+(let t_1 (vec-of (Id (N 31)) (Id (N 31)) (N 32)))
+(let t_2 (HoldsVec t_1))
+(let t_3 (vec-of (N 31) (N 31) (N 32)))
+(let prf_1
   (Rule
-          (= t2 t2)
+          (= t_2 t_2)
           (name
             "(rule ((Go))
         ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
            )")
-          t0
+          t
           (substitution)))
-(let prf2
+(let prf_2
   (Rule
               (= (Id (N 31)) (N 31))
               (name "(rewrite (Id x) x)")
@@ -367,76 +367,76 @@ expression: proof_snapshot
                     "(rule ((Go))
         ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
            )")
-                  t0
+                  t
                   (substitution)))
               (substitution (@rewrite_var__ (Id (N 31))) (x (N 31)))))
 (Rule
-  (= (@ExistsConstructor4) (@ExistsConstructor4))
-  (name "@prove_exists_rule4")
+  (= (@ExistsConstructor_4) (@ExistsConstructor_4))
+  (name "@prove_exists_rule_4")
   (premises
-    prf0
-    prf0
+    prf
+    prf
     (Rule
       (= (N 32) (N 32))
       (name
         "(rule ((Go))
       ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
          )")
-      t0
+      t
       (substitution))
     (Eval)
     (Congr
-      (= t2 (HoldsVec t3))
-      prf1
+      (= t_2 (HoldsVec t_3))
+      prf_1
       (Congr
-        (= t1 t3)
+        (= t_1 t_3)
         (Congr
-          (= t1 (vec-of (N 31) (Id (N 31)) (N 32)))
-          (Proj (= t1 t1) prf1 0)
-          prf2
+          (= t_1 (vec-of (N 31) (Id (N 31)) (N 32)))
+          (Proj (= t_1 t_1) prf_1 0)
+          prf_2
           0)
-        prf2
+        prf_2
         1)
       0))
-  (substitution (@v14 (N 31)) (@v15 (N 31)) (@v16 (N 32)) (@v17 t3)))
+  (substitution (@v_14 (N 31)) (@v_15 (N 31)) (@v_16 (N 32)) (@v_17 t_3)))
 )
 (
-(let t0 (premises (Fiat (= (Go) (Go)))))
-(let prf0
+(let t (premises (Fiat (= (Go) (Go)))))
+(let prf
   (Rule
         (= (N 41) (N 41))
         (name
           "(rule ((Go))
         ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
            )")
-        t0
+        t
         (substitution)))
-(let t1 (set-of (Id (N 41)) (N 42)))
-(let t2 (set-of (set-of (N 43)) t1))
-(let t3 (HoldsNested t2))
-(let t4 (set-of (N 41) (N 42)))
-(let t5 (set-of (set-of (N 41)) t4))
-(let t6 (set-of (set-of (N 41)) t1))
-(let prf1
+(let t_1 (set-of (Id (N 41)) (N 42)))
+(let t_2 (set-of (set-of (N 43)) t_1))
+(let t_3 (HoldsNested t_2))
+(let t_4 (set-of (N 41) (N 42)))
+(let t_5 (set-of (set-of (N 41)) t_4))
+(let t_6 (set-of (set-of (N 41)) t_1))
+(let prf_1
   (Rule
-            (= t3 t3)
+            (= t_3 t_3)
             (name
               "(rule ((Go))
         ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
            )")
-            t0
+            t
             (substitution)))
-(let prf2 (Proj (= t2 t2) prf1 0))
-(let prf3
+(let prf_2 (Proj (= t_2 t_2) prf_1 0))
+(let prf_3
   (Congr
-          (= t3 (HoldsNested t6))
-          prf1
+          (= t_3 (HoldsNested t_6))
+          prf_1
           (Congr
-            (= t2 t6)
-            prf2
+            (= t_2 t_6)
+            prf_2
             (Congr
               (= (set-of (N 43)) (set-of (N 41)))
-              (Proj (= (set-of (N 43)) (set-of (N 43))) prf2 0)
+              (Proj (= (set-of (N 43)) (set-of (N 43))) prf_2 0)
               (Sym
                 (= (N 43) (N 41))
                 (Rule
@@ -445,36 +445,36 @@ expression: proof_snapshot
                     "(rule ((Go))
         ((union (N 41) (N 43)))
            )")
-                  t0
+                  t
                   (substitution)))
               0)
             0)
           0))
-(let prf4 (Proj (= t6 t6) prf3 0))
+(let prf_4 (Proj (= t_6 t_6) prf_3 0))
 (Rule
-  (= (@ExistsConstructor5) (@ExistsConstructor5))
-  (name "@prove_exists_rule5")
+  (= (@ExistsConstructor_5) (@ExistsConstructor_5))
+  (name "@prove_exists_rule_5")
   (premises
-    prf0
+    prf
     (Rule
       (= (N 42) (N 42))
       (name
         "(rule ((Go))
       ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
          )")
-      t0
+      t
       (substitution))
-    prf0
+    prf
     (Eval)
     (Congr
-      (= t3 (HoldsNested t5))
-      prf3
+      (= t_3 (HoldsNested t_5))
+      prf_3
       (Congr
-        (= t6 t5)
-        prf4
+        (= t_6 t_5)
+        prf_4
         (Congr
-          (= t1 t4)
-          (Proj (= t1 t1) prf4 1)
+          (= t_1 t_4)
+          (Proj (= t_1 t_1) prf_4 1)
           (Rule
             (= (Id (N 41)) (N 41))
             (name "(rewrite (Id x) x)")
@@ -485,11 +485,11 @@ expression: proof_snapshot
                   "(rule ((Go))
       ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
          )")
-                t0
+                t
                 (substitution)))
             (substitution (@rewrite_var__ (Id (N 41))) (x (N 41))))
           0)
         1)
       0))
-  (substitution (@v18 (N 41)) (@v19 (N 42)) (@v20 (N 41)) (@v21 t5)))
+  (substitution (@v_18 (N 41)) (@v_19 (N 42)) (@v_20 (N 41)) (@v_21 t_5)))
 )

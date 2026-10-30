@@ -3,23 +3,23 @@ source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
 (
-(let t0 (Let (Var "x") (Var "y")))
-(let prf0 (Fiat (= t0 t0)))
-(let t1 (@GeneratedFreshTable (Var "x") (Var "y") 0))
-(let t2 (Let t1 (Var "y")))
+(let t (Let (Var "x") (Var "y")))
+(let prf (Fiat (= t t)))
+(let t_1 (@GeneratedFreshTable (Var "x") (Var "y") 0))
+(let t_2 (Let t_1 (Var "y")))
 (Rule
   (= (@ExistsConstructor) (@ExistsConstructor))
   (name "@prove_exists_rule")
   (premises
-    prf0
+    prf
     (Rule
-      (= t2 t2)
+      (= t_2 t_2)
       (name
         "(rule ((Let a b))
       ((Let (@GeneratedFreshTable a b 0) b))
          )")
-      (premises prf0)
+      (premises prf)
       (substitution (a (Var "x")) (b (Var "y"))))
     (Fiat (= () ())))
-  (substitution (?x (Var "x")) (?y t1)))
+  (substitution (?x (Var "x")) (?y t_1)))
 )

@@ -3,189 +3,189 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
-(let t1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
-(let t2 (premises (Fiat (= t0 t0))))
-(let t3
+(let t (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
+(let t_1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
+(let t_2 (premises (Fiat (= t t))))
+(let t_3
   (substitution
-        (@rewrite_var__3 t0)
+        (@rewrite_var___3 t)
         (ctx (NilConst))
         (x "x")
         (t1 (TUnitConst))
         (e (Var "x"))))
 (Congr
-  (= t0 (TArr (TUnitConst) (TUnitConst)))
+  (= t (TArr (TUnitConst) (TUnitConst)))
   (Rule
-    (= t0 (TArr (TUnitConst) t1))
+    (= t (TArr (TUnitConst) t_1))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t2
-    t3)
+    t_2
+    t_3)
   (Rule
-    (= t1 (TUnitConst))
+    (= t_1 (TUnitConst))
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t1 t1)
+        (= t_1 t_1)
         (name
           "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-        t2
-        t3))
+        t_2
+        t_3))
     (substitution
-      (@rewrite_var__1 t1)
+      (@rewrite_var___1 t_1)
       (x "x")
       (t (TUnitConst))
       (ctx (NilConst))))
   1)
 )
 (
-(let t0 (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
-(let t1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
-(let t2 (premises (Fiat (= t0 t0))))
-(let t3
+(let t (typeof (NilConst) (Lam "x" (TUnitConst) (Var "x"))))
+(let t_1 (typeof (Cons "x" (TUnitConst) (NilConst)) (Var "x")))
+(let t_2 (premises (Fiat (= t t))))
+(let t_3
   (substitution
-        (@rewrite_var__3 t0)
+        (@rewrite_var___3 t)
         (ctx (NilConst))
         (x "x")
         (t1 (TUnitConst))
         (e (Var "x"))))
 (Congr
-  (= t0 (TArr (TUnitConst) (TUnitConst)))
+  (= t (TArr (TUnitConst) (TUnitConst)))
   (Rule
-    (= t0 (TArr (TUnitConst) t1))
+    (= t (TArr (TUnitConst) t_1))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t2
-    t3)
+    t_2
+    t_3)
   (Rule
-    (= t1 (TUnitConst))
+    (= t_1 (TUnitConst))
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t1 t1)
+        (= t_1 t_1)
         (name
           "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-        t2
-        t3))
+        t_2
+        t_3))
     (substitution
-      (@rewrite_var__1 t1)
+      (@rewrite_var___1 t_1)
       (x "x")
       (t (TUnitConst))
       (ctx (NilConst))))
   1)
 )
 (
-(let t0 (App (Var "f") (Var "x")))
-(let t1 (Lam "f" (TArr (TUnitConst) (TUnitConst)) t0))
-(let t2 (Lam "x" (TUnitConst) t1))
-(let t3 (App t2 (MyUnitConst)))
-(let t4 (Lam "x" (TUnitConst) (Var "x")))
-(let t5 (typeof (NilConst) (App t3 t4)))
-(let t6 (Cons "x" (TUnitConst) (NilConst)))
-(let t7 (Cons "f" (TArr (TUnitConst) (TUnitConst)) t6))
-(let t8 (typeof t7 t0))
-(let prf0 (Fiat (= t5 t5)))
-(let t9 (typeof (NilConst) t3))
-(let t10 (typeof (NilConst) t4))
-(let t11 (TArr (TArr (TUnitConst) (TUnitConst)) t8))
-(let t12 (typeof t6 t1))
-(let t13 (f t3))
-(let t14 (e t4))
-(let prf1
+(let t (App (Var "f") (Var "x")))
+(let t_1 (Lam "f" (TArr (TUnitConst) (TUnitConst)) t))
+(let t_2 (Lam "x" (TUnitConst) t_1))
+(let t_3 (App t_2 (MyUnitConst)))
+(let t_4 (Lam "x" (TUnitConst) (Var "x")))
+(let t_5 (typeof (NilConst) (App t_3 t_4)))
+(let t_6 (Cons "x" (TUnitConst) (NilConst)))
+(let t_7 (Cons "f" (TArr (TUnitConst) (TUnitConst)) t_6))
+(let t_8 (typeof t_7 t))
+(let prf (Fiat (= t_5 t_5)))
+(let t_9 (typeof (NilConst) t_3))
+(let t_10 (typeof (NilConst) t_4))
+(let t_11 (TArr (TArr (TUnitConst) (TUnitConst)) t_8))
+(let t_12 (typeof t_6 t_1))
+(let t_13 (f t_3))
+(let t_14 (e t_4))
+(let prf_1
   (Rule
-                      (= t9 t9)
+                      (= t_9 t_9)
                       (name
                         "(rule ((= (typeof ctx (App f e)) t2))
         ((typeof ctx f)
          (typeof ctx e))
            )")
-                      (premises prf0)
-                      (substitution (ctx (NilConst)) t13 t14 (t2 t5))))
-(let t15 (typeof (NilConst) t2))
-(let t16 (premises prf1))
-(let t17 (f t2))
-(let t18
+                      (premises prf)
+                      (substitution (ctx (NilConst)) t_13 t_14 (t2 t_5))))
+(let t_15 (typeof (NilConst) t_2))
+(let t_16 (premises prf_1))
+(let t_17 (f t_2))
+(let t_18
   (substitution
                               (ctx (NilConst))
-                              t17
+                              t_17
                               (e (MyUnitConst))
-                              (t2 t9)))
-(let t19
+                              (t2 t_9)))
+(let t_19
   (premises
                           (Rule
-                            (= t15 t15)
+                            (= t_15 t_15)
                             (name
                               "(rule ((= (typeof ctx (App f e)) t2))
         ((typeof ctx f)
          (typeof ctx e))
            )")
-                            t16
-                            t18)))
-(let t20
+                            t_16
+                            t_18)))
+(let t_20
   (substitution
-                          (@rewrite_var__3 t15)
+                          (@rewrite_var___3 t_15)
                           (ctx (NilConst))
                           (x "x")
                           (t1 (TUnitConst))
-                          (e t1)))
-(let t21
+                          (e t_1)))
+(let t_21
   (premises
                   (Rule
-                    (= t12 t12)
+                    (= t_12 t_12)
                     (name
                       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                    t19
-                    t20)))
-(let t22 (ctx t6))
-(let t23
+                    t_19
+                    t_20)))
+(let t_22 (ctx t_6))
+(let t_23
   (substitution
-                  (@rewrite_var__3 t12)
-                  t22
+                  (@rewrite_var___3 t_12)
+                  t_22
                   (x "f")
                   (t1 (TArr (TUnitConst) (TUnitConst)))
-                  (e t0)))
-(let t24 (typeof t6 (Var "x")))
-(let t25 (premises (Fiat (= t10 t10))))
-(let t26
+                  (e t)))
+(let t_24 (typeof t_6 (Var "x")))
+(let t_25 (premises (Fiat (= t_10 t_10))))
+(let t_26
   (substitution
-                    (@rewrite_var__3 t10)
+                    (@rewrite_var___3 t_10)
                     (ctx (NilConst))
                     (x "x")
                     (t1 (TUnitConst))
                     (e (Var "x"))))
-(let prf2
+(let prf_2
   (Rule
-                  (= t24 (TUnitConst))
+                  (= t_24 (TUnitConst))
                   (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
                   (premises
                     (Rule
-                      (= t24 t24)
+                      (= t_24 t_24)
                       (name
                         "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                      t25
-                      t26))
+                      t_25
+                      t_26))
                   (substitution
-                    (@rewrite_var__1 t24)
+                    (@rewrite_var___1 t_24)
                     (x "x")
                     (t (TUnitConst))
                     (ctx (NilConst)))))
-(let t27 (t1 t5))
-(let t28 (t2 t8))
-(let t29 (typeof t7 (Var "f")))
-(let t30 (typeof t7 (Var "x")))
-(let t31 (TArr t30 (TUnitConst)))
-(let t32
+(let t_27 (t1 t_5))
+(let t_28 (t2 t_8))
+(let t_29 (typeof t_7 (Var "f")))
+(let t_30 (typeof t_7 (Var "x")))
+(let t_31 (TArr t_30 (TUnitConst)))
+(let t_32
   (premises
                 (Rule
-                  (= t8 t8)
+                  (= t_8 t_8)
                   (name
                     "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                  t21
-                  t23)))
-(let t33 (ctx t7))
-(let t34 (substitution t33 (f (Var "f")) (e (Var "x")) t28))
+                  t_21
+                  t_23)))
+(let t_33 (ctx t_7))
+(let t_34 (substitution t_33 (f (Var "f")) (e (Var "x")) t_28))
 (Rule
-  (= t5 (TUnitConst))
+  (= t_5 (TUnitConst))
   (name
     "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
@@ -193,37 +193,37 @@ expression: proof_snapshot
          )")
   (premises
     (Rule
-      (= t8 t5)
+      (= t_8 t_5)
       (name
         "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
       ((union t1 t2))
          )")
       (premises
-        prf0
+        prf
         (Congr
-          (= t9 (TArr t10 t8))
+          (= t_9 (TArr t_10 t_8))
           (Trans
-            (= t9 t11)
+            (= t_9 t_11)
             (Sym
-              (= t9 t12)
+              (= t_9 t_12)
               (Rule
-                (= t12 t9)
+                (= t_12 t_9)
                 (name
                   "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
       ((union t1 t2))
          )")
                 (premises
-                  prf1
+                  prf_1
                   (Congr
-                    (= t15 (TArr (typeof (NilConst) (MyUnitConst)) t12))
+                    (= t_15 (TArr (typeof (NilConst) (MyUnitConst)) t_12))
                     (Rule
-                      (= t15 (TArr (TUnitConst) t12))
+                      (= t_15 (TArr (TUnitConst) t_12))
                       (name
                         "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                      t19
-                      t20)
+                      t_19
+                      t_20)
                     (Sym
                       (= (TUnitConst) (typeof (NilConst) (MyUnitConst)))
                       (Rule
@@ -239,203 +239,203 @@ expression: proof_snapshot
       ((typeof ctx f)
        (typeof ctx e))
          )")
-                            t16
-                            t18))
+                            t_16
+                            t_18))
                         (substitution
                           (@rewrite_var__ (typeof (NilConst) (MyUnitConst)))
                           (ctx (NilConst)))))
                     0))
                 (substitution
                   (ctx (NilConst))
-                  t17
+                  t_17
                   (e (MyUnitConst))
-                  (t1 t9)
-                  (t2 t12))))
+                  (t1 t_9)
+                  (t2 t_12))))
             (Rule
-              (= t12 t11)
+              (= t_12 t_11)
               (name
                 "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-              t21
-              t23))
+              t_21
+              t_23))
           (Sym
-            (= (TArr (TUnitConst) (TUnitConst)) t10)
+            (= (TArr (TUnitConst) (TUnitConst)) t_10)
             (Congr
-              (= t10 (TArr (TUnitConst) (TUnitConst)))
+              (= t_10 (TArr (TUnitConst) (TUnitConst)))
               (Rule
-                (= t10 (TArr (TUnitConst) t24))
+                (= t_10 (TArr (TUnitConst) t_24))
                 (name
                   "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                t25
-                t26)
-              prf2
+                t_25
+                t_26)
+              prf_2
               1))
           0))
-      (substitution (ctx (NilConst)) t13 t14 t27 t28))
+      (substitution (ctx (NilConst)) t_13 t_14 t_27 t_28))
     (Trans
-      (= t29 t31)
+      (= t_29 t_31)
       (Rule
-        (= t29 (TArr (TUnitConst) (TUnitConst)))
+        (= t_29 (TArr (TUnitConst) (TUnitConst)))
         (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
         (premises
           (Rule
-            (= t29 t29)
+            (= t_29 t_29)
             (name
               "(rule ((= (typeof ctx (App f e)) t2))
       ((typeof ctx f)
        (typeof ctx e))
          )")
-            t32
-            t34))
+            t_32
+            t_34))
         (substitution
-          (@rewrite_var__1 t29)
+          (@rewrite_var___1 t_29)
           (x "f")
           (t (TArr (TUnitConst) (TUnitConst)))
-          t22))
+          t_22))
       (Congr
-        (= (TArr (TUnitConst) (TUnitConst)) t31)
+        (= (TArr (TUnitConst) (TUnitConst)) t_31)
         (Fiat
           (= (TArr (TUnitConst) (TUnitConst)) (TArr (TUnitConst) (TUnitConst))))
         (Trans
-          (= (TUnitConst) t30)
-          (Sym (= (TUnitConst) t24) prf2)
+          (= (TUnitConst) t_30)
+          (Sym (= (TUnitConst) t_24) prf_2)
           (Sym
-            (= t24 t30)
+            (= t_24 t_30)
             (Rule
-              (= t30 t24)
+              (= t_30 t_24)
               (name
                 "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
               (premises
                 (Rule
-                  (= t30 t30)
+                  (= t_30 t_30)
                   (name
                     "(rule ((= (typeof ctx (App f e)) t2))
       ((typeof ctx f)
        (typeof ctx e))
          )")
-                  t32
-                  t34)
+                  t_32
+                  t_34)
                 (Fiat (= () ())))
               (substitution
-                (@rewrite_var__2 t30)
+                (@rewrite_var___2 t_30)
                 (y "f")
                 (ty (TArr (TUnitConst) (TUnitConst)))
-                t22
+                t_22
                 (x "x")))))
         0)))
-  (substitution t33 (f (Var "f")) (e (Var "x")) t27 (t2 (TUnitConst))))
+  (substitution t_33 (f (Var "f")) (e (Var "x")) t_27 (t2 (TUnitConst))))
 )
 (
-(let t0 (App (Var "f") (Var "x")))
-(let t1 (Lam "f" (TArr (TUnitConst) (TUnitConst)) t0))
-(let t2 (Lam "x" (TUnitConst) t1))
-(let t3 (App t2 (MyUnitConst)))
-(let t4 (Lam "x" (TUnitConst) (Var "x")))
-(let t5 (typeof (NilConst) (App t3 t4)))
-(let t6 (Cons "x" (TUnitConst) (NilConst)))
-(let t7 (Cons "f" (TArr (TUnitConst) (TUnitConst)) t6))
-(let t8 (typeof t7 t0))
-(let prf0 (Fiat (= t5 t5)))
-(let t9 (typeof (NilConst) t3))
-(let t10 (typeof (NilConst) t4))
-(let t11 (TArr (TArr (TUnitConst) (TUnitConst)) t8))
-(let t12 (typeof t6 t1))
-(let t13 (f t3))
-(let t14 (e t4))
-(let prf1
+(let t (App (Var "f") (Var "x")))
+(let t_1 (Lam "f" (TArr (TUnitConst) (TUnitConst)) t))
+(let t_2 (Lam "x" (TUnitConst) t_1))
+(let t_3 (App t_2 (MyUnitConst)))
+(let t_4 (Lam "x" (TUnitConst) (Var "x")))
+(let t_5 (typeof (NilConst) (App t_3 t_4)))
+(let t_6 (Cons "x" (TUnitConst) (NilConst)))
+(let t_7 (Cons "f" (TArr (TUnitConst) (TUnitConst)) t_6))
+(let t_8 (typeof t_7 t))
+(let prf (Fiat (= t_5 t_5)))
+(let t_9 (typeof (NilConst) t_3))
+(let t_10 (typeof (NilConst) t_4))
+(let t_11 (TArr (TArr (TUnitConst) (TUnitConst)) t_8))
+(let t_12 (typeof t_6 t_1))
+(let t_13 (f t_3))
+(let t_14 (e t_4))
+(let prf_1
   (Rule
-                      (= t9 t9)
+                      (= t_9 t_9)
                       (name
                         "(rule ((= (typeof ctx (App f e)) t2))
         ((typeof ctx f)
          (typeof ctx e))
            )")
-                      (premises prf0)
-                      (substitution (ctx (NilConst)) t13 t14 (t2 t5))))
-(let t15 (typeof (NilConst) t2))
-(let t16 (premises prf1))
-(let t17 (f t2))
-(let t18
+                      (premises prf)
+                      (substitution (ctx (NilConst)) t_13 t_14 (t2 t_5))))
+(let t_15 (typeof (NilConst) t_2))
+(let t_16 (premises prf_1))
+(let t_17 (f t_2))
+(let t_18
   (substitution
                               (ctx (NilConst))
-                              t17
+                              t_17
                               (e (MyUnitConst))
-                              (t2 t9)))
-(let t19
+                              (t2 t_9)))
+(let t_19
   (premises
                           (Rule
-                            (= t15 t15)
+                            (= t_15 t_15)
                             (name
                               "(rule ((= (typeof ctx (App f e)) t2))
         ((typeof ctx f)
          (typeof ctx e))
            )")
-                            t16
-                            t18)))
-(let t20
+                            t_16
+                            t_18)))
+(let t_20
   (substitution
-                          (@rewrite_var__3 t15)
+                          (@rewrite_var___3 t_15)
                           (ctx (NilConst))
                           (x "x")
                           (t1 (TUnitConst))
-                          (e t1)))
-(let t21
+                          (e t_1)))
+(let t_21
   (premises
                   (Rule
-                    (= t12 t12)
+                    (= t_12 t_12)
                     (name
                       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                    t19
-                    t20)))
-(let t22 (ctx t6))
-(let t23
+                    t_19
+                    t_20)))
+(let t_22 (ctx t_6))
+(let t_23
   (substitution
-                  (@rewrite_var__3 t12)
-                  t22
+                  (@rewrite_var___3 t_12)
+                  t_22
                   (x "f")
                   (t1 (TArr (TUnitConst) (TUnitConst)))
-                  (e t0)))
-(let t24 (typeof t6 (Var "x")))
-(let t25 (premises (Fiat (= t10 t10))))
-(let t26
+                  (e t)))
+(let t_24 (typeof t_6 (Var "x")))
+(let t_25 (premises (Fiat (= t_10 t_10))))
+(let t_26
   (substitution
-                    (@rewrite_var__3 t10)
+                    (@rewrite_var___3 t_10)
                     (ctx (NilConst))
                     (x "x")
                     (t1 (TUnitConst))
                     (e (Var "x"))))
-(let prf2
+(let prf_2
   (Rule
-                  (= t24 (TUnitConst))
+                  (= t_24 (TUnitConst))
                   (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
                   (premises
                     (Rule
-                      (= t24 t24)
+                      (= t_24 t_24)
                       (name
                         "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                      t25
-                      t26))
+                      t_25
+                      t_26))
                   (substitution
-                    (@rewrite_var__1 t24)
+                    (@rewrite_var___1 t_24)
                     (x "x")
                     (t (TUnitConst))
                     (ctx (NilConst)))))
-(let t27 (t1 t5))
-(let t28 (t2 t8))
-(let t29 (typeof t7 (Var "f")))
-(let t30 (typeof t7 (Var "x")))
-(let t31 (TArr t30 (TUnitConst)))
-(let t32
+(let t_27 (t1 t_5))
+(let t_28 (t2 t_8))
+(let t_29 (typeof t_7 (Var "f")))
+(let t_30 (typeof t_7 (Var "x")))
+(let t_31 (TArr t_30 (TUnitConst)))
+(let t_32
   (premises
                 (Rule
-                  (= t8 t8)
+                  (= t_8 t_8)
                   (name
                     "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                  t21
-                  t23)))
-(let t33 (ctx t7))
-(let t34 (substitution t33 (f (Var "f")) (e (Var "x")) t28))
+                  t_21
+                  t_23)))
+(let t_33 (ctx t_7))
+(let t_34 (substitution t_33 (f (Var "f")) (e (Var "x")) t_28))
 (Rule
-  (= t5 (TUnitConst))
+  (= t_5 (TUnitConst))
   (name
     "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
@@ -443,37 +443,37 @@ expression: proof_snapshot
          )")
   (premises
     (Rule
-      (= t8 t5)
+      (= t_8 t_5)
       (name
         "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
       ((union t1 t2))
          )")
       (premises
-        prf0
+        prf
         (Congr
-          (= t9 (TArr t10 t8))
+          (= t_9 (TArr t_10 t_8))
           (Trans
-            (= t9 t11)
+            (= t_9 t_11)
             (Sym
-              (= t9 t12)
+              (= t_9 t_12)
               (Rule
-                (= t12 t9)
+                (= t_12 t_9)
                 (name
                   "(rule ((= (typeof ctx (App f e)) t1)
        (= (typeof ctx f) (TArr (typeof ctx e) t2)))
       ((union t1 t2))
          )")
                 (premises
-                  prf1
+                  prf_1
                   (Congr
-                    (= t15 (TArr (typeof (NilConst) (MyUnitConst)) t12))
+                    (= t_15 (TArr (typeof (NilConst) (MyUnitConst)) t_12))
                     (Rule
-                      (= t15 (TArr (TUnitConst) t12))
+                      (= t_15 (TArr (TUnitConst) t_12))
                       (name
                         "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                      t19
-                      t20)
+                      t_19
+                      t_20)
                     (Sym
                       (= (TUnitConst) (typeof (NilConst) (MyUnitConst)))
                       (Rule
@@ -489,262 +489,282 @@ expression: proof_snapshot
       ((typeof ctx f)
        (typeof ctx e))
          )")
-                            t16
-                            t18))
+                            t_16
+                            t_18))
                         (substitution
                           (@rewrite_var__ (typeof (NilConst) (MyUnitConst)))
                           (ctx (NilConst)))))
                     0))
                 (substitution
                   (ctx (NilConst))
-                  t17
+                  t_17
                   (e (MyUnitConst))
-                  (t1 t9)
-                  (t2 t12))))
+                  (t1 t_9)
+                  (t2 t_12))))
             (Rule
-              (= t12 t11)
+              (= t_12 t_11)
               (name
                 "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-              t21
-              t23))
+              t_21
+              t_23))
           (Sym
-            (= (TArr (TUnitConst) (TUnitConst)) t10)
+            (= (TArr (TUnitConst) (TUnitConst)) t_10)
             (Congr
-              (= t10 (TArr (TUnitConst) (TUnitConst)))
+              (= t_10 (TArr (TUnitConst) (TUnitConst)))
               (Rule
-                (= t10 (TArr (TUnitConst) t24))
+                (= t_10 (TArr (TUnitConst) t_24))
                 (name
                   "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-                t25
-                t26)
-              prf2
+                t_25
+                t_26)
+              prf_2
               1))
           0))
-      (substitution (ctx (NilConst)) t13 t14 t27 t28))
+      (substitution (ctx (NilConst)) t_13 t_14 t_27 t_28))
     (Trans
-      (= t29 t31)
+      (= t_29 t_31)
       (Rule
-        (= t29 (TArr (TUnitConst) (TUnitConst)))
+        (= t_29 (TArr (TUnitConst) (TUnitConst)))
         (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
         (premises
           (Rule
-            (= t29 t29)
+            (= t_29 t_29)
             (name
               "(rule ((= (typeof ctx (App f e)) t2))
       ((typeof ctx f)
        (typeof ctx e))
          )")
-            t32
-            t34))
+            t_32
+            t_34))
         (substitution
-          (@rewrite_var__1 t29)
+          (@rewrite_var___1 t_29)
           (x "f")
           (t (TArr (TUnitConst) (TUnitConst)))
-          t22))
+          t_22))
       (Congr
-        (= (TArr (TUnitConst) (TUnitConst)) t31)
+        (= (TArr (TUnitConst) (TUnitConst)) t_31)
         (Fiat
           (= (TArr (TUnitConst) (TUnitConst)) (TArr (TUnitConst) (TUnitConst))))
         (Trans
-          (= (TUnitConst) t30)
-          (Sym (= (TUnitConst) t24) prf2)
+          (= (TUnitConst) t_30)
+          (Sym (= (TUnitConst) t_24) prf_2)
           (Sym
-            (= t24 t30)
+            (= t_24 t_30)
             (Rule
-              (= t30 t24)
+              (= t_30 t_24)
               (name
                 "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
               (premises
                 (Rule
-                  (= t30 t30)
+                  (= t_30 t_30)
                   (name
                     "(rule ((= (typeof ctx (App f e)) t2))
       ((typeof ctx f)
        (typeof ctx e))
          )")
-                  t32
-                  t34)
+                  t_32
+                  t_34)
                 (Fiat (= () ())))
               (substitution
-                (@rewrite_var__2 t30)
+                (@rewrite_var___2 t_30)
                 (y "f")
                 (ty (TArr (TUnitConst) (TUnitConst)))
-                t22
+                t_22
                 (x "x")))))
         0)))
-  (substitution t33 (f (Var "f")) (e (Var "x")) t27 (t2 (TUnitConst))))
+  (substitution t_33 (f (Var "f")) (e (Var "x")) t_27 (t2 (TUnitConst))))
 )
 (
-(let t0 (Cons "y" (TUnitConst) (NilConst)))
-(let t1 (typeof t0 (Lam "x" (TUnitConst) (Var "y"))))
-(let t2 (typeof (Cons "x" (TUnitConst) t0) (Var "y")))
-(let t3 (premises (Fiat (= t1 t1))))
-(let t4 (ctx t0))
-(let t5
+(let t (Cons "y" (TUnitConst) (NilConst)))
+(let t_1 (typeof t (Lam "x" (TUnitConst) (Var "y"))))
+(let t_2 (typeof (Cons "x" (TUnitConst) t) (Var "y")))
+(let t_3 (premises (Fiat (= t_1 t_1))))
+(let t_4 (ctx t))
+(let t_5
   (substitution
-        (@rewrite_var__3 t1)
-        t4
+        (@rewrite_var___3 t_1)
+        t_4
         (x "x")
         (t1 (TUnitConst))
         (e (Var "y"))))
 (Congr
-  (= t1 (TArr (TUnitConst) (TUnitConst)))
+  (= t_1 (TArr (TUnitConst) (TUnitConst)))
   (Rule
-    (= t1 (TArr (TUnitConst) t2))
+    (= t_1 (TArr (TUnitConst) t_2))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t3
-    t5)
+    t_3
+    t_5)
   (Rule
-    (= t2 (TUnitConst))
+    (= t_2 (TUnitConst))
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t2 (typeof t0 (Var "y")))
+        (= t_2 (typeof t (Var "y")))
         (name
           "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
         (premises
           (Rule
-            (= t2 t2)
+            (= t_2 t_2)
             (name
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-            t3
-            t5)
+            t_3
+            t_5)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t2) (y "x") (ty (TUnitConst)) t4 (x "y"))))
+        (substitution
+          (@rewrite_var___2 t_2)
+          (y "x")
+          (ty (TUnitConst))
+          t_4
+          (x "y"))))
     (substitution
-      (@rewrite_var__1 t2)
+      (@rewrite_var___1 t_2)
       (x "y")
       (t (TUnitConst))
       (ctx (NilConst))))
   1)
 )
 (
-(let t0 (Cons "y" (TUnitConst) (NilConst)))
-(let t1 (typeof t0 (Lam "x" (TUnitConst) (Var "y"))))
-(let t2 (typeof (Cons "x" (TUnitConst) t0) (Var "y")))
-(let t3 (premises (Fiat (= t1 t1))))
-(let t4 (ctx t0))
-(let t5
+(let t (Cons "y" (TUnitConst) (NilConst)))
+(let t_1 (typeof t (Lam "x" (TUnitConst) (Var "y"))))
+(let t_2 (typeof (Cons "x" (TUnitConst) t) (Var "y")))
+(let t_3 (premises (Fiat (= t_1 t_1))))
+(let t_4 (ctx t))
+(let t_5
   (substitution
-        (@rewrite_var__3 t1)
-        t4
+        (@rewrite_var___3 t_1)
+        t_4
         (x "x")
         (t1 (TUnitConst))
         (e (Var "y"))))
 (Congr
-  (= t1 (TArr (TUnitConst) (TUnitConst)))
+  (= t_1 (TArr (TUnitConst) (TUnitConst)))
   (Rule
-    (= t1 (TArr (TUnitConst) t2))
+    (= t_1 (TArr (TUnitConst) t_2))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t3
-    t5)
+    t_3
+    t_5)
   (Rule
-    (= t2 (TUnitConst))
+    (= t_2 (TUnitConst))
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t2 (typeof t0 (Var "y")))
+        (= t_2 (typeof t (Var "y")))
         (name
           "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
         (premises
           (Rule
-            (= t2 t2)
+            (= t_2 t_2)
             (name
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-            t3
-            t5)
+            t_3
+            t_5)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t2) (y "x") (ty (TUnitConst)) t4 (x "y"))))
+        (substitution
+          (@rewrite_var___2 t_2)
+          (y "x")
+          (ty (TUnitConst))
+          t_4
+          (x "y"))))
     (substitution
-      (@rewrite_var__1 t2)
+      (@rewrite_var___1 t_2)
       (x "y")
       (t (TUnitConst))
       (ctx (NilConst))))
   1)
 )
 (
-(let t0 (TArr (TArr (TUnitConst) (TUnitConst)) (TUnitConst)))
-(let t1 (Cons "y" t0 (NilConst)))
-(let t2 (typeof t1 (Lam "x" (TUnitConst) (Var "y"))))
-(let t3 (typeof (Cons "x" (TUnitConst) t1) (Var "y")))
-(let t4 (premises (Fiat (= t2 t2))))
-(let t5 (ctx t1))
-(let t6
+(let t (TArr (TArr (TUnitConst) (TUnitConst)) (TUnitConst)))
+(let t_1 (Cons "y" t (NilConst)))
+(let t_2 (typeof t_1 (Lam "x" (TUnitConst) (Var "y"))))
+(let t_3 (typeof (Cons "x" (TUnitConst) t_1) (Var "y")))
+(let t_4 (premises (Fiat (= t_2 t_2))))
+(let t_5 (ctx t_1))
+(let t_6
   (substitution
-        (@rewrite_var__3 t2)
-        t5
+        (@rewrite_var___3 t_2)
+        t_5
         (x "x")
         (t1 (TUnitConst))
         (e (Var "y"))))
 (Congr
-  (= t2 (TArr (TUnitConst) t0))
+  (= t_2 (TArr (TUnitConst) t))
   (Rule
-    (= t2 (TArr (TUnitConst) t3))
+    (= t_2 (TArr (TUnitConst) t_3))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t4
-    t6)
+    t_4
+    t_6)
   (Rule
-    (= t3 t0)
+    (= t_3 t)
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t3 (typeof t1 (Var "y")))
+        (= t_3 (typeof t_1 (Var "y")))
         (name
           "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
         (premises
           (Rule
-            (= t3 t3)
+            (= t_3 t_3)
             (name
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-            t4
-            t6)
+            t_4
+            t_6)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t3) (y "x") (ty (TUnitConst)) t5 (x "y"))))
-    (substitution (@rewrite_var__1 t3) (x "y") (t t0) (ctx (NilConst))))
+        (substitution
+          (@rewrite_var___2 t_3)
+          (y "x")
+          (ty (TUnitConst))
+          t_5
+          (x "y"))))
+    (substitution (@rewrite_var___1 t_3) (x "y") (t t) (ctx (NilConst))))
   1)
 )
 (
-(let t0 (TArr (TArr (TUnitConst) (TUnitConst)) (TUnitConst)))
-(let t1 (Cons "y" t0 (NilConst)))
-(let t2 (typeof t1 (Lam "x" (TUnitConst) (Var "y"))))
-(let t3 (typeof (Cons "x" (TUnitConst) t1) (Var "y")))
-(let t4 (premises (Fiat (= t2 t2))))
-(let t5 (ctx t1))
-(let t6
+(let t (TArr (TArr (TUnitConst) (TUnitConst)) (TUnitConst)))
+(let t_1 (Cons "y" t (NilConst)))
+(let t_2 (typeof t_1 (Lam "x" (TUnitConst) (Var "y"))))
+(let t_3 (typeof (Cons "x" (TUnitConst) t_1) (Var "y")))
+(let t_4 (premises (Fiat (= t_2 t_2))))
+(let t_5 (ctx t_1))
+(let t_6
   (substitution
-        (@rewrite_var__3 t2)
-        t5
+        (@rewrite_var___3 t_2)
+        t_5
         (x "x")
         (t1 (TUnitConst))
         (e (Var "y"))))
 (Congr
-  (= t2 (TArr (TUnitConst) t0))
+  (= t_2 (TArr (TUnitConst) t))
   (Rule
-    (= t2 (TArr (TUnitConst) t3))
+    (= t_2 (TArr (TUnitConst) t_3))
     (name
       "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-    t4
-    t6)
+    t_4
+    t_6)
   (Rule
-    (= t3 t0)
+    (= t_3 t)
     (name "(rewrite (typeof (Cons x t ctx) (Var x)) t)")
     (premises
       (Rule
-        (= t3 (typeof t1 (Var "y")))
+        (= t_3 (typeof t_1 (Var "y")))
         (name
           "(rewrite (typeof (Cons y ty ctx) (Var x)) (typeof ctx (Var x)) :when ((!= x y)))")
         (premises
           (Rule
-            (= t3 t3)
+            (= t_3 t_3)
             (name
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
-            t4
-            t6)
+            t_4
+            t_6)
           (Fiat (= () ())))
-        (substitution (@rewrite_var__2 t3) (y "x") (ty (TUnitConst)) t5 (x "y"))))
-    (substitution (@rewrite_var__1 t3) (x "y") (t t0) (ctx (NilConst))))
+        (substitution
+          (@rewrite_var___2 t_3)
+          (y "x")
+          (ty (TUnitConst))
+          t_5
+          (x "y"))))
+    (substitution (@rewrite_var___1 t_3) (x "y") (t t) (ctx (NilConst))))
   1)
 )

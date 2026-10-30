@@ -3,9 +3,9 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (typed_signed-vec-widen-mul (SYMBV 1) (SYMBV 2) 8 1024))
-(let t1 (typed_vec-add t0 (SYMBV 0) 16 2048))
-(let t2
+(let t (typed_signed-vec-widen-mul (SYMBV 1) (SYMBV 2) 8 1024))
+(let t_1 (typed_vec-add t (SYMBV 0) 16 2048))
+(let t_2
   (hvx_swizzle_43
           (hexagon_V6_vmpybv_128B
             (SYMBV 1)
@@ -38,13 +38,13 @@ expression: proof_snapshot
           2
           0))
 (Congr
-  (= t1 (typed_vec-add t2 (SYMBV 0) 16 2048))
-  (Fiat (= t1 t1))
+  (= t_1 (typed_vec-add t_2 (SYMBV 0) 16 2048))
+  (Fiat (= t_1 t_1))
   (Rule
-    (= t0 t2)
+    (= t t_2)
     (name
       "(birewrite (hvx_swizzle_43 (hexagon_V6_vmpybv_128B reg_0 reg_1 1024 1024 0 512 8 0 512 8 16 1 1 1 16 1024 1 1 8 2 0) 2048 32 0 32 16 64 2 0) (typed_signed-vec-widen-mul reg_0 reg_1 8 1024))<=")
-    (premises (Fiat (= t0 t0)))
-    (substitution (@rewrite_var__28 t0) (reg_0 (SYMBV 1)) (reg_1 (SYMBV 2))))
+    (premises (Fiat (= t t)))
+    (substitution (@rewrite_var___28 t) (reg_0 (SYMBV 1)) (reg_1 (SYMBV 2))))
   0)
 )

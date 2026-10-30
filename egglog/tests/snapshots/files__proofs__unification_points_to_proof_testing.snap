@@ -3,40 +3,40 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0
+(let t
   (assign
                   (Stmt "int *v = malloc(sizeof(int))")
                   (Type "int *")
                   (Expr "v")
                   (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let prf0 (Fiat (= t1 t1)))
-(let t2 (premises (Fiat (= t0 t0)) prf0))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let prf (Fiat (= t_1 t_1)))
+(let t_2 (premises (Fiat (= t t)) prf))
+(let t_3
   (substitution
             (s (Stmt "int *v = malloc(sizeof(int))"))
             (t1 (Type "int *"))
             (v (Expr "v"))
             (c (Expr "malloc(sizeof(int))"))
             (t2 (Type "int"))))
-(let t4
+(let t_4
   (struct-lit-field
                   (Expr "(struct s){u, v}")
                   (Field "y")
                   (Expr "v")))
-(let t5
+(let t_5
   (struct-lit-field
                     (Expr "(struct s){u, v}")
                     (Field "x")
                     (Expr "u")))
-(let t6
+(let t_6
   (assign
                         (Stmt "int *u = malloc(sizeof(int))")
                         (Type "int *")
                         (Expr "u")
                         (Expr "malloc(sizeof(int))")))
-(let t7 (premises (Fiat (= t6 t6)) prf0))
-(let t8
+(let t_7 (premises (Fiat (= t_6 t_6)) prf))
+(let t_8
   (substitution
                   (s (Stmt "int *u = malloc(sizeof(int))"))
                   (t1 (Type "int *"))
@@ -56,8 +56,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-        t2
-        t3))
+        t_2
+        t_3))
     (Trans
       (= (expr-points-to (Expr "v")) (expr-points-to (Expr "u")))
       (Rule
@@ -70,7 +70,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
         (premises
-          (Fiat (= t4 t4))
+          (Fiat (= t_4 t_4))
           (Rule
             (= (expr-points-to (Expr "v")) (expr-points-to (Expr "v")))
             (name
@@ -78,8 +78,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-            t2
-            t3))
+            t_2
+            t_3))
         (substitution
           (l (Expr "(struct s){u, v}"))
           (f (Field "y"))
@@ -99,7 +99,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
           (premises
-            (Fiat (= t5 t5))
+            (Fiat (= t_5 t_5))
             (Rule
               (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
               (name
@@ -107,8 +107,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-              t7
-              t8))
+              t_7
+              t_8))
           (substitution
             (l (Expr "(struct s){u, v}"))
             (f (Field "x"))
@@ -121,52 +121,52 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-    t7
-    t8))
+    t_7
+    t_8))
 )
 (
-(let t0
+(let t
   (assign
                     (Stmt "int *v = malloc(sizeof(int))")
                     (Type "int *")
                     (Expr "v")
                     (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let prf0 (Fiat (= t1 t1)))
-(let t2 (premises (Fiat (= t0 t0)) prf0))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let prf (Fiat (= t_1 t_1)))
+(let t_2 (premises (Fiat (= t t)) prf))
+(let t_3
   (substitution
               (s (Stmt "int *v = malloc(sizeof(int))"))
               (t1 (Type "int *"))
               (v (Expr "v"))
               (c (Expr "malloc(sizeof(int))"))
               (t2 (Type "int"))))
-(let t4
+(let t_4
   (struct-lit-field
                     (Expr "(struct s){u, v}")
                     (Field "y")
                     (Expr "v")))
-(let t5
+(let t_5
   (struct-lit-field
                       (Expr "(struct s){u, v}")
                       (Field "x")
                       (Expr "u")))
-(let t6
+(let t_6
   (assign
                           (Stmt "int *u = malloc(sizeof(int))")
                           (Type "int *")
                           (Expr "u")
                           (Expr "malloc(sizeof(int))")))
-(let t7
+(let t_7
   (assign
                   (Stmt "struct s *sp = malloc(sizeof(struct s))")
                   (Type "struct s*")
                   (Expr "sp")
                   (Expr "malloc(sizeof(struct s))")))
-(let t8 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let t_8 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
 (Rule
-  (= (@ExistsConstructor1) (@ExistsConstructor1))
-  (name "@prove_exists_rule1")
+  (= (@ExistsConstructor_1) (@ExistsConstructor_1))
+  (name "@prove_exists_rule_1")
   (premises
     (Trans
       (= (AllocVar (Expr "v")) (expr-points-to (Expr "u")))
@@ -179,8 +179,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-          t2
-          t3))
+          t_2
+          t_3))
       (Trans
         (= (expr-points-to (Expr "v")) (expr-points-to (Expr "u")))
         (Rule
@@ -193,7 +193,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
           (premises
-            (Fiat (= t4 t4))
+            (Fiat (= t_4 t_4))
             (Rule
               (= (expr-points-to (Expr "v")) (expr-points-to (Expr "v")))
               (name
@@ -201,8 +201,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-              t2
-              t3))
+              t_2
+              t_3))
           (substitution
             (l (Expr "(struct s){u, v}"))
             (f (Field "y"))
@@ -222,7 +222,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
             (premises
-              (Fiat (= t5 t5))
+              (Fiat (= t_5 t_5))
               (Rule
                 (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
                 (name
@@ -230,7 +230,7 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                (premises (Fiat (= t6 t6)) prf0)
+                (premises (Fiat (= t_6 t_6)) prf)
                 (substitution
                   (s (Stmt "int *u = malloc(sizeof(int))"))
                   (t1 (Type "int *"))
@@ -251,7 +251,7 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-        (premises (Fiat (= t7 t7)) (Fiat (= t8 t8)))
+        (premises (Fiat (= t_7 t_7)) (Fiat (= t_8 t_8)))
         (substitution
           (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
           (t1 (Type "struct s*"))
@@ -261,17 +261,17 @@ expression: proof_snapshot
     (Fiat (= () ())))
   (substitution
     (@v (expr-points-to (Expr "u")))
-    (@v1 (expr-points-to (Expr "sp")))))
+    (@v_1 (expr-points-to (Expr "sp")))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let prf0
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let prf
   (Rule
         (= (expr-points-to (Expr "u")) (AllocVar (Expr "u")))
         (name
@@ -279,7 +279,7 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-        (premises (Fiat (= t0 t0)) (Fiat (= t1 t1)))
+        (premises (Fiat (= t t)) (Fiat (= t_1 t_1)))
         (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
@@ -288,44 +288,44 @@ expression: proof_snapshot
           (t2 (Type "int")))))
 (Trans
   (= (AllocVar (Expr "u")) (AllocVar (Expr "u")))
-  (Sym (= (AllocVar (Expr "u")) (expr-points-to (Expr "u"))) prf0)
-  prf0)
+  (Sym (= (AllocVar (Expr "u")) (expr-points-to (Expr "u"))) prf)
+  prf)
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let prf0 (Fiat (= t1 t1)))
-(let t2 (premises (Fiat (= t0 t0)) prf0))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let prf (Fiat (= t_1 t_1)))
+(let t_2 (premises (Fiat (= t t)) prf))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (struct-lit-field
                   (Expr "(struct s){u, v}")
                   (Field "x")
                   (Expr "u")))
-(let t5
+(let t_5
   (struct-lit-field
                     (Expr "(struct s){u, v}")
                     (Field "y")
                     (Expr "v")))
-(let t6
+(let t_6
   (assign
                         (Stmt "int *v = malloc(sizeof(int))")
                         (Type "int *")
                         (Expr "v")
                         (Expr "malloc(sizeof(int))")))
-(let t7 (premises (Fiat (= t6 t6)) prf0))
-(let t8
+(let t_7 (premises (Fiat (= t_6 t_6)) prf))
+(let t_8
   (substitution
                   (s (Stmt "int *v = malloc(sizeof(int))"))
                   (t1 (Type "int *"))
@@ -343,8 +343,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Trans
     (= (expr-points-to (Expr "u")) (AllocVar (Expr "v")))
     (Trans
@@ -359,7 +359,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
         (premises
-          (Fiat (= t4 t4))
+          (Fiat (= t_4 t_4))
           (Rule
             (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
             (name
@@ -367,8 +367,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-            t2
-            t3))
+            t_2
+            t_3))
         (substitution
           (l (Expr "(struct s){u, v}"))
           (f (Field "x"))
@@ -388,7 +388,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
           (premises
-            (Fiat (= t5 t5))
+            (Fiat (= t_5 t_5))
             (Rule
               (= (expr-points-to (Expr "v")) (expr-points-to (Expr "v")))
               (name
@@ -396,8 +396,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-              t7
-              t8))
+              t_7
+              t_8))
           (substitution
             (l (Expr "(struct s){u, v}"))
             (f (Field "y"))
@@ -410,49 +410,49 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t7
-      t8)))
+      t_7
+      t_8)))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (assign
               (Stmt "int **xp = &(r->x)")
               (Type "int **")
               (Expr "xp")
               (Expr "&(r->x)")))
-(let t5
+(let t_5
   (func
                           (Func "swap")
                           (Expr "r")
                           (Type "void")
                           (Type "{int *x; int *y;}*")))
-(let t6 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
-(let t7
+(let t_6 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
+(let t_7
   (assign
                               (Stmt "struct s *sp = malloc(sizeof(struct s))")
                               (Type "struct s*")
                               (Expr "sp")
                               (Expr "malloc(sizeof(struct s))")))
-(let t8
+(let t_8
   (malloc
                               (Expr "malloc(sizeof(struct s))")
                               (Type "struct s")))
-(let prf0
+(let prf
   (Rule
                       (=
                         (expr-points-to (Expr "sp"))
@@ -462,27 +462,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-                      (premises (Fiat (= t7 t7)) (Fiat (= t8 t8)))
+                      (premises (Fiat (= t_7 t_7)) (Fiat (= t_8 t_8)))
                       (substitution
                         (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
                         (t1 (Type "struct s*"))
                         (v (Expr "sp"))
                         (c (Expr "malloc(sizeof(struct s))"))
                         (t2 (Type "struct s")))))
-(let t9 (a (expr-points-to (Expr "sp"))))
-(let t10 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t11
+(let t_9 (a (expr-points-to (Expr "sp"))))
+(let t_10 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_11
   (store
                           (Stmt "*sp = (struct s){u, v}")
                           (Expr "sp")
                           (Expr "(struct s){u, v}")))
-(let t12
+(let t_12
   (struct-lit-field
                                 (Expr "(struct s){u, v}")
                                 (Field "x")
                                 (Expr "u")))
-(let t13 (b (expr-points-to (Expr "u"))))
-(let t14 (addr (Expr "&(r->x)") (Expr "r") (Field "x")))
+(let t_13 (b (expr-points-to (Expr "u"))))
+(let t_14 (addr (Expr "&(r->x)") (Expr "r") (Field "x")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "xp")))
   (Sym
@@ -494,8 +494,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "xp")))
     (name
@@ -504,7 +504,7 @@ expression: proof_snapshot
       ((union (expr-points-to v) a))
          )")
     (premises
-      (Fiat (= t4 t4))
+      (Fiat (= t_4 t_4))
       (Sym
         (= (expr-points-to (Expr "&(r->x)")) (expr-points-to (Expr "u")))
         (Rule
@@ -526,7 +526,7 @@ expression: proof_snapshot
        (= (expr-points-to v) a))
       ((union (expr-points-to x) a))
          )")
-                (premises (Fiat (= t5 t5)) (Fiat (= t6 t6)) prf0)
+                (premises (Fiat (= t_5 t_5)) (Fiat (= t_6 t_6)) prf)
                 (substitution
                   (f (Func "swap"))
                   (x (Expr "r"))
@@ -534,11 +534,11 @@ expression: proof_snapshot
                   (out (Type "{int *x; int *y;}*"))
                   (e (Expr "swap(sp)"))
                   (v (Expr "sp"))
-                  t9)))
+                  t_9)))
             (Sym
-              (= t10 (expr-points-to (Expr "u")))
+              (= t_10 (expr-points-to (Expr "u")))
               (Rule
-                (= (expr-points-to (Expr "u")) t10)
+                (= (expr-points-to (Expr "u")) t_10)
                 (name
                   "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -546,8 +546,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
                 (premises
-                  (Fiat (= t11 t11))
-                  prf0
+                  (Fiat (= t_11 t_11))
+                  prf
                   (Sym
                     (=
                       (expr-points-to (Expr "(struct s){u, v}"))
@@ -562,7 +562,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                       (premises
-                        (Fiat (= t12 t12))
+                        (Fiat (= t_12 t_12))
                         (Rule
                           (=
                             (expr-points-to (Expr "u"))
@@ -572,24 +572,24 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                          t2
-                          t3))
+                          t_2
+                          t_3))
                       (substitution
                         (l (Expr "(struct s){u, v}"))
                         (f (Field "x"))
                         (x (Expr "u"))
-                        t13))))
+                        t_13))))
                 (substitution
                   (s (Stmt "*sp = (struct s){u, v}"))
                   (v (Expr "sp"))
                   (u (Expr "(struct s){u, v}"))
-                  t9
-                  t13)))
-            (Fiat (= t14 t14)))
+                  t_9
+                  t_13)))
+            (Fiat (= t_14 t_14)))
           (substitution
             (u (Expr "r"))
-            t9
-            t13
+            t_9
+            t_13
             (e (Expr "&(r->x)"))
             (f (Field "x"))))))
     (substitution
@@ -600,36 +600,36 @@ expression: proof_snapshot
       (a (expr-points-to (Expr "u"))))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (func
                     (Func "swap")
                     (Expr "r")
                     (Type "void")
                     (Type "{int *x; int *y;}*")))
-(let t5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
-(let t6
+(let t_5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
+(let t_6
   (assign
                         (Stmt "struct s *sp = malloc(sizeof(struct s))")
                         (Type "struct s*")
                         (Expr "sp")
                         (Expr "malloc(sizeof(struct s))")))
-(let t7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let prf0
+(let t_7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let prf
   (Rule
                 (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
                 (name
@@ -637,27 +637,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-                (premises (Fiat (= t6 t6)) (Fiat (= t7 t7)))
+                (premises (Fiat (= t_6 t_6)) (Fiat (= t_7 t_7)))
                 (substitution
                   (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
                   (t1 (Type "struct s*"))
                   (v (Expr "sp"))
                   (c (Expr "malloc(sizeof(struct s))"))
                   (t2 (Type "struct s")))))
-(let t8 (a (expr-points-to (Expr "sp"))))
-(let t9 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t10
+(let t_8 (a (expr-points-to (Expr "sp"))))
+(let t_9 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_10
   (store
                     (Stmt "*sp = (struct s){u, v}")
                     (Expr "sp")
                     (Expr "(struct s){u, v}")))
-(let t11
+(let t_11
   (struct-lit-field
                           (Expr "(struct s){u, v}")
                           (Field "x")
                           (Expr "u")))
-(let t12 (b (expr-points-to (Expr "u"))))
-(let t13 (addr (Expr "&(r->x)") (Expr "r") (Field "x")))
+(let t_12 (b (expr-points-to (Expr "u"))))
+(let t_13 (addr (Expr "&(r->x)") (Expr "r") (Field "x")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "&(r->x)")))
   (Sym
@@ -669,8 +669,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "&(r->x)")))
     (name
@@ -690,7 +690,7 @@ expression: proof_snapshot
        (= (expr-points-to v) a))
       ((union (expr-points-to x) a))
          )")
-          (premises (Fiat (= t4 t4)) (Fiat (= t5 t5)) prf0)
+          (premises (Fiat (= t_4 t_4)) (Fiat (= t_5 t_5)) prf)
           (substitution
             (f (Func "swap"))
             (x (Expr "r"))
@@ -698,11 +698,11 @@ expression: proof_snapshot
             (out (Type "{int *x; int *y;}*"))
             (e (Expr "swap(sp)"))
             (v (Expr "sp"))
-            t8)))
+            t_8)))
       (Sym
-        (= t9 (expr-points-to (Expr "u")))
+        (= t_9 (expr-points-to (Expr "u")))
         (Rule
-          (= (expr-points-to (Expr "u")) t9)
+          (= (expr-points-to (Expr "u")) t_9)
           (name
             "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -710,8 +710,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
           (premises
-            (Fiat (= t10 t10))
-            prf0
+            (Fiat (= t_10 t_10))
+            prf
             (Sym
               (=
                 (expr-points-to (Expr "(struct s){u, v}"))
@@ -726,7 +726,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                 (premises
-                  (Fiat (= t11 t11))
+                  (Fiat (= t_11 t_11))
                   (Rule
                     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
                     (name
@@ -734,62 +734,62 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                    t2
-                    t3))
+                    t_2
+                    t_3))
                 (substitution
                   (l (Expr "(struct s){u, v}"))
                   (f (Field "x"))
                   (x (Expr "u"))
-                  t12))))
+                  t_12))))
           (substitution
             (s (Stmt "*sp = (struct s){u, v}"))
             (v (Expr "sp"))
             (u (Expr "(struct s){u, v}"))
-            t8
-            t12)))
-      (Fiat (= t13 t13)))
-    (substitution (u (Expr "r")) t8 t12 (e (Expr "&(r->x)")) (f (Field "x")))))
+            t_8
+            t_12)))
+      (Fiat (= t_13 t_13)))
+    (substitution (u (Expr "r")) t_8 t_12 (e (Expr "&(r->x)")) (f (Field "x")))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (assign
               (Stmt "int **yp = &(r->x)")
               (Type "int **")
               (Expr "yp")
               (Expr "&(r->y)")))
-(let t5
+(let t_5
   (func
                           (Func "swap")
                           (Expr "r")
                           (Type "void")
                           (Type "{int *x; int *y;}*")))
-(let t6 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
-(let t7
+(let t_6 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
+(let t_7
   (assign
                               (Stmt "struct s *sp = malloc(sizeof(struct s))")
                               (Type "struct s*")
                               (Expr "sp")
                               (Expr "malloc(sizeof(struct s))")))
-(let t8
+(let t_8
   (malloc
                               (Expr "malloc(sizeof(struct s))")
                               (Type "struct s")))
-(let prf0
+(let prf
   (Rule
                       (=
                         (expr-points-to (Expr "sp"))
@@ -799,27 +799,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-                      (premises (Fiat (= t7 t7)) (Fiat (= t8 t8)))
+                      (premises (Fiat (= t_7 t_7)) (Fiat (= t_8 t_8)))
                       (substitution
                         (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
                         (t1 (Type "struct s*"))
                         (v (Expr "sp"))
                         (c (Expr "malloc(sizeof(struct s))"))
                         (t2 (Type "struct s")))))
-(let t9 (a (expr-points-to (Expr "sp"))))
-(let t10 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t11
+(let t_9 (a (expr-points-to (Expr "sp"))))
+(let t_10 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_11
   (store
                           (Stmt "*sp = (struct s){u, v}")
                           (Expr "sp")
                           (Expr "(struct s){u, v}")))
-(let t12
+(let t_12
   (struct-lit-field
                                 (Expr "(struct s){u, v}")
                                 (Field "x")
                                 (Expr "u")))
-(let t13 (b (expr-points-to (Expr "u"))))
-(let t14 (addr (Expr "&(r->y)") (Expr "r") (Field "y")))
+(let t_13 (b (expr-points-to (Expr "u"))))
+(let t_14 (addr (Expr "&(r->y)") (Expr "r") (Field "y")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "yp")))
   (Sym
@@ -831,8 +831,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "yp")))
     (name
@@ -841,7 +841,7 @@ expression: proof_snapshot
       ((union (expr-points-to v) a))
          )")
     (premises
-      (Fiat (= t4 t4))
+      (Fiat (= t_4 t_4))
       (Sym
         (= (expr-points-to (Expr "&(r->y)")) (expr-points-to (Expr "u")))
         (Rule
@@ -863,7 +863,7 @@ expression: proof_snapshot
        (= (expr-points-to v) a))
       ((union (expr-points-to x) a))
          )")
-                (premises (Fiat (= t5 t5)) (Fiat (= t6 t6)) prf0)
+                (premises (Fiat (= t_5 t_5)) (Fiat (= t_6 t_6)) prf)
                 (substitution
                   (f (Func "swap"))
                   (x (Expr "r"))
@@ -871,11 +871,11 @@ expression: proof_snapshot
                   (out (Type "{int *x; int *y;}*"))
                   (e (Expr "swap(sp)"))
                   (v (Expr "sp"))
-                  t9)))
+                  t_9)))
             (Sym
-              (= t10 (expr-points-to (Expr "u")))
+              (= t_10 (expr-points-to (Expr "u")))
               (Rule
-                (= (expr-points-to (Expr "u")) t10)
+                (= (expr-points-to (Expr "u")) t_10)
                 (name
                   "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -883,8 +883,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
                 (premises
-                  (Fiat (= t11 t11))
-                  prf0
+                  (Fiat (= t_11 t_11))
+                  prf
                   (Sym
                     (=
                       (expr-points-to (Expr "(struct s){u, v}"))
@@ -899,7 +899,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                       (premises
-                        (Fiat (= t12 t12))
+                        (Fiat (= t_12 t_12))
                         (Rule
                           (=
                             (expr-points-to (Expr "u"))
@@ -909,24 +909,24 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                          t2
-                          t3))
+                          t_2
+                          t_3))
                       (substitution
                         (l (Expr "(struct s){u, v}"))
                         (f (Field "x"))
                         (x (Expr "u"))
-                        t13))))
+                        t_13))))
                 (substitution
                   (s (Stmt "*sp = (struct s){u, v}"))
                   (v (Expr "sp"))
                   (u (Expr "(struct s){u, v}"))
-                  t9
-                  t13)))
-            (Fiat (= t14 t14)))
+                  t_9
+                  t_13)))
+            (Fiat (= t_14 t_14)))
           (substitution
             (u (Expr "r"))
-            t9
-            t13
+            t_9
+            t_13
             (e (Expr "&(r->y)"))
             (f (Field "y"))))))
     (substitution
@@ -937,36 +937,36 @@ expression: proof_snapshot
       (a (expr-points-to (Expr "u"))))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (func
                     (Func "swap")
                     (Expr "r")
                     (Type "void")
                     (Type "{int *x; int *y;}*")))
-(let t5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
-(let t6
+(let t_5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
+(let t_6
   (assign
                         (Stmt "struct s *sp = malloc(sizeof(struct s))")
                         (Type "struct s*")
                         (Expr "sp")
                         (Expr "malloc(sizeof(struct s))")))
-(let t7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let prf0
+(let t_7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let prf
   (Rule
                 (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
                 (name
@@ -974,27 +974,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-                (premises (Fiat (= t6 t6)) (Fiat (= t7 t7)))
+                (premises (Fiat (= t_6 t_6)) (Fiat (= t_7 t_7)))
                 (substitution
                   (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
                   (t1 (Type "struct s*"))
                   (v (Expr "sp"))
                   (c (Expr "malloc(sizeof(struct s))"))
                   (t2 (Type "struct s")))))
-(let t8 (a (expr-points-to (Expr "sp"))))
-(let t9 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t10
+(let t_8 (a (expr-points-to (Expr "sp"))))
+(let t_9 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_10
   (store
                     (Stmt "*sp = (struct s){u, v}")
                     (Expr "sp")
                     (Expr "(struct s){u, v}")))
-(let t11
+(let t_11
   (struct-lit-field
                           (Expr "(struct s){u, v}")
                           (Field "x")
                           (Expr "u")))
-(let t12 (b (expr-points-to (Expr "u"))))
-(let t13 (addr (Expr "&(r->y)") (Expr "r") (Field "y")))
+(let t_12 (b (expr-points-to (Expr "u"))))
+(let t_13 (addr (Expr "&(r->y)") (Expr "r") (Field "y")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "&(r->y)")))
   (Sym
@@ -1006,8 +1006,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "&(r->y)")))
     (name
@@ -1027,7 +1027,7 @@ expression: proof_snapshot
        (= (expr-points-to v) a))
       ((union (expr-points-to x) a))
          )")
-          (premises (Fiat (= t4 t4)) (Fiat (= t5 t5)) prf0)
+          (premises (Fiat (= t_4 t_4)) (Fiat (= t_5 t_5)) prf)
           (substitution
             (f (Func "swap"))
             (x (Expr "r"))
@@ -1035,11 +1035,11 @@ expression: proof_snapshot
             (out (Type "{int *x; int *y;}*"))
             (e (Expr "swap(sp)"))
             (v (Expr "sp"))
-            t8)))
+            t_8)))
       (Sym
-        (= t9 (expr-points-to (Expr "u")))
+        (= t_9 (expr-points-to (Expr "u")))
         (Rule
-          (= (expr-points-to (Expr "u")) t9)
+          (= (expr-points-to (Expr "u")) t_9)
           (name
             "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -1047,8 +1047,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
           (premises
-            (Fiat (= t10 t10))
-            prf0
+            (Fiat (= t_10 t_10))
+            prf
             (Sym
               (=
                 (expr-points-to (Expr "(struct s){u, v}"))
@@ -1063,7 +1063,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                 (premises
-                  (Fiat (= t11 t11))
+                  (Fiat (= t_11 t_11))
                   (Rule
                     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
                     (name
@@ -1071,30 +1071,30 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                    t2
-                    t3))
+                    t_2
+                    t_3))
                 (substitution
                   (l (Expr "(struct s){u, v}"))
                   (f (Field "x"))
                   (x (Expr "u"))
-                  t12))))
+                  t_12))))
           (substitution
             (s (Stmt "*sp = (struct s){u, v}"))
             (v (Expr "sp"))
             (u (Expr "(struct s){u, v}"))
-            t8
-            t12)))
-      (Fiat (= t13 t13)))
-    (substitution (u (Expr "r")) t8 t12 (e (Expr "&(r->y)")) (f (Field "y")))))
+            t_8
+            t_12)))
+      (Fiat (= t_13 t_13)))
+    (substitution (u (Expr "r")) t_8 t_12 (e (Expr "&(r->y)")) (f (Field "y")))))
 )
 (
-(let t0
+(let t
   (assign
               (Stmt "int *u = malloc(sizeof(int))")
               (Type "int *")
               (Expr "u")
               (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
 (Sym
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "u")))
   (Rule
@@ -1104,7 +1104,7 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-    (premises (Fiat (= t0 t0)) (Fiat (= t1 t1)))
+    (premises (Fiat (= t t)) (Fiat (= t_1 t_1)))
     (substitution
       (s (Stmt "int *u = malloc(sizeof(int))"))
       (t1 (Type "int *"))
@@ -1113,29 +1113,29 @@ expression: proof_snapshot
       (t2 (Type "int")))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let prf0 (Fiat (= t1 t1)))
-(let t2 (premises (Fiat (= t0 t0)) prf0))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let prf (Fiat (= t_1 t_1)))
+(let t_2 (premises (Fiat (= t t)) prf))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4 (struct-lit-field (Expr "(struct s){u, v}") (Field "x") (Expr "u")))
-(let t5
+(let t_4 (struct-lit-field (Expr "(struct s){u, v}") (Field "x") (Expr "u")))
+(let t_5
   (struct-lit-field
                   (Expr "(struct s){u, v}")
                   (Field "y")
                   (Expr "v")))
-(let t6
+(let t_6
   (assign
                       (Stmt "int *v = malloc(sizeof(int))")
                       (Type "int *")
@@ -1152,8 +1152,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Trans
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "v")))
     (Rule
@@ -1164,7 +1164,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
       (premises
-        (Fiat (= t4 t4))
+        (Fiat (= t_4 t_4))
         (Rule
           (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
           (name
@@ -1172,8 +1172,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-          t2
-          t3))
+          t_2
+          t_3))
       (substitution
         (l (Expr "(struct s){u, v}"))
         (f (Field "x"))
@@ -1191,7 +1191,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
         (premises
-          (Fiat (= t5 t5))
+          (Fiat (= t_5 t_5))
           (Rule
             (= (expr-points-to (Expr "v")) (expr-points-to (Expr "v")))
             (name
@@ -1199,7 +1199,7 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-            (premises (Fiat (= t6 t6)) prf0)
+            (premises (Fiat (= t_6 t_6)) prf)
             (substitution
               (s (Stmt "int *v = malloc(sizeof(int))"))
               (t1 (Type "int *"))
@@ -1213,22 +1213,22 @@ expression: proof_snapshot
           (b (expr-points-to (Expr "v"))))))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4 (struct-lit-field (Expr "(struct s){u, v}") (Field "x") (Expr "u")))
+(let t_4 (struct-lit-field (Expr "(struct s){u, v}") (Field "x") (Expr "u")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "(struct s){u, v}")))
   (Sym
@@ -1240,8 +1240,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "(struct s){u, v}")))
     (name
@@ -1250,7 +1250,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
     (premises
-      (Fiat (= t4 t4))
+      (Fiat (= t_4 t_4))
       (Rule
         (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
         (name
@@ -1258,8 +1258,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-        t2
-        t3))
+        t_2
+        t_3))
     (substitution
       (l (Expr "(struct s){u, v}"))
       (f (Field "x"))
@@ -1267,35 +1267,35 @@ expression: proof_snapshot
       (b (expr-points-to (Expr "u"))))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (assign
               (Stmt "int **zpp = &(sp->x)")
               (Type "int **")
               (Expr "zpp")
               (Expr "&(sp->x)")))
-(let t5
+(let t_5
   (assign
                         (Stmt "struct s *sp = malloc(sizeof(struct s))")
                         (Type "struct s*")
                         (Expr "sp")
                         (Expr "malloc(sizeof(struct s))")))
-(let t6 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let prf0
+(let t_6 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let prf
   (Rule
                 (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
                 (name
@@ -1303,27 +1303,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-                (premises (Fiat (= t5 t5)) (Fiat (= t6 t6)))
+                (premises (Fiat (= t_5 t_5)) (Fiat (= t_6 t_6)))
                 (substitution
                   (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
                   (t1 (Type "struct s*"))
                   (v (Expr "sp"))
                   (c (Expr "malloc(sizeof(struct s))"))
                   (t2 (Type "struct s")))))
-(let t7 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t8
+(let t_7 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_8
   (store
                           (Stmt "*sp = (struct s){u, v}")
                           (Expr "sp")
                           (Expr "(struct s){u, v}")))
-(let t9
+(let t_9
   (struct-lit-field
                                 (Expr "(struct s){u, v}")
                                 (Field "x")
                                 (Expr "u")))
-(let t10 (b (expr-points-to (Expr "u"))))
-(let t11 (a (expr-points-to (Expr "sp"))))
-(let t12 (addr (Expr "&(sp->x)") (Expr "sp") (Field "x")))
+(let t_10 (b (expr-points-to (Expr "u"))))
+(let t_11 (a (expr-points-to (Expr "sp"))))
+(let t_12 (addr (Expr "&(sp->x)") (Expr "sp") (Field "x")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "zpp")))
   (Sym
@@ -1335,8 +1335,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "zpp")))
     (name
@@ -1345,7 +1345,7 @@ expression: proof_snapshot
       ((union (expr-points-to v) a))
          )")
     (premises
-      (Fiat (= t4 t4))
+      (Fiat (= t_4 t_4))
       (Sym
         (= (expr-points-to (Expr "&(sp->x)")) (expr-points-to (Expr "u")))
         (Rule
@@ -1357,11 +1357,11 @@ expression: proof_snapshot
       ((union (expr-points-to e) b))
          )")
           (premises
-            prf0
+            prf
             (Sym
-              (= t7 (expr-points-to (Expr "u")))
+              (= t_7 (expr-points-to (Expr "u")))
               (Rule
-                (= (expr-points-to (Expr "u")) t7)
+                (= (expr-points-to (Expr "u")) t_7)
                 (name
                   "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -1369,8 +1369,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
                 (premises
-                  (Fiat (= t8 t8))
-                  prf0
+                  (Fiat (= t_8 t_8))
+                  prf
                   (Sym
                     (=
                       (expr-points-to (Expr "(struct s){u, v}"))
@@ -1385,7 +1385,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                       (premises
-                        (Fiat (= t9 t9))
+                        (Fiat (= t_9 t_9))
                         (Rule
                           (=
                             (expr-points-to (Expr "u"))
@@ -1395,24 +1395,24 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                          t2
-                          t3))
+                          t_2
+                          t_3))
                       (substitution
                         (l (Expr "(struct s){u, v}"))
                         (f (Field "x"))
                         (x (Expr "u"))
-                        t10))))
+                        t_10))))
                 (substitution
                   (s (Stmt "*sp = (struct s){u, v}"))
                   (v (Expr "sp"))
                   (u (Expr "(struct s){u, v}"))
-                  t11
-                  t10)))
-            (Fiat (= t12 t12)))
+                  t_11
+                  t_10)))
+            (Fiat (= t_12 t_12)))
           (substitution
             (u (Expr "sp"))
-            t11
-            t10
+            t_11
+            t_10
             (e (Expr "&(sp->x)"))
             (f (Field "x"))))))
     (substitution
@@ -1423,29 +1423,29 @@ expression: proof_snapshot
       (a (expr-points-to (Expr "u"))))))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t4
+(let t_4
   (assign
                   (Stmt "struct s *sp = malloc(sizeof(struct s))")
                   (Type "struct s*")
                   (Expr "sp")
                   (Expr "malloc(sizeof(struct s))")))
-(let t5 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let prf0
+(let t_5 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let prf
   (Rule
           (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
           (name
@@ -1453,27 +1453,27 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-          (premises (Fiat (= t4 t4)) (Fiat (= t5 t5)))
+          (premises (Fiat (= t_4 t_4)) (Fiat (= t_5 t_5)))
           (substitution
             (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
             (t1 (Type "struct s*"))
             (v (Expr "sp"))
             (c (Expr "malloc(sizeof(struct s))"))
             (t2 (Type "struct s")))))
-(let t6 (ptr-points-to (expr-points-to (Expr "sp"))))
-(let t7
+(let t_6 (ptr-points-to (expr-points-to (Expr "sp"))))
+(let t_7
   (store
                     (Stmt "*sp = (struct s){u, v}")
                     (Expr "sp")
                     (Expr "(struct s){u, v}")))
-(let t8
+(let t_8
   (struct-lit-field
                           (Expr "(struct s){u, v}")
                           (Field "x")
                           (Expr "u")))
-(let t9 (b (expr-points-to (Expr "u"))))
-(let t10 (a (expr-points-to (Expr "sp"))))
-(let t11 (addr (Expr "&(sp->x)") (Expr "sp") (Field "x")))
+(let t_9 (b (expr-points-to (Expr "u"))))
+(let t_10 (a (expr-points-to (Expr "sp"))))
+(let t_11 (addr (Expr "&(sp->x)") (Expr "sp") (Field "x")))
 (Trans
   (= (AllocVar (Expr "u")) (expr-points-to (Expr "&(sp->x)")))
   (Sym
@@ -1485,8 +1485,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "&(sp->x)")))
     (name
@@ -1496,11 +1496,11 @@ expression: proof_snapshot
       ((union (expr-points-to e) b))
          )")
     (premises
-      prf0
+      prf
       (Sym
-        (= t6 (expr-points-to (Expr "u")))
+        (= t_6 (expr-points-to (Expr "u")))
         (Rule
-          (= (expr-points-to (Expr "u")) t6)
+          (= (expr-points-to (Expr "u")) t_6)
           (name
             "(rule ((store s v u)
        (= (expr-points-to v) a)
@@ -1508,8 +1508,8 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
           (premises
-            (Fiat (= t7 t7))
-            prf0
+            (Fiat (= t_7 t_7))
+            prf
             (Sym
               (=
                 (expr-points-to (Expr "(struct s){u, v}"))
@@ -1524,7 +1524,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
                 (premises
-                  (Fiat (= t8 t8))
+                  (Fiat (= t_8 t_8))
                   (Rule
                     (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
                     (name
@@ -1532,67 +1532,72 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                    t2
-                    t3))
+                    t_2
+                    t_3))
                 (substitution
                   (l (Expr "(struct s){u, v}"))
                   (f (Field "x"))
                   (x (Expr "u"))
-                  t9))))
+                  t_9))))
           (substitution
             (s (Stmt "*sp = (struct s){u, v}"))
             (v (Expr "sp"))
             (u (Expr "(struct s){u, v}"))
-            t10
-            t9)))
-      (Fiat (= t11 t11)))
-    (substitution (u (Expr "sp")) t10 t9 (e (Expr "&(sp->x)")) (f (Field "x")))))
+            t_10
+            t_9)))
+      (Fiat (= t_11 t_11)))
+    (substitution
+      (u (Expr "sp"))
+      t_10
+      t_9
+      (e (Expr "&(sp->x)"))
+      (f (Field "x")))))
 )
 (
-(let t0 (ptr-points-to (AllocVar (Expr "sp"))))
-(let t1
+(let t (ptr-points-to (AllocVar (Expr "sp"))))
+(let t_1
   (assign
                 (Stmt "int *u = malloc(sizeof(int))")
                 (Type "int *")
                 (Expr "u")
                 (Expr "malloc(sizeof(int))")))
-(let t2 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
-(let t3 (premises (Fiat (= t1 t1)) (Fiat (= t2 t2))))
-(let t4
+(let t_2 (malloc (Expr "malloc(sizeof(int))") (Type "int")))
+(let t_3 (premises (Fiat (= t_1 t_1)) (Fiat (= t_2 t_2))))
+(let t_4
   (substitution
           (s (Stmt "int *u = malloc(sizeof(int))"))
           (t1 (Type "int *"))
           (v (Expr "u"))
           (c (Expr "malloc(sizeof(int))"))
           (t2 (Type "int"))))
-(let t5
+(let t_5
   (store
                 (Stmt "*sp = (struct s){u, v}")
                 (Expr "sp")
                 (Expr "(struct s){u, v}")))
-(let t6
+(let t_6
   (assign
                     (Stmt "struct s *sp = malloc(sizeof(struct s))")
                     (Type "struct s*")
                     (Expr "sp")
                     (Expr "malloc(sizeof(struct s))")))
-(let t7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let t8 (premises (Fiat (= t6 t6)) (Fiat (= t7 t7))))
-(let t9
+(let t_7 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let t_8 (premises (Fiat (= t_6 t_6)) (Fiat (= t_7 t_7))))
+(let t_9
   (substitution
               (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
               (t1 (Type "struct s*"))
               (v (Expr "sp"))
               (c (Expr "malloc(sizeof(struct s))"))
               (t2 (Type "struct s"))))
-(let t10
+(let t_10
   (struct-lit-field
                       (Expr "(struct s){u, v}")
                       (Field "x")
                       (Expr "u")))
-(let t11 (b (expr-points-to (Expr "u"))))
+(let t_11 (b (expr-points-to (Expr "u"))))
 (Trans
-  (= (AllocVar (Expr "u")) t0)
+  (= (AllocVar (Expr "u")) t)
   (Sym
     (= (AllocVar (Expr "u")) (expr-points-to (Expr "u")))
     (Rule
@@ -1602,10 +1607,10 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t3
-      t4))
+      t_3
+      t_4))
   (Congr
-    (= (expr-points-to (Expr "u")) t0)
+    (= (expr-points-to (Expr "u")) t)
     (Rule
       (=
         (expr-points-to (Expr "u"))
@@ -1617,7 +1622,7 @@ expression: proof_snapshot
       ((union (ptr-points-to a) b))
          )")
       (premises
-        (Fiat (= t5 t5))
+        (Fiat (= t_5 t_5))
         (Rule
           (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
           (name
@@ -1625,8 +1630,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-          t8
-          t9)
+          t_8
+          t_9)
         (Sym
           (=
             (expr-points-to (Expr "(struct s){u, v}"))
@@ -1641,7 +1646,7 @@ expression: proof_snapshot
       ((union (expr-points-to l) b))
          )")
             (premises
-              (Fiat (= t10 t10))
+              (Fiat (= t_10 t_10))
               (Rule
                 (= (expr-points-to (Expr "u")) (expr-points-to (Expr "u")))
                 (name
@@ -1649,19 +1654,19 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-                t3
-                t4))
+                t_3
+                t_4))
             (substitution
               (l (Expr "(struct s){u, v}"))
               (f (Field "x"))
               (x (Expr "u"))
-              t11))))
+              t_11))))
       (substitution
         (s (Stmt "*sp = (struct s){u, v}"))
         (v (Expr "sp"))
         (u (Expr "(struct s){u, v}"))
         (a (expr-points-to (Expr "sp")))
-        t11))
+        t_11))
     (Rule
       (= (expr-points-to (Expr "sp")) (AllocVar (Expr "sp")))
       (name
@@ -1669,19 +1674,19 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t8
-      t9)
+      t_8
+      t_9)
     0))
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "struct s *sp = malloc(sizeof(struct s))")
                 (Type "struct s*")
                 (Expr "sp")
                 (Expr "malloc(sizeof(struct s))")))
-(let t1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let prf0
+(let t_1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let prf
   (Rule
         (= (expr-points-to (Expr "sp")) (AllocVar (Expr "sp")))
         (name
@@ -1689,7 +1694,7 @@ expression: proof_snapshot
          (malloc c t2))
         ((union (expr-points-to v) (AllocVar v)))
            )")
-        (premises (Fiat (= t0 t0)) (Fiat (= t1 t1)))
+        (premises (Fiat (= t t)) (Fiat (= t_1 t_1)))
         (substitution
           (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
           (t1 (Type "struct s*"))
@@ -1698,32 +1703,32 @@ expression: proof_snapshot
           (t2 (Type "struct s")))))
 (Trans
   (= (AllocVar (Expr "sp")) (AllocVar (Expr "sp")))
-  (Sym (= (AllocVar (Expr "sp")) (expr-points-to (Expr "sp"))) prf0)
-  prf0)
+  (Sym (= (AllocVar (Expr "sp")) (expr-points-to (Expr "sp"))) prf)
+  prf)
 )
 (
-(let t0
+(let t
   (assign
                 (Stmt "struct s *sp = malloc(sizeof(struct s))")
                 (Type "struct s*")
                 (Expr "sp")
                 (Expr "malloc(sizeof(struct s))")))
-(let t1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
-(let t2 (premises (Fiat (= t0 t0)) (Fiat (= t1 t1))))
-(let t3
+(let t_1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let t_2 (premises (Fiat (= t t)) (Fiat (= t_1 t_1))))
+(let t_3
   (substitution
           (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
           (t1 (Type "struct s*"))
           (v (Expr "sp"))
           (c (Expr "malloc(sizeof(struct s))"))
           (t2 (Type "struct s"))))
-(let t4
+(let t_4
   (func
               (Func "swap")
               (Expr "r")
               (Type "void")
               (Type "{int *x; int *y;}*")))
-(let t5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
+(let t_5 (call (Expr "swap(sp)") (Func "swap") (Expr "sp")))
 (Trans
   (= (AllocVar (Expr "sp")) (expr-points-to (Expr "r")))
   (Sym
@@ -1735,8 +1740,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-      t2
-      t3))
+      t_2
+      t_3))
   (Rule
     (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "r")))
     (name
@@ -1746,8 +1751,8 @@ expression: proof_snapshot
       ((union (expr-points-to x) a))
          )")
     (premises
-      (Fiat (= t4 t4))
-      (Fiat (= t5 t5))
+      (Fiat (= t_4 t_4))
+      (Fiat (= t_5 t_5))
       (Rule
         (= (expr-points-to (Expr "sp")) (expr-points-to (Expr "sp")))
         (name
@@ -1755,8 +1760,8 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-        t2
-        t3))
+        t_2
+        t_3))
     (substitution
       (f (Func "swap"))
       (x (Expr "r"))
@@ -1767,13 +1772,13 @@ expression: proof_snapshot
       (a (expr-points-to (Expr "sp"))))))
 )
 (
-(let t0
+(let t
   (assign
               (Stmt "struct s *sp = malloc(sizeof(struct s))")
               (Type "struct s*")
               (Expr "sp")
               (Expr "malloc(sizeof(struct s))")))
-(let t1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
+(let t_1 (malloc (Expr "malloc(sizeof(struct s))") (Type "struct s")))
 (Sym
   (= (AllocVar (Expr "sp")) (expr-points-to (Expr "sp")))
   (Rule
@@ -1783,7 +1788,7 @@ expression: proof_snapshot
        (malloc c t2))
       ((union (expr-points-to v) (AllocVar v)))
          )")
-    (premises (Fiat (= t0 t0)) (Fiat (= t1 t1)))
+    (premises (Fiat (= t t)) (Fiat (= t_1 t_1)))
     (substitution
       (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
       (t1 (Type "struct s*"))

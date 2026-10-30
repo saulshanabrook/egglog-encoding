@@ -12,7 +12,7 @@ racket -y src/main.rkt report --enable dump:egglog --enable generate:egglog benc
 
 They were copied from the resulting `dump-egglog/` directory. Their `rewriteN.egg` filenames retain Herbie's numbering: it assigns each new rewrite dump the first unused nonnegative integer. `rewrite16.egg` was the performance optimization target; `rewrite15.egg`, `rewrite17.egg`, `rewrite66.egg`, and `rewrite88.egg` exercise additional inputs. All five are included in the integration tests. The Herbie copyright and MIT license notice are preserved in [herbie/LICENSE](herbie/LICENSE).
 
-The dumps retain their original rules, schedules, extraction requests and rollback checks. Compatibility edits replace obsolete `(set (constN) expression)` assignments to nullary constructors with `(union (constN) expression)`. There are 2, 7, 24, 97 and 4 such edits in dumps 15, 16, 17, 66 and 88 respectively.
+The dumps retain their original rules, schedules, extraction requests and rollback checks. Compatibility edits replace obsolete `(set (constN) expression)` assignments to nullary constructors with `(union (constN) expression)`. There are 2, 7, 24, 97 and 4 such edits in dumps 15, 16, 17, 66 and 88 respectively. This fork also renames the `rewrite` ruleset to `herbie-rewrite` in declarations, rule options and schedule references because `rewrite` is reserved for the built-in command.
 
 In `rewrite17.egg`, the last bad-merge flag is intentionally `true`, followed by rollback. Expected behavior includes that flag, extraction variant multiplicity and table sizes.
 

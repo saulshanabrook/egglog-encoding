@@ -3,12 +3,12 @@ source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
 (
-(let prf0
+(let prf
   (Fiat
                       (=
                         (____disequality-eq-Other (X) (Y))
                         (____disequality-false))))
-(let prf1
+(let prf_1
   (Sym
                 (=
                   (____disequality-eq-Term (A) (A))
@@ -21,7 +21,7 @@ expression: snapshot
                     (=
                       (____disequality-eq-Other (X) (Y))
                       (____disequality-eq-Term (A) (B)))
-                    prf0
+                    prf
                     (Sym
                       (=
                         (____disequality-false)
@@ -50,9 +50,9 @@ expression: snapshot
         (premises
           (Trans
             (= (____disequality-eq-Term (A) (A)) (____disequality-false))
-            prf1
-            prf0))
+            prf_1
+            prf))
         (substitution (x (A)) (y (A)))))
-    prf1)
-  prf0)
+    prf_1)
+  prf)
 )

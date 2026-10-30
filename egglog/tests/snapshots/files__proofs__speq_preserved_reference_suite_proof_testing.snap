@@ -3,96 +3,96 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (parseIR_array (parseIR_Val_name "%y_vals") 1 (parseIR_Val_name "Real")))
-(let t1
+(let t (parseIR_array (parseIR_Val_name "%y_vals") 1 (parseIR_Val_name "Real")))
+(let t_1
   (parseIR_lt
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t2
+(let t_2
   (parseIR_select1
-                      t0
+                      t
                       (parseIR__int (parseIR_Val_int "%iA.02.dense"))))
-(let t3
+(let t_3
   (parseIR_add
                           (parseIR_mul
                             (parseIR__int (parseIR_Val_int "%iA.02.dense"))
                             (parseIR__int (parseIR_Val_int "%7.dense")))
                           (parseIR__int (parseIR_Val_int "%j.04"))))
-(let t4
+(let t_4
   (parseIR_select1
                         (parseIR_array
                           (parseIR_Val_name "%A_vals.dense")
                           1
                           (parseIR_Val_name "Real"))
-                        t3))
-(let t5
+                        t_3))
+(let t_5
   (parseIR_select1
                         (parseIR_array
                           (parseIR_Val_name "%x_vals")
                           1
                           (parseIR_Val_name "Real"))
                         (parseIR__int (parseIR_Val_int "%j.04"))))
-(let t6 (parseIR_mul t4 t5))
-(let t7 (parseIR_add t2 t6))
-(let t8
+(let t_6 (parseIR_mul t_4 t_5))
+(let t_7 (parseIR_add t_2 t_6))
+(let t_8
   (parseIR_store1
-                  t0
+                  t
                   (parseIR__int (parseIR_Val_int "%iA.02.dense"))
-                  t7))
-(let t9
+                  t_7))
+(let t_9
   (parseIR_abstraction1
-                t0
+                t
                 (parseIR__int (parseIR_Val_int "%iA.02.dense"))
-                t8))
-(let t10
+                t_8))
+(let t_10
   (parseIR_fold
               (parseIR_Val_name "%for.body5.dense")
-              t9
-              t0
+              t_9
+              t
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t11 (parseIR_ifthenelse t1 t10 t0))
-(let t12 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%j.04")) t11))
-(let t13
+(let t_11 (parseIR_ifthenelse t_1 t_10 t))
+(let t_12 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%j.04")) t_11))
+(let t_13
   (parseIR_fold
         (parseIR_Val_name "%for.body")
-        t12
-        t0
+        t_12
+        t
         (parseIR_constant_int (parseIR_Val_constant_int 0))
         (parseIR__int (parseIR_Val_int "%x1_dimension"))))
-(let t14
+(let t_14
   (parseIR_gt
                   (parseIR__int (parseIR_Val_int "%7.dense"))
                   (parseIR_constant_int (parseIR_Val_constant_int 0))))
-(let t15
+(let t_15
   (parseIR_mul
-                            t4
+                            t_4
                             (parseIR_constant_real
                               (parseIR_Val_constant_real 1.0))))
-(let t16 (parseIR_mul t15 t5))
-(let t17 (parseIR_add t2 t16))
-(let t18
+(let t_16 (parseIR_mul t_15 t_5))
+(let t_17 (parseIR_add t_2 t_16))
+(let t_18
   (parseIR_store1
-                      t0
+                      t
                       (parseIR__int (parseIR_Val_int "%iA.02.dense"))
-                      t17))
-(let t19
+                      t_17))
+(let t_19
   (parseIR_abstraction1
-                    t0
+                    t
                     (parseIR__int (parseIR_Val_int "%iA.02.dense"))
-                    t18))
-(let t20
+                    t_18))
+(let t_20
   (parseIR_fold
                   (parseIR_Val_name "%for.body5.dense")
-                  t19
-                  t0
+                  t_19
+                  t
                   (parseIR_constant_int (parseIR_Val_constant_int 0))
                   (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t21 (parseIR_ifthenelse t14 t20 t0))
-(let t22 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%j.04")) t21))
+(let t_21 (parseIR_ifthenelse t_14 t_20 t))
+(let t_22 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%j.04")) t_21))
 (Rule
   (=
-    t13
+    t_13
     (gemv
       (parseIR_Val_name "%for.body")
       (parseIR__int (parseIR_Val_int "%7.dense"))
@@ -107,57 +107,57 @@ expression: proof_snapshot
   (premises
     (Congr
       (=
-        t13
+        t_13
         (parseIR_fold
           (parseIR_Val_name "%for.body")
-          t22
-          t0
+          t_22
+          t
           (parseIR_constant_int (parseIR_Val_constant_int 0))
           (parseIR__int (parseIR_Val_int "%x1_dimension"))))
-      (Fiat (= t13 t13))
+      (Fiat (= t_13 t_13))
       (Congr
-        (= t12 t22)
-        (Fiat (= t12 t12))
+        (= t_12 t_22)
+        (Fiat (= t_12 t_12))
         (Congr
-          (= t11 t21)
+          (= t_11 t_21)
           (Congr
-            (= t11 (parseIR_ifthenelse t14 t10 t0))
-            (Fiat (= t11 t11))
+            (= t_11 (parseIR_ifthenelse t_14 t_10 t))
+            (Fiat (= t_11 t_11))
             (Rule
-              (= t1 t14)
+              (= t_1 t_14)
               (name
                 "(rewrite (parseIR_lt _a _b) (parseIR_gt _b _a) :ruleset parseIR.transform-taco-spmv-csc)")
-              (premises (Fiat (= t1 t1)))
+              (premises (Fiat (= t_1 t_1)))
               (substitution
-                (@rewrite_var__39 t1)
+                (@rewrite_var___39 t_1)
                 (_a (parseIR_constant_int (parseIR_Val_constant_int 0)))
                 (_b (parseIR__int (parseIR_Val_int "%7.dense")))))
             0)
           (Congr
-            (= t10 t20)
-            (Fiat (= t10 t10))
+            (= t_10 t_20)
+            (Fiat (= t_10 t_10))
             (Congr
-              (= t9 t19)
-              (Fiat (= t9 t9))
+              (= t_9 t_19)
+              (Fiat (= t_9 t_9))
               (Congr
-                (= t8 t18)
-                (Fiat (= t8 t8))
+                (= t_8 t_18)
+                (Fiat (= t_8 t_8))
                 (Congr
-                  (= t7 t17)
-                  (Fiat (= t7 t7))
+                  (= t_7 t_17)
+                  (Fiat (= t_7 t_7))
                   (Congr
-                    (= t6 t16)
-                    (Fiat (= t6 t6))
+                    (= t_6 t_16)
+                    (Fiat (= t_6 t_6))
                     (Rule
-                      (= t4 t15)
+                      (= t_4 t_15)
                       (name
                         "(rewrite (parseIR_select1 (parseIR_array _C 1 _t) _i) (parseIR_mul (parseIR_select1 (parseIR_array _C 1 _t) _i) (parseIR_constant_real (parseIR_Val_constant_real 1.0))) :ruleset parseIR.expand-taco-spmv-csc)")
-                      (premises (Fiat (= t4 t4)))
+                      (premises (Fiat (= t_4 t_4)))
                       (substitution
-                        (@rewrite_var__46 t4)
+                        (@rewrite_var___46 t_4)
                         (_C (parseIR_Val_name "%A_vals.dense"))
                         (_t (parseIR_Val_name "Real"))
-                        (_i t3)))
+                        (_i t_3)))
                     0)
                   1)
                 2)
@@ -167,7 +167,7 @@ expression: proof_snapshot
         2)
       1))
   (substitution
-    (@rewrite_var__44 t13)
+    (@rewrite_var___44 t_13)
     (_root (parseIR_Val_name "%for.body"))
     (_%y (parseIR_Val_name "%y_vals"))
     (_%j.04 (parseIR__int (parseIR_Val_int "%j.04")))
@@ -181,96 +181,96 @@ expression: proof_snapshot
     (_%n (parseIR__int (parseIR_Val_int "%x1_dimension")))))
 )
 (
-(let t0 (parseIR_array (parseIR_Val_name "%y") 1 (parseIR_Val_name "Real")))
-(let t1
+(let t (parseIR_array (parseIR_Val_name "%y") 1 (parseIR_Val_name "Real")))
+(let t_1
   (parseIR_lt
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t2
+(let t_2
   (parseIR_select1
-                      t0
+                      t
                       (parseIR__int (parseIR_Val_int "%p.02.dense"))))
-(let t3
+(let t_3
   (parseIR_add
                           (parseIR_mul
                             (parseIR__int (parseIR_Val_int "%p.02.dense"))
                             (parseIR__int (parseIR_Val_int "%7.dense")))
                           (parseIR__int (parseIR_Val_int "%j.05"))))
-(let t4
+(let t_4
   (parseIR_select1
                         (parseIR_array
                           (parseIR_Val_name "%Ax.dense")
                           1
                           (parseIR_Val_name "Real"))
-                        t3))
-(let t5
+                        t_3))
+(let t_5
   (parseIR_select1
                         (parseIR_array
                           (parseIR_Val_name "%x")
                           1
                           (parseIR_Val_name "Real"))
                         (parseIR__int (parseIR_Val_int "%j.05"))))
-(let t6 (parseIR_mul t4 t5))
-(let t7 (parseIR_add t2 t6))
-(let t8
+(let t_6 (parseIR_mul t_4 t_5))
+(let t_7 (parseIR_add t_2 t_6))
+(let t_8
   (parseIR_store1
-                  t0
+                  t
                   (parseIR__int (parseIR_Val_int "%p.02.dense"))
-                  t7))
-(let t9
+                  t_7))
+(let t_9
   (parseIR_abstraction1
-                t0
+                t
                 (parseIR__int (parseIR_Val_int "%p.02.dense"))
-                t8))
-(let t10
+                t_8))
+(let t_10
   (parseIR_fold
               (parseIR_Val_name "%for.body4.dense")
-              t9
-              t0
+              t_9
+              t
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t11 (parseIR_ifthenelse t1 t10 t0))
-(let t12 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%j.05")) t11))
-(let t13
+(let t_11 (parseIR_ifthenelse t_1 t_10 t))
+(let t_12 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%j.05")) t_11))
+(let t_13
   (parseIR_fold
         (parseIR_Val_name "%for.body")
-        t12
-        t0
+        t_12
+        t
         (parseIR_constant_int (parseIR_Val_constant_int 0))
         (parseIR__int (parseIR_Val_int "%n"))))
-(let t14
+(let t_14
   (parseIR_gt
                   (parseIR__int (parseIR_Val_int "%7.dense"))
                   (parseIR_constant_int (parseIR_Val_constant_int 0))))
-(let t15
+(let t_15
   (parseIR_mul
-                            t4
+                            t_4
                             (parseIR_constant_real
                               (parseIR_Val_constant_real 1.0))))
-(let t16 (parseIR_mul t15 t5))
-(let t17 (parseIR_add t2 t16))
-(let t18
+(let t_16 (parseIR_mul t_15 t_5))
+(let t_17 (parseIR_add t_2 t_16))
+(let t_18
   (parseIR_store1
-                      t0
+                      t
                       (parseIR__int (parseIR_Val_int "%p.02.dense"))
-                      t17))
-(let t19
+                      t_17))
+(let t_19
   (parseIR_abstraction1
-                    t0
+                    t
                     (parseIR__int (parseIR_Val_int "%p.02.dense"))
-                    t18))
-(let t20
+                    t_18))
+(let t_20
   (parseIR_fold
                   (parseIR_Val_name "%for.body4.dense")
-                  t19
-                  t0
+                  t_19
+                  t
                   (parseIR_constant_int (parseIR_Val_constant_int 0))
                   (parseIR__int (parseIR_Val_int "%7.dense"))))
-(let t21 (parseIR_ifthenelse t14 t20 t0))
-(let t22 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%j.05")) t21))
+(let t_21 (parseIR_ifthenelse t_14 t_20 t))
+(let t_22 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%j.05")) t_21))
 (Rule
   (=
-    t13
+    t_13
     (gemv
       (parseIR_Val_name "%for.body")
       (parseIR__int (parseIR_Val_int "%7.dense"))
@@ -285,57 +285,57 @@ expression: proof_snapshot
   (premises
     (Congr
       (=
-        t13
+        t_13
         (parseIR_fold
           (parseIR_Val_name "%for.body")
-          t22
-          t0
+          t_22
+          t
           (parseIR_constant_int (parseIR_Val_constant_int 0))
           (parseIR__int (parseIR_Val_int "%n"))))
-      (Fiat (= t13 t13))
+      (Fiat (= t_13 t_13))
       (Congr
-        (= t12 t22)
-        (Fiat (= t12 t12))
+        (= t_12 t_22)
+        (Fiat (= t_12 t_12))
         (Congr
-          (= t11 t21)
+          (= t_11 t_21)
           (Congr
-            (= t11 (parseIR_ifthenelse t14 t10 t0))
-            (Fiat (= t11 t11))
+            (= t_11 (parseIR_ifthenelse t_14 t_10 t))
+            (Fiat (= t_11 t_11))
             (Rule
-              (= t1 t14)
+              (= t_1 t_14)
               (name
                 "(rewrite (parseIR_lt _a _b) (parseIR_gt _b _a) :ruleset parseIR.transform-csparse-spmv-csc-nostruct)")
-              (premises (Fiat (= t1 t1)))
+              (premises (Fiat (= t_1 t_1)))
               (substitution
-                (@rewrite_var__64 t1)
+                (@rewrite_var___64 t_1)
                 (_a (parseIR_constant_int (parseIR_Val_constant_int 0)))
                 (_b (parseIR__int (parseIR_Val_int "%7.dense")))))
             0)
           (Congr
-            (= t10 t20)
-            (Fiat (= t10 t10))
+            (= t_10 t_20)
+            (Fiat (= t_10 t_10))
             (Congr
-              (= t9 t19)
-              (Fiat (= t9 t9))
+              (= t_9 t_19)
+              (Fiat (= t_9 t_9))
               (Congr
-                (= t8 t18)
-                (Fiat (= t8 t8))
+                (= t_8 t_18)
+                (Fiat (= t_8 t_8))
                 (Congr
-                  (= t7 t17)
-                  (Fiat (= t7 t7))
+                  (= t_7 t_17)
+                  (Fiat (= t_7 t_7))
                   (Congr
-                    (= t6 t16)
-                    (Fiat (= t6 t6))
+                    (= t_6 t_16)
+                    (Fiat (= t_6 t_6))
                     (Rule
-                      (= t4 t15)
+                      (= t_4 t_15)
                       (name
                         "(rewrite (parseIR_select1 (parseIR_array _C 1 _t) _i) (parseIR_mul (parseIR_select1 (parseIR_array _C 1 _t) _i) (parseIR_constant_real (parseIR_Val_constant_real 1.0))) :ruleset parseIR.expand-csparse-spmv-csc-nostruct)")
-                      (premises (Fiat (= t4 t4)))
+                      (premises (Fiat (= t_4 t_4)))
                       (substitution
-                        (@rewrite_var__71 t4)
+                        (@rewrite_var___71 t_4)
                         (_C (parseIR_Val_name "%Ax.dense"))
                         (_t (parseIR_Val_name "Real"))
-                        (_i t3)))
+                        (_i t_3)))
                     0)
                   1)
                 2)
@@ -345,7 +345,7 @@ expression: proof_snapshot
         2)
       1))
   (substitution
-    (@rewrite_var__69 t13)
+    (@rewrite_var___69 t_13)
     (_root (parseIR_Val_name "%for.body"))
     (_%y (parseIR_Val_name "%y"))
     (_%j.04 (parseIR__int (parseIR_Val_int "%j.05")))
@@ -359,36 +359,36 @@ expression: proof_snapshot
     (_%n (parseIR__int (parseIR_Val_int "%n")))))
 )
 (
-(let t0
+(let t
   (parseIR_array
             (parseIR_Val_name "%work_buff")
             1
             (parseIR_Val_name "Int")))
-(let t1
+(let t_1
   (parseIR_select1
               (parseIR_array
                 (parseIR_Val_name "%key_buff_ptr2")
                 1
                 (parseIR_Val_name "Int"))
               (parseIR__int (parseIR_Val_int "%i.02"))))
-(let t2
+(let t_2
   (parseIR_fold
         (parseIR_Val_name "%for.body")
         (parseIR_abstraction1
-          t0
+          t
           (parseIR__int (parseIR_Val_int "%i.02"))
           (parseIR_store1
-            t0
-            t1
+            t
+            t_1
             (parseIR_add
-              (parseIR_select1 t0 t1)
+              (parseIR_select1 t t_1)
               (parseIR_constant_int (parseIR_Val_constant_int 1)))))
-        t0
+        t
         (parseIR_constant_int (parseIR_Val_constant_int 0))
         (parseIR__int (parseIR_Val_int "%NUM_KEYS"))))
 (Rule
   (=
-    t2
+    t_2
     (histogram
       (parseIR_Val_name "%for.body")
       (parseIR__int (parseIR_Val_int "%NUM_KEYS"))
@@ -397,9 +397,9 @@ expression: proof_snapshot
       (parseIR_constant_int (parseIR_Val_constant_int 1))))
   (name
     "(rewrite (parseIR_fold _root (parseIR_abstraction1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) _%i.02 (parseIR_store1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_select1 (parseIR_array _%key 1 (parseIR_Val_name 'Int')) _%i.02) (parseIR_add (parseIR_select1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_select1 (parseIR_array _%key 1 (parseIR_Val_name 'Int')) _%i.02)) _%add))) (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_constant_int (parseIR_Val_constant_int 0)) _%N) (histogram _root _%N _%buckets _%key _%add) :ruleset parseIR.transform-npb-is-hist)")
-  (premises (Fiat (= t2 t2)))
+  (premises (Fiat (= t_2 t_2)))
   (substitution
-    (@rewrite_var__95 t2)
+    (@rewrite_var___95 t_2)
     (_root (parseIR_Val_name "%for.body"))
     (_%buckets (parseIR_Val_name "%work_buff"))
     (_%i.02 (parseIR__int (parseIR_Val_int "%i.02")))
@@ -408,154 +408,154 @@ expression: proof_snapshot
     (_%N (parseIR__int (parseIR_Val_int "%NUM_KEYS")))))
 )
 (
-(let t0 (parseIR_array (parseIR_Val_name "%call4") 1 (parseIR_Val_name "Int")))
-(let t1
+(let t (parseIR_array (parseIR_Val_name "%call4") 1 (parseIR_Val_name "Int")))
+(let t_1
   (parseIR__eq
               (parseIR__int (parseIR_Val_int "%mul"))
               (parseIR_constant_int (parseIR_Val_constant_int 0))))
-(let t2
+(let t_2
   (parseIR_select1
                         (parseIR_array
                           (parseIR_Val_name "%call")
                           1
                           (parseIR_Val_name "Int"))
                         (parseIR__int (parseIR_Val_int "%i.02"))))
-(let t3 (parseIR_select1 t0 t2))
-(let t4
+(let t_3 (parseIR_select1 t t_2))
+(let t_4
   (parseIR__eq
-                    t3
+                    t_3
                     (parseIR_constant_int (parseIR_Val_constant_int -1))))
-(let t5
+(let t_5
   (parseIR_add
-                      t3
+                      t_3
                       (parseIR_constant_int (parseIR_Val_constant_int 1))))
-(let t6 (parseIR_ifthenelse t4 (parseIR_store1 t0 t2 t5) t0))
-(let t7
+(let t_6 (parseIR_ifthenelse t_4 (parseIR_store1 t t_2 t_5) t))
+(let t_7
   (parseIR_abstraction1
-                t0
+                t
                 (parseIR__int (parseIR_Val_int "%i.02"))
-                t6))
-(let t8
+                t_6))
+(let t_8
   (parseIR_fold
               (parseIR_Val_name "%for.body13")
-              t7
-              t0
+              t_7
+              t
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%mul"))))
-(let t9
+(let t_9
   (parseIR_memset
               (parseIR__int (parseIR_Val_int "%call4"))
               (parseIR_constant_int (parseIR_Val_constant_int 0))
               (parseIR__int (parseIR_Val_int "%conv3"))))
-(let t10 (parseIR_ifthenelse t1 t8 t9))
-(let t11 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%iter.04")) t10))
-(let t12 (parseIR_array (parseIR_Val_name "%call4.2") 1 (parseIR_Val_name "Int")))
-(let t13
+(let t_10 (parseIR_ifthenelse t_1 t_8 t_9))
+(let t_11 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%iter.04")) t_10))
+(let t_12 (parseIR_array (parseIR_Val_name "%call4.2") 1 (parseIR_Val_name "Int")))
+(let t_13
   (parseIR_fold
         (parseIR_Val_name "%for.body")
-        t11
-        t12
+        t_11
+        t_12
         (parseIR_constant_int (parseIR_Val_constant_int 0))
         (parseIR__int (parseIR_Val_int "%numIterations"))))
-(let t14
+(let t_14
   (parseIR_ifthenelse
-                t4
+                t_4
                 (parseIR_constant_int (parseIR_Val_constant_int 1))
                 (parseIR_constant_real (parseIR_Val_constant_real 0.0))))
-(let t15
+(let t_15
   (histogram
               (parseIR_Val_name "%for.body13")
               (parseIR__int (parseIR_Val_int "%mul"))
               (parseIR_Val_name "%call4")
               (parseIR_Val_name "%call")
-              t14))
-(let t16 (parseIR_ifthenelse t1 t15 t9))
-(let t17 (parseIR_abstraction1 t0 (parseIR__int (parseIR_Val_int "%iter.04")) t16))
-(let t18 (parseIR_add t3 t14))
-(let t19 (parseIR_store1 t0 t2 t18))
-(let t20
+              t_14))
+(let t_16 (parseIR_ifthenelse t_1 t_15 t_9))
+(let t_17 (parseIR_abstraction1 t (parseIR__int (parseIR_Val_int "%iter.04")) t_16))
+(let t_18 (parseIR_add t_3 t_14))
+(let t_19 (parseIR_store1 t t_2 t_18))
+(let t_20
   (parseIR_abstraction1
-                    t0
+                    t
                     (parseIR__int (parseIR_Val_int "%i.02"))
-                    t19))
-(let t21 (parseIR_ifthenelse t4 t5 t3))
-(let t22 (premises (Fiat (= t6 t6))))
-(let t23 (_c t4))
-(let t24
+                    t_19))
+(let t_21 (parseIR_ifthenelse t_4 t_5 t_3))
+(let t_22 (premises (Fiat (= t_6 t_6))))
+(let t_23 (_c t_4))
+(let t_24
   (substitution
-                      (@rewrite_var__105 t6)
-                      t23
-                      (_y t0)
-                      (_i t2)
-                      (_v t5)))
+                      (@rewrite_var___105 t_6)
+                      t_23
+                      (_y t)
+                      (_i t_2)
+                      (_v t_5)))
 (Congr
   (=
-    t13
+    t_13
     (parseIR_fold
       (parseIR_Val_name "%for.body")
-      t17
-      t12
+      t_17
+      t_12
       (parseIR_constant_int (parseIR_Val_constant_int 0))
       (parseIR__int (parseIR_Val_int "%numIterations"))))
-  (Fiat (= t13 t13))
+  (Fiat (= t_13 t_13))
   (Congr
-    (= t11 t17)
-    (Fiat (= t11 t11))
+    (= t_11 t_17)
+    (Fiat (= t_11 t_11))
     (Congr
-      (= t10 t16)
-      (Fiat (= t10 t10))
+      (= t_10 t_16)
+      (Fiat (= t_10 t_10))
       (Rule
-        (= t8 t15)
+        (= t_8 t_15)
         (name
           "(rewrite (parseIR_fold _root (parseIR_abstraction1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) _%i.02 (parseIR_store1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_select1 (parseIR_array _%key 1 (parseIR_Val_name 'Int')) _%i.02) (parseIR_add (parseIR_select1 (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_select1 (parseIR_array _%key 1 (parseIR_Val_name 'Int')) _%i.02)) _%add))) (parseIR_array _%buckets 1 (parseIR_Val_name 'Int')) (parseIR_constant_int (parseIR_Val_constant_int 0)) _%N) (histogram _root _%N _%buckets _%key _%add) :ruleset parseIR.transform-parboil-hist)")
         (premises
           (Congr
             (=
-              t8
+              t_8
               (parseIR_fold
                 (parseIR_Val_name "%for.body13")
-                t20
-                t0
+                t_20
+                t
                 (parseIR_constant_int (parseIR_Val_constant_int 0))
                 (parseIR__int (parseIR_Val_int "%mul"))))
-            (Fiat (= t8 t8))
+            (Fiat (= t_8 t_8))
             (Congr
-              (= t7 t20)
-              (Fiat (= t7 t7))
+              (= t_7 t_20)
+              (Fiat (= t_7 t_7))
               (Congr
-                (= t6 t19)
+                (= t_6 t_19)
                 (Rule
-                  (= t6 (parseIR_store1 t0 t2 t21))
+                  (= t_6 (parseIR_store1 t t_2 t_21))
                   (name
                     "(rewrite (parseIR_ifthenelse _c (parseIR_store1 _y _i _v) _y) (parseIR_store1 _y _i (parseIR_ifthenelse _c _v (parseIR_select1 _y _i))) :ruleset parseIR.transform-parboil-hist)")
-                  t22
-                  t24)
+                  t_22
+                  t_24)
                 (Rule
-                  (= t21 t18)
+                  (= t_21 t_18)
                   (name
                     "(rewrite (parseIR_ifthenelse _c (parseIR_add _a _b) _a) (parseIR_add _a (parseIR_ifthenelse _c _b (parseIR_constant_real (parseIR_Val_constant_real 0.0)))) :ruleset parseIR.transform-parboil-hist)")
                   (premises
                     (Rule
-                      (= t21 t21)
+                      (= t_21 t_21)
                       (name
                         "(rewrite (parseIR_ifthenelse _c (parseIR_store1 _y _i _v) _y) (parseIR_store1 _y _i (parseIR_ifthenelse _c _v (parseIR_select1 _y _i))) :ruleset parseIR.transform-parboil-hist)")
-                      t22
-                      t24))
+                      t_22
+                      t_24))
                   (substitution
-                    (@rewrite_var__106 t21)
-                    t23
-                    (_a t3)
+                    (@rewrite_var___106 t_21)
+                    t_23
+                    (_a t_3)
                     (_b (parseIR_constant_int (parseIR_Val_constant_int 1)))))
                 2)
               2)
             1))
         (substitution
-          (@rewrite_var__120 t8)
+          (@rewrite_var___120 t_8)
           (_root (parseIR_Val_name "%for.body13"))
           (_%buckets (parseIR_Val_name "%call4"))
           (_%i.02 (parseIR__int (parseIR_Val_int "%i.02")))
           (_%key (parseIR_Val_name "%call"))
-          (_%add t14)
+          (_%add t_14)
           (_%N (parseIR__int (parseIR_Val_int "%mul")))))
       1)
     2)
