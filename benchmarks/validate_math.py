@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.engines import MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT, MATH12_WORKLOAD_PATH, MATH12_WORKLOAD_SHA256
-from native_memory import NATIVE_LIMIT_BYTES
+from native_memory import NATIVE_ALLOCATION_EXIT, NATIVE_LIMIT_BYTES, NATIVE_SETUP_EXIT, native_memory_command
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
@@ -52,19 +52,21 @@ def validate(test_binary: Path, output: Path) -> dict[str, Any]:
     expected_sizes: dict[int, tuple[dict[str, int], int]] = {}
     for engine, proof, iterations in CASES:
         name = f"{engine}-{proof}-{iterations}"
-        command = [str(test_binary), "--exact", "tests::bounded_math12_case", "--ignored", "--nocapture"]
-        environment = os.environ | {
-            "RUST_TEST_THREADS": "1",
-            "MIMALLOC_ARENA_RESERVE": "0",
-            "MIMALLOC_DISALLOW_ARENA_ALLOC": "1",
-            "MIMALLOC_RESERVE_OS_MEMORY": "0",
-            "MIMALLOC_RESERVE_HUGE_OS_PAGES": "0",
-            "MATH_BOUNDARY_ENGINE": engine,
-            "MATH_BOUNDARY_PROOF": proof,
-            "MATH_BOUNDARY_ITERATIONS": str(iterations),
-            "MATH_BOUNDARY_LEFT": left,
-            "MATH_BOUNDARY_RIGHT": right,
-        }
+        # libtest owns argv; the test forwards the shared cap to native setup.
+        command, environment = native_memory_command(
+            [str(test_binary), "--exact", "tests::bounded_math12_case", "--ignored", "--nocapture"],
+            os.environ
+            | {
+                "RUST_TEST_THREADS": "1",
+                "MATH_BOUNDARY_MEMORY_LIMIT_BYTES": str(NATIVE_LIMIT_BYTES),
+                "MATH_BOUNDARY_ENGINE": engine,
+                "MATH_BOUNDARY_PROOF": proof,
+                "MATH_BOUNDARY_ITERATIONS": str(iterations),
+                "MATH_BOUNDARY_LEFT": left,
+                "MATH_BOUNDARY_RIGHT": right,
+            },
+            limit_bytes=None,
+        )
         case: dict[str, Any] = {
             "engine": engine,
             "proof": proof,
@@ -80,8 +82,8 @@ def validate(test_binary: Path, output: Path) -> dict[str, Any]:
                 case["exit_code"] = process.returncode
                 case["status"] = {
                     0: "success",
-                    86: "native-allocation-exhausted",
-                    87: "native-limit-setup-failed",
+                    NATIVE_ALLOCATION_EXIT: "native-allocation-exhausted",
+                    NATIVE_SETUP_EXIT: "native-limit-setup-failed",
                 }.get(process.returncode, "failed")
             except subprocess.TimeoutExpired:
                 case["status"] = "timed-out"

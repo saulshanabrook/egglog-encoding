@@ -227,7 +227,8 @@ mod tests {
         let _args = benchmark_memory::configure([
             "math-boundary-case".into(),
             "--memory-limit-bytes".into(),
-            "17179869184".into(),
+            std::env::var_os("MATH_BOUNDARY_MEMORY_LIMIT_BYTES")
+                .expect("set memory limit via diagnostic"),
         ]);
         let expected_witness = iterations == 12;
         let sizes = match engine.as_str() {
