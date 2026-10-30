@@ -120,3 +120,125 @@ fn includes_share_prefix_and_proof_parsing_boundaries() {
     assert_eq!(materialized.get_size("B"), 0);
     assert_eq!(proof.get_size("B"), 0);
 }
+
+#[test]
+fn source_and_ast_views_share_preparation_without_effects() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    for source in ["(F (A))", "(union (A) (B))"] {
+        let program = graph.parse_program(None, source).unwrap();
+        for mut reader in [
+            ProgramSource::from_text(None, source),
+            ProgramSource::from_commands(program.into_iter()),
+        ] {
+            let item = reader
+                .next_item(&mut graph, &mut GroundActionCache::default(), true)
+                .unwrap();
+            assert!(matches!(item, Some(ProgramItem::Prepared(_))));
+            assert_eq!(graph.get_size("A"), 0);
+            assert_eq!(graph.get_size("B"), 0);
+            assert_eq!(graph.get_size("F"), 0);
+            assert!(!graph.backend.flush_updates());
+        }
+    }
+}
+
+#[test]
+fn source_admission_preserves_parser_overrides() {
+    let mut initial = EGraph::default();
+    initial
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    for kind in ["expression", "action", "command"] {
+        let mut graph = initial.clone();
+        match kind {
+            "expression" => graph
+                .parser
+                .add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                    Ok(Expr::Call(span, "B".into(), vec![]))
+                }))),
+            "action" => {
+                graph
+                    .parser
+                    .add_action_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                        Ok(vec![Action::Expr(
+                            span.clone(),
+                            Expr::Call(span, "B".into(), vec![]),
+                        )])
+                    })))
+            }
+            _ => graph
+                .parser
+                .add_command_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                    Ok(vec![Command::Action(Action::Expr(
+                        span.clone(),
+                        Expr::Call(span, "B".into(), vec![]),
+                    ))])
+                }))),
+        }
+        let mut ast = graph.clone();
+        let source = "(A) (F (A))";
+        let commands = ast.parse_program(None, source).unwrap();
+        graph.parse_and_run_program(None, source).unwrap();
+        ast.run_program(commands).unwrap();
+        for name in ["A", "B", "F"] {
+            assert_eq!(graph.get_size(name), ast.get_size(name), "{kind}: {name}");
+        }
+        assert_eq!(graph.get_size("B"), 1);
+        assert_eq!(graph.get_size("A"), usize::from(kind != "expression"));
+    }
+}
+
+#[test]
+fn default_deny_macro_capability_preserves_effects_and_error_prefix() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct RejectA(Arc<AtomicUsize>);
+    impl CommandMacro for RejectA {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, _))) if head == "A")
+            {
+                Err(Error::BackendError("A rejected by macro".into()))
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    graph
+        .command_macros
+        .register(Arc::new(RejectA(calls.clone())));
+    assert!(graph.parse_and_run_program(None, "(F (B)) (A)").is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(graph.get_size("F"), 1);
+    assert_eq!(graph.get_size("A"), 0);
+}
+
+#[test]
+fn raw_source_never_bypasses_builtin_dispatch_for_reserved_constructors() {
+    let mut graph = EGraph::default();
+    graph.ensure_no_reserved_symbols(false);
+    graph.parse_and_run_program(None, "(sort T)").unwrap();
+    for head in ["index", "set", "input", "output"] {
+        graph
+            .parse_and_run_program(None, &format!("(constructor {head} () T)"))
+            .unwrap();
+        assert!(
+            graph
+                .parse_and_run_program(None, &format!("({head})"))
+                .is_err()
+        );
+        assert_eq!(graph.get_size(head), 0);
+    }
+}

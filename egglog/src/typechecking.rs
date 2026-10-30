@@ -23,6 +23,43 @@ pub(crate) enum ClosedAction<T> {
     Union(T, T),
 }
 
+impl<'a> ClosedAction<&'a Expr> {
+    pub(crate) fn from_action(action: &'a Action) -> Option<Self> {
+        match action {
+            Action::Expr(_, expr) => Some(Self::Expr(expr)),
+            Action::Union(_, left, right) => Some(Self::Union(left, right)),
+            _ => None,
+        }
+    }
+}
+
+/// Borrow a call tree without allocating an intermediate expression tree.
+/// Leaves and malformed source lists decline the closed-call checker.
+pub(crate) trait CallView: Sized {
+    fn as_call(&self) -> Option<(&str, &[Self])>;
+}
+
+impl CallView for Expr {
+    fn as_call(&self) -> Option<(&str, &[Self])> {
+        match self {
+            Expr::Call(_, head, args) => Some((head, args)),
+            _ => None,
+        }
+    }
+}
+
+impl CallView for Sexp<'_> {
+    fn as_call(&self) -> Option<(&str, &[Self])> {
+        match self {
+            Sexp::List(items, _) => match items.as_slice() {
+                [Sexp::Atom(head, _), args @ ..] => Some((head, args)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 // `ExternalFunction` wrapper for `PurePrim`. Holds the primitive
 // directly so the dispatch chain `external_funcs[id].invoke(...)` →
 // `T::apply(...)` is just one vtable hop plus a direct call — no
@@ -1664,23 +1701,23 @@ impl TypeInfo {
     /// representation. `resolve` supplies a function admitted by `closed_call_type`
     /// plus caller-specific metadata; it may also reject calls needing general
     /// execution. `emit` only prepares work, so failure discards all tentative
-    /// output without executing it. Argument storage is chosen by the caller.
-    pub(crate) fn check_closed_action<T, Args, Call, Metadata>(
+    /// output without executing it.
+    pub(crate) fn check_closed_action<Node: CallView, T, Args, Call, Metadata>(
         &self,
-        action: &Action,
+        action: ClosedAction<&Node>,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(Metadata, Args) -> Option<T>,
     ) -> Option<ClosedAction<T>>
     where
         Args: FromIterator<T>,
         Call: Deref<Target = FuncType>,
     {
         match action {
-            Action::Expr(_, expr) => {
+            ClosedAction::Expr(expr) => {
                 let (value, _) = Self::check_declared_expr(expr, resolve, emit)?;
                 Some(ClosedAction::Expr(value))
             }
-            Action::Union(_, left, right) => {
+            ClosedAction::Union(left, right) => {
                 let (left, left_call) = Self::check_declared_expr(left, resolve, emit)?;
                 let (right, right_call) = Self::check_declared_expr(right, resolve, emit)?;
                 let left_sort = left_call.output();
@@ -1689,22 +1726,19 @@ impl TypeInfo {
                     && self.is_sort_unionable(left_sort))
                 .then_some(ClosedAction::Union(left, right))
             }
-            _ => None,
         }
     }
 
-    fn check_declared_expr<T, Args, Call, Metadata>(
-        expr: &Expr,
+    fn check_declared_expr<Node: CallView, T, Args, Call, Metadata>(
+        expr: &Node,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(&Span, &Call, Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(Metadata, Args) -> Option<T>,
     ) -> Option<(T, Call)>
     where
         Args: FromIterator<T>,
         Call: Deref<Target = FuncType>,
     {
-        let Expr::Call(span, head, args) = expr else {
-            return None;
-        };
+        let (head, args) = expr.as_call()?;
         let (func, metadata) = resolve(head)?;
         if func.input.len() != args.len() {
             return None;
@@ -1718,7 +1752,7 @@ impl TypeInfo {
                 (Arc::ptr_eq(sort, expected) || sort.name() == expected.name()).then_some(value)
             })
             .collect::<Option<Args>>()?;
-        Some((emit(span, &func, metadata, checked_args)?, func))
+        Some((emit(metadata, checked_args)?, func))
     }
 
     pub fn get_sort_by_name(&self, sym: &str) -> Option<&ArcSort> {
