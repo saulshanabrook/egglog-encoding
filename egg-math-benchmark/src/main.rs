@@ -19,6 +19,15 @@ static ALLOCATOR: benchmark_memory::LimitedAllocator = benchmark_memory::Limited
 const ITERATIONS: usize = 11;
 const CHECK_LEFT: &str = "(+ (cos x) (cos x))";
 const CHECK_RIGHT: &str = "(d x (+ (sin x) (sin x)))";
+const MATH12_CHECK_LEFT: &str = concat!(
+    "(* -1 (+ (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x))) (* (* ",
+    "-1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x)))))"
+);
+const MATH12_CHECK_RIGHT: &str = concat!(
+    "(+ (* -1 (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x)))) (* -1",
+    " (* (* -1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x))",
+    ")))"
+);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 enum ProofMode {
@@ -39,26 +48,22 @@ struct Args {
     proof_mode: ProofMode,
     #[arg(long)]
     timing_summary: Option<PathBuf>,
-    #[arg(long, default_value_t = ITERATIONS)]
-    iterations: usize,
-    #[arg(long, default_value = CHECK_LEFT)]
-    check_left: String,
-    #[arg(long, default_value = CHECK_RIGHT)]
-    check_right: String,
+    #[arg(long)]
+    math12: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse_from(benchmark_memory::configure(std::env::args_os()));
-    let (timing, _, check_passed) = run_math(
-        args.proof_mode,
-        args.iterations,
-        &args.check_left,
-        &args.check_right,
-    )?;
+    let (iterations, check_left, check_right) = if args.math12 {
+        (12, MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT)
+    } else {
+        (ITERATIONS, CHECK_LEFT, CHECK_RIGHT)
+    };
+    let (timing, _, check_passed) = run_math(args.proof_mode, iterations, check_left, check_right)?;
     ensure!(
         check_passed,
         "terminal equality is not established after iteration {}",
-        args.iterations
+        iterations
     );
     if let Some(path) = args.timing_summary {
         write_timing_summary(&path, &timing)?;
@@ -72,13 +77,8 @@ fn run_math(
     check_left: &str,
     check_right: &str,
 ) -> Result<(TimingSummary, egg::EGraph<Math, ()>, bool)> {
-    ensure!(iterations > 0, "iterations must be positive");
-    let left: RecExpr<Math> = check_left
-        .parse()
-        .context("invalid left check expression")?;
-    let right: RecExpr<Math> = check_right
-        .parse()
-        .context("invalid right check expression")?;
+    let left: RecExpr<Math> = check_left.parse().expect("fixed left check must parse");
+    let right: RecExpr<Math> = check_right.parse().expect("fixed right check must parse");
     let rules = math::rules();
     let mut runner = Runner::default()
         .with_scheduler(SimpleScheduler)
@@ -184,121 +184,68 @@ mod tests {
     use std::collections::{BTreeMap, HashSet};
 
     #[test]
-    fn cli_defaults_preserve_math11_and_accept_explicit_witness() {
-        let defaults = Args::try_parse_from(["egg-math-benchmark"]).unwrap();
-        assert_eq!(defaults.iterations, 11);
-        assert_eq!(defaults.check_left, CHECK_LEFT);
-        assert_eq!(defaults.check_right, CHECK_RIGHT);
-        let explicit = Args::try_parse_from([
-            "egg-math-benchmark",
-            "--iterations",
-            "12",
-            "--check-left",
-            "x",
-            "--check-right",
-            "x",
-        ])
-        .unwrap();
-        assert_eq!(explicit.iterations, 12);
-        assert_eq!(explicit.check_left, "x");
-        assert_eq!(explicit.check_right, "x");
-        assert!(run_math(ProofMode::Off, 0, "x", "x").is_err());
-        assert!(run_math(ProofMode::Off, 1, "(", "x").is_err());
+    fn math12_native_and_egglog_checks_use_the_same_witness() {
+        let fixture = include_str!("../../benchmarks/corpus/math/math-iteration-12.egg");
+        let (_, check) = fixture.split_once("(run 12)").unwrap();
+        let native = format!("(check (= {MATH12_CHECK_LEFT} {MATH12_CHECK_RIGHT}))");
+        let translated = native
+            .replace('(', " ( ")
+            .replace(')', " ) ")
+            .split_whitespace()
+            .map(|token| match token {
+                "+" => "Add",
+                "*" => "Mul",
+                "d" => "Diff",
+                "i" => "Integral",
+                "cos" => "Cos",
+                "x" => "(Var \"x\")",
+                "-1" => "(Const (rational -1 1))",
+                token => token,
+            })
+            .collect::<String>();
+        assert_eq!(
+            translated.split_whitespace().collect::<String>(),
+            check.split_whitespace().collect::<String>()
+        );
     }
 
-    // Run one engine/mode/cutoff per bounded subprocess. The reproduction
-    // diagnostic compares these logical counts across cases; normal tests never
-    // construct the sixteen-million-node twelve-round graph.
     #[test]
-    #[ignore = "bounded paper preparation: benchmarks/validate_math.py"]
-    fn bounded_math12_case() {
-        let engine = std::env::var("MATH_BOUNDARY_ENGINE").expect("set engine via diagnostic");
-        let proof = std::env::var("MATH_BOUNDARY_PROOF").expect("set proof via diagnostic");
-        let iterations: usize = std::env::var("MATH_BOUNDARY_ITERATIONS")
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert!([11, 12].contains(&iterations));
-        let mode = match proof.as_str() {
-            "off" => ProofMode::Off,
-            "check" => ProofMode::Check,
-            _ => panic!("unsupported boundary proof mode"),
-        };
+    #[ignore = "bounded paper validation: benchmarks/validate_math.py"]
+    fn math12_graph_parity() {
         let _args = benchmark_memory::configure([
-            "math-boundary-case".into(),
+            "math12-graph-parity".into(),
             "--memory-limit-bytes".into(),
-            std::env::var_os("MATH_BOUNDARY_MEMORY_LIMIT_BYTES")
-                .expect("set memory limit via diagnostic"),
+            std::env::var_os("MATH12_MEMORY_LIMIT_BYTES")
+                .expect("launch via benchmarks/validate_math.py"),
         ]);
-        let expected_witness = iterations == 12;
-        let sizes = match engine.as_str() {
-            "egg" => {
-                let left = std::env::var("MATH_BOUNDARY_LEFT").unwrap();
-                let right = std::env::var("MATH_BOUNDARY_RIGHT").unwrap();
-                let (timing, graph, established) =
-                    run_math(mode, iterations, &left, &right).unwrap();
-                assert_eq!(established, expected_witness);
-                assert_eq!(
-                    timing.commands_other_ns > 0,
-                    mode == ProofMode::Check && established
-                );
-                let sizes = native_graph_size(&graph);
-                assert_eq!(
-                    sizes.0.values().sum::<usize>(),
-                    graph.total_number_of_nodes()
-                );
-                sizes
-            }
-            "egglog" => {
-                let fixture = include_str!("../../benchmarks/corpus/math/math-iteration-12.egg");
-                let (setup, check) = fixture.split_once("(run 12)").unwrap();
-                let mut graph = if mode == ProofMode::Check {
-                    egglog_experimental::new_experimental_egraph_with_proof_testing()
-                } else {
-                    egglog_experimental::new_experimental_egraph()
-                };
-                graph
-                    .parse_and_run_program(None, &format!("{setup}(run {iterations})"))
-                    .unwrap();
-                let before = egglog_graph_size(&graph);
-                let result = graph.parse_and_run_program(None, check);
-                if expected_witness {
-                    let proofs = result
-                        .unwrap()
-                        .iter()
-                        .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
-                        .count();
-                    assert_eq!(proofs, usize::from(mode == ProofMode::Check));
-                } else {
-                    match result.unwrap_err() {
-                        Error::CheckError(..) => assert_eq!(mode, ProofMode::Off),
-                        Error::ProofError { error, .. } => {
-                            assert_eq!(mode, ProofMode::Check);
-                            assert!(
-                                error.to_string().starts_with(
-                                    "Could not find a proof due to query not matching "
-                                )
-                            );
-                        }
-                        error => panic!("expected an unestablished equality: {error}"),
-                    }
-                }
-                assert_eq!(
-                    before,
-                    egglog_graph_size(&graph),
-                    "terminal query/proof inserted logical nodes"
-                );
-                before
-            }
-            _ => panic!("unsupported boundary engine"),
-        };
-        println!(
-            "MATH_BOUNDARY_RESULT {}",
-            serde_json::json!({
-                "engine": engine, "proof": proof, "iterations": iterations,
-                "witness_established": expected_witness,
-                "constructors": sizes.0, "classes": sizes.1,
-            })
+        eprintln!("Math12: Egg, proofs off");
+        let (_, native, established) =
+            run_math(ProofMode::Off, 12, MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT).unwrap();
+        assert!(established);
+        let expected = native_graph_size(&native);
+        assert_eq!(
+            expected.0.values().sum::<usize>(),
+            native.total_number_of_nodes()
+        );
+        drop(native);
+
+        eprintln!("Math12: Egglog, proofs off");
+        let fixture = include_str!("../../benchmarks/corpus/math/math-iteration-12.egg");
+        let (setup, check) = fixture.split_once("(run 12)").unwrap();
+        let mut graph = egglog_experimental::new_experimental_egraph();
+        graph
+            .parse_and_run_program(None, &format!("{setup}(run 12)"))
+            .unwrap();
+        let before = egglog_graph_size(&graph);
+        graph.parse_and_run_program(None, check).unwrap();
+        assert_eq!(
+            before,
+            egglog_graph_size(&graph),
+            "terminal query inserted logical nodes"
+        );
+        assert_eq!(
+            expected, before,
+            "Egg/Egglog constructor or class counts differ"
         );
     }
 

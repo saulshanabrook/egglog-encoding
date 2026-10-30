@@ -1,6 +1,5 @@
 """Complete registered Math bytes determine native schedules and terminal witnesses."""
 
-import re
 from pathlib import Path
 
 import pytest
@@ -42,14 +41,7 @@ def test_math12_copy_derives_exact_native_schedule_and_witness(tmp_path: Path, t
     path.write_bytes((ROOT / engines.MATH12_WORKLOAD_PATH).read_bytes())
     (file,) = workloads.resolve_files([str(path)], tmp_path)
     engines.validate_engine_workload(file, treatment)
-    assert engines.math_workload_arguments(file) == (
-        "--iterations",
-        "12",
-        "--check-left",
-        engines.MATH12_CHECK_LEFT,
-        "--check-right",
-        engines.MATH12_CHECK_RIGHT,
-    )
+    assert engines.math_workload_arguments(file) == ("--math12",)
     assert targets.workload_command(tmp_path / "egg", file, treatment) == [
         str(tmp_path / "egg"),
         *engines.TREATMENT_SPECS[treatment].flags,
@@ -87,24 +79,3 @@ def test_math12_preserves_complete_math11_setup() -> None:
         new[new.index("(datatype Math") : new.index("(run 12)")]
         == old[old.index("(datatype Math") : old.index("(run 11)")]
     )
-    assert engines.MATH12_CHECK_LEFT != engines.MATH12_CHECK_RIGHT
-
-
-def test_frozen_math12_native_arguments_and_egglog_check_are_the_same_witness() -> None:
-    source = (ROOT / engines.MATH12_WORKLOAD_PATH).read_text()
-    check = source.split("(run 12)", 1)[1]
-    native_to_egglog = {
-        "+": "Add",
-        "*": "Mul",
-        "d": "Diff",
-        "i": "Integral",
-        "cos": "Cos",
-        "x": '(Var "x")',
-        "-1": "(Const (rational -1 1))",
-    }
-    expressions = []
-    for native in [engines.MATH12_CHECK_LEFT, engines.MATH12_CHECK_RIGHT]:
-        tokens = re.findall(r"[()]|[^\s()]+", native)
-        expressions.append(" ".join(native_to_egglog.get(token, token) for token in tokens))
-    expected = f"(check (= {expressions[0]} {expressions[1]}))"
-    assert re.findall(r"[()]|[^\s()]+", check) == re.findall(r"[()]|[^\s()]+", expected)

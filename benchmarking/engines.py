@@ -66,25 +66,9 @@ MATH_WORKLOAD_SHA256 = "sha256:29e120079c588d0bf079891b393ae041ec4e1a45d369114cd
 # integration-by-parts closure; its complete input identity fixes both endpoints.
 MATH12_WORKLOAD_PATH = Path("benchmarks/corpus/math/math-iteration-12.egg")
 MATH12_WORKLOAD_SHA256 = "sha256:fde0b4a62c8d5904014babd00dfce11fcab429fa26125280ccd4515f9dd6915f"
-MATH12_CHECK_LEFT = (
-    "(* -1 (+ (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x))) (* (* "
-    "-1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x)))))"
-)
-MATH12_CHECK_RIGHT = (
-    "(+ (* -1 (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x)))) (* -1"
-    " (* (* -1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x))"
-    ")))"
-)
 MATH_WORKLOAD_ARGUMENTS: dict[str, tuple[str, ...]] = {
     MATH_WORKLOAD_SHA256: (),
-    MATH12_WORKLOAD_SHA256: (
-        "--iterations",
-        "12",
-        "--check-left",
-        MATH12_CHECK_LEFT,
-        "--check-right",
-        MATH12_CHECK_RIGHT,
-    ),
+    MATH12_WORKLOAD_SHA256: ("--math12",),
 }
 PARAMETER_WORKLOAD_PATH = Path("benchmarks/disequality/parameter-analysis.egg")
 

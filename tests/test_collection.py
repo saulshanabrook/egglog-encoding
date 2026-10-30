@@ -961,7 +961,7 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     assert "abc123: collected 2 fresh runs · 1 successful, 1 failed" in rendered
 
 
-def test_preflight_requires_math12_witness_flags_only_for_fresh_math12(
+def test_preflight_requires_math12_flag_only_for_fresh_math12(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     egg_binary = ROOT / "egg-math-benchmark"
@@ -985,6 +985,6 @@ def test_preflight_requires_math12_witness_flags_only_for_fresh_math12(
     collection.preflight_collection(collection.CollectionPlan(target, (cached12, math11)), 120)
 
     assert calls == [
-        ("--timing-summary", "--memory-limit-bytes", "--iterations", "--check-left", "--check-right"),
+        ("--timing-summary", "--memory-limit-bytes", "--math12"),
         ("--timing-summary", "--memory-limit-bytes"),
     ]

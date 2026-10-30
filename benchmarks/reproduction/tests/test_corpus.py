@@ -57,7 +57,7 @@ def test_renaming_preserves_the_entire_canonical_manifest_by_identity() -> None:
         case["workloads"] = [names[name] for name in case["workloads"]]
     encoded = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
     # Published manifest, including frozen Math12, with physical paths replaced by identities.
-    assert hashlib.sha256(encoded).hexdigest() == "0827a6c4c113d91448cbcb23db68153417ad77dd53b0785eb8b54a294c859037"
+    assert hashlib.sha256(encoded).hexdigest() == "1a3e9279097244275e7282f4e049ba7e528e6f76877a62a24f95f5ff80794b8d"
 
 
 def test_readable_name_collisions_extend_the_digest_without_replacing_an_input() -> None:

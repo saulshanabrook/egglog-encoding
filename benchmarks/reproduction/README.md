@@ -58,23 +58,23 @@ Use the module paths above for new invocations.
 The frozen Math12 paper fixture is additive to the original Math11 source
 recipe. Its seven seeds and 24 rules are identical; its terminal equality is a
 new distribution instance from the integration-by-parts closure. The complete
-fixture hash determines native `--iterations`, `--check-left`, and
-`--check-right` arguments. Math11 remains admitted unchanged. The corpus now
+fixture hash selects native `--math12`, which fixes both the twelve-round
+schedule and that equality. Math11 remains admitted unchanged. The corpus now
 has 488 saved inputs: 486 application replays and two standalone Math fixtures.
 
-Math12 boundary validation is an explicit diagnostic, separate from collection:
+Math12 graph parity is an explicit correctness check, separate from collection:
 
 ```sh
 CARGO_BUILD_JOBS=2 cargo test --locked --release -p egg-math-benchmark --no-run --message-format=json
 # Use the test executable path printed in the compiler-artifact JSON:
 uv run --locked python -m benchmarks.validate_math \
-  --test-binary /path/to/egg_math_benchmark-test --output /tmp/math12-validation
+  --test-binary /path/to/egg_math_benchmark-test > /tmp/math12-validation.log
 ```
 
-Each sequential subprocess installs the sixteen-GiB native allocation
-limit and has a 300-second timeout. Logical constructor and class counts,
-terminal-query non-insertion, and the eleven/twelve equality boundary are
-checked in both engines with proofs off and fully checked. Failed conditions
-remain explicit; the diagnostic continues independent conditions after a cap
-or timeout and never retries a capped condition. Twelve-round graphs are
-excluded from the normal Cargo test run.
+The ignored Rust test compares Egg and Egglog with proofs off at exactly twelve
+rounds. It checks the frozen equality, logical constructor and class counts,
+and query non-insertion, dropping the native graph before building the Egglog
+graph. The launcher applies the shared sixteen-GiB native allocation limit and
+a 300-second timeout, then leaves success and failure reporting to the normal
+Rust test runner. This large test remains excluded from ordinary Cargo runs;
+benchmark timings come from the regular CLI collection path.
