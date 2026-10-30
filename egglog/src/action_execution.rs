@@ -4,13 +4,14 @@
 
 use crate::*;
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 /// Constructor metadata keyed by function name; `None` records functions
 /// that cannot use prepared constructor actions.
-type GroundActionCache = HashMap<String, Option<egglog_bridge::TableAction>>;
+type GroundActionCache = HashMap<String, Option<Rc<egglog_bridge::TableAction>>>;
 
 struct GroundActions {
-    lookups: Vec<(egglog_bridge::TableAction, SmallVec<[usize; 4]>)>,
+    lookups: Vec<(Rc<egglog_bridge::TableAction>, SmallVec<[usize; 4]>)>,
     union: Option<(usize, usize)>,
 }
 
@@ -296,7 +297,7 @@ impl EGraph {
                         function.backend_id,
                     )?;
 
-                    (table.input_arity() == func.input.len()).then_some(table)
+                    (table.input_arity() == func.input.len()).then(|| Rc::new(table))
                 })();
                 calls.insert(func.name.clone(), table.clone());
                 table?
@@ -337,24 +338,70 @@ impl EGraph {
     fn eval_ground_actions(&mut self, prepared: Vec<GroundActions>) -> Result<(), Error> {
         #[cfg(test)]
         tests::GROUND_ACTIONS_EXECUTED.with(|count| count.set(count.get() + prepared.len()));
+        #[cfg(test)]
+        let batch_event = tests::BATCH_EVENTS.with(|slot| {
+            slot.borrow().as_ref().map(|_| {
+                (
+                    prepared.len(),
+                    prepared
+                        .first()
+                        .map(|action| {
+                            action
+                                .lookups
+                                .iter()
+                                .map(|(table, _)| table.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                )
+            })
+        });
         let union = egglog_bridge::UnionAction::new(&self.backend);
-        self.backend
+        let result = self
+            .backend
             .run_actions(Some(&self.type_info), |state| {
                 let mut values = Vec::new();
                 let mut arguments = Vec::new();
+                // The metadata cache interns handles and keeps them alive through
+                // this call, so pointer identity names one physical table. Values
+                // stay fixed only until this backend transaction commits/rebuilds.
+                let mut constants = HashMap::default();
                 for action in prepared {
                     values.clear();
                     for (table, args) in action.lookups {
-                        arguments.clear();
-                        arguments.extend(args.iter().map(|index| values[*index]));
-                        values.push(table.lookup_or_insert(state, &arguments).unwrap());
+                        let value = if args.is_empty() {
+                            *constants
+                                .entry(Rc::as_ptr(&table))
+                                .or_insert_with(|| table.lookup_or_insert(state, &[]).unwrap())
+                        } else {
+                            arguments.clear();
+                            arguments.extend(args.iter().map(|index| values[*index]));
+                            table.lookup_or_insert(state, &arguments).unwrap()
+                        };
+                        values.push(value);
                     }
                     if let Some((left, right)) = action.union {
                         union.union(state, values[left], values[right]);
                     }
                 }
             })
-            .map_err(|error| Error::BackendError(error.to_string()))
+            .map_err(|error| Error::BackendError(error.to_string()));
+        #[cfg(test)]
+        if result.is_ok() {
+            if let Some(batch_event) = batch_event {
+                tests::BATCH_EVENTS.with(|slot| {
+                    if let Some(events) = slot.borrow_mut().as_mut() {
+                        events.push(batch_event);
+                    }
+                });
+            }
+            tests::ORDER_LOG.with(|slot| {
+                if let Some(log) = slot.borrow().as_ref() {
+                    log.lock().unwrap().push("commit");
+                }
+            });
+        }
+        result
     }
 
     /// Constructor insertion runs share a bounded transaction. A union retains

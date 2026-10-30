@@ -25,6 +25,14 @@ fn execution_scope_commits_pending_prefix_on_success_and_error() {
     }
 }
 
+type BatchEvent = (usize, Vec<Rc<egglog_bridge::TableAction>>);
+type OrderLog = Arc<std::sync::Mutex<Vec<&'static str>>>;
+
+std::thread_local! {
+    pub(super) static BATCH_EVENTS: std::cell::RefCell<Option<Vec<BatchEvent>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static ORDER_LOG: std::cell::RefCell<Option<OrderLog>> = const { std::cell::RefCell::new(None) };
+}
+
 thread_local! {
     pub(super) static GROUND_ACTIONS_EXECUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -662,4 +670,95 @@ fn argument_buffers_reset_between_wide_and_narrow_calls() {
         .unwrap();
     assert_eq!(graph.get_size("Wide"), 2);
     assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
+fn insertion_batches_keep_metadata_across_flushes_and_unions() {
+    for threads in [1, 4] {
+        let mut graph = EGraph::default();
+        graph.backend.set_num_threads(threads);
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        BATCH_EVENTS.with(|events| *events.borrow_mut() = Some(Vec::new()));
+        let mut source = "(F (A))\n".repeat(257);
+        source.push_str("(union (A) (B))\n(F (B))");
+        let program = graph.parse_program(None, &source).unwrap();
+        let result = graph.run_program(program);
+        let events = BATCH_EVENTS.with(|events| events.borrow_mut().take().unwrap());
+        result.unwrap();
+        assert_eq!(graph.get_size("F"), 1);
+        assert_eq!(
+            events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
+            [256, 1, 1, 1]
+        );
+        assert!(events.iter().all(|(_, tables)| tables.len() == 2));
+        // First-action lookups are [A,F], [A,F], [A,B], then [B,F].
+        assert!(Rc::ptr_eq(&events[0].1[0], &events[1].1[0]));
+        assert!(Rc::ptr_eq(&events[0].1[0], &events[2].1[0]));
+        assert!(Rc::ptr_eq(&events[2].1[1], &events[3].1[0]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[1].1[1]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[3].1[1]));
+        graph
+            .parse_and_run_program(None, "(check (= (F (A)) (F (B))))")
+            .unwrap();
+    }
+}
+
+#[test]
+fn opaque_constraint_and_read_observe_the_committed_prefix() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct ObservePrefix {
+        order: Arc<Mutex<Vec<&'static str>>>,
+        observed: Arc<AtomicUsize>,
+    }
+    impl Primitive for ObservePrefix {
+        fn name(&self) -> &str {
+            "observe-f-prefix"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            self.order.lock().unwrap().push("constraints");
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ObservePrefix {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            let size = state.table_size("F")?;
+            self.observed.store(size, Ordering::SeqCst);
+            self.order.lock().unwrap().push("read");
+            Some(state.base_values().get(size as i64))
+        }
+    }
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::new(AtomicUsize::new(usize::MAX));
+    let mut graph = EGraph::default();
+    graph.add_read_primitive(
+        ObservePrefix {
+            order: order.clone(),
+            observed: observed.clone(),
+        },
+        None,
+    );
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    order.lock().unwrap().clear();
+    ORDER_LOG.with(|slot| *slot.borrow_mut() = Some(order.clone()));
+    let result = graph.parse_and_run_program(None, "(F (A)) (observe-f-prefix)");
+    ORDER_LOG.with(|slot| slot.borrow_mut().take());
+    result.unwrap();
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert_eq!(graph.get_size("F"), 1);
+    let order = order.lock().unwrap();
+    let commit = order.iter().position(|event| *event == "commit").unwrap();
+    let constraints = order
+        .iter()
+        .position(|event| *event == "constraints")
+        .unwrap();
+    let read = order.iter().position(|event| *event == "read").unwrap();
+    assert!(commit < constraints && constraints < read, "{order:?}");
 }
