@@ -104,13 +104,19 @@ fn includes_share_prefix_and_proof_parsing_boundaries() {
     );
     let mut ordinary = EGraph::default();
     let ordinary_result = ordinary.parse_and_run_program(None, &source);
+    let mut materialized = EGraph::default();
+    let program = materialized.parse_program(None, &source).unwrap();
+    let materialized_result = materialized.run_program(program);
     let mut proof = EGraph::new_with_proofs();
     let proof_result = proof.parse_and_run_program(None, &source);
     std::fs::remove_file(path).unwrap();
     assert!(ordinary_result.is_err());
+    assert!(materialized_result.is_err());
     assert!(proof_result.is_err());
     assert_eq!(ordinary.get_size("F"), 1);
+    assert_eq!(materialized.get_size("F"), 0);
     assert_eq!(proof.get_size("F"), 0);
     assert_eq!(ordinary.get_size("B"), 0);
+    assert_eq!(materialized.get_size("B"), 0);
     assert_eq!(proof.get_size("B"), 0);
 }

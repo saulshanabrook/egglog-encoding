@@ -2966,6 +2966,7 @@ impl EGraph {
         mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        let stream_includes = run_commands && matches!(&program, ProgramSource::Text { .. });
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
@@ -3043,7 +3044,7 @@ impl EGraph {
                             .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
                         self.overall_report.frontend_other += include_timer.elapsed();
                         let s = s?;
-                        let included_program = if run_commands && !self.are_proofs_enabled() {
+                        let included_program = if stream_includes && !self.are_proofs_enabled() {
                             ProgramSource::Text {
                                 parser: SexpParser::new(Some(file.clone()), &s),
                                 expanded: Vec::new().into_iter(),
