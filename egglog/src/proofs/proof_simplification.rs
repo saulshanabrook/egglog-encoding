@@ -343,7 +343,7 @@ impl ProofStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EGraph, TermDag};
+    use crate::{EGraph, TermDag, program_source::ProgramSource};
 
     #[test]
     fn simplify_symmetry_preserves_shared_transitivity_dags() {
@@ -359,7 +359,7 @@ mod tests {
             )
             .unwrap();
         let program = egraph
-            .process_program_internal(program, false)
+            .process_program_internal(ProgramSource::Commands(program.into_iter()), false)
             .unwrap()
             .resolved;
         let mut dag = TermDag::default();
