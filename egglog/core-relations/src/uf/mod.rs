@@ -701,7 +701,7 @@ impl DisplacedTable {
     }
 }
 
-fn eval_constraint<const N: usize>(vals: &[Value; N], constraint: &Constraint) -> bool {
+pub(super) fn eval_constraint<const N: usize>(vals: &[Value; N], constraint: &Constraint) -> bool {
     match constraint {
         Constraint::Eq { l_col, r_col } => vals[l_col.index()] == vals[r_col.index()],
         Constraint::EqConst { col, val } => vals[col.index()] == *val,
