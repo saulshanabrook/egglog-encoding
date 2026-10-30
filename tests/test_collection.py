@@ -1056,7 +1056,7 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     collection.collect_rows(store, plan, 120, console)
 
     assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s · ETA ~0:00:01",
+        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s · ETA ~0:00:02",
         "  [2/3] file.egg · proofs · 1/1: failed after 0.500s: bad rule more context · ETA ~0:00:01",
         "  [3/3] other.egg · off · 1/1: timed out after 120 seconds · ETA ~0:00:00",
         "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
@@ -1169,6 +1169,119 @@ def test_collection_eta_uses_cached_durations_without_cached_elapsed(
     second_key = CacheKey.for_endpoint(endpoint(target), second.file)
     estimate.complete(second_key, processes.TimingResult("failure", processes.TimingRow(), None))
     assert str(estimate.render(task)) == "ETA ~0:00:08"
+
+
+@pytest.mark.parametrize("slow_cached", [1, 3])
+def test_eta_uses_workload_history_without_reusing_old_binary_results(tmp_path: Path, slow_cached: int) -> None:
+    target = make_target(binary_path=tmp_path / "engine")
+    fast = tuple(planned_run(filename=f"fast{i}.egg", treatment="proof-testing", required=3) for i in range(100))
+    slow = tuple(
+        planned_run(
+            filename=f"slow{i}.egg",
+            treatment="proof-testing",
+            required=3,
+            cached=(cast(models.Status, "success"),) * slow_cached,
+        )
+        for i in range(2)
+    )
+    path = tmp_path / "report.jsonl"
+    for run in fast:
+        write_report(
+            path,
+            make_record(
+                0,
+                started_at="2026-10-27T00:00:00Z",
+                file_sha256=run.file.sha256,
+                treatment=run.treatment,
+                binary_sha256="old",
+                wall_sec=1,
+            ),
+        )
+    for run in slow:
+        write_report(
+            path,
+            *[
+                make_record(
+                    i,
+                    started_at="2026-10-27T00:00:01Z",
+                    file_sha256=run.file.sha256,
+                    treatment=run.treatment,
+                    wall_sec=60,
+                )
+                for i in range(slow_cached)
+            ],
+        )
+    before = path.read_bytes()
+    store = ReportStore(path)
+    requests = (
+        collection.BenchmarkRequest(
+            models.EndpointRequest(target.request, "proof-testing"), tuple(run.file for run in (*fast, *slow))
+        ),
+    )
+    (plan,) = collection.plan_collection(store, requests, {target.request: target}, 3, 120, False)
+    assert plan.total_missing_observations == 300 + 2 * (3 - slow_cached)
+    estimate = collection.CollectionETAColumn(store, tuple((target, run) for run in plan.runs), 120)
+    progress = collection.Progress(console=Console(file=io.StringIO()), auto_refresh=False)
+    progress.add_task("Collecting", total=300)
+    assert str(estimate.render(progress.tasks[0])) == ("ETA ~0:05:00" if slow_cached == 3 else "ETA ~0:09:00")
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"file_sha256": "other"},
+        {"fact_directory_sha256": "other"},
+        {"treatment": "proofs"},
+        {"disequality_encoding": "ee"},
+        {"status": "failure"},
+        {"wall_sec": None},
+        {"wall_sec": 0},
+    ],
+)
+def test_eta_ignores_unrelated_or_unusable_historical_durations(tmp_path: Path, changes: dict[str, Any]) -> None:
+    run = planned_run(required=2)
+    record = make_record(
+        0, started_at="2026-10-27T00:00:00Z", file_sha256=run.file.sha256, binary_sha256="old", wall_sec=100
+    )
+    cast(dict[str, Any], record).update(changes)
+    path = tmp_path / "report.jsonl"
+    write_report(path, record)
+    estimate = collection.CollectionETAColumn(ReportStore(path), ((make_target(), run),), 120)
+    progress = collection.Progress(console=Console(file=io.StringIO()), auto_refresh=False)
+    progress.add_task("Collecting", total=2)
+    assert str(estimate.render(progress.tasks[0])) == "ETA ~0:00:02"
+
+
+def test_eta_prefers_current_timings_and_first_live_sample_replaces_history(tmp_path: Path) -> None:
+    target = make_target()
+    run = planned_run(required=3)
+    path = tmp_path / "report.jsonl"
+    write_report(
+        path,
+        make_record(
+            0, started_at="2026-10-27T00:00:02Z", file_sha256=run.file.sha256, binary_sha256="old", wall_sec=10
+        ),
+        make_record(
+            1, started_at="2026-10-27T00:00:01Z", file_sha256=run.file.sha256, binary_sha256="old", wall_sec=100
+        ),
+        make_record(
+            2, started_at="2026-10-27T00:00:02Z", file_sha256=run.file.sha256, binary_sha256="old", wall_sec=20
+        ),
+    )
+    estimate = collection.CollectionETAColumn(ReportStore(path), ((target, run),), 120)
+    progress = collection.Progress(console=Console(file=io.StringIO()), auto_refresh=False)
+    progress.add_task("Collecting", total=3)
+    task = progress.tasks[0]
+    key = CacheKey.for_endpoint(endpoint(target), run.file)
+    assert estimate.durations[key] == []
+    assert str(estimate.render(task)) == "ETA ~0:01:00"
+    estimate.complete(key, processes.TimingResult("success", processes.TimingRow(wall_sec=2), None))
+    assert estimate.durations[key] == [2]
+    assert str(estimate.render(task)) == "ETA ~0:00:04"
+    write_report(path, make_record(3, started_at="2026-10-27T00:00:00Z", file_sha256=run.file.sha256, wall_sec=3))
+    cached = collection.CollectionETAColumn(ReportStore(path), ((target, run),), 120)
+    assert str(cached.render(task)) == "ETA ~0:00:09"
 
 
 @pytest.mark.parametrize("status", ["failure", "timed-out"])

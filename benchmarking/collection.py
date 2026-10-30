@@ -650,9 +650,9 @@ def flat_report_record(
 class CollectionETAColumn(ProgressColumn):
     """Estimate the whole missing plan, refining a rough one-second fallback.
 
-    Exact successful cached/live durations predict each condition. Unseen
-    conditions use the mean known duration until they finish once themselves.
-    Cached work never advances the progress clock or completed counter.
+    Current-binary cached/live durations take precedence over historical hints
+    for the same input and mode. Unseen conditions use the remaining plan's
+    known mean. Historical hints never count as reusable results or elapsed work.
     """
 
     def __init__(
@@ -661,7 +661,22 @@ class CollectionETAColumn(ProgressColumn):
         super().__init__(table_column=Column(no_wrap=True))
         self.remaining: dict[CacheKey, int] = {}
         self.durations: dict[CacheKey, list[float]] = {}
+        self.hints: dict[tuple[str, str, Treatment, DisequalityEncoding], tuple[tuple[datetime, int], float]] = {}
         self.active: tuple[CacheKey, float] | None = None
+        for row_index, record in enumerate(store.records):
+            wall = record["wall_sec"]
+            if record["status"] != "success" or wall is None or not isfinite(wall) or wall <= 0:
+                continue
+            identity = (
+                record["file_sha256"],
+                record["fact_directory_sha256"],
+                record["treatment"],
+                record["disequality_encoding"],
+            )
+            order = (datetime.fromisoformat(record["started_at"]), row_index)
+            prior = self.hints.get(identity)
+            if prior is None or order > prior[0]:
+                self.hints[identity] = (order, wall)
         for target, run in runs:
             key = CacheKey.for_endpoint(BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file)
             self.remaining[key] = run.missing_observations
@@ -682,7 +697,16 @@ class CollectionETAColumn(ProgressColumn):
         self.active = None
 
     def render(self, task: Task) -> Text:
-        means = {key: sum(values) / len(values) for key, values in self.durations.items() if values}
+        means = {
+            key: sum(values) / len(values) for key, values in self.durations.items() if values and self.remaining[key]
+        }
+        for key, count in self.remaining.items():
+            if count and key not in means:
+                hint = self.hints.get(
+                    (key.file_sha256, key.fact_directory_sha256, key.treatment, key.disequality_encoding)
+                )
+                if hint is not None:
+                    means[key] = hint[1]
         fallback = sum(means.values()) / len(means) if means else 1.0
         seconds = sum(count * means.get(key, fallback) for key, count in self.remaining.items())
         active = self.active
