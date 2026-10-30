@@ -126,21 +126,21 @@ fn multipattern_assertions_detect_missing_joins() {
     }
 }
 
-fn claim_name(form: Sexp) -> Option<String> {
+fn claim_name(form: Sexp<'_>) -> Option<String> {
     let Sexp::List(mut xs, _) = form else {
         return None;
     };
     let Sexp::Atom(head, _) = &xs[0] else {
         return None;
     };
-    match head.as_str() {
+    match head.as_ref() {
         "fail" => claim_name(xs.remove(1)),
         "check" => {
             let Sexp::List(fact, _) = xs.remove(1) else {
                 panic!("invalid check")
             };
             fact.into_iter().skip(1).find_map(|x| match x {
-                Sexp::Atom(s, _) if !s.starts_with('$') => Some(s),
+                Sexp::Atom(s, _) if !s.starts_with('$') => Some(s.into_owned()),
                 _ => None,
             })
         }

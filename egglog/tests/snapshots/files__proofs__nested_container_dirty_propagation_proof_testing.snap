@@ -3,25 +3,25 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (vec-of (vec-of (w (b)))))
-(let t1 (p t0))
-(let prf0 (Fiat (= t1 t1)))
-(let prf1 (Proj (= t0 t0) prf0 0))
+(let t (vec-of (vec-of (w (b)))))
+(let t_1 (p t))
+(let prf (Fiat (= t_1 t_1)))
+(let prf_1 (Proj (= t t) prf 0))
 (Rule
-  (= t1 (b))
+  (= t_1 (b))
   (name "(rewrite (p (vec-of (vec-of (b)))) (b))")
   (premises
     (Fiat (= (b) (b)))
     (Eval)
     (Congr
-      (= t1 (p (vec-of (vec-of (b)))))
-      prf0
+      (= t_1 (p (vec-of (vec-of (b)))))
+      prf
       (Congr
-        (= t0 (vec-of (vec-of (b))))
-        prf1
+        (= t (vec-of (vec-of (b))))
+        prf_1
         (Congr
           (= (vec-of (w (b))) (vec-of (b)))
-          (Proj (= (vec-of (w (b))) (vec-of (w (b)))) prf1 0)
+          (Proj (= (vec-of (w (b))) (vec-of (w (b)))) prf_1 0)
           (Rule
             (= (w (b)) (b))
             (name "(rewrite (w x) x)")
@@ -30,5 +30,5 @@ expression: proof_snapshot
           0)
         0)
       0))
-  (substitution (@v (b)) (@rewrite_var__1 t1) (@v1 (vec-of (vec-of (b))))))
+  (substitution (@v (b)) (@rewrite_var___1 t_1) (@v_1 (vec-of (vec-of (b))))))
 )

@@ -60,7 +60,7 @@ impl Store {
             Kind::SortedProofShape => Self::Sorted(Box::new(SortedWritesTable::new(
                 KEY_COLS,
                 COLS,
-                Some(ColumnId::from_usize(COLS - 1)),
+                ColumnId::from_usize(COLS - 1),
                 vec![ColumnId::new(1)],
                 Box::new(|_, _, _, _| {
                     panic!("the proof-shaped workload must have unique minted ids")

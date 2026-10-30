@@ -31,6 +31,10 @@ validation; their `*-nits` and `*-test` dependencies can be run separately
 while iterating. These targets discover files from project configuration rather
 than naming individual files in this document.
 
+`make slotted-test` builds the slotted reference runners and runs their unit and
+differential tests. CI runs it in parallel with `make rust-test`; both remain
+part of `make test` and `make check`.
+
 For proof-focused changes, the filtered proof snapshot test is useful while
 iterating or when you want a focused proof rerun:
 

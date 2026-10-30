@@ -3,51 +3,51 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
-(let t1 (g* t0 t0))
-(Fiat (= t1 t1))
+(let t (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
+(let t_1 (g* t t))
+(Fiat (= t_1 t_1))
 )
 (
-(let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
-(let t1 (g* t0 t0))
+(let t (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
+(let t_1 (g* t t))
 (Rule
-  (= t1 (g* (g* (AConst) (AConst)) (g* (g* (AConst) (AConst)) t0)))
+  (= t_1 (g* (g* (AConst) (AConst)) (g* (g* (AConst) (AConst)) t)))
   (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
-  (premises (Fiat (= t1 t1)))
+  (premises (Fiat (= t_1 t_1)))
   (substitution
-    (@rewrite_var__ t1)
+    (@rewrite_var__ t_1)
     (a (g* (AConst) (AConst)))
     (b (g* (AConst) (AConst)))
-    (c t0)))
+    (c t)))
 )
 (
-(let t0 (g* (inv (aConst)) (aConst)))
-(let t1 (g* (bConst) t0))
-(let t2 (g* t1 (inv (bConst))))
+(let t (g* (inv (aConst)) (aConst)))
+(let t_1 (g* (bConst) t))
+(let t_2 (g* t_1 (inv (bConst))))
 (Congr
-  (= t2 (g* (bConst) (inv (bConst))))
-  (Fiat (= t2 t2))
+  (= t_2 (g* (bConst) (inv (bConst))))
+  (Fiat (= t_2 t_2))
   (Rule
-    (= t1 (bConst))
+    (= t_1 (bConst))
     (name "(rewrite (g* a $I) a)")
     (premises
       (Congr
-        (= t1 (g* (bConst) (IConst)))
-        (Fiat (= t1 t1))
+        (= t_1 (g* (bConst) (IConst)))
+        (Fiat (= t_1 t_1))
         (Rule
-          (= t0 (IConst))
+          (= t (IConst))
           (name "(rewrite (g* (inv a) a) $I)")
-          (premises (Fiat (= t0 t0)))
-          (substitution (@rewrite_var__4 t0) (a (aConst))))
+          (premises (Fiat (= t t)))
+          (substitution (@rewrite_var___4 t) (a (aConst))))
         1))
-    (substitution (@rewrite_var__3 t1) (a (bConst))))
+    (substitution (@rewrite_var___3 t_1) (a (bConst))))
   0)
 )
 (
-(let t0 (g* (bConst) (inv (bConst))))
+(let t (g* (bConst) (inv (bConst))))
 (Rule
-  (= t0 (IConst))
+  (= t (IConst))
   (name "(rewrite (g* a (inv a)) $I)")
-  (premises (Fiat (= t0 t0)))
-  (substitution (@rewrite_var__5 t0) (a (bConst))))
+  (premises (Fiat (= t t)))
+  (substitution (@rewrite_var___5 t) (a (bConst))))
 )

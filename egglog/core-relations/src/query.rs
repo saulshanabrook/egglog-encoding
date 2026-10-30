@@ -16,12 +16,15 @@ use crate::{
     free_join::{
         ActionId, AtomId, Database, ProcessedConstraints, SubAtom, TableId, TableInfo, VarInfo,
         Variable, get_occurrence_index_from_tableinfo,
-        plan::{JoinHeader, Plan, PlanStrategy},
+        plan::{JoinHeader, Plan, PlanStrategy, SharedHeaderSubset},
     },
     offsets::Subset,
     pool::{Pooled, with_pool_set},
     table_spec::{ColumnId, Constraint, TableSchema},
 };
+
+#[cfg(test)]
+mod tests;
 
 define_id!(pub RuleId, u32, "An identifier for a rule in a rule set");
 
@@ -95,6 +98,25 @@ impl RuleSet {
 pub struct RuleSetBuilder<'outer> {
     rule_set: RuleSet,
     db: &'outer mut Database,
+    /// Rows cannot change through this builder. Cache processed headers only
+    /// until it is consumed; the next ruleset rechecks the database after merge.
+    /// Constraint order is preserved, and atom ids deliberately are not keys.
+    header_cache: DenseIdMap<TableId, HashMap<Vec<Constraint>, Option<CachedHeaderConstraints>>>,
+}
+
+struct CachedHeaderConstraints {
+    fast: Pooled<Vec<Constraint>>,
+    subset: SharedHeaderSubset,
+}
+
+impl CachedHeaderConstraints {
+    fn header(&self, atom: AtomId) -> JoinHeader {
+        JoinHeader {
+            atom,
+            constraints: Pooled::cloned(&self.fast),
+            subset: self.subset.clone(),
+        }
+    }
 }
 
 impl<'outer> RuleSetBuilder<'outer> {
@@ -102,6 +124,7 @@ impl<'outer> RuleSetBuilder<'outer> {
         Self {
             rule_set: Default::default(),
             db,
+            header_cache: Default::default(),
         }
     }
 
@@ -132,45 +155,64 @@ impl<'outer> RuleSetBuilder<'outer> {
     }
 
     fn reprocess_constraints(
-        &self,
-        atom_info: &Atom,
+        &mut self,
+        table: TableId,
         atom: AtomId,
         constraints: &[Constraint],
     ) -> Option<JoinHeader> {
-        let table = atom_info.table;
-        let mut processed = self.db.process_constraints(table, constraints);
+        let table_cache = self.header_cache.get_or_insert(table, HashMap::default);
+        if let Some(cached) = table_cache.get(constraints) {
+            return cached.as_ref().map(|cached| cached.header(atom));
+        }
+        let processed = self.db.process_constraints(table, constraints);
         if !processed.slow.is_empty() {
             panic!(
                 "Cached plans only support constraints with a fast pushdown. \
                  Got: {constraints:?} for table {table:?}",
             );
         }
-        // A constant occurrence restricts the atom to the rows holding the value,
-        // which the cached subset cannot carry: the table has grown since.
+        let cached = (processed.subset.size() != 0).then(|| CachedHeaderConstraints {
+            fast: processed.fast,
+            subset: processed.subset,
+        });
+        let header = cached.as_ref().map(|cached| cached.header(atom));
+        // Borrowed slice lookup above allocates a key only on a cache miss.
+        table_cache.insert(constraints.to_vec(), cached);
+        header
+    }
+
+    /// Recompute a cached atom's constant occurrence restriction after fetching
+    /// the shared table header. Occurrences are not encoded in the constraint
+    /// cache key, so their row subsets must remain specific to this atom.
+    fn reprocess_atom_constraints(
+        &mut self,
+        atom_info: &Atom,
+        atom: AtomId,
+        constraints: &[Constraint],
+    ) -> Option<JoinHeader> {
+        let mut header = self.reprocess_constraints(atom_info.table, atom, constraints)?;
         if let Some(occ) = &atom_info.occurrence
             && let OccurrenceKey::Const(val) = occ.key
         {
-            restrict_to_occurrences(self.db, table, &occ.cols, val, &mut processed.subset);
+            let mut subset = with_pool_set(|ps| header.subset.as_ref().to_owned(&ps.get_pool()));
+            restrict_to_occurrences(self.db, atom_info.table, &occ.cols, val, &mut subset);
+            if subset.size() == 0 {
+                return None;
+            }
+            header.subset = subset.into();
         }
-        if processed.subset.size() == 0 {
-            return None;
-        }
-        Some(JoinHeader {
-            atom,
-            constraints: processed.fast,
-            subset: processed.subset,
-        })
+        Some(header)
     }
 
     fn push_extra_constraints(
-        &self,
+        &mut self,
         headers: &mut Vec<JoinHeader>,
         atoms: &Arc<DenseIdMap<AtomId, Atom>>,
         extra_constraints: &[(AtomId, Constraint)],
     ) -> Option<()> {
         for (atom_id, constraint) in extra_constraints {
             let atom_info = atoms.get(*atom_id).expect("atom must exist in plan");
-            headers.push(self.reprocess_constraints(
+            headers.push(self.reprocess_atom_constraints(
                 atom_info,
                 *atom_id,
                 std::slice::from_ref(constraint),
@@ -180,7 +222,7 @@ impl<'outer> RuleSetBuilder<'outer> {
     }
 
     fn reprocess_existing_headers(
-        &self,
+        &mut self,
         headers: &mut Vec<JoinHeader>,
         atoms: &Arc<DenseIdMap<AtomId, Atom>>,
         existing: &[JoinHeader],
@@ -190,13 +232,13 @@ impl<'outer> RuleSetBuilder<'outer> {
         } in existing
         {
             let atom_info = atoms.get(*atom).expect("atom must exist in plan");
-            headers.push(self.reprocess_constraints(atom_info, *atom, constraints)?);
+            headers.push(self.reprocess_atom_constraints(atom_info, *atom, constraints)?);
         }
         Some(())
     }
 
     fn get_rule_with_extra_constraints(
-        &self,
+        &mut self,
         cached: &CachedPlan,
         action_id: ActionId,
         extra_constraints: &[(AtomId, Constraint)],
@@ -585,7 +627,9 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
             OccurrenceKey::Const(val) => {
                 let table = self.query.atoms[atom].table;
                 let subset = &mut self.query.atoms[atom].constraints.subset;
-                restrict_to_occurrences(self.rsb.db, table, &cols, val, subset);
+                let mut rows = with_pool_set(|ps| subset.as_ref().to_owned(&ps.get_pool()));
+                restrict_to_occurrences(self.rsb.db, table, &cols, val, &mut rows);
+                *subset = rows.into();
             }
             // Register the occurrence columns as this variable's foothold in the
             // atom, so the planner probes the atom once the variable is bound.

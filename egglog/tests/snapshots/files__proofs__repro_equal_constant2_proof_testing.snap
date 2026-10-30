@@ -16,5 +16,5 @@ expression: proof_snapshot
       (premises (Fiat (= (foo 10) (foo 10))) (Fiat (= 10 10)))
       (substitution (@n 10)))
     (Fiat (= 4 4)))
-  (substitution (@n1 4)))
+  (substitution (@n_1 4)))
 )

@@ -10,25 +10,25 @@ expression: proof_snapshot
     (Fiat (= (Var "x") (Var "x")))
     (Fiat (= (Const 2) (Const 2)))
     (Fiat (= () ())))
-  (substitution (@v (Var "x")) (@v1 (Const 2))))
+  (substitution (@v (Var "x")) (@v_1 (Const 2))))
 )
 (
-(let t0 (Add (Var "x") (Const 2)))
+(let t (Add (Var "x") (Const 2)))
 (Rule
-  (= t0 (Add (Const 2) (Var "x")))
+  (= t (Add (Const 2) (Var "x")))
   (name "(rewrite (Add a b) (Add b a))")
-  (premises (Fiat (= t0 t0)))
-  (substitution (@rewrite_var__1 t0) (a (Var "x")) (b (Const 2))))
+  (premises (Fiat (= t t)))
+  (substitution (@rewrite_var___1 t) (a (Var "x")) (b (Const 2))))
 )
 (
-(let t0 (Add (Var "x") (Const 2)))
-(let prop0 (= t0 t0))
-(let t1 (Add t0 (Const 0)))
-(let prf0
+(let t (Add (Var "x") (Const 2)))
+(let prop (= t t))
+(let t_1 (Add t (Const 0)))
+(let prf
   (Rule
-      (= t0 t1)
+      (= t t_1)
       (name "(rewrite (Add a b) (Add (Add a b) (Const 0)))")
-      (premises (Fiat prop0))
-      (substitution (@rewrite_var__ t0) (a (Var "x")) (b (Const 2)))))
-(Trans prop0 prf0 (Sym (= t1 t0) prf0))
+      (premises (Fiat prop))
+      (substitution (@rewrite_var__ t) (a (Var "x")) (b (Const 2)))))
+(Trans prop prf (Sym (= t_1 t) prf))
 )

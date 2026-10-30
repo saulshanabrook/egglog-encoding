@@ -753,6 +753,9 @@ CI runs on pull requests, manual dispatches, and pushes to `main`:
 
 - `python`: `make python-nits`, then `make python-test`.
 - `rust`: `make rust-nits`, then `make rust-test`.
+- `slotted`: `make slotted-test` builds the reference runners and runs their
+  unit and differential tests, including both fixed fuzz seeds. This runs in
+  parallel with the workspace Rust tests; `make test` still runs all three suites.
 - `benchmark-smoke`: a one-round `off`/`proof-testing` runner check on small Math and
   disequality fixtures through `make benchmark-smoke`. The full parameter-analysis
   benchmark is not included in this CI job.

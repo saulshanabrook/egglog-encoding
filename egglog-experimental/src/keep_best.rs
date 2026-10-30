@@ -9,7 +9,9 @@
 //! Each argument must evaluate to a `String` that names an existing function.
 
 use crate::DynamicCostModel;
-use crate::greedy_dag_extract::{extract_best_greedy_dag, split_trailing_extractor};
+use crate::greedy_dag_extract::{
+    extract_best_greedy_dag, greedy_dag_or_tree, split_trailing_extractor,
+};
 use egglog::{
     CommandOutput, EGraph, Error, RawValues, TermDag, TermId, UserDefinedCommand, Value, Write,
     ast::{Expr, FunctionSubtype, ParseError},
@@ -30,7 +32,8 @@ pub struct KeepBestCommand;
 
 impl UserDefinedCommand for KeepBestCommand {
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
-        let (args, use_greedy_dag) = split_trailing_extractor(args)?;
+        let (args, extractor) = split_trailing_extractor(args)?;
+        let use_greedy_dag = greedy_dag_or_tree(extractor, "keep-best")?;
 
         if args.is_empty() {
             return Err(Error::ParseError(ParseError(

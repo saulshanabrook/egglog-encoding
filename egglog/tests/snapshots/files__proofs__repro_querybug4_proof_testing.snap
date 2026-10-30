@@ -3,7 +3,7 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let prf0 (Fiat (= 2 2)))
+(let prf (Fiat (= 2 2)))
 (Rule
   (= (OtherNum 2) (Num 2))
   (name
@@ -12,6 +12,6 @@ expression: proof_snapshot
        (= y fvar5__))
       ((union (OtherNum fvar5__) (Num fvar5__)))
          )")
-  (premises prf0 prf0 prf0)
+  (premises prf prf prf)
   (substitution (fvar5__ 2) (fvar6__ 2) (y 2)))
 )

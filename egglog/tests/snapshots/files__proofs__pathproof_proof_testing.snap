@@ -3,10 +3,10 @@ source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
 (
-(let t0 (path 3 1 (Trans 3 (Edge 2 1))))
-(let t1 (path 2 1 (Edge 2 1)))
+(let t (path 3 1 (Trans 3 (Edge 2 1))))
+(let t_1 (path 2 1 (Edge 2 1)))
 (Rule
-  (= t0 t0)
+  (= t t)
   (name
     "(rule ((edge x y)
        (path y z p))
@@ -15,7 +15,7 @@ expression: proof_snapshot
   (premises
     (Fiat (= (edge 3 2) (edge 3 2)))
     (Rule
-      (= t1 t1)
+      (= t_1 t_1)
       (name
         "(rule ((edge x y))
       ((path x y (Edge x y)))
