@@ -135,6 +135,7 @@ def test_native_cache_and_plan_use_physical_input_identity(tmp_path: Path) -> No
 def test_native_build_uses_the_isolated_manifest_and_selected_profile(
     treatment: Treatment, profile: targets.BuildProfile, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "shared-target"))
     native = tmp_path / "benchmarks/disequality/native"
     target_dir = tmp_path / "benchmarks/local/parameter-native/target"
     binary = target_dir / profile / treatment

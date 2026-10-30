@@ -194,6 +194,97 @@ def test_same_checkout_target_aliases_build_once(
     assert resolved[baseline_request].binary_sha256 == resolved[candidate_request].binary_sha256 == "sha256:union"
 
 
+@pytest.mark.parametrize("target_dir_is_absolute", [False, True])
+@pytest.mark.parametrize("treatments", [("off", "proofs"), ("egg", "egg-proofs"), ("off", "egg")])
+def test_distinct_checkouts_reject_one_cargo_target_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target_dir_is_absolute: bool,
+    treatments: tuple[models.Treatment, models.Treatment],
+) -> None:
+    baseline_request = targets.parse_target("baseline")
+    candidate_request = targets.parse_target("candidate")
+    rows = {
+        baseline_request: models.TargetRow("baseline", str(tmp_path / "baseline"), "HEAD", "baseline123", False),
+        candidate_request: models.TargetRow("candidate", str(tmp_path / "candidate"), "HEAD", "candidate123", False),
+    }
+    target_dir = str(tmp_path / "shared-target") if target_dir_is_absolute else "../shared-target"
+    monkeypatch.setenv("CARGO_TARGET_DIR", target_dir)
+    monkeypatch.setattr(
+        collection,
+        "materialize_target_request",
+        lambda request, *_args: rows[request],
+    )
+
+    with pytest.raises(ValueError, match="cannot share one CARGO_TARGET_DIR"):
+        collection.resolve_targets(
+            (
+                (
+                    baseline_request,
+                    (models.EndpointRequest(baseline_request, treatments[0]),),
+                ),
+                (
+                    candidate_request,
+                    (models.EndpointRequest(candidate_request, treatments[1]),),
+                ),
+            ),
+            cast(ReportStore, object()),
+            (FILE_SPEC,),
+            1,
+            120,
+            False,
+            tmp_path,
+            ROOT,
+            Console(stderr=True),
+        )
+
+
+@pytest.mark.parametrize("candidate_treatment", ["egg-ee", "off"])
+def test_isolated_native_checkouts_allow_a_shared_cargo_target_dir(
+    candidate_treatment: models.Treatment,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    baseline_request = targets.parse_target("baseline")
+    candidate_request = targets.parse_target("candidate")
+    rows = {
+        baseline_request: models.TargetRow("baseline", str(tmp_path / "baseline"), "HEAD", "baseline123", False),
+        candidate_request: models.TargetRow("candidate", str(tmp_path / "candidate"), "HEAD", "candidate123", False),
+    }
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "shared-target"))
+    monkeypatch.setattr(collection, "materialize_target_request", lambda request, *_args: rows[request])
+    builds: list[models.TargetRequest] = []
+
+    def build(
+        request: models.TargetRequest,
+        row: models.TargetRow,
+        _console: Console,
+        _profile: targets.BuildProfile,
+        _engines: tuple[models.Engine, ...],
+    ) -> models.ResolvedTarget:
+        builds.append(request)
+        return models.ResolvedTarget(request, row, f"sha256:{row.git_sha}", Path(row.path) / "binary")
+
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+    resolved = collection.resolve_targets(
+        (
+            (baseline_request, (models.EndpointRequest(baseline_request, "egg-ee"),)),
+            (candidate_request, (models.EndpointRequest(candidate_request, candidate_treatment),)),
+        ),
+        cast(ReportStore, object()),
+        (FILE_SPEC,),
+        1,
+        120,
+        False,
+        tmp_path,
+        ROOT,
+        Console(stderr=True),
+    )
+
+    assert builds == [baseline_request, candidate_request]
+    assert tuple(resolved) == (baseline_request, candidate_request)
+
+
 def test_same_target_builds_each_engine_required_by_its_treatments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

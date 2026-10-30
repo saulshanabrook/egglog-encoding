@@ -214,8 +214,12 @@ def build_target(
     engine_label = "" if engine == "egglog" else f" · {engine}"
     console.print(Text.assemble(("Building", "bold"), " ", _display_target(row), engine_label))
     package = {"egglog": "egglog-experimental", "egg": "egg-math-benchmark"}.get(engine)
-    target_dir = checkout_path / "target"
+    target_dir = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
+    if not target_dir.is_absolute():
+        target_dir = checkout_path / target_dir
     build_args = ["cargo", "build"]
+    if engine == "egglog":
+        build_args.append("--locked")
     if build_profile == "release":
         build_args.append("--release")
     else:
@@ -236,6 +240,8 @@ def build_target(
         )
     else:
         build_args.extend(("-p", package))
+        if engine == "egglog":
+            build_args.extend(("--no-default-features", "--features", "bin", "--bin", package))
     subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
     binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem

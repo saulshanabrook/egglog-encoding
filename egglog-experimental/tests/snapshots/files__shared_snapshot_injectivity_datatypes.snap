@@ -1,0 +1,7 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((Block 1)
+ (Leaf 2)
+ (Return 1))

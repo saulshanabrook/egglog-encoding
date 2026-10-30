@@ -1,0 +1,27 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(let t0
+  (premises
+            (Fiat
+              (= (Pair (Leaf "b") 7 (Leaf "d")) (Pair (Leaf "a") 7 (Leaf "c"))))))
+(let t1
+  (substitution
+            (@injectivity-left (Leaf "b"))
+            (@injectivity-left1 7)
+            (@injectivity-left2 (Leaf "d"))
+            (@injectivity-right (Leaf "a"))
+            (@injectivity-right1 7)
+            (@injectivity-right2 (Leaf "c"))))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Sym
+      (= (Leaf "a") (Leaf "b"))
+      (Rule (= (Leaf "b") (Leaf "a")) (name "@injectivity-Pair") t0 t1))
+    (Sym
+      (= (Leaf "c") (Leaf "d"))
+      (Rule (= (Leaf "d") (Leaf "c")) (name "@injectivity-Pair") t0 t1)))
+  (substitution))

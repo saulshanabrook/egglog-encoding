@@ -1,0 +1,7 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((Leaf 4)
+ (Other 2)
+ (Wrap 4))
