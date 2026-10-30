@@ -10,6 +10,7 @@ mod core;
 mod exec_state;
 pub mod extract;
 pub mod prelude;
+mod program_source;
 mod proofs;
 
 pub mod scheduler;
@@ -56,6 +57,7 @@ use indexmap::map::Entry;
 use log::{Level, log_enabled};
 use numeric_id::DenseIdMap;
 use prelude::*;
+use program_source::ProgramSource;
 #[doc(hidden)]
 pub use proofs::proof_certificate::{CertificateVerdict, check_certificates};
 pub use proofs::proof_encoding_helpers::{
@@ -1372,7 +1374,8 @@ impl EGraph {
         if proof_testing {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
-        let resolved = proof_check_eg.process_program_internal(prog, false)?;
+        let resolved = proof_check_eg
+            .process_program_internal(ProgramSource::Commands(prog.into_iter()), false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
         Ok(())
@@ -2960,7 +2963,7 @@ impl EGraph {
     /// Only resolution retains the lowered commands in the returned value.
     fn process_program_internal(
         &mut self,
-        program: Vec<Command>,
+        mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
@@ -2969,7 +2972,17 @@ impl EGraph {
         let mut pending = Vec::new();
         let mut pending_lookups = 0;
 
-        for before_expanded_command in program {
+        loop {
+            let next =
+                program.next_command(&mut self.parser, &mut self.overall_report.frontend_parse);
+            let before_expanded_command = match next {
+                Ok(Some(command)) => command,
+                Ok(None) => break,
+                Err(error) => {
+                    self.flush_ground_actions(&mut pending)?;
+                    return Err(error.into());
+                }
+            };
             // First do user-provided macro expansion for this command,
             // which may rely on type information from previous commands.
             let macro_type_info = self
@@ -3030,8 +3043,18 @@ impl EGraph {
                             .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
                         self.overall_report.frontend_other += include_timer.elapsed();
                         let s = s?;
-                        let included_program = self.parse_program_timed(Some(file.clone()), &s)?;
-                        // run program internal on these include commands
+                        let included_program = if run_commands && !self.are_proofs_enabled() {
+                            ProgramSource::Text {
+                                parser: SexpParser::new(Some(file.clone()), &s),
+                                expanded: Vec::new().into_iter(),
+                            }
+                        } else {
+                            ProgramSource::Commands(
+                                self.parse_program_timed(Some(file.clone()), &s)?
+                                    .into_iter(),
+                            )
+                        };
+                        // Use the same executor and flush at the include boundary.
                         let resolved =
                             self.process_program_internal(included_program, run_commands)?;
                         outputs.extend(resolved.outputs);
@@ -3085,7 +3108,8 @@ impl EGraph {
     /// recovery rebuild leaves the database canonical and reusable. Rust panics
     /// in extension code unwind normally instead of becoming [`enum@Error`] values.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
-        let res = self.process_program_internal(program, true)?;
+        let res =
+            self.process_program_internal(ProgramSource::Commands(program.into_iter()), true)?;
         Ok(res.outputs)
     }
 
@@ -3098,7 +3122,8 @@ impl EGraph {
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parse_program_timed(filename, input)?;
-        let res = self.process_program_internal(parsed, false)?;
+        let res =
+            self.process_program_internal(ProgramSource::Commands(parsed.into_iter()), false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
 
@@ -3111,7 +3136,13 @@ impl EGraph {
         self.parse_program_timed(filename, input)
     }
 
-    /// Takes a source program `input`, parses it, runs it, and returns a list of messages.
+    /// Parse and execute source commands, returning their messages.
+    ///
+    /// With proofs disabled, commands execute incrementally: earlier commands
+    /// remain executed if a later form fails to parse, and parser extensions
+    /// installed by a command are available to subsequent source forms.
+    /// Proof inputs are parsed in full before execution. To request eager parsing
+    /// in any mode, call [`Self::parse_program`] followed by [`Self::run_program`].
     ///
     /// `filename` is an optional argument to indicate the source of
     /// the program for error reporting. If `filename` is `None`,
@@ -3121,12 +3152,19 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<CommandOutput>, Error> {
-        let parsed = self.parse_program_timed(filename, input)?;
-        self.run_program(parsed)
+        let source = if self.are_proofs_enabled() {
+            ProgramSource::Commands(self.parse_program_timed(filename, input)?.into_iter())
+        } else {
+            ProgramSource::Text {
+                parser: SexpParser::new(filename, input),
+                expanded: Vec::new().into_iter(),
+            }
+        };
+        Ok(self.process_program_internal(source, true)?.outputs)
     }
 
-    /// Parse through the single accounting boundary shared by source, include,
-    /// and generated term-encoding text.
+    /// Parse eagerly and account for parsing time. The streaming reader records
+    /// its parsing work in the same report counter.
     pub(crate) fn parse_program_timed(
         &mut self,
         filename: Option<String>,
@@ -4166,7 +4204,9 @@ mod tests {
                 graph = graph.with_proofs_enabled().with_proof_testing();
             }
             let program = graph.parse_program(None, source).unwrap();
-            let result = graph.process_program_internal(program, true).unwrap();
+            let result = graph
+                .process_program_internal(ProgramSource::Commands(program.into_iter()), true)
+                .unwrap();
             assert!(result.resolved.is_empty());
             assert!(result.resolved_before_proofs.is_empty());
             assert_eq!(!graph.proof_check_program.is_empty(), proofs);
@@ -4178,7 +4218,9 @@ mod tests {
                 graph = graph.with_proofs_enabled();
             }
             let program = graph.parse_program(None, source).unwrap();
-            let result = graph.process_program_internal(program, false).unwrap();
+            let result = graph
+                .process_program_internal(ProgramSource::Commands(program.into_iter()), false)
+                .unwrap();
             assert!(!result.resolved.is_empty());
             assert_eq!(!result.resolved_before_proofs.is_empty(), proofs);
             assert!(graph.proof_check_program.is_empty());
