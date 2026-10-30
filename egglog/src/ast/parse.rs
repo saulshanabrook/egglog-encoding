@@ -1283,7 +1283,7 @@ impl Parser {
                 }
             },
             _ => {
-                self.ensure_definition_name(&head, &span)?;
+                self.ensure_definition_name(head, &span)?;
                 let variants = map_fallible(tail, self, Self::variant)?;
                 (span, head.to_owned(), Subdatatypes::Variants(variants))
             }
@@ -1292,7 +1292,7 @@ impl Parser {
 
     pub fn variant(&mut self, sexp: &Sexp<'_>) -> Result<Variant, ParseError> {
         let (name, tail, span) = sexp.expect_call("datatype variant")?;
-        self.ensure_definition_name(&name, &span)?;
+        self.ensure_definition_name(name, &span)?;
 
         let (types, cost, unextractable) = match tail {
             [types @ .., Sexp::Atom(o, _)] if *o == ":unextractable" => (types, None, true),
