@@ -118,52 +118,6 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def build_collection_plan(
-    store: ReportStore,
-    target: ResolvedTarget,
-    endpoints: tuple[BenchmarkEndpoint, ...],
-    files: tuple[FileSpec, ...],
-    rounds: int,
-    timeout_sec: int,
-    force_run: bool,
-) -> CollectionPlan:
-    """Select cached observations for the exact endpoints using this binary."""
-
-    endpoint_by_identity = {endpoint.cache_identity: endpoint for endpoint in endpoints}
-    if len(endpoint_by_identity) != len(endpoints):
-        raise ValueError("collection endpoints must not contain duplicate cache identities")
-    if any(endpoint.target != target for endpoint in endpoints):
-        raise ValueError("collection endpoints must use the plan target")
-
-    requests = tuple(
-        (
-            file_spec.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),
-            endpoint.treatment,
-            CacheKey.for_endpoint(endpoint, file_spec, timeout_sec),
-        )
-        for file_spec in files
-        for endpoint in endpoints
-    )
-    selected = store.selected_statuses_for_keys(tuple(request[2] for request in requests), rounds)
-    runs: list[BenchmarkRunPlan] = []
-    for file_spec, treatment, cache_key in requests:
-        cached = selected[cache_key]
-        missing = rounds if force_run else max(0, rounds - len(cached))
-        if not force_run and any(status != "success" for status in cached):
-            missing = 0
-        runs.append(
-            BenchmarkRunPlan(
-                file=file_spec,
-                treatment=treatment,
-                required_rows=rounds,
-                cached_statuses=cached,
-                missing_observations=missing,
-                disequality_encoding=cache_key.disequality_encoding,
-            )
-        )
-    return CollectionPlan(target=target, runs=tuple(runs))
-
-
 def resolve_requests(
     requests: tuple[BenchmarkRequest, ...],
     store: ReportStore,
@@ -220,7 +174,7 @@ def plan_collection(
     timeout_sec: int,
     force_run: bool,
 ) -> tuple[CollectionPlan, ...]:
-    """Plan each requested rectangle and merge shared observations before execution."""
+    """Select each exact cache identity once, preserving scope execution order."""
 
     scopes: dict[tuple[ResolvedTarget, tuple[FileSpec, ...]], list[BenchmarkEndpoint]] = {}
     for request in requests:
@@ -229,35 +183,34 @@ def plan_collection(
         endpoints = scopes.setdefault((target, request.files), [])
         if endpoint not in endpoints:
             endpoints.append(endpoint)
-    return merge_collection_plans(
-        tuple(
-            build_collection_plan(store, target, tuple(endpoints), files, rounds, timeout_sec, force_run)
-            for (target, files), endpoints in scopes.items()
-        ),
-        timeout_sec,
-    )
 
+    cells: dict[CacheKey, tuple[BenchmarkEndpoint, FileSpec]] = {}
+    for (_target, files), endpoints in scopes.items():
+        for file in files:
+            for endpoint in endpoints:
+                physical_file = file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine)
+                key = CacheKey.for_endpoint(endpoint, file, timeout_sec)
+                cells.setdefault(key, (endpoint, physical_file))
+    if not cells:
+        return ()
 
-def merge_collection_plans(plans: tuple[CollectionPlan, ...], timeout_sec: int) -> tuple[CollectionPlan, ...]:
-    """Collect each exact cache identity once, retaining first-request execution order."""
-
+    selected = store.selected_statuses_for_keys(tuple(cells), rounds)
     runs_by_target: dict[ResolvedTarget, list[BenchmarkRunPlan]] = {}
-    seen: dict[CacheKey, BenchmarkRunPlan] = {}
-    for plan in plans:
-        for run in plan.runs:
-            endpoint = BenchmarkEndpoint(plan.target, run.treatment, run.disequality_encoding)
-            key = CacheKey.for_endpoint(endpoint, run.file, timeout_sec)
-            previous = seen.get(key)
-            if previous is not None:
-                if (
-                    previous.required_rows,
-                    previous.cached_statuses,
-                    previous.missing_observations,
-                ) != (run.required_rows, run.cached_statuses, run.missing_observations):
-                    raise ValueError("cannot merge different collection requirements for the same cache identity")
-                continue
-            seen[key] = run
-            runs_by_target.setdefault(plan.target, []).append(run)
+    for key, (endpoint, file) in cells.items():
+        cached = selected[key]
+        missing = rounds if force_run else max(0, rounds - len(cached))
+        if not force_run and any(status != "success" for status in cached):
+            missing = 0
+        runs_by_target.setdefault(endpoint.target, []).append(
+            BenchmarkRunPlan(
+                file=file,
+                treatment=endpoint.treatment,
+                required_rows=rounds,
+                cached_statuses=cached,
+                missing_observations=missing,
+                disequality_encoding=key.disequality_encoding,
+            )
+        )
     return tuple(CollectionPlan(target, tuple(runs)) for target, runs in runs_by_target.items())
 
 
