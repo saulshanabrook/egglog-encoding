@@ -41,11 +41,15 @@ def nightly_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         "file": file,
     }
 
-    def resolve(groups: Any, *_args: Any, **_kwargs: Any) -> dict[models.TargetRequest, models.ResolvedTarget]:
-        request, endpoints = groups[0]
+    def resolve(
+        requests: tuple[collection.BenchmarkRequest, ...], *_args: Any, **_kwargs: Any
+    ) -> dict[models.TargetRequest, models.ResolvedTarget]:
+        request = requests[0].endpoint.target
+        assert request.label is not None
         case["builds"].append(request.label)
         assert processes.COLLECTION_DEADLINE.get() is not None
-        assert [endpoint.treatment for endpoint in endpoints] == ["off", "proof-testing"]
+        assert [item.endpoint.treatment for item in requests] == ["off", "proof-testing"]
+        assert all(item.endpoint.target == request and item.files == (file,) for item in requests)
         return {request: resolved[request.label]}
 
     def measure(
@@ -57,7 +61,7 @@ def nightly_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         )
 
     monkeypatch.setattr(workloads, "resolve_files", lambda *_args: (file,))
-    monkeypatch.setattr(collection, "resolve_targets", resolve)
+    monkeypatch.setattr(collection, "resolve_requests", resolve)
     monkeypatch.setattr(
         collection, "preflight_collection", lambda plan, *_args: case["preflights"].append(plan.target.display_label)
     )
@@ -84,7 +88,7 @@ def test_worker_collects_only_checked_and_off_builds_once_and_renders_cached_rep
     records = ReportStore(args.output_dir / "index.jsonl").records
     assert len(records) == 4 and {row["timeout_sec"] for row in records} == {120}
     assert processes.COLLECTION_DEADLINE.get() is None
-    monkeypatch.setattr(collection, "resolve_targets", lambda *a, **k: pytest.fail("render must not resolve/build"))
+    monkeypatch.setattr(collection, "resolve_requests", lambda *a, **k: pytest.fail("render must not resolve/build"))
     monkeypatch.setattr(collection, "collect_rows", lambda *a, **k: pytest.fail("render must not collect"))
     assert nightly._render(args) == 0
     assert (args.output_dir / "index.html").is_file()
