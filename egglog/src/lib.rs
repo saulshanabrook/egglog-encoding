@@ -25,7 +25,7 @@ pub use command_macro::{CommandMacro, CommandMacroRegistry};
 // This is used to allow the `add_primitive` macro to work in
 // both this crate and other crates by referring to `::egglog`.
 extern crate self as egglog;
-use action_execution::ExecutableCommand;
+use action_execution::{ExecutableCommand, GroundActionCache};
 pub use ast::{ResolvedExpr, ResolvedFact, ResolvedVar};
 #[cfg(feature = "bin")]
 pub use cli::*;
@@ -2972,6 +2972,7 @@ impl EGraph {
         let mut desugared = Vec::new();
         let mut pending = Vec::new();
         let mut pending_lookups = 0;
+        let mut ground_calls = GroundActionCache::default();
 
         loop {
             let next =
@@ -3010,7 +3011,9 @@ impl EGraph {
             for command in macro_expanded {
                 let timer = Instant::now();
                 let prepared = match &command {
-                    Command::Action(action) if run_commands => self.prepare_ground_action(action),
+                    Command::Action(action) if run_commands => {
+                        self.prepare_ground_action(action, &mut ground_calls)
+                    }
                     _ => None,
                 };
                 self.overall_report.typecheck += timer.elapsed();
@@ -3037,6 +3040,7 @@ impl EGraph {
                     // scopes and includes see all preceding constructor insertions.
                     self.flush_ground_actions(&mut pending)?;
                     pending_lookups = 0;
+                    ground_calls.clear();
                     // handle include specially- we keep them as-is for desugaring
                     if let Command::Include(span, file) = &command {
                         let include_timer = Instant::now();
