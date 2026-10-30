@@ -368,6 +368,9 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         "math-backoff.egg",
         // The bounded paper test checks the iteration witness and full proof.
         "math-microbenchmark-rational.egg",
+        // Legacy stress workloads are too slow for the routine test suite.
+        "python_array_optimize_old.egg",
+        "stresstest_large_expr_old.egg",
     ];
 
     for entry in glob::glob(glob).unwrap() {
