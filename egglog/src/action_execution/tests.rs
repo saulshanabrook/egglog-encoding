@@ -253,9 +253,12 @@ fn ground_actions_check_eligibility_before_mutation() {
             let accepted = commands.into_iter().any(|command| {
                 graph.resolve_command(command).is_ok_and(|commands| {
                     commands.desugared.iter().any(|command| match command {
-                        ResolvedNCommand::CoreAction(action) => {
-                            graph.prepare_resolved_ground_action(action).is_some()
-                        }
+                        ResolvedNCommand::CoreAction(action) => graph
+                            .prepare_resolved_ground_action(
+                                action,
+                                &mut GroundActionCache::default(),
+                            )
+                            .is_some(),
                         _ => false,
                     })
                 })
@@ -580,4 +583,83 @@ fn declared_calls_with_primitive_alternatives_keep_ambiguity() {
     graph.add_pure_primitive(AlsoA(sort), None);
     assert!(graph.parse_and_run_program(None, "(A)").is_err());
     assert_eq!(graph.get_size("A"), 0);
+}
+
+#[test]
+fn ground_action_cache_keeps_call_validation_and_command_scope() {
+    let mut initial = EGraph::default();
+    initial
+        .parse_and_run_program(None, "(datatype T (A) (F T)) (datatype U (B))")
+        .unwrap();
+    for source in ["(F (A)) (F (A) (A))", "(F (A)) (F (B))"] {
+        let mut graph = initial.clone();
+        assert!(graph.parse_and_run_program(None, source).is_err());
+        assert_eq!(graph.get_size("F"), 1);
+        assert_eq!(graph.get_size("B"), 0);
+    }
+
+    let mut graph = initial;
+    assert!(
+        graph
+            .parse_and_run_program(
+                None,
+                "(push) (constructor Temporary () T) (Temporary) (pop) (Temporary)",
+            )
+            .is_err()
+    );
+    assert!(!graph.functions.contains_key("Temporary"));
+    graph
+        .parse_and_run_program(
+            None,
+            "
+        (push)
+        (constructor Reused () T)
+        (Reused)
+        (pop)
+        (constructor Padding () T)
+        (constructor Reused () T)
+        (Reused)
+        (check (= (Reused) (Reused)))
+    ",
+        )
+        .unwrap();
+    assert_eq!(graph.get_size("Padding"), 0);
+    assert_eq!(graph.get_size("Reused"), 1);
+}
+
+#[test]
+fn cached_calls_preserve_parser_macro_registration() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    graph
+        .parser
+        .add_command_macro(Arc::new(SimpleMacro::new("replace-a", |_, _, parser| {
+            parser.add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                Ok(Expr::Call(span, "B".into(), vec![]))
+            })));
+            Ok(vec![])
+        })));
+    graph
+        .parse_and_run_program(None, "(F (A)) (replace-a) (F (A))")
+        .unwrap();
+    assert_eq!(graph.get_size("A"), 1);
+    assert_eq!(graph.get_size("B"), 1);
+    assert_eq!(graph.get_size("F"), 2);
+}
+
+#[test]
+fn argument_buffers_reset_between_wide_and_narrow_calls() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (B) (F T) (Wide T T T T T))
+        (Wide (A) (A) (A) (A) (A)) (F (A))
+        (Wide (B) (B) (B) (B) (B))",
+        )
+        .unwrap();
+    assert_eq!(graph.get_size("Wide"), 2);
+    assert_eq!(graph.get_size("F"), 1);
 }

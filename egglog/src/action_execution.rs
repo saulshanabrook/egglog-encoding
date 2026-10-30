@@ -3,9 +3,14 @@
 //! a commit. Unions retain an individual rebuild boundary.
 
 use crate::*;
+use smallvec::SmallVec;
+
+/// Constructor metadata keyed by function name; `None` records functions
+/// that cannot use prepared constructor actions.
+type GroundActionCache = HashMap<String, Option<egglog_bridge::TableAction>>;
 
 struct GroundActions {
-    lookups: Vec<(egglog_bridge::TableAction, Vec<usize>)>,
+    lookups: Vec<(egglog_bridge::TableAction, SmallVec<[usize; 4]>)>,
     union: Option<(usize, usize)>,
 }
 
@@ -13,6 +18,7 @@ struct GroundActions {
 struct GroundActionBatch {
     pending: Vec<GroundActions>,
     lookups: usize,
+    calls: GroundActionCache,
 }
 
 /// Own the mutable graph borrow while insertions may be pending. Ordinary work
@@ -41,6 +47,17 @@ impl<'a> ActionExecutor<'a> {
     }
 
     fn committed<T>(
+        &mut self,
+        operation: impl FnOnce(&mut EGraph) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        self.graph.flush_ground_actions(&mut self.pending)?;
+        self.pending.calls.clear();
+        operation(self.graph)
+    }
+
+    /// Reader callbacks may change parsing, but cannot replace signatures or
+    /// table allocations. Commit their prefix while retaining valid metadata.
+    fn callback<T>(
         &mut self,
         operation: impl FnOnce(&mut EGraph) -> Result<T, Error>,
     ) -> Result<T, Error> {
@@ -75,9 +92,9 @@ impl<'a> ActionExecutor<'a> {
         let process_before = self.graph.overall_report.process_time();
         let iteration_before = self.graph.overall_report.run.iterations.len();
         let prepared = match &command {
-            ResolvedNCommand::CoreAction(action) => {
-                self.graph.prepare_resolved_ground_action(action)
-            }
+            ResolvedNCommand::CoreAction(action) => self
+                .graph
+                .prepare_resolved_ground_action(action, &mut self.pending.calls),
             _ => None,
         };
         let result = if let Some(prepared) = prepared {
@@ -118,7 +135,7 @@ impl<'a> ActionExecutor<'a> {
                 if let Some(command) = expanded.next() {
                     return Ok(Some(command));
                 }
-                let parsed = self.committed(|graph| {
+                let parsed = self.callback(|graph| {
                     let timer = Instant::now();
                     let parsed = graph.parser.parse_next_command(source);
                     graph.overall_report.frontend_parse += timer.elapsed();
@@ -151,7 +168,7 @@ impl<'a> ActionExecutor<'a> {
                 // The capability also certifies that no macros are registered.
                 vec![command]
             } else {
-                self.committed(|graph| {
+                self.callback(|graph| {
                     let types = graph
                         .proof_state
                         .original_typechecking
@@ -244,38 +261,53 @@ impl EGraph {
     /// this walk only admits closed calls supported by the physical native tables.
     /// Literals, variables, primitives, globals, views, indexes and custom sorts
     /// retain the ordinary compiler.
-    fn prepare_resolved_ground_action(&self, action: &ResolvedAction) -> Option<GroundActions> {
+    fn prepare_resolved_ground_action(
+        &self,
+        action: &ResolvedAction,
+        calls: &mut GroundActionCache,
+    ) -> Option<GroundActions> {
         fn prepare_expr(
             graph: &EGraph,
             expr: &ResolvedExpr,
             prepared: &mut GroundActions,
+            calls: &mut GroundActionCache,
         ) -> Option<usize> {
             let GenericExpr::Call(_, ResolvedCall::Func(func), args) = expr else {
                 return None;
             };
-            let function = graph.functions.get(&func.name)?;
-            if func.subtype != FunctionSubtype::Constructor
-                || function.subtype() != FunctionSubtype::Constructor
-                || func.num_outputs() != 1
-                || func.role.is_global()
-                || function.is_view()
-                || function.is_let_binding()
-                || graph.type_info.indexes.contains_key(&func.name)
-                || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
-            {
-                return None;
-            }
-            let table = egglog_bridge::TableAction::for_constructor_insertions(
-                &graph.backend,
-                function.backend_id,
-            )?;
+            let table = if let Some(cached) = calls.get(&func.name) {
+                cached.clone()?
+            } else {
+                let table = (|| {
+                    let function = graph.functions.get(&func.name)?;
+                    if func.subtype != FunctionSubtype::Constructor
+                        || function.subtype() != FunctionSubtype::Constructor
+                        || func.num_outputs() != 1
+                        || func.role.is_global()
+                        || function.is_view()
+                        || function.is_let_binding()
+                        || graph.type_info.indexes.contains_key(&func.name)
+                        || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
+                    {
+                        return None;
+                    }
+                    let table = egglog_bridge::TableAction::for_constructor_insertions(
+                        &graph.backend,
+                        function.backend_id,
+                    )?;
+
+                    (table.input_arity() == func.input.len()).then_some(table)
+                })();
+                calls.insert(func.name.clone(), table.clone());
+                table?
+            };
             if table.input_arity() != args.len() {
                 return None;
             }
             let args = args
                 .iter()
-                .map(|arg| prepare_expr(graph, arg, prepared))
-                .collect::<Option<Vec<_>>>()?;
+                .map(|arg| prepare_expr(graph, arg, prepared, calls))
+                .collect::<Option<SmallVec<[usize; 4]>>>()?;
             let index = prepared.lookups.len();
             prepared.lookups.push((table, args));
             Some(index)
@@ -290,11 +322,11 @@ impl EGraph {
         };
         match action {
             ResolvedAction::Expr(_, expr) => {
-                prepare_expr(self, expr, &mut prepared)?;
+                prepare_expr(self, expr, &mut prepared, calls)?;
             }
             ResolvedAction::Union(_, left, right) => {
-                let left = prepare_expr(self, left, &mut prepared)?;
-                let right = prepare_expr(self, right, &mut prepared)?;
+                let left = prepare_expr(self, left, &mut prepared, calls)?;
+                let right = prepare_expr(self, right, &mut prepared, calls)?;
                 prepared.union = Some((left, right));
             }
             _ => return None,
@@ -309,12 +341,13 @@ impl EGraph {
         self.backend
             .run_actions(Some(&self.type_info), |state| {
                 let mut values = Vec::new();
+                let mut arguments = Vec::new();
                 for action in prepared {
                     values.clear();
                     for (table, args) in action.lookups {
-                        let args: smallvec::SmallVec<[Value; 4]> =
-                            args.iter().map(|index| values[*index]).collect();
-                        values.push(table.lookup_or_insert(state, &args).unwrap());
+                        arguments.clear();
+                        arguments.extend(args.iter().map(|index| values[*index]));
+                        values.push(table.lookup_or_insert(state, &arguments).unwrap());
                     }
                     if let Some((left, right)) = action.union {
                         union.union(state, values[left], values[right]);
