@@ -137,6 +137,7 @@ impl<'a> ActionExecutor<'a> {
         mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        let stream_includes = run_commands && matches!(&program, ProgramSource::Text { .. });
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
@@ -174,7 +175,7 @@ impl<'a> ActionExecutor<'a> {
                             .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
                         graph.overall_report.frontend_other += include_timer.elapsed();
                         let s = s?;
-                        let included_program = if graph.are_proofs_enabled() {
+                        let included_program = if !stream_includes || graph.are_proofs_enabled() {
                             ProgramSource::Commands(
                                 graph
                                     .parse_program_timed(Some(file.clone()), &s)?
