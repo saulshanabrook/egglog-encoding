@@ -485,7 +485,7 @@ Churchroad wide multiply and DialEgg NMM-40. The ordinary CLI roster is separate
 
 ```bash
 make nightly
-python3 scripts/nightly_bench.py /path/to/output --rounds 1 --timeout-sec 120
+uv run --locked python scripts/nightly_bench.py /path/to/output --rounds 1 --timeout-sec 120
 ```
 
 The initial request is one observation per endpoint/file, with a 120-second
@@ -494,31 +494,20 @@ The default page shows checked/off overhead of the branch; `branch-vs-main.md`
 compares the two checked endpoints from the same snapshot. Identical executables
 share observations rather than appearing as distinct measurements.
 
-A host Python 3.8+ standard-library supervisor starts before bootstrap. It bounds
-uv/rustup installation, uv's Python 3.12 environment setup, target preparation,
-builds, collection and final rendering under one **two-hour maximum**. Collection
-reserves 120 seconds for partial rendering and five seconds for process cleanup.
-`--rounds` and `--timeout-sec` cannot extend that deadline; `--budget-sec` can
-shorten it. Native/setup process owners enforce the earlier collection deadline
-and reap their own process groups. Final rendering has its own remaining-time
-bound and never builds or collects.
-
 Each job replaces `nightly/output/index.jsonl`, `index-grouped.json` and
 `index.html`. Completed rows survive timeout or fatal setup failure; partial
 reports retain missing/failed outcomes. `status.txt` explains an incomplete job,
-and `nightly-context.json` preserves its exact target/input identities for the
-separate render worker. No generic interactive-report state is added. Ordinary
-workload failures may leave other workloads running; failed native setup or
-process control halts further collection. Deployment of the branch/main workflow
-requires the native-cap prerequisite on `main`: an older binary rejecting the
-option is reported explicitly and is never run uncapped.
+and rendering reads the collected snapshot without building or collecting.
+Ordinary workload failures may leave other workloads running; failed native
+setup or process control halts further collection. Deployment of the branch/main
+workflow requires the native-cap prerequisite on `main`: an older binary
+rejecting the option is reported explicitly and is never run uncapped.
 
 The [egraphs-good nightly service](https://nightly.cs.washington.edu) runs
-`make nightly` and serves `nightly/output/`. The bounded supervisor invokes the
-existing pinned uv/rustup bootstrap targets and puts rustup's cargo shims first
-on PATH. Existing installations are reused. `make nightly-local` remains an
-alias for the same one-round bounded run; `HOST_PYTHON` selects the host
-supervisor interpreter.
+`make nightly` and serves `nightly/output/`. The Make target installs pinned uv
+and rustup when missing; uv supplies the project's Python environment. The script
+puts rustup's cargo shims first on PATH. Existing installations are reused.
+`make nightly-local` runs the same one-round comparison.
 
 ### CPU profiling
 

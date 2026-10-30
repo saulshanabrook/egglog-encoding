@@ -11,7 +11,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -22,7 +21,6 @@ from rich.text import Text
 
 from .engines import TREATMENT_SPECS, Engine, Treatment, math_workload_arguments, validate_engine_workload
 from .models import EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
-from .processes import COLLECTION_DEADLINE, BudgetExpired, terminate_process_group
 
 BuildProfile = Literal["release", "profiling"]
 
@@ -70,39 +68,15 @@ def sha256_directory(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def run_text(args: Sequence[str], cwd: Path, *, capture_output: bool = True) -> str:
-    """Bound each owned setup/build process group when nightly sets a deadline."""
-    deadline = COLLECTION_DEADLINE.get()
-    if deadline is None:
-        completed = subprocess.run(
-            list(args),
-            cwd=cwd,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE if capture_output else sys.stderr,
-            stderr=subprocess.PIPE if capture_output else sys.stderr,
-        )
-        return completed.stdout.strip() if capture_output else ""
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise BudgetExpired("nightly collection budget exhausted before target setup")
-    process = subprocess.Popen(
+def run_text(args: Sequence[str], cwd: Path) -> str:
+    completed = subprocess.run(
         list(args),
         cwd=cwd,
+        check=True,
         text=True,
-        start_new_session=True,
-        stdout=subprocess.PIPE if capture_output else sys.stderr,
-        stderr=subprocess.PIPE if capture_output else sys.stderr,
+        capture_output=True,
     )
-    try:
-        stdout, stderr = process.communicate(timeout=max(0, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired as error:
-        raise BudgetExpired("nightly collection budget exhausted during target setup") from error
-    finally:
-        terminate_process_group(process)
-    if process.returncode:
-        raise subprocess.CalledProcessError(process.returncode, list(args), output=stdout, stderr=stderr)
-    return stdout.strip() if stdout is not None else ""
+    return completed.stdout.strip()
 
 
 def git_root_for_path(path: Path) -> Path:
@@ -162,7 +136,13 @@ def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[P
             path = worktree_root / f"{path_stem}-{disambiguator}"
             disambiguator += 1
     path.parent.mkdir(parents=True, exist_ok=True)
-    run_text(["git", "worktree", "add", "--detach", str(path), sha], cwd=repo, capture_output=False)
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(path), sha],
+        cwd=repo,
+        check=True,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
     return (path, sha)
 
 
@@ -262,7 +242,7 @@ def build_target(
         build_args.extend(("-p", package))
         if engine == "egglog":
             build_args.extend(("--no-default-features", "--features", "bin", "--bin", package))
-    run_text(build_args, cwd=checkout_path, capture_output=False)
+    subprocess.run(build_args, cwd=checkout_path, check=True, stdout=sys.stderr, stderr=sys.stderr)
     binary_stem = package or engine
     binary_name = f"{binary_stem}.exe" if os.name == "nt" else binary_stem
     binary_path = target_dir / build_profile / binary_name
