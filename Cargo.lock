@@ -516,7 +516,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "egg"
 version = "0.11.0"
-source = "git+https://github.com/saulshanabrook/egg?rev=1d5bce1e6742ca4e83cac528b5190d43748bf473#1d5bce1e6742ca4e83cac528b5190d43748bf473"
+source = "git+https://github.com/egraphs-good/egg?rev=73975c9819efb4af2f3c6c1b44fa53f8c5742574#73975c9819efb4af2f3c6c1b44fa53f8c5742574"
 dependencies = [
  "env_logger 0.9.3",
  "hashbrown 0.15.5",
@@ -686,7 +686,6 @@ dependencies = [
  "lazy_static",
  "libtest-mimic",
  "log",
- "mimalloc",
  "num",
  "rustc-hash",
  "serde",
@@ -739,7 +738,7 @@ dependencies = [
  "egraph-serialize",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]

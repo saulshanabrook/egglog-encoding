@@ -325,7 +325,7 @@ simple/seminaive schedulers without the artifact's backoff scheduler or match
 cap, so this is a controlled current-engine comparison rather than an exact
 reproduction of the paper's historical scheduler results.
 
-The native Math runner uses the pinned optional-clock Egg fork with
+The native Math runner uses a pinned revision of upstream Egg main with
 `std::time::Instant`, avoiding Quanta's startup calibration in whole-process
 timings. Its Git revision and dependency versions are recorded in `Cargo.lock`.
 
