@@ -466,3 +466,43 @@ fn argument_buffers_reset_between_wide_and_narrow_calls() {
     assert_eq!(graph.get_size("Wide"), 2);
     assert_eq!(graph.get_size("F"), 1);
 }
+
+#[test]
+fn repeated_nullary_calls_refresh_after_flushes_and_unions() {
+    let source = format!(
+        "(datatype T (A) (B) (F T))
+(A)
+{}
+(union (A) (B))
+{}
+(check (= (F (A)) (F (B))))",
+        "(F (B))\n".repeat(260),
+        "(F (B))\n".repeat(260),
+    );
+    let mut graph = EGraph::default();
+    let mut compiled = EGraph::default();
+    run_ground_action_oracle(&mut graph, &source, true).unwrap();
+    run_ground_action_oracle(&mut compiled, &source, false).unwrap();
+    assert_eq!(graph.get_size("F"), 1);
+    assert_action_graphs_equal(&graph, &compiled);
+}
+
+#[test]
+fn nullary_caching_keeps_subsumed_constructor_rows() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (Pair T T))
+        (A) (subsume (A)) (Pair (A) (A)) (Pair (A) (A))",
+        )
+        .unwrap();
+    let mut rows = Vec::new();
+    graph
+        .backend
+        .for_each(graph.functions["A"].backend_id, |row| {
+            rows.push(row.subsumed)
+        });
+    assert_eq!(rows, vec![true]);
+    assert_eq!(graph.get_size("Pair"), 1);
+}
