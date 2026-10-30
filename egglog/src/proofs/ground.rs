@@ -104,22 +104,11 @@ impl EGraph {
         if count < 0 {
             return Err(fail("cannot extract a negative number of variants"));
         }
-        let (mut terms, outputs, extraction) = if count == 0 {
-            let (dag, term, cost) = self.extract_value(&sort, value)?;
-            let output = CommandOutput::ExtractBest(dag.clone(), cost, term);
-            (dag, vec![term], output)
-        } else {
-            let mut extracted =
-                self.extract_variants(vec![(sort.clone(), value)], count as usize)?;
-            let outputs = extracted
-                .variants
-                .pop()
-                .unwrap()
-                .into_iter()
-                .map(|term| term.term)
-                .collect::<Vec<_>>();
-            let output = CommandOutput::ExtractVariants(extracted.termdag.clone(), outputs.clone());
-            (extracted.termdag, outputs, output)
+        let extraction = self.extract_command(sort.clone(), value, count as usize)?;
+        let (mut terms, outputs) = match &extraction {
+            CommandOutput::ExtractBest(dag, _, term) => (dag.clone(), vec![*term]),
+            CommandOutput::ExtractVariants(dag, terms) => (dag.clone(), terms.clone()),
+            _ => unreachable!(),
         };
         let input = ground_expr(&mut terms, expr)?;
         let (proof_store, proof_ids) = self.prove_extracted_terms(&terms, input, &outputs, sort)?;
@@ -401,20 +390,21 @@ fn global_origin(egraph: &EGraph, name: &str) -> String {
     let mut origin = name.to_owned();
     let mut seen = HashSet::default();
     while seen.insert(origin.clone()) {
-        let alias = gather_global_actions(&egraph.proof_check_program).find_map(|action| {
-            let ResolvedAction::Let(_, var, expr) = action else {
-                return None;
-            };
-            if var.name != origin {
-                return None;
-            }
-            match expr {
-                ResolvedExpr::Var(_, var) if var.is_global_ref => Some(var.name.clone()),
+        // Popped actions remain in the proof program, so only the latest
+        // binding can determine whether the current name is an alias.
+        let binding = gather_global_actions(&egraph.proof_check_program)
+            .filter_map(|action| match action {
+                ResolvedAction::Let(_, var, expr) if var.name == origin => Some(expr),
                 _ => None,
-            }
-        });
-        let Some(alias) = alias else { break };
-        origin = alias;
+            })
+            .last();
+        let Some(ResolvedExpr::Var(_, var)) = binding else {
+            break;
+        };
+        if !var.is_global_ref {
+            break;
+        }
+        origin = var.name.clone();
     }
     origin
 }

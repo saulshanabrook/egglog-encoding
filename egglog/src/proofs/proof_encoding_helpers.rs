@@ -1517,11 +1517,15 @@ pub(crate) fn command_supports_proof_encoding(
         GenericCommand::Output { .. } if proofs_enabled => {
             Err(ProofEncodingUnsupportedReason::OutputCommand)
         }
-        // Extract commands can't have non-global function lookups
-        // because instrument_action_expr doesn't support them
-        // Global reads are supported by the encoding.
+        // A direct nullary function root reads an existing row. Other custom
+        // lookups, including the variant count, still have action semantics.
         GenericCommand::Extract(_, expr, variants) => {
-            if type_info.expr_has_function_lookup(expr).is_some()
+            let function_root = matches!(
+                expr,
+                ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+                    if func.subtype == crate::FunctionSubtype::Custom && args.is_empty()
+            );
+            if (!function_root && type_info.expr_has_function_lookup(expr).is_some())
                 || type_info.expr_has_function_lookup(variants).is_some()
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)

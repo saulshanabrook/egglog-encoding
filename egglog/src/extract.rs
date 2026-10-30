@@ -265,6 +265,18 @@ pub struct ExtractedTermVariants<C> {
     pub variants: Vec<Vec<ExtractedTerm<C>>>,
 }
 
+struct CommandCostModel;
+
+impl DagCostModel<DefaultCost> for CommandCostModel {
+    fn base_value_cost(&self, _: &EGraph, _: &ArcSort, _: Value) -> DefaultCost {
+        1
+    }
+
+    fn enode_cost(&self, egraph: &EGraph, func: &Function, enode: &Enode<'_>) -> DefaultCost {
+        (egraph.extraction_cost)(egraph, func, enode)
+    }
+}
+
 /// Bellman-Ford-like tree extraction with reusable cost preparation.
 ///
 /// The prepared state borrows the e-graph because reconstruction still needs
@@ -960,6 +972,43 @@ impl EGraph {
                 ))
             })?;
         Ok((extracted.termdag, root.term, root.cost))
+    }
+
+    /// Run command tree extraction with the configured constructor costs.
+    pub(crate) fn extract_command(
+        &self,
+        sort: ArcSort,
+        value: Value,
+        variants: usize,
+    ) -> Result<CommandOutput, Error> {
+        let extractor = TreeExtractor::compute_costs_from_rootsorts(
+            Some(vec![sort.clone()]),
+            self,
+            TreeCostModelFromDag(CommandCostModel),
+        );
+        let mut dag = TermDag::default();
+        if variants == 0 {
+            let extracted = extractor
+                .extract_best_with_sort(&mut dag, value, sort.clone())
+                .ok_or_else(|| {
+                    Error::ExtractError(format!(
+                        "Unable to find any valid extraction for sort {}",
+                        sort.name()
+                    ))
+                })?;
+            Ok(CommandOutput::ExtractBest(
+                dag,
+                extracted.cost,
+                extracted.term,
+            ))
+        } else {
+            let terms = extractor
+                .extract_variants_with_sort(&mut dag, value, variants, sort)
+                .into_iter()
+                .map(|extracted| extracted.term)
+                .collect();
+            Ok(CommandOutput::ExtractVariants(dag, terms))
+        }
     }
 
     /// For constructors and relations, the output column can be ignored

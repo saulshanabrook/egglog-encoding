@@ -480,6 +480,37 @@ fn global_aliases_keep_their_provenance() {
 }
 
 #[test]
+fn global_aliases_follow_rebindings_after_popped_scopes() {
+    for bindings in [
+        "(let original (A))
+         (push) (let rebound original) (pop)
+         (let rebound (B)) (let current rebound)",
+        "(let first (A)) (let second (B))
+         (push) (let rebound first)
+         (push) (let nested rebound) (pop) (pop)
+         (let rebound second) (let current rebound)",
+        "(push) (let scoped (A)) (let rebound scoped) (pop)
+         (let rebound (B)) (let current rebound)",
+    ] {
+        let mut graph = graph(&format!("(datatype E (A) (B)) {bindings}"));
+        assert_eq!(
+            extracted(&mut graph, "(prove-extract current)")[0],
+            ("(B)".into(), "(B)".into()),
+            "{bindings}"
+        );
+        let mut terms = TermDag::default();
+        let current = terms.app("current".into(), vec![]);
+        let b = terms.app("B".into(), vec![]);
+        let sort = graph.type_info().get_sort_by_name("E").unwrap().clone();
+        let before = graph.num_nodes();
+        let (store, proof) = graph.prove_equal_terms(&terms, current, b, sort).unwrap();
+        assert_eq!(store.term_dag().to_string(store.get(proof).lhs()), "(B)");
+        assert_eq!(store.term_dag().to_string(store.get(proof).rhs()), "(B)");
+        assert_eq!(graph.num_nodes(), before);
+    }
+}
+
+#[test]
 fn selector_can_return_a_nonleader() {
     let mut graph = graph("(datatype E (A) (B)) (sort V (Vec E)) (A) (B) (union (A) (B)) (run 1)");
     assert_eq!(

@@ -2632,7 +2632,20 @@ impl<'a> ProofInstrumentor<'a> {
                     justification: &fiat,
                     at: ActionNodes::default(),
                 };
-                let instrumented_expr = self.instrument_action_expr(expr, &mut emit, &scope).value;
+                let instrumented_expr = match expr {
+                    ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+                        if func.subtype == FunctionSubtype::Custom
+                            && !func.role.is_global()
+                            && args.is_empty() =>
+                    {
+                        // Capture the existing output before count actions run.
+                        let value = self.fresh_var();
+                        emit.stmts
+                            .push(format!("(let {value} (view-root-{}))", func.name));
+                        value
+                    }
+                    _ => self.instrument_action_expr(expr, &mut emit, &scope).value,
+                };
                 let instrumented_variants = self
                     .instrument_action_expr(variants, &mut emit, &scope)
                     .value;

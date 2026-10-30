@@ -2,7 +2,7 @@ use std::hash::Hasher;
 
 use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
-use crate::proofs::proof_fresh::{register_mint, register_set_if_empty};
+use crate::proofs::proof_fresh::{ExtractFunctionRoot, register_mint, register_set_if_empty};
 use crate::{
     core::{CoreActionContext, GenericActionsExt, ResolvedCall},
     *,
@@ -687,6 +687,19 @@ impl EGraph {
                 {
                     let (name, input, outputs) =
                         (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    if resolved.role == FunctionRole::FunctionView && input.is_empty() {
+                        self.add_read_primitive(
+                            ExtractFunctionRoot {
+                                name: format!("view-root-{name}"),
+                                function: self
+                                    .type_info
+                                    .source_types()
+                                    .get_func_type(&name)
+                                    .unwrap(),
+                            },
+                            None,
+                        );
+                    }
                     register_set_if_empty(self, &name, input, outputs);
                 }
                 // Term-node mint primitives must also be available during replay.

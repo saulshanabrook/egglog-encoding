@@ -378,6 +378,10 @@ pub struct EGraph {
     overall_report: OverallReport,
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
+    /// Marginal constructor costs used by ordinary and certified extraction
+    /// commands. Primitive values retain unit cost; the generic extraction APIs
+    /// accept other cost models and algorithms independently.
+    pub extraction_cost: fn(&EGraph, &Function, &Enode<'_>) -> DefaultCost,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
     strict_mode: bool,
     warned_about_global_prefix: bool,
@@ -512,6 +516,7 @@ impl EGraph {
             type_info: Default::default(),
             schedulers: Default::default(),
             commands: Default::default(),
+            extraction_cost: |egraph, func, _| func.extraction_head_cost(egraph).unwrap_or(1),
             extension_state: Default::default(),
             strict_mode: false,
             warned_about_global_prefix: false,
@@ -2357,37 +2362,26 @@ impl EGraph {
                 let n = self.eval_resolved_expr(span, &variants)?;
                 let n: i64 = self.backend.base_values().unwrap(n);
 
-                return if n == 0 {
-                    let (termdag, term, cost) = self.extract_value(&sort, x)?;
-                    // dont turn termdag into a string if we have messages disabled for performance reasons
-                    if log_enabled!(Level::Info) {
-                        log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
+                if n < 0 {
+                    return Err(Error::ExtractError(
+                        "cannot extract a negative number of variants".to_string(),
+                    ));
+                }
+                let output = self.extract_command(sort, x, n as usize)?;
+                // Avoid rendering terms when messages are disabled.
+                if log_enabled!(Level::Info) {
+                    match &output {
+                        CommandOutput::ExtractBest(termdag, cost, term) => {
+                            log::info!("extracted with cost {cost}: {}", termdag.to_string(*term));
+                        }
+                        CommandOutput::ExtractVariants(_, terms) => {
+                            let expr_str = expr.to_string();
+                            log::info!("extracted {} variants for {expr_str}", terms.len());
+                        }
+                        _ => unreachable!(),
                     }
-                    Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
-                } else {
-                    if n < 0 {
-                        return Err(Error::ExtractError(
-                            "cannot extract a negative number of variants".to_string(),
-                        ));
-                    }
-                    let extracted = self.extract_variants(vec![(sort, x)], n as usize)?;
-                    let terms: Vec<TermId> = extracted
-                        .variants
-                        .into_iter()
-                        .next()
-                        .expect("extract_variants returns one result for one root")
-                        .into_iter()
-                        .map(|extracted| extracted.term)
-                        .collect();
-                    if log_enabled!(Level::Info) {
-                        let expr_str = expr.to_string();
-                        log::info!("extracted {} variants for {expr_str}", terms.len());
-                    }
-                    Ok(vec![CommandOutput::ExtractVariants(
-                        extracted.termdag,
-                        terms,
-                    )])
-                };
+                }
+                return Ok(vec![output]);
             }
             ResolvedNCommand::Push(n) => {
                 (0..n).for_each(|_| self.push());

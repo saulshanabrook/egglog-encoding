@@ -18,6 +18,42 @@
 use crate::*;
 use egglog_numeric_id::NumericId;
 
+/// Read the source output of a nullary custom-function view without creating it.
+/// Registered with the view so the same read is available in encoded replay.
+#[derive(Clone)]
+pub(crate) struct ExtractFunctionRoot {
+    pub(crate) name: String,
+    pub(crate) function: Arc<FuncType>,
+}
+
+impl Primitive for ExtractFunctionRoot {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            &self.name,
+            vec![self.function.output().clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+}
+
+impl ReadPrim for ExtractFunctionRoot {
+    fn apply<'a, 'db>(&self, mut state: ReadState<'a, 'db>, _args: &[Value]) -> Option<Value> {
+        state.eval_resolved_expr(
+            &ResolvedExpr::Call(
+                Span::Panic,
+                ResolvedCall::Func(self.function.clone()),
+                vec![],
+            ),
+            &[],
+        )
+    }
+}
+
 /// Deterministic name of an FD view's `set-if-empty` primitive. The stable
 /// `set-if-empty-` prefix carries no internal-symbol marker, so a name-sanitizer
 /// leaves it alone. Any internal-symbol marker already present in the embedded
