@@ -167,6 +167,51 @@ fn ground_actions_keep_numeric_constructor_names_distinct() {
 }
 
 #[test]
+fn insertion_batches_ignore_unrelated_globals_and_containers() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (B) (F T))
+            (sort Unused (Vec T)) (let $unrelated 7)",
+        )
+        .unwrap();
+    let actions = graph.parse_program(None, "(F (A)) (F (B))").unwrap();
+    assert!(actions.iter().all(|command| match command {
+        Command::Action(action) => graph.prepare_ground_action(action).is_some(),
+        _ => false,
+    }));
+    graph
+        .parse_and_run_program(None, "(F (A)) (F (B))")
+        .unwrap();
+    assert_eq!(graph.get_size("F"), 2);
+    graph
+        .parse_and_run_program(
+            None,
+            "(check (= $unrelated 7))
+            (check (= (F (A)) (F (A))))",
+        )
+        .unwrap();
+}
+
+#[test]
+fn batches_flush_for_keyed_reads_globals_and_deletes() {
+    let source = "(datatype T (A) (B) (F T))
+            (function f () i64 :no-merge)
+            (function g () i64 :no-merge)
+            (function out () i64 :no-merge)
+            (function value (T) i64 :no-merge)
+            (F (A)) (set (f) 1) (set (g) (f)) (check (= (g) 1))
+            (delete (f)) (fail (check (= (f) 1)))
+            (let $a (A)) (F $a)
+            (set (value (A)) 7) (union (A) (B))
+            (set (out) (value (B))) (check (= (out) 7))";
+    for direct in [false, true] {
+        run_ground_action_oracle(&mut EGraph::default(), source, direct).unwrap();
+    }
+}
+
+#[test]
 fn union_preserves_a_failing_merge_boundary() {
     let mut graph = EGraph::default();
     graph
@@ -204,6 +249,71 @@ fn constructor_rows_remain_subsumed_after_union() {
             });
         assert_eq!(rows, vec![true]);
     }
+}
+
+#[test]
+fn completed_constructor_prefix_survives_macro_errors() {
+    struct RejectCheck;
+    impl CommandMacro for RejectCheck {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            if matches!(command, Command::Check(..)) {
+                Err(Error::BackendError("expected macro error".into()))
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    graph.command_macros.register(Arc::new(RejectCheck));
+    assert!(
+        graph
+            .parse_and_run_program(None, "(F (A)) (check (= (A) (A)))")
+            .is_err()
+    );
+    assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
+fn read_primitives_observe_completed_insertions() {
+    #[derive(Clone)]
+    struct ReadSize;
+    impl Primitive for ReadSize {
+        fn name(&self) -> &str {
+            "read-f-size"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ReadSize {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            Some(
+                state
+                    .base_values()
+                    .get(state.table_size("F").unwrap() as i64),
+            )
+        }
+    }
+    let mut graph = EGraph::default();
+    graph.add_read_primitive(ReadSize, None);
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (B) (F T))
+        (function result () i64 :no-merge)
+        (F (A)) (F (B)) (set (result) (read-f-size))
+        (check (= (result) 2))",
+        )
+        .unwrap();
 }
 
 #[test]
