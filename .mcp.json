@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "lean-lsp": {
+      "command": "uvx",
+      "args": ["lean-lsp-mcp", "--lean-project-path", "semantics"],
+      "env": {
+        "PATH": "${HOME}/.elan/bin:${HOME}/.local/bin:${PATH}"
+      }
+    }
+  }
+}

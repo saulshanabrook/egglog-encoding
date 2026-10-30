@@ -1,0 +1,37 @@
+(G (F (B))) = (G (F (A)))  trans
+  (G (F (B))) = (G (F (A)))  congr 0
+    (G (F (B))) = (G (F (B)))  rule 1 {}
+    (F (B)) = (F (A))  trans
+      (F (B)) = (F (A))  congr 0
+        (F (B)) = (F (B))  rule 1 {}
+        (B) = (A)  rule 2 {}
+      (F (A)) = (F (A))  symm
+        (F (A)) = (F (A))  rule 0 {}
+  (G (F (A))) = (G (F (A)))  symm
+    (G (F (A))) = (G (F (A)))  rule 0 {}
+
+(F (B)) = (F (A))  trans
+  (F (B)) = (F (A))  congr 0
+    (F (B)) = (F (B))  rule 1 {}
+    (B) = (A)  rule 2 {}
+  (F (A)) = (F (A))  symm
+    (F (A)) = (F (A))  rule 0 {}
+
+(A) = (B)  trans
+  (A) = (B)  symm
+    (B) = (A)  rule 2 {}
+  (B) = (B)  rule 2 {}
+
+(B) = (A)  rule 2 {}
+
+(G (F (A))) = (G (F (A)))  rule 0 {}
+
+(G (F (A))) = (G (F (A)))  rule 0 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(A) = (A)  rule 2 {}
+
+(A) = (A)  rule 2 {}

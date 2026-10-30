@@ -53,6 +53,8 @@ use indexmap::map::Entry;
 use log::{Level, log_enabled};
 use numeric_id::DenseIdMap;
 use prelude::*;
+#[doc(hidden)]
+pub use proofs::proof_certificate::{CertificateVerdict, check_certificates};
 pub use proofs::proof_encoding_helpers::{
     file_supports_proofs, file_supports_proofs_with_egraph, program_supports_proofs,
 };

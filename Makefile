@@ -1,9 +1,21 @@
-.PHONY: \
-	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests slotted-eval benchmark-smoke nightly nightly-local nightly-uv nightly-rustup \
-	update-snapshots format \
+# Validation recipes live in scripts/check.py; these names remain public aliases.
+CHECK_TARGETS := \
+	check nits test python-check python-nits rust-check rust-nits proof-tests \
+	lean-check lean-difftest lean-compiled-difftest lean-congruence-test lean-provenance-test \
+	lean-resugar-test \
+	lean-certificate-test lean-update-fixtures lean-egg-test lean-update-egg-snapshots \
+	paper paper-check paper-extract update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
+.PHONY: $(CHECK_TARGETS) slotted-eval benchmark-smoke nightly nightly-local nightly-uv nightly-rustup
+.DEFAULT_GOAL := check
+
+# Make command-line overrides reach the script without shell interpolation.
+# RUST_TEST_ARGS is empty by default; constrained hosts can set --test-threads=1.
+export RUST_TEST_ARGS LEAN_BIN_DIR LEAN_CERTIFICATES
+
+$(CHECK_TARGETS):
+	python3 scripts/check.py $@
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
 
@@ -18,67 +30,13 @@ NIGHTLY_UV = $(shell command -v uv || echo $(UV_BOOTSTRAP_DIR)/uv)
 # rustup's shims; scripts/nightly_bench.py puts them first on PATH.
 CARGO_HOME_DIR ?= $(HOME)/.cargo
 
-# Full validation is hygiene followed by tests.
-check: nits test
-
-# Nits are intentionally test-free.
-nits: python-nits rust-nits
-
-test: python-test rust-test
-	cargo build -p egglog-experimental -p egraph-isomorphism --bins
-	cargo build --manifest-path slotted/xmulti/Cargo.toml
-	cargo test --manifest-path slotted/xmulti/Cargo.toml
-	uv run --locked python slotted/checks/check-slotted.py
-
-python-check: python-nits python-test
-
-python-nits: python-lock python-format-check python-lint python-typecheck
-
-python-lock:
-	uv lock --check
-
-python-format-check:
-	uv run --locked ruff format --check .
-
-python-lint:
-	uv run --locked ruff check .
-
-python-typecheck:
-	uv run --locked mypy .
-
-python-test:
-	uv run --locked pytest -q
-
-rust-check: rust-nits rust-test
-
-rust-nits: rust-format-check rust-clippy rust-doc-links
-
-rust-format-check:
-	cargo fmt --all -- --check
-
-rust-test:
-	cargo test --workspace
-
-rust-clippy:
-	cargo clippy --workspace --all-targets -- -D warnings
-
-# Clippy does not resolve doc links, and plain `cargo doc` skips the private
-# items most of this codebase documents, so a rename leaves stale links behind
-# unless rustdoc is run over them too.
-rust-doc-links:
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --workspace
-
-# This is a name-filtered subset of rust-test, useful for proof iteration.
-proof-tests:
-	cargo test --workspace --test files 'proofs/'
-
 # The paper's case studies -- the S4.1 array goal and the S4.2 SDQL workloads -- on the
 # encoding and on the reference through both of its matchers, at the artifact's budgets.
 # Release builds of both binaries, since these are the numbers a graph is drawn from.
 slotted-eval:
 	uv run --locked python slotted/eval.py
 
-# Smoke the runner on small files, not the full local benchmark suite.
+# Use a disposable report path, keeping the default report cache untouched.
 benchmark-smoke:
 	rm -f -- "$(BENCHMARK_SMOKE_REPORT)"
 	uv run --locked ./bench.py \
@@ -109,14 +67,6 @@ nightly-rustup:
 # git-ignored, so this writes it just as the host does.
 nightly-local: nightly-uv nightly-rustup
 	CARGO_HOME="$(CARGO_HOME_DIR)" $(NIGHTLY_UV) run --locked python scripts/nightly_bench.py --rounds 1
-
-update-snapshots:
-	uv run --locked pytest -q --snapshot-update --snapshot-details
-	INSTA_UPDATE=always cargo test -p egglog-experimental --test slotted_files
-
-format:
-	uv run --locked ruff format .
-	cargo fmt --all
 
 # Same committed input, six implementations, no proof recording or extraction.
 PARAMETER_FILE := benchmarks/disequality/parameter-analysis.egg

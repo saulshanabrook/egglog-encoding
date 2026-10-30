@@ -1,0 +1,12 @@
+; A ground equality query that only holds after another rule fires.
+(sort Math)
+(constructor One () Math)
+(constructor Two () Math)
+(constructor Add (Math Math) Math)
+(constructor Wrapper (Math) Math)
+(constructor Success () Math)
+(Wrapper (Add (One) (Two)))
+(Wrapper (Add (Two) (One)))
+(rule ((Add a b)) ((union (Add a b) (Add b a))))
+(rule ((= (Wrapper (Add (One) (Two))) (Wrapper (Add (Two) (One))))) ((Success)))
+(run-schedule (saturate (run)))

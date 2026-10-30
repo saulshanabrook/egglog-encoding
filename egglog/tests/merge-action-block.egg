@@ -25,3 +25,24 @@
 (set (pick 0) (Red))
 (set (pick 0) (Green))
 (check (= (Red) (Green)))    ; the `union` action unified the conflicting values
+
+; A collision that leaves the value unchanged is not a conflict, so the block does not run
+; and its `set` writes nothing. A real conflict runs it, and the constructor call in the
+; written key resolves to the constructor's own e-class.
+(datatype Math (L))
+(function Log (Math) i64 :merge (min old new))
+(function Dist () i64 :merge ((set (Log (L)) old) new))
+(set (Dist) 2)
+(set (Dist) 2)
+(fail (check (= (Log (L)) 2)))
+(set (Dist) 1)
+(check (= (Log (L)) 2))
+
+; A tuple-output block still runs when only some value column changes, so an unchanged column
+; must not make the constructor call in the block's `set` key resolve to that column's value.
+(function Idx (Math) i64 :merge (min old new))
+(function T () (i64 i64)
+  :merge ((set (Idx (L)) old0) (values (min old0 new0) (min old1 new1))))
+(set (T) (values 5 8))
+(set (T) (values 5 3))
+(check (= (Idx (L)) 5))

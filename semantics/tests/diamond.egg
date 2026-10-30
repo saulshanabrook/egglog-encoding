@@ -1,0 +1,12 @@
+; A chain of unions, with the end terms related through one constructor.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor C () Math)
+(constructor D () Math)
+(constructor F (Math) Math)
+(F (A))
+(F (D))
+(union (A) (B))
+(union (B) (C))
+(union (C) (D))

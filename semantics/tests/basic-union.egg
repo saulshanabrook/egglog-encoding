@@ -1,0 +1,8 @@
+; Congruence closure through one constructor.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(F (A))
+(F (B))
+(union (A) (B))

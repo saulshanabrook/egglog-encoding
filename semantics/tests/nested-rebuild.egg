@@ -1,0 +1,9 @@
+; A union two levels below the terms it identifies.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(G (F (A)))
+(G (F (B)))
+(union (A) (B))

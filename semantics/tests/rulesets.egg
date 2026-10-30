@@ -1,0 +1,12 @@
+; Named rulesets run separately.
+(sort Math)
+(constructor A () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(ruleset lower)
+(ruleset upper)
+(F (A))
+(rule ((F x)) ((G x)) :ruleset lower)
+(rule ((G x)) ((union (G x) (F x))) :ruleset upper)
+(run-schedule (saturate lower))
+(run upper 1)
