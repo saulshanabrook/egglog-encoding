@@ -1080,6 +1080,8 @@ impl EGraph {
         // up front, then build the merge and the backing table. Non-self-referential merges resolve
         // the same either way.
         let table_id = self.db.next_table_id();
+        let insertion_merge =
+            storage == TableStorage::SortedWrites && matches!(merge, MergeFn::UnionId);
         let res = self.funcs.push(FunctionInfo {
             table: table_id,
             schema: schema.clone(),
@@ -1089,6 +1091,7 @@ impl EGraph {
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
             can_subsume,
+            insertion_merge,
             name: name.clone(),
             read_projection,
         });
@@ -1262,17 +1265,51 @@ impl EGraph {
         rules: &[RuleId],
         context: ExternalContext<'_>,
     ) -> Result<IterationReport> {
-        let ts = self.next_ts();
+        let ((assembly_time, rule_set_report), rebuild_time) = self.run_iteration(|this, ts| {
+            run_rules_impl(
+                &mut this.db,
+                &mut this.rules,
+                rules,
+                ts,
+                this.report_level,
+                context,
+            )
+        })?;
+        Ok(IterationReport {
+            assembly_time,
+            rule_set_report,
+            rebuild_time,
+        })
+    }
 
+    /// Execute one action batch with the same commit, panic, epoch, and rebuild
+    /// boundaries as a single rule iteration. All actions share predicted values.
+    #[doc(hidden)]
+    pub fn run_actions(
+        &mut self,
+        context: ExternalContext<'_>,
+        actions: impl FnOnce(&mut ExecutionState),
+    ) -> Result<()> {
+        let thread_pool = self.thread_pool();
+        install_thread_pool(thread_pool, || {
+            self.run_iteration(|this, _| {
+                this.db.with_execution_state(context, actions);
+                this.db.merge_all();
+                Ok(())
+            })
+            .map(|_| ())
+        })
+    }
+
+    // The operation owns its commit: run_rule_set deliberately skips merging
+    // for an empty rule set. An operation error must bypass the whole postlude.
+    fn run_iteration<R>(
+        &mut self,
+        operation: impl FnOnce(&mut Self, Timestamp) -> Result<R>,
+    ) -> Result<(R, Duration)> {
+        let ts = self.next_ts();
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let (assembly_time, rule_set_report) = run_rules_impl(
-            &mut self.db,
-            &mut self.rules,
-            rules,
-            ts,
-            self.report_level,
-            context,
-        )?;
+        let result = operation(self, ts)?;
         let panic_message = self.panic_message.lock().unwrap().take();
         if let Some(message) = panic_message {
             let action_error = PanicError(message);
@@ -1294,11 +1331,6 @@ impl EGraph {
             ));
         }
 
-        let mut iteration_report = IterationReport {
-            assembly_time,
-            rule_set_report,
-            rebuild_time: Duration::ZERO,
-        };
         let uf_size_after = self.db.get_table(self.uf_table).len();
         if uf_size_before == uf_size_after {
             // No new unions: skip the full rebuild but still advance the
@@ -1306,18 +1338,18 @@ impl EGraph {
             // Rebuilding is only necessary when new unions have been made because ids may need to be updated.
             // Adding terms doesn't necessarily touch the union-find, only doing a union between existing ids does.
             self.inc_ts();
-            return Ok(iteration_report);
+            return Ok((result, Duration::ZERO));
         }
 
         let rebuild_timer = Instant::now();
         self.rebuild()?;
-        iteration_report.rebuild_time = rebuild_timer.elapsed();
+        let rebuild_time = rebuild_timer.elapsed();
 
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
         }
 
-        Ok(iteration_report)
+        Ok((result, rebuild_time))
     }
 
     fn rebuild(&mut self) -> Result<()> {
@@ -1731,6 +1763,8 @@ struct FunctionInfo {
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
     can_subsume: bool,
+    /// This physical table uses the native constructor merge, without callbacks.
+    insertion_merge: bool,
     name: Arc<str>,
     /// User-visible row projection. This equals the physical layout unless the
     /// table is an encoded view with internal columns.
@@ -2439,6 +2473,25 @@ impl TableAction {
             kind,
             read_projection: func_info.read_projection,
         }
+    }
+
+    /// Return a handle only for a plain, single-output constructor whose missing
+    /// keys can be inserted together without invoking user merge behavior.
+    ///
+    /// Callers must share predictions, enter with a canonical database, and flush
+    /// before equality changes or other writes. This does not admit union batches:
+    /// rebuilding after a union can reach tables and callbacks not named here.
+    #[doc(hidden)]
+    pub fn for_constructor_insertions(egraph: &EGraph, func: FunctionId) -> Option<Self> {
+        let info = &egraph.funcs[func];
+        (info.insertion_merge
+            && matches!(info.default_val, DefaultVal::FreshId)
+            && info.schema.len() == info.n_keys + 1
+            && info.schema.last() == Some(&ColumnTy::Id)
+            && info.read_projection.kind == TableKind::Constructor
+            && info.read_projection.input_arity == info.n_keys
+            && info.read_projection.output_arity == 1)
+            .then(|| Self::new(egraph, func))
     }
 
     /// Whether this still names the same table allocation in `state`.

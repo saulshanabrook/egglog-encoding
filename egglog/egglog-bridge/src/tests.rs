@@ -2151,3 +2151,26 @@ const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<EGraph>()
 };
+
+#[test]
+fn insertion_batch_handles_require_native_constructor_merges() {
+    for (name, merge, eligible) in [
+        ("native", MergeFn::UnionId, true),
+        ("custom", MergeFn::Old, false),
+    ] {
+        let mut graph = EGraph::default();
+        let id = graph.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::FreshId,
+            merge,
+            name: name.into(),
+            can_subsume: true,
+        });
+        assert_eq!(
+            TableAction::for_constructor_insertions(&graph, id).is_some(),
+            eligible
+        );
+    }
+}
