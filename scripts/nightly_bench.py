@@ -113,14 +113,15 @@ def _collect(args: argparse.Namespace) -> int:
     from rich.console import Console
 
     from benchmarking.collection import (
-        build_collection_plan,
+        BenchmarkRequest,
         collect_rows,
         emit_collection_plan,
+        plan_collection,
         preflight_collection,
-        resolve_targets,
+        resolve_requests,
     )
     from benchmarking.engines import Treatment
-    from benchmarking.models import BenchmarkEndpoint, EndpointRequest
+    from benchmarking.models import EndpointRequest
     from benchmarking.processes import COLLECTION_DEADLINE
     from benchmarking.reports.grouped import grouped_report_path, write_grouped_report
     from benchmarking.reports.store import ReportStore
@@ -153,28 +154,27 @@ def _collect(args: argparse.Namespace) -> int:
                     capture_output=False,
                 )
             request = parse_target(f"{label}={source}")
-            endpoints = tuple(EndpointRequest(request, treatment) for treatment in treatments)
-            target = resolve_targets(
-                ((request, endpoints),),
+            requests = tuple(BenchmarkRequest(EndpointRequest(request, treatment), files) for treatment in treatments)
+            resolved_targets = resolve_requests(
+                requests,
                 store,
-                files,
                 args.rounds,
                 args.timeout_sec,
                 False,
                 REPO_ROOT,
                 REPO_ROOT,
                 console,
-            )[request]
+            )
+            target = resolved_targets[request]
             context["targets"][label] = {
                 "request": asdict(target.request),
                 "row": asdict(target.row),
                 "binary_sha256": target.binary_sha256_for("off"),
             }
-            plan = build_collection_plan(
+            (plan,) = plan_collection(
                 store,
-                target,
-                tuple(BenchmarkEndpoint(target, treatment) for treatment in treatments),
-                files,
+                requests,
+                resolved_targets,
                 args.rounds,
                 args.timeout_sec,
                 False,
