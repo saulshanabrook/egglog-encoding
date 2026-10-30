@@ -25,18 +25,6 @@ def test_native_command_uses_explicit_limit_and_fixed_startup_policy() -> None:
     assert native_memory.native_memory_command(["engine"], {}, 123)[0] == ["engine", "--memory-limit-bytes=123"]
 
 
-def test_unsupported_native_limit_fails_before_launch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(native_memory.sys, "platform", "unsupported")
-    with pytest.raises(ValueError, match="requires macOS or Linux"):
-        native_memory.native_memory_command(["never-launched"], {})
-
-
-@pytest.mark.parametrize("limit", [0, -1, 2**64 - 1, 2**64])
-def test_invalid_native_cap_is_rejected(limit: int) -> None:
-    with pytest.raises(ValueError, match="positive finite"):
-        native_memory.native_memory_command(["never-launched"], {}, limit)
-
-
 @pytest.mark.parametrize(("code", "controlled", "stop"), [(86, True, False), (87, True, True), (87, False, False)])
 def test_native_exit_protocol_does_not_depend_on_diagnostic_text(
     tmp_path: Path, code: int, controlled: bool, stop: bool

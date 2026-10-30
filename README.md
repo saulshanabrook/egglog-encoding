@@ -548,36 +548,9 @@ workload and endpoint; independent conditions continue. A compatible selected
 cached failure also prevents automatic retries. Use `--force-run` to explicitly
 retry failed conditions; earlier observations remain in the append-only cache.
 
-Controlled launches through `bench.py` use one fixed native memory policy:
-16 GiB of additional virtual address space above startup mappings on macOS,
-or 16 GiB of total virtual address space on Linux. This is an address-space
-limit, not an RSS or process-group cap. Peak RSS remains an external measurement;
-host pressure and RSS are not polled to enforce protection. A stricter inherited
-limit wins. Author compilers, original parameter drivers, Python and Cargo do
-not understand this option and are not capped by it.
-
-Both controlled executables use mimalloc so allocations cannot bypass the cap
-through the system allocator's startup reservations. This also changes their
-allocator when launched without a limit. The shared `native_memory.py` adapter
-sets `MIMALLOC_ARENA_RESERVE=0`, `MIMALLOC_DISALLOW_ARENA_ALLOC=1`,
-`MIMALLOC_RESERVE_OS_MEMORY=0` and `MIMALLOC_RESERVE_HUGE_OS_PAGES=0` before exec.
-Standalone `egglog-experimental` and `egg-math-benchmark` invocations remain
-uncapped unless given `--memory-limit-bytes N`; that option requires the same
-startup environment and must precede `--`. Linux/macOS setup failures exit 87;
-allocator exhaustion after successful setup exits 86. Exhaustion ends only that
-condition, while failed setup/preflight, process-control failure or an unexplained
-SIGKILL stops the invocation. An older target rejecting the option fails
-preflight rather than running uncapped.
-
-Cache keys do not encode the allocation policy. After changing the cap or
-allocator environment, use a fresh report, such as
-`--report benchmarks/local/reports-16gib.jsonl`, and retain the previous report.
-Do not pool or relabel observations collected under different policies.
-Profiling applies the same policy to the controlled workload inside Samply.
-
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
-per controlled engine verifies the native-limit and timing-summary interfaces. Unmodified
+per engine verifies the timing-summary interface when supported. Unmodified
 parameter-analysis drivers have no such interface or preflight. Each target prints
 one compact cached/required line and either `nothing to collect` or the fresh-run
 count; cached failures and timeouts are explicit. Fresh TTY runs use transient

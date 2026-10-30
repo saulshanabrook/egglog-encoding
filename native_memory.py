@@ -1,8 +1,12 @@
-"""Configure native address-space protection for the controlled executables."""
+"""Select the controlled executables' 16 GiB native address-space policy.
+
+Python supplies the cap through a CLI flag; Rust validates and installs it before
+running the workload. Allocator settings must be in the environment before exec:
+mimalloc can reserve memory before main, too early for CLI parsing or option setters.
+"""
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping, Sequence
 
 NATIVE_LIMIT_BYTES = 16 * 1024**3
@@ -27,9 +31,5 @@ def native_memory_command(
     """
     args = list(command)
     if limit_bytes is not None:
-        if sys.platform not in ("darwin", "linux"):
-            raise ValueError("native memory limit requires macOS or Linux")
-        if not 0 < limit_bytes < 2**64 - 1:
-            raise ValueError("native memory limit must be a positive finite u64 integer")
         args.insert(1, f"--memory-limit-bytes={limit_bytes}")
     return args, {**env, **NATIVE_ALLOCATOR_ENV}
