@@ -16,6 +16,7 @@ mod serialize;
 pub mod sort;
 mod termdag;
 mod typechecking;
+mod typed_termdag;
 pub mod util;
 pub use command_macro::{CommandMacro, CommandMacroRegistry};
 
@@ -76,12 +77,15 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-pub use termdag::{OrdTerm, Term, TermDag, TermId};
+pub use termdag::{
+    GenericTerm, GenericTermDag, OrdTerm, Term, TermDag, TermId, TypedTerm, TypedTermDag,
+};
 use thiserror::Error;
 pub use typechecking::FuncType;
 pub use typechecking::PrimitiveValidator;
 pub use typechecking::TypeError;
-pub use typechecking::TypeInfo;
+pub use typechecking::{TypeInfo, TypeInfoView};
+pub use typed_termdag::GroundTypeError;
 use util::*;
 
 use crate::ast::desugar::desugar_command;
@@ -180,6 +184,11 @@ pub enum CommandOutput {
         proof_store: ProofStore,
         proof_id: ProofId,
     },
+    /// Equality proofs for extraction results, sharing one proof store.
+    ProveExtract {
+        proof_store: ProofStore,
+        proof_ids: Vec<ProofId>,
+    },
     /// The report from all runs
     OverallStatistics(RunReport),
     /// A printed function and all its values
@@ -205,7 +214,9 @@ impl CommandOutput {
         outputs
             .iter()
             .filter_map(|output| match output {
-                CommandOutput::ProveExists { .. } => Some(output.to_string()),
+                CommandOutput::ProveExists { .. } | CommandOutput::ProveExtract { .. } => {
+                    Some(output.to_string())
+                }
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -213,7 +224,7 @@ impl CommandOutput {
     }
 
     /// Render the non-proof outputs that should still match the normal-mode
-    /// shared snapshot when proof-testing rewrites checks into prove commands.
+    /// shared snapshot when proof-testing rewrites checks and extracts into proof commands.
     pub fn snapshot_non_proof_stable_under_proof_encoding(outputs: &[CommandOutput]) -> String {
         Self::snapshot_stable(outputs, false)
     }
@@ -228,7 +239,11 @@ impl CommandOutput {
                     Some(format!("(extraction-costs {cost})\n"))
                 }
                 CommandOutput::ExtractVariants(..) => None,
-                CommandOutput::ProveExists { .. } if !include_proofs => None,
+                CommandOutput::ProveExists { .. } | CommandOutput::ProveExtract { .. }
+                    if !include_proofs =>
+                {
+                    None
+                }
                 other => Some(other.to_string()),
             })
             .collect::<Vec<_>>()
@@ -271,6 +286,15 @@ impl std::fmt::Display for CommandOutput {
                 proof_store,
                 proof_id,
             } => writeln!(f, "{}", proof_store.proof_to_string(*proof_id)),
+            CommandOutput::ProveExtract {
+                proof_store,
+                proof_ids,
+            } => {
+                for proof in proof_ids {
+                    writeln!(f, "{}", proof_store.proof_to_string(*proof))?;
+                }
+                Ok(())
+            }
             CommandOutput::OverallStatistics(run_report) => {
                 write!(f, "Overall statistics:\n{run_report}")
             }
@@ -356,6 +380,10 @@ pub struct EGraph {
     overall_report: OverallReport,
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
+    /// Marginal constructor costs used by ordinary and certified extraction
+    /// commands. Primitive values retain unit cost; the generic extraction APIs
+    /// accept other cost models and algorithms independently.
+    pub extraction_cost: fn(&EGraph, &Function, &Enode<'_>) -> DefaultCost,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
     strict_mode: bool,
     warned_about_global_prefix: bool,
@@ -411,7 +439,7 @@ impl Function {
 
     /// Whether this is a let binding
     pub fn is_let_binding(&self) -> bool {
-        self.decl.internal_let
+        self.decl.role.is_global()
     }
 
     /// Whether this function is internally hidden (e.g., compiler-generated
@@ -423,7 +451,7 @@ impl Function {
     /// Whether this table is a view created by the term/proof encoding: the
     /// function's own rows, keyed on canonicalized children.
     pub fn is_view(&self) -> bool {
-        self.decl.internal_view.is_some()
+        self.decl.role.is_view()
     }
 
     /// The source-level row layout exposed by the Rust APIs. Encoded views use
@@ -490,6 +518,7 @@ impl EGraph {
             type_info: Default::default(),
             schedulers: Default::default(),
             commands: Default::default(),
+            extraction_cost: |egraph, func, _| func.extraction_head_cost(egraph).unwrap_or(1),
             extension_state: Default::default(),
             strict_mode: false,
             warned_about_global_prefix: false,
@@ -708,8 +737,8 @@ impl EGraph {
         self
     }
 
-    /// Enable testing of getting proofs for every `check` outside `fail`.
-    /// Checks inside `fail` remain negative assertions.
+    /// Prove every `check` and certify every `extract` outside `fail`.
+    /// Commands inside `fail` retain their ordinary behavior.
     pub fn with_proof_testing(mut self) -> Self {
         self.proof_state.proof_testing = true;
         self
@@ -1107,6 +1136,7 @@ impl EGraph {
             Some(func_type) => {
                 debug_assert!(
                     func_type.subtype == decl.subtype
+                        && func_type.role == decl.role
                         && func_type.input.len() == decl.schema.input.len()
                         && func_type
                             .input
@@ -1135,7 +1165,7 @@ impl EGraph {
                 let func_type = Arc::new(FuncType {
                     name: decl.name.clone(),
                     subtype: decl.subtype,
-                    is_global: decl.internal_let,
+                    role: decl.role,
                     input: decl
                         .schema
                         .input
@@ -1160,7 +1190,7 @@ impl EGraph {
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
             // View tables need subsumption support
-            FunctionSubtype::Custom => decl.internal_view.is_some(),
+            FunctionSubtype::Custom => decl.role.is_view(),
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
@@ -1180,7 +1210,7 @@ impl EGraph {
         };
         // Proof-node relations are write-once records identified by a freshly
         // minted final id; extraction only scans them.
-        let is_proof_node = decl.internal_term_node
+        let is_proof_node = decl.role.is_term_node()
             && input
                 .last()
                 .is_some_and(|sort| sort.name() == self.proof_state.proof_names.proof_datatype);
@@ -1194,11 +1224,6 @@ impl EGraph {
             assert!(
                 decl.merge.is_none(),
                 "proof-node relation `{}` cannot declare merge behavior",
-                decl.name
-            );
-            assert!(
-                decl.internal_view.is_none(),
-                "proof-node relation `{}` cannot be an FD view",
                 decl.name
             );
             assert!(
@@ -1275,7 +1300,7 @@ impl EGraph {
         }
         let key = self.backend.base_values().get::<S>(name.to_owned().into());
         self.functions.values().find(|function| {
-            function.decl.internal_let
+            function.decl.role.is_global()
                 && function.func_type.input.len() == 1
                 && function.func_type.input[0].name() == StringSort.name()
                 && self
@@ -1328,8 +1353,8 @@ impl EGraph {
 
     /// Provide a program for use in proof checking.
     /// This enables testing of a desugared egglog proof program outside of proof mode.
-    /// When proof_testing is true, turns every `check` outside `fail` into a `prove` command.
-    /// Checks inside `fail` remain negative assertions.
+    /// When proof_testing is true, rewrites checks and extracts outside `fail` into proof commands.
+    /// Commands inside `fail` retain their ordinary behavior.
     /// Not intended for general use but needed in files.rs, so public but hidden.
     #[doc(hidden)]
     pub fn set_proof_checking_program(
@@ -1361,7 +1386,7 @@ impl EGraph {
                 .get(sym)
                 .ok_or(TypeError::UnboundFunction(sym.to_owned(), span!()))?;
             // Skip hidden and let_binding functions
-            if f.decl.internal_hidden || f.decl.internal_let {
+            if f.decl.internal_hidden || f.decl.role.is_global() {
                 return Err(TypeError::UnboundFunction(sym.to_owned(), span!()).into());
             }
             let size = self.backend.table_size(f.backend_id);
@@ -1372,7 +1397,7 @@ impl EGraph {
             let mut lens = self
                 .functions
                 .iter()
-                .filter(|(_, f)| !f.decl.internal_hidden && !f.decl.internal_let)
+                .filter(|(_, f)| !f.decl.internal_hidden && !f.decl.role.is_global())
                 .map(|(sym, f)| (sym.clone(), self.backend.table_size(f.backend_id)))
                 .collect::<Vec<_>>();
 
@@ -2329,6 +2354,9 @@ impl EGraph {
             ResolvedNCommand::LetBegin(..) => {
                 unreachable!("LetBegin is removed by remove_globals")
             }
+            ResolvedNCommand::ProveExtract(_, expr, variants) => {
+                return self.run_prove_extract(&expr, &variants);
+            }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 let sort = expr.output_type();
 
@@ -2336,37 +2364,26 @@ impl EGraph {
                 let n = self.eval_resolved_expr(span, &variants)?;
                 let n: i64 = self.backend.base_values().unwrap(n);
 
-                return if n == 0 {
-                    let (termdag, term, cost) = self.extract_value(&sort, x)?;
-                    // dont turn termdag into a string if we have messages disabled for performance reasons
-                    if log_enabled!(Level::Info) {
-                        log::info!("extracted with cost {cost}: {}", termdag.to_string(term));
+                if n < 0 {
+                    return Err(Error::ExtractError(
+                        "cannot extract a negative number of variants".to_string(),
+                    ));
+                }
+                let output = self.extract_command(sort, x, n as usize)?;
+                // Avoid rendering terms when messages are disabled.
+                if log_enabled!(Level::Info) {
+                    match &output {
+                        CommandOutput::ExtractBest(termdag, cost, term) => {
+                            log::info!("extracted with cost {cost}: {}", termdag.to_string(*term));
+                        }
+                        CommandOutput::ExtractVariants(_, terms) => {
+                            let expr_str = expr.to_string();
+                            log::info!("extracted {} variants for {expr_str}", terms.len());
+                        }
+                        _ => unreachable!(),
                     }
-                    Ok(vec![CommandOutput::ExtractBest(termdag, cost, term)])
-                } else {
-                    if n < 0 {
-                        return Err(Error::ExtractError(
-                            "cannot extract a negative number of variants".to_string(),
-                        ));
-                    }
-                    let extracted = self.extract_variants(vec![(sort, x)], n as usize)?;
-                    let terms: Vec<TermId> = extracted
-                        .variants
-                        .into_iter()
-                        .next()
-                        .expect("extract_variants returns one result for one root")
-                        .into_iter()
-                        .map(|extracted| extracted.term)
-                        .collect();
-                    if log_enabled!(Level::Info) {
-                        let expr_str = expr.to_string();
-                        log::info!("extracted {} variants for {expr_str}", terms.len());
-                    }
-                    Ok(vec![CommandOutput::ExtractVariants(
-                        extracted.termdag,
-                        terms,
-                    )])
-                };
+                }
+                return Ok(vec![output]);
             }
             ResolvedNCommand::Push(n) => {
                 (0..n).for_each(|_| self.push());

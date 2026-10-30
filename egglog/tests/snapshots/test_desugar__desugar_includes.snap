@@ -6,6 +6,6 @@ expression: snapshot
 (constructor Test2 () Main)
 (sort Math)
 (constructor Test () Math)
-(function @Globals_Math (String) Math :no-merge :unextractable :internal-let)
+(function @Globals_Math (String) Math :no-merge :unextractable :internal-role global)
 (set (@Globals_Math "x") (Test))
 (set (@Globals_Math "y") (Test))

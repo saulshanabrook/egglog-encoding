@@ -55,6 +55,15 @@ def test_overlapping_targets_do_not_repeat_completed_checks(commands: list[Comma
     assert sum("pytest" in command.args for command in commands) == 1
 
 
+def test_ci_suites_preserve_full_test_coverage(commands: list[Command]) -> None:
+    assert check.main(["test"]) == 0
+    full_suite = commands.copy()
+    commands.clear()
+    for target in ("python-test", "rust-test", "slotted-test"):
+        assert check.main([target]) == 0
+    assert commands == full_suite
+
+
 def test_failure_stops_immediately_and_preserves_exit_status(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 

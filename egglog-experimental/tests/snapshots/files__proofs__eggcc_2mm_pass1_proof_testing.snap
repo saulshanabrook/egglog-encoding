@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (TupleT (TCons (StateT) (TNil))))
 (let t1 (FunctionHasType "main" t0 t0))
 (Rule
@@ -3175,3 +3176,4 @@ expression: snapshot
         :ruleset initialization )")
   (premises)
   (substitution))
+)

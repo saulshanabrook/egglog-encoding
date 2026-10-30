@@ -1467,16 +1467,16 @@ fn test_cant_subsume_merge() {
 }
 
 #[test]
-fn constructor_internal_view_is_rejected() {
+fn constructor_view_role_is_rejected() {
     let mut egraph = EGraph::default();
     // Proof-encoding views use a function annotation, so constructor syntax
-    // should reject `:internal-view`.
+    // should reject a view role.
     let res = egraph.parse_and_run_program(
         None,
         r#"
         (sort Expr)
         (sort View)
-        (constructor ExprView (Expr Expr) View :internal-view constructor)
+        (constructor ExprView (Expr Expr) View :internal-role constructor-view)
         "#,
     );
 
@@ -1660,7 +1660,7 @@ fn test_print_function() {
 #[test]
 fn function_to_dag_uses_logical_view_layout() {
     let s = "(datatype N (n :cost 0))
-             (function f (i64 N) Unit :no-merge :internal-view constructor)
+             (function f (i64 N) Unit :no-merge :internal-role constructor-view)
              (set (f 1 (n)) ())";
     let mut egraph = EGraph::default();
     egraph.parse_and_run_program(None, s).unwrap();

@@ -1,7 +1,7 @@
 use egglog::{
     CommandMacro, Error, TypeInfo,
     ast::ResolvedFact,
-    ast::{Actions, Command, Expr, ParseError, Rule, Schema},
+    ast::{Actions, Command, Expr, FunctionRole, ParseError, Rule, Schema},
     util::{FreshGen, IndexSet, SymbolGen},
 };
 use egglog_ast::generic_ast::Literal;
@@ -94,7 +94,7 @@ fn desugar_fresh_rule(
         unextractable: first_opts.unextractable,
         injective: false,
         hidden: false,
-        let_binding: false,
+        role: FunctionRole::Ordinary,
     };
 
     // Get just the variable names for rewriting

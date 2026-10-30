@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (select (store (AVar "mem1") (Var "r1") (Num 42)) (Var "r1")))
 (Rule
   (= t0 (Num 42))
@@ -12,8 +13,12 @@ expression: proof_snapshot
     (mem (AVar "mem1"))
     (i (Var "r1"))
     (e (Num 42))))
+)
+(
 (let t0 (neq (Var "r1") (Var "r2")))
 (Fiat (= t0 t0))
+)
+(
 (let t0 (add (Var "r1") (Num 17)))
 (let t1 (neq (Var "r1") t0))
 (let t2 (neq t0 (Var "r1")))
@@ -34,6 +39,8 @@ expression: proof_snapshot
       (premises (Fiat (= t0 t0)) (Fiat (= () ())))
       (substitution (x (Var "r1")) (i 17) (e t0))))
   (substitution (x t0) (y (Var "r1"))))
+)
+(
 (let t0 (add (Var "r1") (Num 17)))
 (let t1 (select (store (AVar "mem1") (Var "r1") (Num 42)) t0))
 (let t2 (neq (Var "r1") t0))
@@ -70,6 +77,8 @@ expression: proof_snapshot
     (e (Num 42))
     (i2 t0)
     (e1 t1)))
+)
+(
 (let t0 (add (Var "r1") (Var "r2")))
 (let t1 (store (AVar "mem1") t0 (Num 1)))
 (let t2 (add (Var "r2") (Var "r1")))
@@ -141,6 +150,8 @@ expression: proof_snapshot
           (substitution (@rewrite_var__2 t4) (x (Var "r1")) (y (Var "r3")))))
       1))
   (substitution (mem (AVar "mem1")) (i1 t0) (e (Num 2)) (i2 t4) (e1 t5)))
+)
+(
 (let t0 (add (Num 1) (Var "r1")))
 (let t1 (add (Num 1) t0))
 (let t2 (add t1 (Num -3)))
@@ -289,3 +300,4 @@ expression: proof_snapshot
         (substitution (@rewrite_var__4 t6) (x 2) (y -2)))
       1))
   (substitution (@rewrite_var__5 t3) (x (Var "r1"))))
+)

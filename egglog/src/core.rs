@@ -415,11 +415,12 @@ impl ResolvedCall {
     // Different from `from_resolution`, this function only considers function types and not primitives.
     // As a result, it only requires input argument types, so types.len() == func.input.len(),
     // while for `from_resolution`, types.len() == func.input.len() + 1 to account for the output type
-    pub fn from_resolution_func_types(
+    pub fn from_resolution_func_types<'a>(
         head: &str,
         types: &[ArcSort],
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
     ) -> Option<ResolvedCall> {
+        let typeinfo = typeinfo.into();
         if let Some(ty) = typeinfo.get_func_type(head) {
             // As long as input types match, a result is returned.
             let expected = ty.input.iter().map(|s| s.name());
@@ -431,13 +432,14 @@ impl ResolvedCall {
         None
     }
 
-    pub fn from_resolution(
+    pub fn from_resolution<'a>(
         head: &str,
         types: &[ArcSort],
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
         span: &Span,
     ) -> Result<ResolvedCall, TypeError> {
+        let typeinfo = typeinfo.into();
         if let Some(ty) = typeinfo.get_func_type(head) {
             let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
             let actual = types.iter().map(|s| s.name());
@@ -450,7 +452,7 @@ impl ResolvedCall {
             .get_prims(head)
             .into_iter()
             .flatten()
-            .filter(|p| p.context_ids[ctx].is_some() && p.accept(types, typeinfo));
+            .filter(|p| p.context_ids[ctx].is_some() && p.accept(types, typeinfo.type_info()));
         if let Some(picked) = primitives.next() {
             // Type inference has already assigned concrete types, so a valid
             // overload (`+`, `map-empty`, container primitives) leaves exactly
@@ -586,7 +588,7 @@ pub(crate) type ResolvedCoreActions = GenericCoreActions<ResolvedCall, ResolvedV
 ///
 pub(crate) struct CoreActionContext<'a, Head, Leaf, FG> {
     /// Type environment describing functions, constructors, and primitives.
-    pub typeinfo: &'a TypeInfo,
+    pub typeinfo: TypeInfoView<'a>,
     /// Set of variables that are currently in scope during lowering.
     pub binding: &'a mut IndexSet<Leaf>,
     /// Generator used to create fresh symbols for intermediate values.
@@ -598,13 +600,13 @@ pub(crate) struct CoreActionContext<'a, Head, Leaf, FG> {
 
 impl<'a, Head, Leaf, FG> CoreActionContext<'a, Head, Leaf, FG> {
     pub fn new(
-        typeinfo: &'a TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         binding: &'a mut IndexSet<Leaf>,
         fresh_gen: &'a mut FG,
         union_to_set_optimization: bool,
     ) -> Self {
         Self {
-            typeinfo,
+            typeinfo: typeinfo.into(),
             binding,
             fresh_gen,
             union_to_set_optimization,
@@ -658,7 +660,7 @@ where
                     norm_actions.push(GenericCoreAction::LetAtomTerm(
                         span.clone(),
                         var.clone(),
-                        mapped_expr.get_corresponding_var_or_lit(typeinfo),
+                        mapped_expr.get_corresponding_var_or_lit(typeinfo.type_info()),
                     ));
                     mapped_actions.0.push(GenericAction::Let(
                         span.clone(),
@@ -681,7 +683,7 @@ where
                             let mut terms = vec![];
                             for v in vargs {
                                 let m = v.to_core_actions(ctx, &mut norm_actions)?;
-                                terms.push(m.get_corresponding_var_or_lit(typeinfo));
+                                terms.push(m.get_corresponding_var_or_lit(typeinfo.type_info()));
                                 mapped.push(m);
                             }
                             let dummy = ctx.fresh_gen.fresh(vhead);
@@ -694,7 +696,7 @@ where
                         }
                         _ => {
                             let m = expr.to_core_actions(ctx, &mut norm_actions)?;
-                            let term = m.get_corresponding_var_or_lit(typeinfo);
+                            let term = m.get_corresponding_var_or_lit(typeinfo.type_info());
                             (m, vec![term])
                         }
                     };
@@ -703,7 +705,7 @@ where
                         head.clone(),
                         mapped_args
                             .iter()
-                            .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                            .map(|e| e.get_corresponding_var_or_lit(typeinfo.type_info()))
                             .collect(),
                         value_terms,
                     ));
@@ -727,7 +729,7 @@ where
                         head.clone(),
                         mapped_args
                             .iter()
-                            .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                            .map(|e| e.get_corresponding_var_or_lit(typeinfo.type_info()))
                             .collect(),
                     ));
                     let v = ctx.fresh_gen.fresh(head);
@@ -747,7 +749,8 @@ where
                     match (e1, e2) {
                         (var @ GenericExpr::Var(..), GenericExpr::Call(_, f, args))
                         | (GenericExpr::Call(_, f, args), var @ GenericExpr::Var(..))
-                            if f.is_constructor(typeinfo) && union_to_set_optimization =>
+                            if f.is_constructor(typeinfo.type_info())
+                                && union_to_set_optimization =>
                         {
                             let head = f;
                             let expr = var;
@@ -762,10 +765,12 @@ where
                                 head.clone(),
                                 mapped_args
                                     .iter()
-                                    .map(|e| e.get_corresponding_var_or_lit(typeinfo))
+                                    .map(|e| e.get_corresponding_var_or_lit(typeinfo.type_info()))
                                     .collect(),
                                 // Constructors are single-output, so a single value column.
-                                vec![mapped_expr.get_corresponding_var_or_lit(typeinfo)],
+                                vec![
+                                    mapped_expr.get_corresponding_var_or_lit(typeinfo.type_info()),
+                                ],
                             ));
                             let v = ctx.fresh_gen.fresh(head);
                             mapped_actions.0.push(GenericAction::Set(
@@ -780,8 +785,8 @@ where
                             let mapped_e2 = e2.to_core_actions(ctx, &mut norm_actions)?;
                             norm_actions.push(GenericCoreAction::Union(
                                 span.clone(),
-                                mapped_e1.get_corresponding_var_or_lit(typeinfo),
-                                mapped_e2.get_corresponding_var_or_lit(typeinfo),
+                                mapped_e1.get_corresponding_var_or_lit(typeinfo.type_info()),
+                                mapped_e2.get_corresponding_var_or_lit(typeinfo.type_info()),
                             ));
                             mapped_actions.0.push(GenericAction::Union(
                                 span.clone(),
@@ -885,7 +890,7 @@ where
             GenericExpr::Lit(span, lit) => Ok(GenericExpr::Lit(span.clone(), lit.clone())),
             GenericExpr::Var(span, v) => {
                 let sym = v.to_string();
-                if ctx.binding.contains(v) || typeinfo.is_global(&sym) {
+                if ctx.binding.contains(v) || typeinfo.get_global_sort(&sym).is_some() {
                     Ok(GenericExpr::Var(span.clone(), v.clone()))
                 } else {
                     Err(TypeError::Unbound(sym, span.clone()))
@@ -896,7 +901,7 @@ where
                 let mut mapped_args = vec![];
                 for arg in args {
                     let mapped_arg = arg.to_core_actions(ctx, out_actions)?;
-                    norm_args.push(mapped_arg.get_corresponding_var_or_lit(typeinfo));
+                    norm_args.push(mapped_arg.get_corresponding_var_or_lit(typeinfo.type_info()));
                     mapped_args.push(mapped_arg);
                 }
                 let var = ctx.fresh_gen.fresh(f);

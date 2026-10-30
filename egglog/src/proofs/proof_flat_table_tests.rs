@@ -63,7 +63,7 @@ fn only_proof_node_relations_use_flat_storage() {
                 function.name()
             );
             assert!(function.decl.merge.is_none(), "{}", function.name());
-            assert!(function.decl.internal_view.is_none(), "{}", function.name());
+            assert!(!function.decl.role.is_view(), "{}", function.name());
             assert!(
                 function
                     .func_type
@@ -78,7 +78,7 @@ fn only_proof_node_relations_use_flat_storage() {
         } else {
             assert!(!is_flat, "{}", function.name());
             assert!(
-                !function.decl.internal_term_node,
+                !function.decl.role.is_term_node(),
                 "the encoding declares no term-node relation but the proof ones, \
                  which are all on flat storage: {}",
                 function.name()
@@ -121,15 +121,6 @@ fn proof_node_storage_rejects_merge_semantics() {
             },
         ),
     ));
-    egraph.declare_function(&decl).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "cannot be an FD view")]
-fn proof_node_storage_rejects_view_semantics() {
-    let (mut egraph, mut decl) = egraph_and_proof_node_decl();
-    decl.name = "invalid-proof-view".into();
-    decl.internal_view = Some(crate::ast::ViewKind::Constructor);
     egraph.declare_function(&decl).unwrap();
 }
 

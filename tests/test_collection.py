@@ -428,6 +428,64 @@ def test_pair_collection_reuses_each_endpoint_independently_and_force_runs_both(
     assert [run.missing_observations for run in forced.runs] == [1, 1]
 
 
+@pytest.mark.parametrize("status", ["failure", "timed-out"])
+def test_cached_failure_stops_only_its_condition_until_forced(tmp_path: Path, status: models.Status) -> None:
+    store = ReportStore(tmp_path / "report.jsonl")
+    store.append(make_record(0, started_at="2026-07-04T12:00:00Z", status=status))
+    target = make_target()
+    requests = (models.EndpointRequest(target.request, "off"),)
+    plan = collection.build_collection_plan(store, target, (endpoint(target),), (FILE_SPEC,), 3, 120, False)
+    assert plan.total_missing_observations == 0
+    assert collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 120)
+    assert not collection.label_has_enough_rows(store, target, requests, (FILE_SPEC,), 3, 121)
+
+    endpoints = (endpoint(target), endpoint(target, "proofs"), models.BenchmarkEndpoint(target, "off", "ee"))
+    other_file = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
+    plan = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC, other_file), 3, 120, False)
+    assert [run.missing_observations for run in plan.runs] == [0, 3, 3, 3, 3, 3]
+    forced = collection.build_collection_plan(store, target, endpoints, (FILE_SPEC,), 3, 120, True)
+    assert [run.missing_observations for run in forced.runs] == [3, 3, 3]
+    assert store.row_count == 1
+
+
+@pytest.mark.parametrize("status", ["failure", "timed-out"])
+def test_fresh_failure_stops_only_its_condition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: models.Status
+) -> None:
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    runs = (
+        planned_run(required=3),
+        planned_run(treatment="proofs", required=3),
+        planned_run(filename="other.egg", required=3),
+    )
+    calls: list[tuple[str, models.Treatment]] = []
+
+    def observe(
+        _binary: Path,
+        _checkout: Path,
+        file: models.FileSpec,
+        treatment: models.Treatment,
+        _timeout: int,
+        _encoding: models.DisequalityEncoding,
+    ) -> collection.ProcessObservation:
+        calls.append((file.display_path, treatment))
+        if file.display_path == "file.egg" and treatment == "off":
+            return collection.ProcessObservation(
+                processes.TimingResult(status, processes.TimingRow(), processes.ErrorRow("failed")), None
+            )
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=0.25), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "run_process", observe)
+    store = ReportStore(tmp_path / "report.jsonl")
+    collection.collect_rows(store, collection.CollectionPlan(target, runs), 120, Console(file=io.StringIO()))
+    assert calls.count(("file.egg", "off")) == 1
+    assert calls.count(("file.egg", "proofs")) == calls.count(("other.egg", "off")) == 3
+    assert store.row_count == 7
+    assert [row["status"] for row in store.records].count(status) == 1
+
+
 @pytest.mark.parametrize("width", [80, 120])
 def test_fully_cached_six_file_plan_is_one_line(width: int) -> None:
     target_label = "target [red]literal[/red] x[/blue]"
@@ -533,7 +591,10 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     with pytest.raises(ValueError, match=r"preflight failed.*--proof-extraction"):
         collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
-    assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
+    assert calls == [
+        ("--timing-summary", "--memory-limit-bytes"),
+        ("--timing-summary", "--memory-limit-bytes", "--proof-extraction"),
+    ]
 
 
 def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -574,8 +635,8 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
     collection.preflight_collection(plan, 120)
 
     assert calls == [
-        (egglog_binary, ("--timing-summary", "--proof-testing")),
-        (egg_binary, ("--timing-summary",)),
+        (egglog_binary, ("--timing-summary", "--memory-limit-bytes", "--proof-testing")),
+        (egg_binary, ("--timing-summary", "--memory-limit-bytes")),
     ]
 
 
@@ -636,7 +697,10 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
+        assert native_limit
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(
             json.dumps({"schema_version": 1, "rulesets": []}),
@@ -666,7 +730,10 @@ def test_run_process_passes_treatment_flags(
     commands: list[list[str]] = []
     file_spec = stable_file_spec(tmp_path)
 
-    def fake_run_command(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+    def fake_run_command(
+        command: list[str], checkout_path: Path, timeout_sec: int, *, native_limit: bool
+    ) -> processes.TimingResult:
+        assert native_limit
         commands.append(command)
         assert checkout_path == ROOT
         assert timeout_sec == 120
@@ -731,7 +798,7 @@ def test_run_process_rejects_success_without_timing_summary(
     monkeypatch.setattr(
         collection,
         "run_command",
-        lambda *_args: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
+        lambda *_args, **_kwargs: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
     )
 
     with pytest.raises(ValueError, match="did not produce --timing-summary"):
@@ -744,7 +811,7 @@ def test_run_process_does_not_require_summary_after_failure(
 ) -> None:
     file_spec = stable_file_spec(tmp_path)
     failure = processes.TimingResult("failure", processes.TimingRow(wall_sec=1.0), processes.ErrorRow("failed"))
-    monkeypatch.setattr(collection, "run_command", lambda *_args: failure)
+    monkeypatch.setattr(collection, "run_command", lambda *_args, **_kwargs: failure)
 
     observation = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "off", 120)
 
@@ -778,7 +845,10 @@ def test_collect_rows_rejects_mutated_workload_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
+        assert native_limit
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(json.dumps(make_timing_summary()), encoding="utf-8")
         if mutated_input == "file":
@@ -803,8 +873,14 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = make_target(binary_path=ROOT / "egglog-experimental")
-    run = planned_run(required=3)
-    plan = collection.CollectionPlan(target, (run,))
+    plan = collection.CollectionPlan(
+        target,
+        (
+            planned_run(required=1),
+            planned_run(treatment="proofs", required=1),
+            planned_run(filename="other.egg", required=1),
+        ),
+    )
     success = collection.ProcessObservation(
         processes.TimingResult("success", processes.TimingRow(wall_sec=0.25), None),
         make_timing_summary(),
@@ -834,9 +910,9 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     collection.collect_rows(store, plan, 120, console)
 
     assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/3: succeeded after 0.250s",
-        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context",
-        "  [3/3] file.egg · off · 3/3: timed out after 120 seconds",
+        "  [1/3] file.egg · off · 1/1: succeeded after 0.250s",
+        "  [2/3] file.egg · proofs · 1/1: failed after 0.500s: bad rule more context",
+        "  [3/3] other.egg · off · 1/1: timed out after 120 seconds",
         "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
     ]
     assert store.row_count == 3

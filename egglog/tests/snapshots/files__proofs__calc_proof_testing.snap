@@ -2,9 +2,12 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
 (let t1 (g* t0 t0))
 (Fiat (= t1 t1))
+)
+(
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
 (let t1 (g* t0 t0))
 (Rule
@@ -16,6 +19,8 @@ expression: proof_snapshot
     (a (g* (AConst) (AConst)))
     (b (g* (AConst) (AConst)))
     (c t0)))
+)
+(
 (let t0 (g* (inv (aConst)) (aConst)))
 (let t1 (g* (bConst) t0))
 (let t2 (g* t1 (inv (bConst))))
@@ -37,9 +42,12 @@ expression: proof_snapshot
         1))
     (substitution (@rewrite_var__3 t1) (a (bConst))))
   0)
+)
+(
 (let t0 (g* (bConst) (inv (bConst))))
 (Rule
   (= t0 (IConst))
   (name "(rewrite (g* a (inv a)) $I)")
   (premises (Fiat (= t0 t0)))
   (substitution (@rewrite_var__5 t0) (a (bConst))))
+)

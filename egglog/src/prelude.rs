@@ -776,12 +776,10 @@ pub fn add_function(
         schema,
         merge: merge.map(GenericMerge::result_only),
         hidden: false,
-        let_binding: false,
-        internal_view: None,
+        role: FunctionRole::Ordinary,
         unextractable: false,
         identity_vals: None,
         cost: None,
-        term_node: false,
     }])
 }
 
@@ -801,7 +799,7 @@ pub fn add_constructor(
         unextractable,
         injective: false,
         hidden: false,
-        let_binding: false,
+        role: FunctionRole::Ordinary,
     }])
 }
 

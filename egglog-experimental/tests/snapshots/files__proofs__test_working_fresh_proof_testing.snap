@@ -2,7 +2,11 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (Let (Var "x") (Var "y")))
 (Fiat (= t0 t0))
+)
+(
 (let t0 (Let (Var "x") (Var "y")))
 (Fiat (= t0 t0))
+)

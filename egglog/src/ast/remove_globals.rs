@@ -56,7 +56,7 @@ struct GlobalRemover<'a> {
 /// ```
 /// becomes
 /// ```ignore
-/// (function @Globals_i64 (String) i64 :no-merge :internal-let)
+/// (function @Globals_i64 (String) i64 :no-merge :internal-role global)
 /// (set (@Globals_i64 "$x") 3)
 /// (set (@Globals_i64 "$y") (+ (@Globals_i64 "$x") 1))
 /// ```
@@ -97,16 +97,15 @@ impl GlobalRemover<'_> {
                     cost: None,
                     unextractable: true,
                     internal_hidden: false,
-                    internal_let: true,
+                    role: FunctionRole::Global,
                     span: span.clone(),
-                    internal_view: None,
+
                     identity_vals: None,
-                    internal_term_node: false,
                 }));
             Arc::new(FuncType {
                 name: table_name,
                 subtype: FunctionSubtype::Custom,
-                is_global: true,
+                role: FunctionRole::Global,
                 input: vec![StringSort.to_arcsort()],
                 outputs: vec![name.sort.clone()],
             })

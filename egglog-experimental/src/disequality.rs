@@ -136,8 +136,8 @@ use egglog::{
     ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
     ReadPrim, ReadState, TypeError, TypeInfo, Value,
     ast::{
-        Action, Actions, Command, Expr, Fact, Macro, ParseError, Parser, Rule, RuleEvalMode,
-        RunConfig, Schedule, Schema, Sexp, Span,
+        Action, Actions, Command, Expr, Fact, FunctionDecl, FunctionRole, Macro, ParseError,
+        Parser, Rule, RuleEvalMode, RunConfig, Schedule, Schema, Sexp, Span,
     },
     constraint::{Constraint, TypeConstraint},
     sort::S,
@@ -481,10 +481,10 @@ impl CommandMacro for LowerDisequality {
                     unextractable,
                     injective: _,
                     hidden,
-                    let_binding,
+                    role,
                 } = &command
             {
-                let mut declaration = egglog::ast::FunctionDecl::constructor(
+                let mut declaration = FunctionDecl::constructor(
                     span.clone(),
                     name.clone(),
                     schema.clone(),
@@ -492,7 +492,7 @@ impl CommandMacro for LowerDisequality {
                     *unextractable,
                     *hidden,
                 );
-                declaration.internal_let = *let_binding;
+                declaration.role = *role;
                 local_types
                     .to_mut()
                     .typecheck_function(symbols, &declaration)?;
@@ -802,7 +802,7 @@ fn constructor(span: &Span, name: String, input: Vec<String>, output: &str) -> C
         unextractable: true,
         injective: false,
         hidden: true,
-        let_binding: false,
+        role: FunctionRole::Ordinary,
     }
 }
 

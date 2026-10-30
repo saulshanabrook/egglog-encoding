@@ -2,7 +2,10 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Fiat (= () ()))
+)
+(
 (let t0 (myor (negate (p 0)) (FalseConst)))
 (let prf0
   (Rule
@@ -75,6 +78,8 @@ expression: proof_snapshot
               0))
           (substitution (a (p 2)) (as (negate (p 0))) (bs (FalseConst)))))))
   (substitution (p (p 0))))
+)
+(
 (let t0 (myor (negate (p 2)) (FalseConst)))
 (let t1 (myor (p 1) t0))
 (Rule
@@ -104,3 +109,4 @@ expression: proof_snapshot
             0))
         (substitution (@rewrite_var__4 (TrueConst)) (a t0)))))
   (substitution (p (p 2))))
+)

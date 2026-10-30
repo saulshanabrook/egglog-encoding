@@ -63,6 +63,7 @@ const RESERVED_KEYWORDS: &[&str] = &[
     "run-schedule",
     "check",
     "extract",
+    "prove-extract",
     "push",
     "pop",
     "print-function",
@@ -518,12 +519,10 @@ impl Parser {
                 [name, inputs, output, rest @ ..] => {
                     let mut merge = None;
                     let mut hidden = false;
-                    let mut let_binding = false;
-                    let mut internal_view = None;
+                    let mut role = FunctionRole::Ordinary;
                     let mut unextractable = false;
                     let mut identity_vals = None;
                     let mut cost = None;
-                    let mut term_node = false;
                     for (key, val) in self.parse_options(rest)? {
                         match (key, val) {
                             (":no-merge", []) => {
@@ -575,28 +574,33 @@ impl Parser {
                                 merge = Some(Some(m));
                             }
                             (":internal-hidden", []) => hidden = true,
-                            (":internal-let", []) => let_binding = true,
                             (":unextractable", []) => unextractable = true,
-                            (":internal-view", [kind]) => {
-                                internal_view =
-                                    Some(match kind.expect_atom("view kind")?.as_str() {
-                                        "constructor" => ViewKind::Constructor,
-                                        "function" => ViewKind::Function,
-                                        other => {
-                                            return error!(
-                                                span,
-                                                "unknown :internal-view kind {other}, expected \
-                                             `constructor` or `function`"
-                                            );
-                                        }
-                                    })
+                            (":internal-role", [value]) => {
+                                if role != FunctionRole::Ordinary {
+                                    return error!(
+                                        span,
+                                        "a function can have only one internal role"
+                                    );
+                                }
+                                role = match value.expect_atom("function role")?.as_str() {
+                                    "global" => FunctionRole::Global,
+                                    "constructor-view" => FunctionRole::ConstructorView,
+                                    "function-view" => FunctionRole::FunctionView,
+                                    "global-view" => FunctionRole::GlobalView,
+                                    "term-node" => FunctionRole::TermNode,
+                                    other => {
+                                        return error!(
+                                            span,
+                                            "unknown internal function role {other}"
+                                        );
+                                    }
+                                };
                             }
                             (":internal-identity-vals", [k]) => {
                                 identity_vals =
                                     Some(k.expect_uint::<usize>("identity value column count")?)
                             }
                             (":internal-cost", [c]) => cost = Some(c.expect_uint("cost")?),
-                            (":internal-term-node", []) => term_node = true,
                             _ => return error!(span, "could not parse function options"),
                         }
                     }
@@ -614,13 +618,11 @@ impl Parser {
                         schema: self.parse_schema(inputs, output)?,
                         merge,
                         hidden,
-                        let_binding,
-                        internal_view,
+                        role,
                         unextractable,
                         identity_vals,
                         cost,
                         span,
-                        term_node,
                     }]
                 }
                 _ => {
@@ -642,13 +644,17 @@ impl Parser {
                         let mut unextractable = false;
                         let mut injective = false;
                         let mut hidden = false;
-                        let mut let_binding = false;
+                        let mut role = FunctionRole::Ordinary;
                         for (key, val) in self.parse_options(rest)? {
                             match (key, val) {
                                 (":unextractable", []) => unextractable = true,
                                 (":injective", []) => injective = true,
                                 (":internal-hidden", []) => hidden = true,
-                                (":internal-let", []) => let_binding = true,
+                                (":internal-role", [value])
+                                    if value.expect_atom("constructor role")? == "global" =>
+                                {
+                                    role = FunctionRole::Global
+                                }
                                 (":cost", [c]) => cost = Some(c.expect_uint("cost")?),
                                 _ => return error!(span, "could not parse constructor options"),
                             }
@@ -662,7 +668,7 @@ impl Parser {
                             unextractable,
                             injective,
                             hidden,
-                            let_binding,
+                            role,
                         }]
                     }
                     _ => {
@@ -900,6 +906,19 @@ impl Parser {
                     self.parse_expr(v)?,
                 )],
                 _ => return error!(span, "usage: (extract <expr> <number of variants>?)"),
+            },
+            "prove-extract" => match tail {
+                [e] => vec![Command::ProveExtract(
+                    span.clone(),
+                    self.parse_expr(e)?,
+                    Expr::Lit(span, Literal::Int(0)),
+                )],
+                [e, v] => vec![Command::ProveExtract(
+                    span,
+                    self.parse_expr(e)?,
+                    self.parse_expr(v)?,
+                )],
+                _ => return error!(span, "usage: (prove-extract <expr> <number of variants>?)"),
             },
             "check" => vec![Command::Check(
                 span,
@@ -1778,15 +1797,31 @@ mod tests {
         assert_eq!(format!("{e}"), s);
     }
 
-    /// The proof encoding declares its views with `:internal-view`, and
+    /// Every internal function role must survive serialization, and
     /// round-tripping a program through `Display` has to preserve them.
     #[test]
-    fn a_view_declaration_round_trips_through_display() {
-        for kind in ["constructor", "function"] {
-            let s = format!("(function V (i64) i64 :no-merge :internal-view {kind})");
+    fn function_roles_round_trip_through_display() {
+        for kind in [
+            "constructor-view",
+            "function-view",
+            "global-view",
+            "global",
+            "term-node",
+        ] {
+            let s = format!("(function V (i64) i64 :no-merge :internal-role {kind})");
             let parsed = Parser::default().get_program_from_string(None, &s).unwrap();
             assert_eq!(format!("{}", parsed[0]), s);
         }
+    }
+
+    #[test]
+    fn conflicting_function_roles_are_rejected() {
+        let source = "(function V () (i64 Unit) :no-merge \
+                      :internal-role constructor-view :internal-role term-node)";
+        let error = Parser::default()
+            .get_program_from_string(None, source)
+            .unwrap_err();
+        assert!(error.to_string().contains("only one internal role"));
     }
 
     #[test]

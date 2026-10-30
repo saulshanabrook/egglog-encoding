@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (vec-of (vec-of (w (b)))))
 (let t1 (p t0))
 (let prf0 (Fiat (= t1 t1)))
@@ -30,3 +31,4 @@ expression: proof_snapshot
         0)
       0))
   (substitution (@v (b)) (@rewrite_var__1 t1) (@v1 (vec-of (vec-of (b))))))
+)

@@ -1,0 +1,45 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(
+(Sym
+  (= (F (B)) (F (A)))
+  (Congr
+    (= (F (A)) (F (B)))
+    (Fiat (= (F (A)) (F (A))))
+    (Rule
+      (= (A) (B))
+      (name "derive")
+      (premises (Fiat (= (A) (A))))
+      (substitution (a (A))))
+    0))
+)
+(
+(Sym
+  (= (C) (A))
+  (Rule
+    (= (A) (C))
+    (name "derive")
+    (premises (Fiat (= (A) (A))))
+    (substitution (a (A)))))
+)
+(
+(let t0 (premises (Fiat (= (A) (A)))))
+(Trans
+  (= (C) (B))
+  (Sym (= (C) (A)) (Rule (= (A) (C)) (name "derive") t0 (substitution (a (A)))))
+  (Rule (= (A) (B)) (name "derive") t0 (substitution (a (A)))))
+)
+(
+(let prf0
+  (Rule
+        (= (A) (C))
+        (name "derive")
+        (premises (Fiat (= (A) (A))))
+        (substitution (a (A)))))
+(Trans (= (C) (C)) (Sym (= (C) (A)) prf0) prf0)
+)
+(
+(Fiat (= (Wrap (vec-empty) (vec-empty)) (Wrap (vec-empty) (vec-empty))))
+)

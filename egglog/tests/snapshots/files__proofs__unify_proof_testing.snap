@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Sym
   (= (Var "a") (Lit 1))
   (Rule
@@ -13,6 +14,8 @@ expression: proof_snapshot
          )")
     (premises (Fiat (= (Mul (Var "a") (Var "a")) (Mul (Lit 1) (Lit 2)))))
     (substitution (a (Var "a")) (b (Var "a")) (c (Lit 1)) (d (Lit 2)))))
+)
+(
 (let t0 (premises (Fiat (= (Mul (Var "a") (Var "a")) (Mul (Lit 1) (Lit 2))))))
 (let t1 (substitution (a (Var "a")) (b (Var "a")) (c (Lit 1)) (d (Lit 2))))
 (Trans
@@ -37,3 +40,4 @@ expression: proof_snapshot
          )")
       t0
       t1)))
+)

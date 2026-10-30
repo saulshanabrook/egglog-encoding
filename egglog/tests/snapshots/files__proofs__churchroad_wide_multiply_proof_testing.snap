@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (Op1 (ZeroExtend 32) (Wire "v0" 16)))
 (let t1 (HasType (Wire "v2" 32) (Bitvector 32)))
 (let t2 (HasType (Wire "v0" 16) (Bitvector 16)))
@@ -68,6 +69,8 @@ expression: proof_snapshot
     (b (Wire "v1" 32))
     (expr-bw 32)
     (a-bw 16)))
+)
+(
 (let t0 (Op1 (ZeroExtend 32) (Wire "v0" 16)))
 (let t1 (Op1 (Extract 15 0) (Wire "v1" 32)))
 (let t2 (Op1 (ZeroExtend 32) t1))
@@ -237,6 +240,8 @@ expression: proof_snapshot
     (?b t1)
     (?a-bw 16)
     (?b-bw 16)))
+)
+(
 (let t0 (Op1 (ZeroExtend 32) (Wire "v0" 16)))
 (let t1 (Op1 (Extract 31 16) (Wire "v1" 32)))
 (let t2 (Op1 (ZeroExtend 32) t1))
@@ -406,6 +411,8 @@ expression: proof_snapshot
     (?b t1)
     (?a-bw 16)
     (?b-bw 16)))
+)
+(
 (let t0 (Op1 (Extract 15 0) (Wire "v1" 32)))
 (let t1 (Op1 (ZeroExtend 32) (Wire "v0" 16)))
 (let t2 (Op1 (Extract 31 16) (Wire "v1" 32)))
@@ -651,3 +658,4 @@ expression: proof_snapshot
     (?a-bw 16)
     (?b-bw 16)
     (?c-bw 32)))
+)

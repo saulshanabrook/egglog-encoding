@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let prf0 (Fiat (= (right 0) (right 0))))
 (let prf1
   (Rule
@@ -203,6 +204,8 @@ expression: proof_snapshot
       (premises prf17 prf16 (Fiat (= 9 9)))
       (substitution (x 9) (y 8))))
   (substitution (x 9)))
+)
+(
 (let prf0 (Fiat (= (right 0) (right 0))))
 (let prf1
   (Rule
@@ -395,3 +398,4 @@ expression: proof_snapshot
     prf16
     (Fiat (= 9 9)))
   (substitution (x 9) (y 8)))
+)

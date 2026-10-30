@@ -26,7 +26,7 @@ use egglog_numeric_id::{DenseIdMap, NumericId, define_id};
 use std::{fmt, rc::Rc};
 
 define_id!(
-    RawProofId,
+    pub(super) RawProofId,
     u32,
     "An identifier for a proof in a RawProofStore"
 );
@@ -119,9 +119,9 @@ struct RuleColumns {
     column: TermId,
 }
 
-/// A proof straight from the e-graph, not exposed to users.
-struct RawProofStore {
-    term_dag: TermDag,
+/// Raw proofs imported from the e-graph or assembled before lifting.
+pub(super) struct RawProofStore {
+    pub(super) term_dag: TermDag,
     /// The proof constructor names, used to recognize each extracted proof
     /// term's head by exact match (rather than substring guessing).
     names: EncodingNames,
@@ -129,6 +129,49 @@ struct RawProofStore {
     /// it, and equal ids mean equal trees.
     store: IndexSet<RawProof>,
     term_to_proof: HashMap<TermId, RawProofId>,
+}
+
+impl RawProofStore {
+    /// Start a raw proof DAG using the encoded program's constructor names.
+    pub(super) fn new(names: &EncodingNames) -> Self {
+        Self {
+            term_dag: TermDag::default(),
+            names: names.clone(),
+            store: IndexSet::default(),
+            term_to_proof: HashMap::default(),
+        }
+    }
+
+    /// Import an extracted proof term, sharing previously parsed dependencies.
+    /// `term` must identify a valid encoded proof in this store's term DAG.
+    pub(super) fn parse(&mut self, term: TermId) -> RawProofId {
+        self.parse_nested_first(term);
+        self.parse_proof(term)
+    }
+
+    pub(super) fn get(&self, proof: RawProofId) -> &RawProof {
+        &self.store[proof.index()]
+    }
+
+    /// Stored raw operations, including Eval side conditions.
+    pub(super) fn proofs(&self) -> impl Iterator<Item = (RawProofId, &RawProof)> {
+        self.store
+            .iter()
+            .enumerate()
+            .map(|(i, proof)| (RawProofId::from_usize(i), proof))
+    }
+
+    /// Decode raw roots in the supplied order with the ordinary proof lifter.
+    /// Panics if a root or its proof is invalid for `program`.
+    pub(super) fn lift(
+        &self,
+        program: &Vec<ResolvedNCommand>,
+        roots: &[RawProofId],
+        normalizers: HashMap<String, PrimitiveValidator>,
+        value_heads: HashSet<String>,
+    ) -> (ProofStore, Vec<ProofId>) {
+        ProofStore::lift(program, self, roots, normalizers, value_heads)
+    }
 }
 
 /// Lift an extracted proof into a proof of the source program.
@@ -140,15 +183,15 @@ pub(crate) fn lift_proof(
     container_normalizers: HashMap<String, PrimitiveValidator>,
     prim_value_constructors: HashSet<String>,
 ) -> (ProofStore, ProofId) {
-    let (raw_store, raw_proof_id) =
-        RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
-    ProofStore::lift(
+    let (raw_store, root) = RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
+    let (store, roots) = ProofStore::lift(
         prog,
-        raw_store,
-        raw_proof_id,
+        &raw_store,
+        &[root],
         container_normalizers,
         prim_value_constructors,
-    )
+    );
+    (store, roots[0])
 }
 
 /// Justifies a single grounded equality t1 = t2.
@@ -157,7 +200,7 @@ pub(crate) fn lift_proof(
 /// leaves off the implicit rule substitution.
 /// Lifting to a [`Proof`] with [`ProofStore::lift`] fills in these details.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-enum RawProof {
+pub(super) enum RawProof {
     /// Equalities added at the top level are justified by fiat.
     Fiat(TermId, TermId),
     /// A top-level `union`, named by which global action it is rather than by
@@ -462,7 +505,7 @@ impl RawProofStore {
                 self.parse_proof(id);
                 continue;
             }
-            if !seen.insert(id) {
+            if self.term_to_proof.contains_key(&id) || !seen.insert(id) {
                 continue;
             }
             stack.push((id, true));
@@ -737,7 +780,7 @@ impl RawProofStore {
         }
     }
 
-    fn add_proof(&mut self, proof: RawProof) -> RawProofId {
+    pub(super) fn add_proof(&mut self, proof: RawProof) -> RawProofId {
         if let Some(id) = self.store.get_index_of(&proof) {
             return RawProofId::from_usize(id);
         }
@@ -932,15 +975,14 @@ impl ProofStore {
         id
     }
 
-    /// Get a string representation of the proof with the given id.
-    /// The string representation is a pretty-printed s-expression block with
-    /// let bindings for sub-proofs and sub-terms.
+    /// Format a proof as one parenthesized s-expression containing its local
+    /// bindings and final proof term.
     pub fn proof_to_string(&self, proof_id: ProofId) -> String {
-        let symbol_gen = &mut crate::util::SymbolGen::new("".to_string());
+        let symbol_gen = &mut SymbolGen::new("".to_string());
         let mut buffer = String::new();
         let res = self.print_to_buffer(symbol_gen, proof_id, &mut buffer);
         buffer.push_str(&res);
-        buffer
+        format!("(\n{buffer}\n)")
     }
 
     /// An empty store over `term_dag`.
@@ -965,11 +1007,11 @@ impl ProofStore {
     /// Lift recorded proof nodes, resolving globals from the source bindings.
     fn lift(
         prog: &Vec<ResolvedNCommand>,
-        raw_store: RawProofStore,
-        raw_proof_id: RawProofId,
+        raw_store: &RawProofStore,
+        raw_proof_ids: &[RawProofId],
         container_normalizers: HashMap<String, PrimitiveValidator>,
         prim_value_constructors: HashSet<String>,
-    ) -> (ProofStore, ProofId) {
+    ) -> (ProofStore, Vec<ProofId>) {
         let mut store = ProofStore::new(
             raw_store.term_dag.clone(),
             container_normalizers,
@@ -983,8 +1025,11 @@ impl ProofStore {
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
 
-        let proof_id = store.lift_raw_proof(prog, &globals, &raw_store, raw_proof_id);
-        (store, proof_id)
+        let roots = raw_proof_ids
+            .iter()
+            .map(|&root| store.lift_raw_proof(prog, &globals, raw_store, root))
+            .collect();
+        (store, roots)
     }
 
     /// Reflexivize a (possibly non-reflexive) proof for use where the checker
@@ -1711,7 +1756,7 @@ impl ProofStore {
 
     /// Construct a positional projection, sharing it with every projection
     /// from the same proof and child index.
-    fn push_projection(&mut self, proof: ProofId, child_index: usize) -> ProofId {
+    pub(super) fn push_projection(&mut self, proof: ProofId, child_index: usize) -> ProofId {
         let child = self.term_child(self.id_to_proof[proof].rhs(), child_index);
         self.push_shared_proof(
             SynthKey::Proj(proof, child_index),
@@ -2090,7 +2135,7 @@ mod tests {
         raw.term_dag.app(head, args)
     }
 
-    /// [`RawProofStore::from_extracted`]'s parse of one packed row.
+    /// Parse one packed row and its nested proofs.
     fn parse(raw: &mut RawProofStore, term: TermId) -> RawProofId {
         raw.parse_nested_first(term);
         raw.parse_proof(term)

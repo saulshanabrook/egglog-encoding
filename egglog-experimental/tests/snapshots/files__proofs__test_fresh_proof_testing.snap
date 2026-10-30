@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (Let (Var "x") (Var "y")))
 (let prf0 (Fiat (= t0 t0)))
 (let t1 (@GeneratedFreshTable (Var "x") (Var "y") 0))
@@ -21,3 +22,4 @@ expression: snapshot
       (substitution (a (Var "x")) (b (Var "y"))))
     (Fiat (= () ())))
   (substitution (?x (Var "x")) (?y t1)))
+)

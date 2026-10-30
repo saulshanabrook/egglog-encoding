@@ -503,12 +503,13 @@ where
 }
 
 impl Assignment<AtomTerm, ArcSort> {
-    pub(crate) fn annotate_expr(
+    pub(crate) fn annotate_expr<'a>(
         &self,
         expr: &GenericExpr<CorrespondingVar<String, String>, String>,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<ResolvedExpr, TypeError> {
+        let typeinfo = typeinfo.into();
         match &expr {
             GenericExpr::Lit(span, literal) => Ok(ResolvedExpr::Lit(span.clone(), literal.clone())),
             GenericExpr::Var(span, var) => {
@@ -574,12 +575,13 @@ impl Assignment<AtomTerm, ArcSort> {
         }
     }
 
-    pub(crate) fn annotate_fact(
+    pub(crate) fn annotate_fact<'a>(
         &self,
         facts: &GenericFact<CorrespondingVar<String, String>, String>,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<ResolvedFact, TypeError> {
+        let typeinfo = typeinfo.into();
         match facts {
             GenericFact::Eq(span, e1, e2) => Ok(ResolvedFact::Eq(
                 span.clone(),
@@ -592,24 +594,26 @@ impl Assignment<AtomTerm, ArcSort> {
         }
     }
 
-    pub(crate) fn annotate_facts(
+    pub(crate) fn annotate_facts<'a>(
         &self,
         mapped_facts: &[GenericFact<CorrespondingVar<String, String>, String>],
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<Vec<ResolvedFact>, TypeError> {
+        let typeinfo = typeinfo.into();
         mapped_facts
             .iter()
             .map(|fact| self.annotate_fact(fact, typeinfo, ctx))
             .collect()
     }
 
-    pub(crate) fn annotate_action(
+    pub(crate) fn annotate_action<'a>(
         &self,
         action: &MappedAction,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<ResolvedAction, TypeError> {
+        let typeinfo = typeinfo.into();
         match action {
             GenericAction::Let(span, var, expr) => {
                 let ty = self
@@ -701,7 +705,7 @@ impl Assignment<AtomTerm, ArcSort> {
                 if !sort.is_eq_sort() {
                     return Err(TypeError::NonEqsortUnion(sort, span.clone()));
                 }
-                if !typeinfo.is_sort_unionable(&sort) {
+                if !typeinfo.type_info().is_sort_unionable(&sort) {
                     return Err(TypeError::NonUnionableSort(sort, span.clone()));
                 }
 
@@ -715,12 +719,13 @@ impl Assignment<AtomTerm, ArcSort> {
         }
     }
 
-    pub(crate) fn annotate_actions(
+    pub(crate) fn annotate_actions<'a>(
         &self,
         mapped_actions: &GenericActions<CorrespondingVar<String, String>, String>,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<ResolvedActions, TypeError> {
+        let typeinfo = typeinfo.into();
         let actions = mapped_actions
             .iter()
             .map(|action| self.annotate_action(action, typeinfo, ctx))
@@ -774,13 +779,14 @@ impl Problem<AtomTerm, ArcSort> {
         Ok(())
     }
 
-    pub(crate) fn add_actions(
+    pub(crate) fn add_actions<'a>(
         &mut self,
         actions: &GenericCoreActions<String, String>,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         symbol_gen: &mut SymbolGen,
         ctx: crate::Context,
     ) -> Result<(), TypeError> {
+        let typeinfo = typeinfo.into();
         for action in actions.0.iter() {
             self.constraints
                 .extend(action.get_constraints(typeinfo, symbol_gen, ctx)?);
@@ -812,22 +818,25 @@ impl Problem<AtomTerm, ArcSort> {
 }
 
 impl CoreAction {
-    pub(crate) fn get_constraints(
+    pub(crate) fn get_constraints<'a>(
         &self,
-        typeinfo: &TypeInfo,
+        typeinfo: impl Into<TypeInfoView<'a>>,
         symbol_gen: &mut SymbolGen,
         ctx: crate::Context,
     ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError> {
+        let typeinfo = typeinfo.into();
         match self {
             CoreAction::Let(span, symbol, f, args) => {
                 let mut args = args.clone();
                 args.push(AtomTerm::Var(span.clone(), symbol.clone()));
 
-                Ok(get_literal_and_global_constraints(&args, typeinfo)
-                    .chain(get_atom_application_constraints(
-                        f, &args, span, typeinfo, ctx,
-                    )?)
-                    .collect())
+                Ok(
+                    get_literal_and_global_constraints(&args, typeinfo.type_info())
+                        .chain(get_atom_application_constraints(
+                            f, &args, span, typeinfo, ctx,
+                        )?)
+                        .collect(),
+                )
             }
             CoreAction::Set(span, head, args, rhs) => {
                 // Check that we're not trying to set a constructor
@@ -843,11 +852,13 @@ impl CoreAction {
                 let mut args = args.clone();
                 args.extend(rhs.iter().cloned());
 
-                Ok(get_literal_and_global_constraints(&args, typeinfo)
-                    .chain(get_atom_application_constraints(
-                        head, &args, span, typeinfo, ctx,
-                    )?)
-                    .collect())
+                Ok(
+                    get_literal_and_global_constraints(&args, typeinfo.type_info())
+                        .chain(get_atom_application_constraints(
+                            head, &args, span, typeinfo, ctx,
+                        )?)
+                        .collect(),
+                )
             }
             CoreAction::Change(span, _change, head, args) => {
                 let mut args = args.clone();
@@ -862,22 +873,24 @@ impl CoreAction {
                     args.push(AtomTerm::Var(span.clone(), var));
                 }
 
-                Ok(get_literal_and_global_constraints(&args, typeinfo)
-                    .chain(get_atom_application_constraints(
-                        head, &args, span, typeinfo, ctx,
-                    )?)
-                    .collect())
+                Ok(
+                    get_literal_and_global_constraints(&args, typeinfo.type_info())
+                        .chain(get_atom_application_constraints(
+                            head, &args, span, typeinfo, ctx,
+                        )?)
+                        .collect(),
+                )
             }
             CoreAction::Union(_ann, lhs, rhs) => Ok(get_literal_and_global_constraints(
                 &[lhs.clone(), rhs.clone()],
-                typeinfo,
+                typeinfo.type_info(),
             )
             .chain(once(constraint::eq(lhs.clone(), rhs.clone())))
             .collect()),
             CoreAction::Panic(_ann, _) => Ok(vec![]),
             CoreAction::LetAtomTerm(span, v, at) => Ok(get_literal_and_global_constraints(
                 std::slice::from_ref(at),
-                typeinfo,
+                typeinfo.type_info(),
             )
             .chain(once(constraint::eq(
                 AtomTerm::Var(span.clone(), v.clone()),
@@ -889,12 +902,14 @@ impl CoreAction {
 }
 
 impl Atom<StringOrEq> {
-    pub(crate) fn get_constraints(
+    pub(crate) fn get_constraints<'a>(
         &self,
-        type_info: &TypeInfo,
+        type_info: impl Into<TypeInfoView<'a>>,
         ctx: crate::Context,
     ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError> {
-        let literal_constraints = get_literal_and_global_constraints(&self.args, type_info);
+        let type_info = type_info.into();
+        let literal_constraints =
+            get_literal_and_global_constraints(&self.args, type_info.type_info());
         match &self.head {
             StringOrEq::Eq => {
                 assert_eq!(self.args.len(), 2);
@@ -915,13 +930,14 @@ impl Atom<StringOrEq> {
     }
 }
 
-fn get_atom_application_constraints(
+fn get_atom_application_constraints<'a>(
     head: &str,
     args: &[AtomTerm],
     span: &Span,
-    type_info: &TypeInfo,
+    type_info: impl Into<TypeInfoView<'a>>,
     ctx: crate::Context,
 ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError> {
+    let type_info = type_info.into();
     // An atom can have potentially different semantics due to polymorphism
     // e.g. (set-empty) can mean any empty set with some element type.
     // To handle this, we collect each possible instantiations of an atom
@@ -971,7 +987,10 @@ fn get_atom_application_constraints(
             if p.context_ids[ctx].is_none() {
                 continue;
             }
-            let constraints = p.primitive.get_type_constraints(span).get(args, type_info);
+            let constraints = p
+                .primitive
+                .get_type_constraints(span)
+                .get(args, type_info.type_info());
             xor_constraints.push(constraints);
         }
     }

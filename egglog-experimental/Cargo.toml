@@ -27,16 +27,16 @@ name = "files"
 
 [features]
 default = ["bin"]
-bin = ["egglog/bin", "dep:mimalloc"]
+bin = ["egglog/bin", "dep:benchmark-memory"]
 
 [dependencies]
+benchmark-memory = { path = "../benchmark-memory", optional = true }
 egglog = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-reports = { workspace = true }
 egraph-isomorphism = { path = "../egraph-isomorphism" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-mimalloc = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 smallvec = { workspace = true }
 num = "0.4.3"

@@ -76,7 +76,7 @@ A constructor becomes an e-node table — its **view** — plus a rebuild index:
 (function Add (Math Math) (Math Unit)
     :merge ((set (@UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
-    :internal-view constructor :internal-identity-vals 1)
+    :internal-role constructor-view :internal-identity-vals 1)
 (index @AddOcc_Math Add (any 0 1 2))
 ```
 
@@ -203,7 +203,7 @@ constructors it has covered in the e-graph's own state, where `push`/`pop` roll
 the memo back together with the declarations it tracks.
 
 The marker is a plain `Unit` relation keyed on the children, with no minted id
-and no `:internal-term-node`, so extraction never reads it as a term.
+and no `:internal-role term-node`, so extraction never reads it as a term.
 
 # Queries
 
@@ -326,7 +326,7 @@ encoding. It stores globals in one table per sort, keyed by their source names:
 becomes
 
 ```text
-(function @Globals_Math (String) Math :no-merge :internal-let)
+(function @Globals_Math (String) Math :no-merge :internal-role global)
 (set (@Globals_Math "$g1") (Add (Num 1) (Num 2)))
 (set (@Globals_Math "$g2") (Num 3))
 ```
@@ -941,3 +941,113 @@ break the rule-head check for the container's proof. Each element's
 `@UF_<E>`, so the standard rebuild and path compression canonicalize the natural
 like any other stale term. That edge's proof column is the element's connector,
 which is therefore one of the few connectors a rule head does write a row for.
+
+
+## Certifying extraction
+
+`(prove-extract e)` looks up `e`, extracts its cheapest representative, and
+returns both the extraction and a proof of equality to `e`. An optional positive
+variant count requests several extractions and a proof for each. Lookup never
+inserts either endpoint; an absent term reports `Could not find term … in the
+e-graph`. Container roots are unsupported; containers may occur within a term
+whose root has a non-container sort. Proof-testing mode rewrites ordinary
+`extract` commands to `prove-extract`, checking the equality proof for every result.
+
+The same certification is available independently of the extractor through
+[`EGraph::prove_extracted_terms`]: supply a
+`TermDag`, an input root, result roots, and their sort. A single proof store
+shares dependencies across all results. Primitive expressions have their
+validated, evaluated meaning in proof endpoints, and globals retain the term
+in their original source definition.
+
+### Ground-term typing
+
+A well-typed term need not exist in the e-graph. Typing only resolves the
+operations and sorts; lookup must separately find their values and evidence.
+
+[`TypeInfoView::typecheck_term_dag`] starts from an untyped `TermDag`. Shared
+syntax can have several typings: one `(vec-empty)` node may occur beneath both
+`WrapInts` and `WrapStrings`. The checker retains candidates by result sort,
+letting each parent's signature select the appropriate child typing. An expected
+root sort can make the same selection. If two typings have the same result sort
+but differ in an argument, knowing the root sort does not resolve that ambiguity;
+the checker retains the error until that candidate is selected.
+
+The returned `TypedTermDag` contains only selected typings, with separate nodes
+for different specializations of shared syntax. Root IDs refer to this new DAG
+and preserve the requested order. Typing performs no evaluation or table access.
+
+[`EGraph::typecheck_term_dag`] also resolves zero-argument global references to
+their binding tables and uses source signatures. It works with or without proof
+encoding; only the global bindings need to exist. Extraction certification uses
+this API and translates typing errors into extraction errors.
+
+[`TypeInfo::source_types`] supplies source signatures when checking against an
+encoded program. A view's first output is the source result; the evidence output
+is omitted, and `FunctionRole` restores whether the operation is a constructor,
+custom function, or global. The printed `:internal-role` annotation preserves
+this distinction during desugared replay. Sorts and primitives come from the same
+environment.
+
+### Looking up values and decoding evidence
+
+`ground.rs` looks up each typed node's canonical value and any view or union-find
+proof. The returned vector has one entry per typed-DAG node, indexed by its
+`TermId`, including non-root children. Missing rows and roots with different
+values are errors. Lookup adds no e-graph rows.
+
+The ordinary lifter then decodes the imported proofs and their dependencies.
+Their conclusions identify the evidence available for composition, including
+containers appearing before a row was rebuilt. A rule-derived container can
+have elements determined by the rule substitution, so its raw proof alone does
+not spell out that witness. This decoding uses the existing lifter; evidence
+search and ground-term construction remain in `ground.rs` and `ground_evidence.rs`.
+
+### Constructing raw proofs
+
+A memoized recursive traversal returns either an ordinary raw proof or a deferred
+container recipe. Constructor proofs combine existing row evidence and child
+certificates using symmetry, transitivity, and congruence. Custom function
+results use raw projections. Globals recover their source connector from the
+imported evidence.
+
+For a constructor `F(b)`, suppose the child certificate is `b = a`, the view
+proof is `r = F(a)`, and the union-find proof is `r = leader`. The composition is
+`Trans(Sym(Congr(view, 0, Sym(child))), union_find)`. Finally, `e = leader` and
+the reverse of `t = leader` produce `e = t`.
+
+Resolved primitive validators compute the endpoint terms used during
+construction. For example, `vec-get(root(), 0)` selects an element from the
+decoded function output; its certificate comes from existing evidence and
+projections. A temporary container can also be evaluated without asserting its
+existence: `vec-length(vec-of(a))` needs a proof of the resulting literal.
+Container-producing operations retain their argument certificates until an
+enclosing row provides an existence witness.
+
+### Resolving deferred containers
+
+Containers have no constructor view of their own. For `Wrap(vec-of(b))`, the
+builder supplies the deferred vector with a projection of the `Wrap` row's
+proof. The recipe is resolved inside ground-term construction, and shared uses
+of that node reuse the completed certificate. The argument certificates remain
+available when another primitive consumes that same container.
+
+A witness may name either the requested container or its canonical form.
+Historical witnesses are sought in the supplied evidence's dependencies. With
+a witness of the requested container, construction uses the same raw operations
+as runtime rebuilding: `CongrAll` applies element equalities throughout nested
+containers, and `ContainerNormalize` canonicalizes the result. With a witness
+of the canonical container, positional congruence restores the requested
+elements. Equal vector elements retain their separate positions.
+
+For example, rebuilding `set-of(A, B)` to `set-of(A)` retains the original
+container witness and its equality to the rebuilt value. That evidence can
+certify the original expression. A smaller canonical container alone cannot
+supply the discarded occurrences. Missing evidence produces an extraction
+error; constructing an interned container value is not an existence proof.
+
+Container roots are rejected, including calls with an empty output list. Every
+accepted root therefore produces an ordinary raw proof. The completed roots
+are passed to the ordinary lifter, then checked before and after simplification.
+Neither the raw proof operations nor the public proof format gains a deferred
+container or primitive case.

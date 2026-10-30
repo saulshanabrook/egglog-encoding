@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (___disequality-ne-Term (f (A)) (f (B))))
 (Rule
   (= (___disequality-contradiction) (___disequality-contradiction))
@@ -17,3 +18,4 @@ expression: snapshot
         0)
       1))
   (substitution (x (f (A)))))
+)

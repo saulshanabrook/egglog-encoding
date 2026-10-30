@@ -61,8 +61,8 @@ use std::{collections::HashSet, sync::Arc};
 use egglog::{
     CommandMacro, EGraph, Error, TypeError, TypeInfo,
     ast::{
-        Action, Actions, Command, Expr, Fact, Literal, ParseError, Rule, RuleEvalMode, Schema,
-        Span, Subdatatypes,
+        Action, Actions, Command, Expr, Fact, FunctionRole, Literal, ParseError, Rule,
+        RuleEvalMode, Schema, Span, Subdatatypes,
     },
     span,
     util::{FreshGen, SymbolGen},
@@ -180,12 +180,10 @@ impl CommandMacro for LowerInjectivity {
                 schema: Schema::new(vec!["String".into()], "Unit".into()),
                 merge: None,
                 hidden: true,
-                let_binding: false,
-                internal_view: None,
+                role: FunctionRole::Ordinary,
                 unextractable: true,
                 identity_vals: None,
                 cost: None,
-                term_node: false,
             });
         }
         commands.extend(rules);

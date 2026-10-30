@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (parseIR_array (parseIR_Val_name "%y_vals") 1 (parseIR_Val_name "Real")))
 (let t1
   (parseIR_lt
@@ -178,6 +179,8 @@ expression: proof_snapshot
     (_%alpha (parseIR_constant_real (parseIR_Val_constant_real 1.0)))
     (_%x (parseIR_Val_name "%x_vals"))
     (_%n (parseIR__int (parseIR_Val_int "%x1_dimension")))))
+)
+(
 (let t0 (parseIR_array (parseIR_Val_name "%y") 1 (parseIR_Val_name "Real")))
 (let t1
   (parseIR_lt
@@ -354,6 +357,8 @@ expression: proof_snapshot
     (_%alpha (parseIR_constant_real (parseIR_Val_constant_real 1.0)))
     (_%x (parseIR_Val_name "%x"))
     (_%n (parseIR__int (parseIR_Val_int "%n")))))
+)
+(
 (let t0
   (parseIR_array
             (parseIR_Val_name "%work_buff")
@@ -401,6 +406,8 @@ expression: proof_snapshot
     (_%key (parseIR_Val_name "%key_buff_ptr2"))
     (_%add (parseIR_constant_int (parseIR_Val_constant_int 1)))
     (_%N (parseIR__int (parseIR_Val_int "%NUM_KEYS")))))
+)
+(
 (let t0 (parseIR_array (parseIR_Val_name "%call4") 1 (parseIR_Val_name "Int")))
 (let t1
   (parseIR__eq
@@ -553,3 +560,4 @@ expression: proof_snapshot
       1)
     2)
   1)
+)

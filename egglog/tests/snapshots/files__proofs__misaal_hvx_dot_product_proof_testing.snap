@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (typed_signed-vec-widen-mul (SYMBV 1) (SYMBV 2) 8 1024))
 (let t1 (typed_vec-add t0 (SYMBV 0) 16 2048))
 (let t2
@@ -46,3 +47,4 @@ expression: proof_snapshot
     (premises (Fiat (= t0 t0)))
     (substitution (@rewrite_var__28 t0) (reg_0 (SYMBV 1)) (reg_1 (SYMBV 2))))
   0)
+)

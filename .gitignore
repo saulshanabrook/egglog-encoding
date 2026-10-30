@@ -16,6 +16,8 @@ __pycache__/
 *.py[cod]
 /.difftest/
 /.difftest-compiled/
+
+/benchmarks/corpus/.local/
 slotted/output.egg
 xdiff-tmp-*.egg
 xdiff-tmp-*.json

@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (MathU (Add (Const 5) (Const 1))))
 (Rule
   (= t0 t0)
@@ -12,3 +13,4 @@ expression: proof_snapshot
          )")
   (premises (Fiat (= (MathU (Const 5)) (MathU (Const 5)))) (Fiat (= () ())))
   (substitution (a 5)))
+)

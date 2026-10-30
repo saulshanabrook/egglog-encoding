@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (const-prop (L 14) (V "y") (I 10)))
 (let t1 (RProg (L 13) (Ass (V "y") (Const (I 10)))))
 (let prf0 (Fiat (= (Prog (L 13)) (Ass (V "y") (Add (V "x") (V "zero"))))))
@@ -439,3 +440,4 @@ expression: proof_snapshot
       (substitution (li 13) (x (V "y")) (k (I 10))))
     (Fiat prop6))
   (substitution (@n23 (I 10))))
+)

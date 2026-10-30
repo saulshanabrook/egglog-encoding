@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (S (S (S (Z)))))
 (let t1 (S t0))
 (let t2 (Plus (S (S (Z))) (S (S (Z)))))
@@ -42,6 +43,8 @@ expression: proof_snapshot
         (substitution (@rewrite_var__ t7) t5))
       0)
     0))
+)
+(
 (let t0 (S (S (S (Z)))))
 (let t1 (Times (S (S (Z))) t0))
 (let t2 (S t0))
@@ -289,3 +292,4 @@ expression: proof_snapshot
   (Sym
     (= t5 t3)
     (Rule (= t3 t5) (name "(rewrite (Plus (S m) n) (S (Plus m n)))") t43 t45)))
+)

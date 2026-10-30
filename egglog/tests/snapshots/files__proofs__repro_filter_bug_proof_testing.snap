@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Rule
   (= (@ExistsConstructor) (@ExistsConstructor))
   (name "@prove_exists_rule")
@@ -11,3 +12,4 @@ expression: proof_snapshot
     (Fiat (= (UF_Stmt (S1) (S2)) (UF_Stmt (S1) (S2))))
     (Fiat (= () ())))
   (substitution (c1 (E)) (c2 (S1)) (c1_leader (E)) (c2_leader (S2))))
+)

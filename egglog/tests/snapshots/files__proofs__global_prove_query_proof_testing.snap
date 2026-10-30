@@ -2,4 +2,6 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Fiat (= (R 2) (R 2)))
+)

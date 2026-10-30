@@ -170,7 +170,7 @@ fn bare_egglog_rejects_injectivity_instead_of_ignoring_it() {
 #[test]
 fn declaration_roundtrip_preserves_all_options() {
     let program = r#"
-    (constructor Node (Term i64) Term :cost 7 :unextractable :injective :internal-hidden :internal-let)
+    (constructor Node (Term i64) Term :cost 7 :unextractable :injective :internal-hidden :internal-role global)
     (datatype Term (Leaf i64 :injective :unextractable :cost 9))
     (datatype* (Other (Child Other :cost 3 :injective :unextractable)))
     "#;
@@ -190,7 +190,7 @@ fn declaration_roundtrip_preserves_all_options() {
         assert!(printed.contains(&format!(":cost {cost}")));
         if cost == 7 {
             assert!(printed.contains(":internal-hidden"));
-            assert!(printed.contains(":internal-let"));
+            assert!(printed.contains(":internal-role global"));
         }
     }
 }

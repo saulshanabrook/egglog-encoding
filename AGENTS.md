@@ -31,6 +31,10 @@ validation; their `*-nits` and `*-test` dependencies can be run separately
 while iterating. These targets discover files from project configuration rather
 than naming individual files in this document.
 
+`make slotted-test` builds the slotted reference runners and runs their unit and
+differential tests. CI runs it in parallel with `make rust-test`; both remain
+part of `make test` and `make check`.
+
 For proof-focused changes, the filtered proof snapshot test is useful while
 iterating or when you want a focused proof rerun:
 
@@ -100,8 +104,9 @@ or modify the JSONL.
   `--proof-extraction` to rewrite checks and extract, materialize, clean, and
   simplify proofs without verifying them. Treat its results as performance
   evidence only; `--proof-testing` remains the strict correctness mode.
-- Bare `./bench.py` compares `proofs` with `off`. The `proof-extraction`
-  treatment is explicit opt-in.
+- Bare `./bench.py` compares `proof-testing` with `off`, including proof
+  extraction and checking. Recording-only `proofs` and unchecked
+  `proof-extraction` remain explicit choices.
 - The five egglog treatments run `egglog-experimental`. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math
   workload. `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native

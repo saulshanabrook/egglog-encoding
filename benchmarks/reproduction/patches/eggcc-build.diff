@@ -1,0 +1,68 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -64,2 +64,9 @@
+ llvm = []
+ default = ["llvm"]
++
++[workspace]
++
++[patch."https://github.com/saulshanabrook/egg-smol.git"]
++egglog = { path = "../egglog-core" }
++egglog-ast = { path = "../egglog-core/egglog-ast" }
++egglog-reports = { path = "../egglog-core/egglog-reports" }
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -790,5 +790,4 @@
+ name = "egglog"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "chrono",
+@@ -822,5 +821,4 @@
+ name = "egglog-add-primitive"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "quote",
+@@ -831,5 +829,4 @@
+ name = "egglog-ast"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "ordered-float",
+@@ -839,5 +836,4 @@
+ name = "egglog-bridge"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+@@ -862,5 +858,4 @@
+ name = "egglog-concurrency"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "arc-swap",
+@@ -874,5 +869,4 @@
+ name = "egglog-core-relations"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+@@ -916,5 +910,4 @@
+ name = "egglog-numeric-id"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "rayon",
+@@ -924,5 +917,4 @@
+ name = "egglog-reports"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "clap",
+@@ -938,5 +930,4 @@
+ name = "egglog-union-find"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "crossbeam",

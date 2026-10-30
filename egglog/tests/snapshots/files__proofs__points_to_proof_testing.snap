@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (VarPointsTo "o1" (Class "A")))
 (let t1 (New "o1" (Class "A")))
 (Rule
@@ -12,6 +13,8 @@ expression: proof_snapshot
          )")
   (premises (Fiat (= t1 t1)))
   (substitution (x t1) (a "o1") (b (Class "A"))))
+)
+(
 (let t0 (VarPointsTo "o2" (Class "B")))
 (let t1 (New "o2" (Class "B")))
 (Rule
@@ -22,6 +25,8 @@ expression: proof_snapshot
          )")
   (premises (Fiat (= t1 t1)))
   (substitution (x t1) (a "o2") (b (Class "B"))))
+)
+(
 (let t0 (VarPointsTo "o3" (Class "B")))
 (let t1 (VarPointsTo "o2" (Class "B")))
 (let t2 (New "o2" (Class "B")))
@@ -43,6 +48,8 @@ expression: proof_snapshot
       (premises (Fiat (= t2 t2)))
       (substitution (x t2) (a "o2") (b (Class "B")))))
   (substitution (x (Assign "o3" "o2")) (v1 "o3") (v2 "o2") (c2 (Class "B"))))
+)
+(
 (let t0 (HeapPointsTo (Class "B") (Field "f") (Class "A")))
 (let t1 (Store "o2" (Field "f") "o1"))
 (let t2 (VarPointsTo "o2" (Class "B")))
@@ -82,6 +89,8 @@ expression: proof_snapshot
     (v2 "o1")
     (c1 (Class "B"))
     (c2 (Class "A"))))
+)
+(
 (let t0 (VarPointsTo "r" (Class "A")))
 (let t1 (Load "r" "o3" (Field "f")))
 (let t2 (VarPointsTo "o3" (Class "B")))
@@ -152,3 +161,4 @@ expression: proof_snapshot
     (f (Field "f"))
     (c1 (Class "B"))
     (c2 (Class "A"))))
+)

@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let prf0
   (Fiat
                       (=
@@ -54,3 +55,4 @@ expression: snapshot
         (substitution (x (A)) (y (A)))))
     prf1)
   prf0)
+)

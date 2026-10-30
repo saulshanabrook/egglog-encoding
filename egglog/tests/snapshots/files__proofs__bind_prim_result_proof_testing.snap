@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Rule
   (= (Strings "found" "hello world") (Strings "found" "hello world"))
   (name "r1")
@@ -9,3 +10,4 @@ expression: proof_snapshot
     (Fiat (= (Strings "hello" "world") (Strings "hello" "world")))
     (Fiat (= "hello world" "hello world")))
   (substitution (a "hello") (b "world") (res "hello world")))
+)

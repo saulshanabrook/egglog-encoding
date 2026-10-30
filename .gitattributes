@@ -3,4 +3,9 @@ tests/__snapshots__/*.ambr -whitespace
 
 # Imported PLDI artifact facts are data inputs, not hand-reviewed source.
 benchmarks/data/pointer-analysis-initdb/*.csv linguist-generated=true
+
+# Prepared compiler inputs are data; source adaptations retain upstream whitespace.
+benchmarks/corpus/**/*.egg linguist-generated=true -whitespace
+benchmarks/reproduction/patches/*.diff -whitespace
+benchmarks/reproduction/fixtures/** -whitespace
 egglog-experimental/tests/slotted/snapshots/*.snap linguist-generated=true

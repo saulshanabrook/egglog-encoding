@@ -1,27 +1,56 @@
 use crate::util::{FreshGen, HashMap, HashSet, SymbolGen};
 use crate::*;
-use std::fmt::Write;
+use std::{convert::Infallible, fmt::Write};
 
+/// A node's index within one DAG. IDs from different DAGs are unrelated.
 pub type TermId = usize;
 
 #[allow(rustdoc::private_intra_doc_links)]
-/// Like [`Expr`]s but with sharing and deduplication.
-///
-/// Terms refer to their children indirectly via opaque [TermId]s (internally
-/// these are just `usize`s) that map into an ambient [`TermDag`].
+/// A literal, variable, or application whose children are [`TermId`]s in a
+/// [`GenericTermDag`].
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Term {
+pub enum GenericTerm<Head, Leaf> {
     Lit(Literal),
-    Var(String),
-    App(String, Vec<TermId>),
+    Var(Leaf),
+    App(Head, Vec<TermId>),
 }
 
-/// A hashconsing arena for [`Term`]s.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct TermDag {
-    /// A bidirectional map between deduplicated `Term`s and indices.
-    nodes: IndexSet<Term>,
+/// Unresolved syntax, using the same head and leaf types as [`Expr`].
+pub type Term = GenericTerm<String, String>;
+
+/// A resolved ground term with no variables.
+pub type TypedTerm = GenericTerm<ResolvedCall, Infallible>;
+
+impl TypedTerm {
+    pub fn sort(&self) -> ArcSort {
+        match self {
+            Self::Lit(literal) => sort::literal_sort(literal),
+            Self::App(call, _) => call.output().clone(),
+            Self::Var(never) => match *never {},
+        }
+    }
 }
+
+/// A DAG of terms with shared, deduplicated nodes.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GenericTermDag<Head: Eq + Hash, Leaf: Eq + Hash> {
+    nodes: IndexSet<GenericTerm<Head, Leaf>>,
+}
+
+impl<Head: Eq + Hash, Leaf: Eq + Hash> Default for GenericTermDag<Head, Leaf> {
+    fn default() -> Self {
+        Self {
+            nodes: IndexSet::default(),
+        }
+    }
+}
+
+/// A DAG of unresolved syntax.
+pub type TermDag = GenericTermDag<String, String>;
+
+/// A DAG of resolved ground terms, with no variable leaves.
+/// Use [`TypeInfo::typecheck_term_dag`] to resolve an untyped [`TermDag`].
+pub type TypedTermDag = GenericTermDag<ResolvedCall, Infallible>;
 
 /// A [`TermId`] paired with its [`TermDag`] so it can be ordered by
 /// [`TermDag::ast_cmp`], for use in ordered collections like
@@ -142,7 +171,7 @@ impl<'a> TermRenderContext<'a> {
     }
 }
 
-impl TermDag {
+impl<Head: Clone + Eq + Hash, Leaf: Clone + Eq + Hash> GenericTermDag<Head, Leaf> {
     /// Returns the number of nodes in this DAG.
     pub fn size(&self) -> usize {
         self.nodes.len()
@@ -151,17 +180,140 @@ impl TermDag {
     /// Convert the given term to its id.
     ///
     /// Panics if the term does not already exist in this [TermDag].
-    pub fn lookup(&self, node: &Term) -> TermId {
+    pub fn lookup(&self, node: &GenericTerm<Head, Leaf>) -> TermId {
         self.nodes.get_index_of(node).unwrap()
     }
 
     /// Convert the given id to the corresponding term.
     ///
     /// Panics if the id is not valid.
-    pub fn get(&self, id: TermId) -> &Term {
+    pub fn get(&self, id: TermId) -> &GenericTerm<Head, Leaf> {
         self.nodes.get_index(id).unwrap()
     }
 
+    /// Visit interned nodes in insertion order, with children before parents
+    /// when terms were constructed from existing children.
+    pub fn nodes(&self) -> impl ExactSizeIterator<Item = (TermId, &GenericTerm<Head, Leaf>)> {
+        self.nodes.iter().enumerate()
+    }
+
+    /// Intern an application and return its [`TermId`].
+    /// Every child ID must already belong to this DAG.
+    pub fn app(&mut self, sym: Head, children: Vec<TermId>) -> TermId {
+        let node = GenericTerm::App(sym, children);
+
+        self.add_node(&node)
+    }
+
+    /// Intern a literal and return its [`TermId`].
+    pub fn lit(&mut self, lit: Literal) -> TermId {
+        let node = GenericTerm::Lit(lit);
+
+        self.add_node(&node)
+    }
+
+    /// Intern a variable and return its [`TermId`].
+    pub fn var(&mut self, sym: Leaf) -> TermId {
+        let node = GenericTerm::Var(sym);
+
+        self.add_node(&node)
+    }
+
+    pub(crate) fn add_node(&mut self, node: &GenericTerm<Head, Leaf>) -> TermId {
+        self.nodes.get_index_of(node).unwrap_or_else(|| {
+            let id = self.nodes.len();
+            self.nodes.insert(node.clone());
+            id
+        })
+    }
+
+    /// Intern an expression and return its root ID, sharing identical subexpressions.
+    pub fn expr_to_term(&mut self, expr: &GenericExpr<Head, Leaf>) -> TermId {
+        let res = match expr {
+            GenericExpr::Lit(_, lit) => GenericTerm::Lit(lit.clone()),
+            GenericExpr::Var(_, v) => GenericTerm::Var(v.to_owned()),
+            GenericExpr::Call(_, op, args) => {
+                let args = args.iter().map(|a| self.expr_to_term(a)).collect();
+                GenericTerm::App(op.clone(), args)
+            }
+        };
+        self.add_node(&res)
+    }
+
+    /// Convert a term to an expression.
+    ///
+    /// Panics if the term or any of its child IDs are outside this DAG.
+    pub fn term_to_expr(&self, term: &TermId, span: Span) -> GenericExpr<Head, Leaf> {
+        let term = self.get(*term);
+        match term {
+            GenericTerm::Lit(lit) => GenericExpr::Lit(span, lit.clone()),
+            GenericTerm::Var(v) => GenericExpr::Var(span, v.clone()),
+            GenericTerm::App(op, args) => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|a| self.term_to_expr(a, span.clone()))
+                    .collect();
+                GenericExpr::Call(span, op.clone(), args)
+            }
+        }
+    }
+
+    /// Converts the given term to a string.
+    ///
+    /// Panics if the term or any of its subterms are not in the DAG.
+    pub fn to_string(&self, term: TermId) -> String
+    where
+        Head: Display,
+        Leaf: Display,
+    {
+        let mut result = String::new();
+        // subranges of the `result` string containing already stringified subterms
+        let mut ranges = HashMap::<TermId, (usize, usize)>::default();
+        // use a stack to avoid stack overflow
+
+        let mut stack = vec![(term, false, None)];
+        while let Some((id, space_before, mut start_index)) = stack.pop() {
+            if space_before {
+                result.push(' ');
+            }
+
+            if let Some((start, end)) = ranges.get(&id) {
+                result.extend_from_within(*start..*end);
+                continue;
+            }
+
+            match self.nodes[id].clone() {
+                GenericTerm::App(name, children) => {
+                    if start_index.is_some() {
+                        result.push(')');
+                    } else {
+                        stack.push((id, false, Some(result.len())));
+                        write!(&mut result, "({name}").unwrap();
+                        for c in children.iter().rev() {
+                            stack.push((*c, true, None));
+                        }
+                    }
+                }
+                GenericTerm::Lit(lit) => {
+                    start_index = Some(result.len());
+                    write!(&mut result, "{lit}").unwrap();
+                }
+                GenericTerm::Var(v) => {
+                    start_index = Some(result.len());
+                    write!(&mut result, "{v}").unwrap();
+                }
+            }
+
+            if let Some(start_index) = start_index {
+                ranges.insert(id, (start_index, result.len()));
+            }
+        }
+
+        result
+    }
+}
+
+impl TermDag {
     /// A deterministic total order on terms by their AST *structure*, rather
     /// than by insertion order (which is what comparing raw [`TermId`]s would
     /// give). Literals order among themselves by value, variables by name, and
@@ -219,75 +371,6 @@ impl TermDag {
     /// in a `BTreeMap`/`BTreeSet` when canonicalizing container terms.
     pub fn ord_term(&self, id: TermId) -> OrdTerm<'_> {
         OrdTerm { termdag: self, id }
-    }
-
-    /// Make and return a [`Term::App`] with the given head symbol and children,
-    /// and insert into the DAG if it is not already present.
-    ///
-    /// Panics if any of the children are not already in the DAG.
-    pub fn app(&mut self, sym: String, children: Vec<TermId>) -> TermId {
-        let node = Term::App(sym, children);
-
-        self.add_node(&node)
-    }
-
-    /// Make a [`Term::Lit`] with the given literal and return its [`TermId`],
-    /// inserting it into the DAG if it is not already present.
-    pub fn lit(&mut self, lit: Literal) -> TermId {
-        let node = Term::Lit(lit);
-
-        self.add_node(&node)
-    }
-
-    /// Make and return a [`Term::Var`] with the given symbol, and insert into
-    /// the DAG if it is not already present.
-    pub fn var(&mut self, sym: String) -> TermId {
-        let node = Term::Var(sym);
-
-        self.add_node(&node)
-    }
-
-    fn add_node(&mut self, node: &Term) -> TermId {
-        self.nodes.get_index_of(node).unwrap_or_else(|| {
-            let id = self.nodes.len();
-            self.nodes.insert(node.clone());
-            id
-        })
-    }
-
-    /// Recursively converts the given expression to a term.
-    ///
-    /// This involves inserting every subexpression into this DAG. Because
-    /// TermDags are hashconsed, the resulting term is guaranteed to maximally
-    /// share subterms.
-    pub fn expr_to_term(&mut self, expr: &GenericExpr<String, String>) -> TermId {
-        let res = match expr {
-            GenericExpr::Lit(_, lit) => Term::Lit(lit.clone()),
-            GenericExpr::Var(_, v) => Term::Var(v.to_owned()),
-            GenericExpr::Call(_, op, args) => {
-                let args = args.iter().map(|a| self.expr_to_term(a)).collect();
-                Term::App(op.clone(), args)
-            }
-        };
-        self.add_node(&res)
-    }
-
-    /// Recursively converts the given term to an expression.
-    ///
-    /// Panics if the term contains subterms that are not in the DAG.
-    pub fn term_to_expr(&self, term: &TermId, span: Span) -> Expr {
-        let term = self.get(*term);
-        match term {
-            Term::Lit(lit) => Expr::Lit(span, lit.clone()),
-            Term::Var(v) => Expr::Var(span, v.clone()),
-            Term::App(op, args) => {
-                let args: Vec<_> = args
-                    .iter()
-                    .map(|a| self.term_to_expr(a, span.clone()))
-                    .collect();
-                Expr::Call(span, op.clone(), args)
-            }
-        }
     }
 
     /// Prints a term to a string, putting let bindings for shared subterms.
@@ -497,56 +580,6 @@ impl TermDag {
                 self.collect_term_ref_counts_inner(*child, counts, visited);
             }
         }
-    }
-
-    /// Converts the given term to a string.
-    ///
-    /// Panics if the term or any of its subterms are not in the DAG.
-    pub fn to_string(&self, term: TermId) -> String {
-        let mut result = String::new();
-        // subranges of the `result` string containing already stringified subterms
-        let mut ranges = HashMap::<TermId, (usize, usize)>::default();
-        // use a stack to avoid stack overflow
-
-        let mut stack = vec![(term, false, None)];
-        while let Some((id, space_before, mut start_index)) = stack.pop() {
-            if space_before {
-                result.push(' ');
-            }
-
-            if let Some((start, end)) = ranges.get(&id) {
-                result.extend_from_within(*start..*end);
-                continue;
-            }
-
-            match self.nodes[id].clone() {
-                Term::App(name, children) => {
-                    if start_index.is_some() {
-                        result.push(')');
-                    } else {
-                        stack.push((id, false, Some(result.len())));
-                        write!(&mut result, "({name}").unwrap();
-                        for c in children.iter().rev() {
-                            stack.push((*c, true, None));
-                        }
-                    }
-                }
-                Term::Lit(lit) => {
-                    start_index = Some(result.len());
-                    write!(&mut result, "{lit}").unwrap();
-                }
-                Term::Var(v) => {
-                    start_index = Some(result.len());
-                    write!(&mut result, "{v}").unwrap();
-                }
-            }
-
-            if let Some(start_index) = start_index {
-                ranges.insert(id, (start_index, result.len()));
-            }
-        }
-
-        result
     }
 }
 

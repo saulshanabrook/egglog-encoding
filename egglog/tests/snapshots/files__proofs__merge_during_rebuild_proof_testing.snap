@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (distance (Node 2) (Node 3) 1))
 (let prop0 (= t0 t0))
 (let prf0 (Fiat (= (Node 2) (Node 0))))
@@ -25,3 +26,4 @@ expression: proof_snapshot
       1)
     (Fiat (= 1 1)))
   (substitution (@n 1)))
+)

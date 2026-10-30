@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (Rule
   (= (___disequality-contradiction) (___disequality-contradiction))
   (name "______disequality-ne-self-Term")
@@ -19,3 +20,4 @@ expression: snapshot
       (Sym (= (B) (A)) (Fiat (= (A) (B))))
       1))
   (substitution (x (A))))
+)

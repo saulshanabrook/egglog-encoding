@@ -13,7 +13,7 @@ expression: snapshot
        (!= __uf_b __uf_c))
       ((set (__UF_Math __uf_a) (values __uf_c ())))
         :ruleset __parent :name "__uf_path_compress")
-(function Add (i64 i64) (Math Unit) :merge ((set (__UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ())) (values (ordering-min old0 new0) ())) :internal-view constructor :internal-identity-vals 1)
+(function Add (i64 i64) (Math Unit) :merge ((set (__UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ())) (values (ordering-min old0 new0) ())) :internal-role constructor-view :internal-identity-vals 1)
 (index __AddOcc_Math Add (any 2))
 (rule ((= (values __pv1 __pv2) (__UF_Math __pv))
        (!= __pv __pv1)

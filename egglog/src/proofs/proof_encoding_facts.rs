@@ -52,7 +52,7 @@ impl ProofInstrumentor<'_> {
                 ResolvedExpr::Call(_span2, head @ ResolvedCall::Func(func), args),
                 // TODO this could actually be arbitrary pretty easily, it's just nested functions that are hard.
                 ResolvedExpr::Var(_span3, v),
-            ) if head.is_custom_func() && (v.sort.is_eq_sort() || !func.is_global) => {
+            ) if head.is_custom_func() && (v.sort.is_eq_sort() || !func.role.is_global()) => {
                 // Eq-sort globals retain this direct view read. Primitive globals
                 // have no proof column and use `instrument_fact_expr` instead.
                 let mut new_args = vec![];
@@ -180,7 +180,7 @@ impl ProofInstrumentor<'_> {
                 }
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
-                        if func_type.is_global && !func_type.output().is_eq_sort() {
+                        if func_type.role.is_global() && !func_type.output().is_eq_sort() {
                             let value = self.fresh_var();
                             res.push(format!(
                                 "(= {value} ({} {}))",
@@ -199,7 +199,7 @@ impl ProofInstrumentor<'_> {
                         // the e-class + proof.
                         assert!(
                             func_type.subtype == FunctionSubtype::Constructor
-                                || func_type.is_global,
+                                || func_type.role.is_global(),
                             "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 

@@ -75,7 +75,7 @@ struct Run {
     path: PathBuf,
     desugar: bool,
     term_encoding: bool,
-    /// proof_testing mode adds automatic prove-exists commands, which produce
+    /// proof_testing mode proves checks and extraction results, producing
     /// proof output that differs from normal mode. This should use separate snapshots.
     proof_testing: bool,
     threads: usize,
@@ -450,7 +450,7 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         }
 
         if !should_fail && supports_proofs {
-            // proof_testing mode adds automatic prove-exists, which has different output
+            // proof_testing mode proves checks and extracts, which have different output
             push_trial(Run {
                 proof_testing: true,
                 ..run.clone()

@@ -1,4 +1,4 @@
-; Test that :internal-let flag hides constructors from print-size
+; Test that :internal-role global flag hides constructors from print-size
 ; Global let bindings should not appear in print-size output
 
 (datatype Math

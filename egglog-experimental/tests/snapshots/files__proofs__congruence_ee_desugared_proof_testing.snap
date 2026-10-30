@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (____disequality-eq-Term (f (A)) (f (B))))
 (let t1 (____disequality-eq-Term (f (A)) (f (A))))
 (let prf0
@@ -30,3 +31,4 @@ expression: snapshot
         (substitution (x (f (A))) (y (f (A))))))
     prf0)
   prf1)
+)

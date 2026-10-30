@@ -22,6 +22,7 @@ files = ["."]
 exclude = [
     "^\\.bench-worktrees/",
     "^\\.venv/",
+    "^benchmarks/local/",
     "^build/",
     "^dist/",
     "^egglog/",
@@ -45,7 +46,7 @@ module = ["scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "benchmarks/reproduction/tests"]
 pythonpath = ["."]
 
 [tool.ruff]
@@ -54,6 +55,7 @@ line-length = 120
 extend-exclude = [
     ".bench-worktrees",
     ".venv",
+    "benchmarks/local",
     "build",
     "dist",
     "egglog",

@@ -1,0 +1,15 @@
+;; The requested input is rule-derived, not a new source action.
+(datatype E (A) (B) (C) (F E))
+(F (A))
+(rule ((= a (A))) ((B) (C) (union a (B)) (union a (C))) :name "derive")
+(run 1)
+(prove-extract (F (B)))
+(prove-extract (C) 3)
+(fail (prove-extract (F (F (A)))))
+
+;; One shared empty syntax node has two contextual typings.
+(sort Es (Vec E))
+(sort Is (Vec i64))
+(datatype Box (Wrap Es Is))
+(Wrap (vec-empty) (vec-empty))
+(prove-extract (Wrap (vec-empty) (vec-empty)))

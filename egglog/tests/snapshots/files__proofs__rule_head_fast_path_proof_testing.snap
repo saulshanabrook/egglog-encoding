@@ -2,8 +2,10 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Rule
   (= (A) (B))
   (name "direct-union-with-heavy-tail")
   (premises (Fiat (= (Trigger) (Trigger))))
   (substitution))
+)

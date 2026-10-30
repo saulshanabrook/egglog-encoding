@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
 (let t1 (g* t0 t0))
 (let prf0
@@ -29,5 +30,10 @@ expression: proof_snapshot
       prf0
       1))
   (substitution (@rewrite_var__2 t1) (a (IConst))))
+)
+(
 (Fiat (= () ()))
+)
+(
 (Fiat (= () ()))
+)

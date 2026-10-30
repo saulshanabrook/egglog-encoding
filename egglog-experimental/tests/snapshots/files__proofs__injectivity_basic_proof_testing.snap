@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0
   (premises
             (Fiat
@@ -25,3 +26,4 @@ expression: snapshot
       (= (Leaf "c") (Leaf "d"))
       (Rule (= (Leaf "d") (Leaf "c")) (name "@injectivity-Pair") t0 t1)))
   (substitution))
+)

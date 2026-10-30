@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (Return (Leaf "b") 0))
 (let t1 (Return (Leaf "a") 0))
 (Sym
@@ -20,3 +21,4 @@ expression: snapshot
       (@injectivity-left2 0)
       (@injectivity-right1 (Leaf "a"))
       (@injectivity-right2 0))))
+)

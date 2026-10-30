@@ -74,7 +74,10 @@ impl ReadPrim for GetSizePrimitive {
 // separate user rows. Reading their string keys also works after desugared replay.
 fn global_rows(state: &ReadState<'_, '_>, table: &str, requested: Option<&str>) -> Option<usize> {
     let signature = state.function_schema(table).ok()?;
-    if !signature.is_global || signature.input.len() != 1 || signature.input[0].name() != "String" {
+    if !signature.role.is_global()
+        || signature.input.len() != 1
+        || signature.input[0].name() != "String"
+    {
         return None;
     }
     let mut count = 0;

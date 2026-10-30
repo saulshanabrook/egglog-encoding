@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (Wrap (Wrap (Leaf "b"))))
 (let t1 (Wrap (Wrap (Leaf "a"))))
 (Sym
@@ -25,3 +26,4 @@ expression: snapshot
     (substitution
       (@injectivity-left (Leaf "b"))
       (@injectivity-right (Leaf "a")))))
+)

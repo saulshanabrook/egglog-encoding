@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Rule
   (= (OtherNum 2) (Num 2))
   (name
@@ -10,3 +11,4 @@ expression: proof_snapshot
          )")
   (premises (Fiat (= 2 2)))
   (substitution (y 2)))
+)

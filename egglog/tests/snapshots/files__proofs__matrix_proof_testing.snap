@@ -2,7 +2,10 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (Fiat (= (nrows (NamedMat "B")) (NamedDim "m")))
+)
+(
 (let t0 (Kron (Id (NamedDim "n")) (NamedMat "B")))
 (let t1 (nrows t0))
 (let t2 (Times (NamedDim "n") (NamedDim "m")))
@@ -58,6 +61,8 @@ expression: proof_snapshot
           (substitution (e t0) t9 (B (NamedMat "B")))))
       (substitution (@rewrite_var__8 t5) (n (NamedDim "n"))))
     0))
+)
+(
 (let t0 (Kron (Id (NamedDim "n")) (NamedMat "B")))
 (let t1 (Kron (NamedMat "A") (Id (NamedDim "m"))))
 (let t2 (MMul t0 t1))
@@ -162,3 +167,4 @@ expression: proof_snapshot
         (substitution (@rewrite_var__11 t4) (A (NamedMat "B")) (n (NamedDim "m"))))
       1))
 (Trans prop0 prf0 (Sym (= t3 t2) prf0))
+)

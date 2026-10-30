@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let t1 (set-of (Id (N 1)) (Id (N 2)) (N 3)))
 (let t2 (HoldsSet t1))
@@ -96,6 +97,8 @@ expression: proof_snapshot
           1))
       0))
   (substitution (@v (N 1)) (@v1 (N 2)) (@v2 t3)))
+)
+(
 (let t0 (Add (Num 51) (Num 52)))
 (let t1 (Add (Num 52) (Num 51)))
 (let t2 (premises (Fiat (= (Go) (Go)))))
@@ -134,6 +137,8 @@ expression: proof_snapshot
       (Congr (= t3 t5) (Proj (= t3 t3) prf1 0) prf0 0)
       0))
   (substitution (@v3 t1) (@v4 t5)))
+)
+(
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -231,6 +236,8 @@ expression: proof_snapshot
           1))
       0))
   (substitution (@v5 (N 11)) (@v6 (N 11)) (@v7 (N 12)) (@v8 t3)))
+)
+(
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -325,6 +332,8 @@ expression: proof_snapshot
     (@v11 (N 22))
     (@v12 (N 23))
     (@v13 t3)))
+)
+(
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -390,6 +399,8 @@ expression: proof_snapshot
         1)
       0))
   (substitution (@v14 (N 31)) (@v15 (N 31)) (@v16 (N 32)) (@v17 t3)))
+)
+(
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -481,3 +492,4 @@ expression: proof_snapshot
         1)
       0))
   (substitution (@v18 (N 41)) (@v19 (N 42)) (@v20 (N 41)) (@v21 t5)))
+)

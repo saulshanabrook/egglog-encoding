@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (path 3 1 (Trans 3 (Edge 2 1))))
 (let t1 (path 2 1 (Edge 2 1)))
 (Rule
@@ -22,3 +23,4 @@ expression: proof_snapshot
       (premises (Fiat (= (edge 2 1) (edge 2 1))))
       (substitution (x 2) (y 1))))
   (substitution (x 3) (y 2) (z 1) (p (Edge 2 1))))
+)

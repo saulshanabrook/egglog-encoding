@@ -9,8 +9,8 @@ use egglog_concurrency::ReadOptimizedLock;
 use crate::{
     ArcSort, EGraph, TypeInfo, Value,
     ast::{
-        Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
+        Command, Expr, Fact, FunctionRole, GenericCommand, ResolvedAction, ResolvedCommand,
+        ResolvedExpr, ResolvedExprExt, ResolvedFact, ResolvedNCommand, Schedule, Span,
     },
     core::ResolvedCall,
     proofs::{proof_checker::is_container_side_condition, proof_encoding::ProofInstrumentor},
@@ -560,7 +560,7 @@ impl ProofInstrumentor<'_> {
             let premises = vec![proof.as_str(); arity].join(" ");
             let sep = if arity == 0 { "" } else { " " };
             decls.push(format!(
-                "(function {name} (String{sep}{premises} i64 {proof}) Unit :no-merge :internal-hidden :internal-term-node)"
+                "(function {name} (String{sep}{premises} i64 {proof}) Unit :no-merge :internal-hidden :internal-role term-node)"
             ));
         }
         if decls.is_empty() {
@@ -590,7 +590,7 @@ impl ProofInstrumentor<'_> {
         let proof = self.proof_names().proof_datatype.clone();
         let columns: String = std::iter::repeat_n(format!("{proof} "), columns).collect();
         let decl = format!(
-            "(function {name} (String {columns}{proof}) Unit :no-merge :internal-hidden :internal-term-node)\n"
+            "(function {name} (String {columns}{proof}) Unit :no-merge :internal-hidden :internal-role term-node)\n"
         );
         (name, decl)
     }
@@ -738,14 +738,14 @@ impl ProofInstrumentor<'_> {
 ;; Lifting evaluates the action to recover both endpoints, so the row names
 ;; neither of them:
 ;;   (FiatUnion <global action index> <0 or 1> <proof>)
-(function {fiat_union_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {fiat_union_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; Fiat justification that a term a top-level action builds exists, stating
 ;; `t = t`. It names where the term is written — which global action, and which
 ;; node of it in `action_exprs` order — so lifting evaluates that node instead
 ;; of the row naming the term:
 ;;   (FiatTerm <global action index> <expression index> <proof>)
-(function {fiat_term_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {fiat_term_constructor} (i64 i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the
 ;; proposition being justified. Its endpoints are values of one sort, so there is
@@ -763,7 +763,7 @@ impl ProofInstrumentor<'_> {
 ;; from it, so no term is stored. The rule name is not repeated either: it is
 ;; read off the `Rule_<k>` row ending the chain.
 ;;   (RuleLink <earlier column's proof> <bridge proof> <column>)
-(function {rule_link_constructor} ({proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {rule_link_constructor} ({proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; A site with a fixed composition rather than a rule head — a top-level action,
 ;; a merge body, a view rebuild, a merge collision — writes one packed row
@@ -779,32 +779,32 @@ impl ProofInstrumentor<'_> {
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body
-;; subexpression whose conclusion is reconstructed during proof lifting
-(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+;; subexpression whose conclusion is reconstructed during proof conversion
+(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 ;; term-free merge justification for an FD custom-function view row:
 ;; name of function and two premise proofs; the whole-row conclusion is
-;; reconstructed during proof lifting by running the whole merge body
-(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+;; reconstructed during proof conversion by running the whole merge body
+(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; transitivity of equality proofs
-(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; symmetry of equality proofs
-(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 ;; given a proof that t1 = f(..., ci, ...)
 ;; and the child index i of ci in the term f(..., ci, ...)
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
-(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; element-matching congruence (used by container rebuilds): given a proof that
 ;; t1 = c and a proof that a = b, produces a justification that t1 = c with
 ;; every child of c equal to a replaced by b.
-(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; given a proof that t1 = f(..., ci, ...) and the child index i,
 ;; produces a justification that ci = ci
-(function {proj_constructor} ({proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {proj_constructor} ({proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; primitive projection: given a proof per argument of a rule-body call that
 ;; reads an element out of a container, produces a justification that the element
@@ -820,11 +820,11 @@ impl ProofInstrumentor<'_> {
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
 ;; last-write-wins for maps, sort for multisets)
-(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
 
 ;; marks the proof of a container side condition. Carries nothing: the side
 ;; condition is re-evaluated against the rule body when checked.
-(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-role term-node)
                 "
         )
     }
@@ -1410,12 +1410,12 @@ pub(crate) fn command_supports_proof_encoding(
     // a file using one runs plain only. Primitive/`Unit`-output `:no-merge` is
     // supported (raw equality is equality there — encoded as an FD view declared
     // native `:no-merge` + `:internal-identity-vals 1`). Constructors/relations are
-    // `Constructor` commands (not `Function`), and encoded globals (`:internal-let`,
+    // `Constructor` commands (not `Function`), and encoded globals (`:internal-role global`,
     // produced by `remove_globals` before this check in the plain-resolve path
     // `file_supports_proofs` uses) have their own FD-view encoding — both excluded.
     if let crate::ast::GenericCommand::Function {
         merge: None,
-        let_binding: false,
+        role: FunctionRole::Ordinary,
         schema,
         ..
     } = command
@@ -1517,11 +1517,15 @@ pub(crate) fn command_supports_proof_encoding(
         GenericCommand::Output { .. } if proofs_enabled => {
             Err(ProofEncodingUnsupportedReason::OutputCommand)
         }
-        // Extract commands can't have non-global function lookups
-        // because instrument_action_expr doesn't support them
-        // Global reads are supported by the encoding.
+        // A direct nullary function root reads an existing row. Other custom
+        // lookups, including the variant count, still have action semantics.
         GenericCommand::Extract(_, expr, variants) => {
-            if type_info.expr_has_function_lookup(expr).is_some()
+            let function_root = matches!(
+                expr,
+                ResolvedExpr::Call(_, ResolvedCall::Func(func), args)
+                    if func.subtype == crate::FunctionSubtype::Custom && args.is_empty()
+            );
+            if (!function_root && type_info.expr_has_function_lookup(expr).is_some())
                 || type_info.expr_has_function_lookup(variants).is_some()
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
@@ -1544,7 +1548,7 @@ pub(crate) fn command_supports_proof_encoding(
         }
         // After global desugar it may look like this
         ResolvedCommand::Action(ResolvedAction::Set(_span, head, _children, expr)) => {
-            if matches!(head, ResolvedCall::Func(func) if func.is_global)
+            if matches!(head, ResolvedCall::Func(func) if func.role.is_global())
                 && expr.output_type().is_container_sort()
             {
                 Err(ProofEncodingUnsupportedReason::LetBindingWithContainer)
@@ -1816,7 +1820,7 @@ pub(crate) fn body_exprs(body: &[ResolvedFact]) -> Vec<&ResolvedExpr> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<&'a ResolvedExpr>) {
         out.push(expr);
         if let ResolvedExpr::Call(_, head, args) = expr
-            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+            && !matches!(head, ResolvedCall::Func(func) if func.role.is_global())
         {
             for arg in args {
                 walk(arg, out);
@@ -1865,7 +1869,7 @@ pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<ActionNode<'a>>) {
         out.push(ActionNode::Expr(expr));
         if let ResolvedExpr::Call(_, head, args) = expr
-            && !matches!(head, ResolvedCall::Func(func) if func.is_global)
+            && !matches!(head, ResolvedCall::Func(func) if func.role.is_global())
         {
             for arg in args {
                 walk(arg, out);
@@ -1876,7 +1880,7 @@ pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
     match action {
         ResolvedAction::Let(_, _, expr) | ResolvedAction::Expr(_, expr) => walk(expr, &mut out),
         ResolvedAction::Set(_, head, args, value) => {
-            if !matches!(head, ResolvedCall::Func(func) if func.is_global) {
+            if !matches!(head, ResolvedCall::Func(func) if func.role.is_global()) {
                 for arg in args {
                     walk(arg, &mut out);
                 }

@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let t0 (Mul (Var "a") (Pow (Const 2) (Const 3))))
 (let t1 (Mul (Var "b") (Const 2)))
 (let t2 (Sub t1 t1))
@@ -62,3 +63,4 @@ expression: proof_snapshot
             1))
         (substitution (@rewrite_var__14 t7) (a (Var "c"))))
       1)))
+)

@@ -1,8 +1,8 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 297
 expression: proof_snapshot
 ---
+(
 (let t0 (Num (Type "binary64") 0))
 (let t1 (Num (Type "binary64") -1))
 (let t2 (Var (Type "binary64") "h0"))
@@ -1538,3 +1538,4 @@ expression: proof_snapshot
                 t141))))))
     (Fiat (= () ())))
   (substitution (ty (Type "binary64")) (n 0) (m -1)))
+)

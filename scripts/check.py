@@ -82,7 +82,9 @@ class Checks:
         self._group("python-nits", "rust-nits")
 
     def test(self) -> None:
-        self._group("python-test", "rust-test")
+        self._group("python-test", "rust-test", "slotted-test")
+
+    def slotted_test(self) -> None:
         self._run("cargo", "build", "-p", "egglog-experimental", "-p", "egraph-isomorphism", "--bins")
         self._run("cargo", "build", "--manifest-path", "slotted/xmulti/Cargo.toml")
         self._run("cargo", "test", "--manifest-path", "slotted/xmulti/Cargo.toml", "--", *self._rust_args)

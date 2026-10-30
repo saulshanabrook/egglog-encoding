@@ -2,6 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
+(
 (let prf0 (Sym (= (B) (A)) (Fiat (= (A) (B)))))
 (let t0 (Holds (set-of (A) (B))))
 (let prf1 (Fiat (= t0 t0)))
@@ -36,3 +37,4 @@ expression: proof_snapshot
     (@v3 (A))
     (@v2 (set-of (A)))
     (@v4 (set-of (A)))))
+)

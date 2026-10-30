@@ -179,7 +179,10 @@ def test_profile_encodings_are_recorded_and_cached_separately(
     calibrated: list[list[str]] = []
     recorded: list[dict[str, Any]] = []
 
-    def calibrate(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+    def calibrate(
+        command: list[str], checkout_path: Path, timeout_sec: int, *, native_limit: bool = False
+    ) -> processes.TimingResult:
+        assert native_limit
         calibrated.append(command)
         return processes.TimingResult("success", processes.TimingRow(wall_sec=2.0), None)
 
@@ -490,6 +493,28 @@ def test_samply_mutated_workload_is_not_promoted(monkeypatch: pytest.MonkeyPatch
     assert temporary_paths and not temporary_paths[0].exists()
 
 
+def test_samply_limits_controlled_workload_inside_wrapper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from native_memory import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES
+
+    def recorded(command: list[str], **kwargs: Any) -> None:
+        assert command[0] == "samply"
+        assert command[-3:] == ["--", "engine", f"--memory-limit-bytes={NATIVE_LIMIT_BYTES}"]
+        assert all(kwargs["env"][name] == value for name, value in NATIVE_ALLOCATOR_ENV.items())
+        write_profile(Path(command[command.index("--output") + 1]))
+
+    stub_samply_record_process(monkeypatch, recorded)
+    profile_runner.run_samply_record(
+        artifact=tmp_path / "profile.json.gz",
+        file_spec=stable_file_spec(tmp_path),
+        name="native",
+        iterations=1,
+        workload=["engine"],
+        checkout_path=tmp_path,
+        timeout_sec=5,
+        native_limit=True,
+    )
+
+
 def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     artifact = tmp_path / "profile.json.gz"
     temp_artifact = tmp_path / ".profile.tmp-test.json.gz"
@@ -778,7 +803,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "success", processes.TimingRow(wall_sec=2.0), None
         ),
     )
@@ -797,7 +822,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "timed-out", processes.TimingRow(), processes.ErrorRow("timed out")
         ),
     )
@@ -815,7 +840,7 @@ def test_profile_auto_iteration_cap_prints_warning(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "success", processes.TimingRow(wall_sec=0.001), None
         ),
     )

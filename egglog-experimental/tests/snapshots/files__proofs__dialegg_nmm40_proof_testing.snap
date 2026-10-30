@@ -2,6 +2,7 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
+(
 (let t0 (Value 0 (RankedTensor (vec-of 73 77) (I32))))
 (let t1 (RankedTensor (vec-of 77 99) (I32)))
 (let t2 (Value 1 t1))
@@ -85,3 +86,4 @@ expression: snapshot
     (?d 39)
     (? (vec-of 73 39))
     (?t (I32))))
+)
