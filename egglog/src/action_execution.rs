@@ -4,6 +4,7 @@
 
 use crate::*;
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 // Consumed directly by command dispatch, never retained in a collection. Keep
 // resolved commands inline instead of allocating for each ordinary command.
@@ -16,10 +17,10 @@ pub(super) enum ExecutableCommand {
 // Metadata is valid only until a command can change signatures or table
 // identities. Bounded flushes and unions preserve it; declined heads are cached.
 pub(super) type GroundActionCache =
-    HashMap<String, Option<(Arc<FuncType>, egglog_bridge::TableAction)>>;
+    HashMap<String, Option<(Arc<FuncType>, Rc<egglog_bridge::TableAction>)>>;
 
 pub(super) struct GroundActions {
-    pub(super) lookups: Vec<(egglog_bridge::TableAction, SmallVec<[usize; 4]>)>,
+    pub(super) lookups: Vec<(Rc<egglog_bridge::TableAction>, SmallVec<[usize; 4]>)>,
     pub(super) union: Option<(usize, usize)>,
 }
 
@@ -62,7 +63,8 @@ impl EGraph {
                         &self.backend,
                         function.backend_id,
                     )?;
-                    (table.input_arity() == func.input.len()).then(|| (func.clone(), table))
+                    (table.input_arity() == func.input.len())
+                        .then(|| (func.clone(), Rc::new(table)))
                 });
                 calls.insert(head.into(), call.clone());
                 call
@@ -88,12 +90,23 @@ impl EGraph {
             .run_actions(Some(&self.type_info), |state| {
                 let mut values = Vec::new();
                 let mut arguments = Vec::new();
+                // The metadata cache interns handles and keeps them alive through
+                // this call, so pointer identity names one physical table. Values
+                // stay fixed only until this backend transaction commits/rebuilds.
+                let mut constants = HashMap::default();
                 for action in prepared {
                     values.clear();
                     for (table, args) in action.lookups {
-                        arguments.clear();
-                        arguments.extend(args.iter().map(|index| values[*index]));
-                        values.push(table.lookup_or_insert(state, &arguments).unwrap());
+                        let value = if args.is_empty() {
+                            *constants
+                                .entry(Rc::as_ptr(&table))
+                                .or_insert_with(|| table.lookup_or_insert(state, &[]).unwrap())
+                        } else {
+                            arguments.clear();
+                            arguments.extend(args.iter().map(|index| values[*index]));
+                            table.lookup_or_insert(state, &arguments).unwrap()
+                        };
+                        values.push(value);
                     }
                     if let Some((left, right)) = action.union {
                         union.union(state, values[left], values[right]);
