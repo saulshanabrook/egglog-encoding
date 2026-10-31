@@ -270,14 +270,13 @@ pub(super) fn compile(
     for (root, value, sort) in &conditions.values {
         let sy = lang.symbols(sort);
         let class = q.bind(root);
-        let label = q.fresh("value");
         match value {
             Term::Global(_) => {
                 let edge = q.fresh("global_edge");
                 q.body.push(format!(
                     "({} {} {edge} {class})",
                     sy.renames,
-                    lang.encode(value, sort)
+                    lang.encode(value)
                 ));
                 globals.push(format!(
                     "(child {} (compose {} {edge}) ({} {class}))",
@@ -286,24 +285,12 @@ pub(super) fn compile(
                     sy.free_vars
                 ));
             }
-            Term::Slot(slot) => {
-                q.body.push(format!("(= {class} ({} 0))", sy.var));
-                q.body.push(format!(
-                    "(= {label} (atom {} (root {} ({} {class})) (lit {} (map-of 0 0))))",
-                    quote(&label),
-                    quote(root),
-                    sy.free_vars,
-                    quote(slot)
-                ));
-                literals.insert(slot.clone());
-                avs.push(label);
-            }
-            _ => unreachable!("query values are globals or slots"),
+            _ => unreachable!("query values are term globals"),
         }
         seen.insert(root.clone());
     }
-    for id in conditions.concrete_slots.values() {
-        globals.push(format!("(leaf (map-of 0 {id}))"));
+    for (name, id) in &conditions.concrete_slots {
+        globals.push(format!("(lit {} (map-of 0 {id}))", quote(name)));
     }
     if !globals.is_empty() {
         let label = q.fresh("globals");
@@ -326,7 +313,7 @@ pub(super) fn compile(
                     "e{idx}_{}",
                     match k {
                         Term::Variable(v) => label(v).into(),
-                        Term::Slot(s) => format!("lit_{}", &s[1..]),
+                        Term::Slot(s) => format!("lit_{}", s.strip_prefix('$').unwrap_or(s)),
                         _ => format!("leaf{j}"),
                     }
                 ))
@@ -393,8 +380,10 @@ pub(super) fn compile(
                     seen.insert(pv.clone());
                 }
                 Term::Slot(s) => {
-                    kids.push(format!("({} 0)", sy.var));
-                    literals.insert(s.clone());
+                    kids.push(String::new());
+                    if !conditions.concrete_slots.contains_key(s) {
+                        literals.insert(s.clone());
+                    }
                     bindings.push(format!(
                         "({} {} {e})",
                         if op.binders().contains(&j) {
@@ -433,11 +422,8 @@ pub(super) fn compile(
         }
         for (t, c, j) in reached {
             let ren = q.fresh(&format!("leafren{idx}_{j}"));
-            q.body.push(format!(
-                "({} {} {ren} {c})",
-                sy.renames,
-                lang.encode(t, &op.sort)
-            ));
+            q.body
+                .push(format!("({} {} {ren} {c})", sy.renames, lang.encode(t)));
         }
         q.body.extend(facts);
         let av = q.fresh(&format!("atom_{idx}"));

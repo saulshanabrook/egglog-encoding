@@ -64,14 +64,14 @@ fn multipattern_assertions_detect_missing_joins() {
         ),
         (
             "cross-slots stops asking the Add's children to be one slot",
-            "(= r (Add $u $u))",
-            "(= r (Add $u $u2))",
+            "(= r (Add (V $u) (V $u)))",
+            "(= r (Add (V $u) (V $u2)))",
             &["root3", "root4"],
         ),
         (
             "abstract-constant takes its argument from the OTHER lambda",
-            "(App (Lam $n (Lam $x (Add $x $n))) a)",
-            "(App (Lam $n (Lam $x (Add $x $n))) b)",
+            "(App (Lam $n (Lam $x (Add (V $x) (V $n)))) a)",
+            "(App (Lam $n (Lam $x (Add (V $x) (V $n)))) b)",
             &["f2"],
         ),
         (
@@ -82,8 +82,8 @@ fn multipattern_assertions_detect_missing_joins() {
         ),
         (
             "abstract-constant stops asking the two constants to differ",
-            "(= other (Lam $y (Add $y b)))\n                (!= a b))",
-            "(= other (Lam $y (Add $y b))))",
+            "(= other (Lam $y (Add (V $y) b)))\n                (!= a b))",
+            "(= other (Lam $y (Add (V $y) b))))",
             &["lone"],
         ),
     ];

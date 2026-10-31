@@ -3,18 +3,18 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Wrap U) (Lam U U :binder 0) (F U) (G U))
-(let input (Wrap (Lam $a (F $a))))
+(datatype U (V Var) (Wrap U) (Lam Var U :binder 0) (F U) (G U))
+(let input (Wrap (Lam $a (F (V $a)))))
 (rewrite (F x) (G x) :name "f-to-g")
 (run 1)
-(check (= input (Wrap (Lam $b (G $b)))))
+(check (= input (Wrap (Lam $b (G (V $b))))))
 
 Proof:
-(let t0 (Lam $a (F $a)))
+(let t0 (Lam $a (F (V $a))))
 (let t1 (Wrap t0))
-(let t2 (Lam $a (G $a)))
+(let t2 (Lam $a (G (V $a))))
 (Claim
-  (= t1 (rename (renaming ($a $b) ($b $a)) (Wrap (Lam $b (G $b)))))
+  (= t1 (rename (renaming ($a $b) ($b $a)) (Wrap (Lam $b (G (V $b))))))
   (Congr
     (= t1 (Wrap t2))
     (Fiat (= t1 t1))
@@ -22,9 +22,9 @@ Proof:
       (= t0 t2)
       (Fiat (= t0 t0))
       (Rule
-        (= (F $a) (G $a))
+        (= (F (V $a)) (G (V $a)))
         (name "f-to-g")
-        (premises (Fiat (= (F $a) (F $a))))
-        (substitution (x $a)))
+        (premises (Fiat (= (F (V $a)) (F (V $a)))))
+        (substitution (x (V $a))))
       1)
     0))

@@ -18,10 +18,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let m (Mult $5 $6))
+(let m (Mult (V $5) (V $6)))
 (run 2)
 
-(let b (Binop (Symbol "mult") $5 $6))
+(let b (Binop (Symbol "mult") (V $5) (V $6)))
 (run 0)
 (check (= m b))
 
@@ -38,8 +38,8 @@
 (push)
 
 (let zero (Num 0))
-(let dup (Sub $5 $5))
-(let mixed (Sub $5 $6))
+(let dup (Sub (V $5) (V $5)))
+(let mixed (Sub (V $5) (V $6)))
 (run 2)
 
 (check (= dup zero))
@@ -62,12 +62,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let a (Add $5 (Num 0)))
+(let a (Add (V $5) (Num 0)))
 (run 2)
 
 ;; the sum IS the variable at $5
 (let slot_5 $5)
-(check (= a slot_5))
+(check (= a (V slot_5)))
 (check (free-names-are a slot_5))
 
 (pop)
@@ -79,10 +79,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let g (Get (Range $3 $4) $7))
+(let g (Get (Range (V $3) (V $4)) (V $7)))
 (run 1)
 
-(let built (Add $7 (Sub $3 (Num 1))))
+(let built (Add (V $7) (Sub (V $3) (Num 1))))
 (run 0)
 (check (= g built))
 
@@ -99,20 +99,20 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let s (Sum $9 $5 $6 (Sing $5 $6)))
+(let s (Sum (V $9) $5 $6 (Sing (V $5) (V $6))))
 (run 2)
 
 ;; the whole sum is the variable at $9
 (let slot_9 $9)
-(check (= s slot_9))
+(check (= s (V slot_9)))
 (check (free-names-are s slot_9))
 
 ;; and it does not fire when the two `sing` children are the SAME slot: that would
 ;; need `$k` and `$v` to be one slot, which the binder columns forbid
-(let s2 (Sum $8 $5 $6 (Sing $5 $5)))
+(let s2 (Sum (V $8) $5 $6 (Sing (V $5) (V $5))))
 (run 2)
 (let slot_8 $8)
-(check (!= s2 slot_8))
+(check (!= s2 (V slot_8)))
 
 (pop)
 
@@ -128,12 +128,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let s (Sum (Null) $5 $6 (Mult $7 $5)))
+(let s (Sum (Null) $5 $6 (Mult (V $7) (V $5))))
 (run 1)
 
 ;; it is `$7 * sum(_, $5, $6, $5)` exactly: the factored sum binds both slots and its
 ;; body is the first of them, so it has no free slots at all
-(let out (Mult $7 (Sum (Null) $5 $6 $5)))
+(let out (Mult (V $7) (Sum (Null) $5 $6 (V $5))))
 (run 0)
 (check (= s out))
 
@@ -151,7 +151,7 @@
 (push)
 
 ;; body = $5 * $6, and both are the sum's own binders
-(let s (Sum (Null) $5 $6 (Mult $5 $6)))
+(let s (Sum (Null) $5 $6 (Mult (V $5) (V $6))))
 (run 1)
 
 (check (__internal-not-holds s Mult))
@@ -176,7 +176,7 @@
 (push)
 
 ;; let $5 = $2 in $5, and let $5 = $2 in $3 -- the second keeps $3 free
-(let bop (Binop $1 (Let $2 $5 $5) (Let $2 $5 $3)))
+(let bop (Binop (V $1) (Let (V $2) $5 (V $5)) (Let (V $2) $5 (V $3))))
 (run 1)
 
 (check (__internal-holds bop Let))

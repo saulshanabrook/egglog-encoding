@@ -24,8 +24,8 @@ use egglog::{Term, TermDag, TermId};
 use std::collections::{BTreeMap, BTreeSet};
 
 type R<T> = Result<T, String>;
-type ShapeKey = (String, Vec<SlotMap>, Vec<TermId>, Vec<TermId>);
-type SymmetryPremises = Vec<(TermId, ProofId)>;
+type ShapeKey = (String, Vec<SlotMap>, Vec<Option<TermId>>, Vec<TermId>);
+type SymmetryPremises = Vec<Option<(TermId, ProofId)>>;
 type ConditionProof = (String, TermId, ViewId, HashMap<Vec<usize>, Occurrence>);
 
 /// Lift the egglog proof `root`, which proves the encoded form of `claim`,
@@ -252,9 +252,8 @@ impl<'a> SlotLifter<'a> {
     }
 
     fn is_carrier_term(&self, t: TermId) -> bool {
-        self.app(t).is_some_and(|(head, _)| {
-            self.program.constructors.contains_key(head) || self.names.is_var_constructor(head)
-        })
+        self.app(t)
+            .is_some_and(|(head, _)| self.program.constructors.contains_key(head))
     }
 
     fn slot_map(&self, t: TermId) -> R<SlotMap> {
@@ -307,13 +306,7 @@ impl<'a> SlotLifter<'a> {
         let (head, args) = self
             .app(t)
             .ok_or_else(|| format!("not an encoded carrier term: {}", self.egg_string(t)))?;
-        let out = if self.names.is_var_constructor(head) {
-            let slot = match self.egg().get(args[0]) {
-                Term::Lit(Literal::Int(n)) => *n,
-                _ => return Err(format!("variable without a slot: {}", self.egg_string(t))),
-            };
-            slot_term(&mut self.out.term_dag, slot)
-        } else if self.program.constructors.contains_key(head) {
+        let out = if self.program.constructors.contains_key(head) {
             let head = head.to_string();
             self.build_node(&head, args, None, Some(t))?
         } else {
@@ -365,7 +358,17 @@ impl<'a> SlotLifter<'a> {
                         self.edge_memo
                             .insert((t, j), Renaming::new([(0, b), (b, 0)]).unwrap());
                     }
-                    i += 2;
+                    i += 1;
+                    k += 1;
+                }
+                ColumnKind::Var => {
+                    let m = match edges {
+                        Some(e) => e[k].clone(),
+                        None => self.slot_map(*args.get(i).ok_or("short row")?)?,
+                    };
+                    let slot = *m.get(&0).ok_or("a Var column without its slot")?;
+                    children.push(slot_term(&mut self.out.term_dag, slot));
+                    i += 1;
                     k += 1;
                 }
                 ColumnKind::Child => {
@@ -412,8 +415,8 @@ impl<'a> SlotLifter<'a> {
         let mut i = 0;
         for (j, col) in ctor.columns.iter().enumerate() {
             let width = match col {
-                ColumnKind::Child | ColumnKind::Binder => 2,
-                ColumnKind::Payload(_) => 1,
+                ColumnKind::Child => 2,
+                ColumnKind::Var | ColumnKind::Binder | ColumnKind::Payload(_) => 1,
             };
             if physical == i + width - 1 && width == 2 {
                 return Ok(j);
@@ -805,7 +808,8 @@ impl<'a> SlotLifter<'a> {
                 renamed = self.rename_both(renamed, &renaming);
             }
             let r = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
-            let aligned = self.align(r, target)?;
+            let occurrences = self.row_occurrences(conclusion_rhs)?;
+            let aligned = self.fit(r, target, &occurrences)?;
             // A congruence whose base is reflexive may be read in either
             // direction later; both endpoints are now known.
             Ok(self.note(aligned))
@@ -896,19 +900,6 @@ impl<'a> SlotLifter<'a> {
                 let node = self.eq(prems[0])?; // node = row
                 let node_egg = self.sub(subst, "_node")?;
                 self.finish_union(node, lhs, rhs, node_egg)
-            }
-            ("slotted", "var-normalize") => {
-                // `e = (Var v)` becomes `e = {0->v}·$0`.
-                let p = self.eq(prems[0])?;
-                let v = self.out.edge(p).rhs;
-                let slot = super::terms::slot_of(&self.out.term_dag, v)
-                    .ok_or("var-normalize on a non-variable")?;
-                if slot == 0 {
-                    return Ok(p);
-                }
-                let sigma = Renaming::new([(slot, 0), (0, slot)]).unwrap();
-                let r = self.out.reframe(p, sigma);
-                Ok(self.note(r))
             }
             ("slotted", "invocation") => {
                 // `a = m·c` and `name = m∘g`: `a = name·c` through the symmetry g.
@@ -1028,7 +1019,7 @@ impl<'a> SlotLifter<'a> {
                         );
                         i += 2;
                     }
-                    ColumnKind::Binder => i += 2,
+                    ColumnKind::Var | ColumnKind::Binder => i += 1,
                     ColumnKind::Payload(_) => i += 1,
                 }
             }
@@ -1076,7 +1067,7 @@ impl<'a> SlotLifter<'a> {
         &mut self,
         row_eq: ViewId,
         row: TermId,
-        groups: &[(TermId, ProofId)],
+        groups: &[Option<(TermId, ProofId)>],
     ) -> R<(ViewId, TermId)> {
         let (head, args) = self.app(row).ok_or("not a row")?;
         let head = head.to_string();
@@ -1088,15 +1079,20 @@ impl<'a> SlotLifter<'a> {
             .clone();
         // the edges and classes of the slotted columns, and the payloads
         let mut edges: Vec<SlotMap> = vec![];
-        let mut classes: Vec<TermId> = vec![];
+        let mut classes: Vec<Option<TermId>> = vec![];
         let mut payloads: Vec<TermId> = vec![];
         let mut i = 0;
         for col in &ctor.columns {
             match col {
-                ColumnKind::Child | ColumnKind::Binder => {
+                ColumnKind::Child => {
                     edges.push(self.slot_map(args[i])?);
-                    classes.push(args[i + 1]);
+                    classes.push(Some(args[i + 1]));
                     i += 2;
+                }
+                ColumnKind::Var | ColumnKind::Binder => {
+                    edges.push(self.slot_map(args[i])?);
+                    classes.push(None);
+                    i += 1;
                 }
                 ColumnKind::Payload(_) => {
                     payloads.push(args[i]);
@@ -1106,7 +1102,10 @@ impl<'a> SlotLifter<'a> {
         }
         let group_values: Vec<Vec<SlotMap>> = groups
             .iter()
-            .map(|(g, _)| self.group(*g))
+            .map(|group| match group {
+                Some((g, _)) => self.group(*g),
+                None => Ok(vec![[(0, 0)].into_iter().collect()]),
+            })
             .collect::<R<_>>()?;
         let own = shape(&edges);
         // the least reading over the children's groups, as node-shape computes it
@@ -1132,9 +1131,9 @@ impl<'a> SlotLifter<'a> {
                 Some(g) if !is_identity(g) => g.clone(),
                 _ => continue,
             };
-            let (gterm, gproof) = groups[k];
+            let (gterm, gproof) = groups[k].ok_or("a rigid port has a nonidentity reading")?;
             let _ = gterm;
-            let s = self.symmetry(classes[k], &g, gproof)?;
+            let s = self.symmetry(classes[k].ok_or("rigid port has no class")?, &g, gproof)?;
             let completion = self.edge_memo[&(row, j)].clone();
             let renamed = self.rename_both(s, &completion);
             p = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
@@ -1169,12 +1168,16 @@ impl<'a> SlotLifter<'a> {
         let row_eq = self.eq(prems[0])?;
         let row = self.egg.get(prems[0]).rhs();
         let classes = self.slotted_classes(row)?;
-        let groups: Vec<(TermId, ProofId)> = classes
+        let groups: SymmetryPremises = classes
             .iter()
             .enumerate()
             .map(|(k, &class)| {
-                let g = self.sub(subst, &format!("_g{}", k + 1))?;
-                Ok((g, self.group_premise(prems, class)?))
+                class
+                    .map(|class| {
+                        let g = self.sub(subst, &format!("_g{}", k + 1))?;
+                        Ok((g, self.group_premise(prems, class)?))
+                    })
+                    .transpose()
             })
             .collect::<R<_>>()?;
         let (to_shape, node) = self.shape_form(row_eq, row, &groups)?;
@@ -1213,20 +1216,39 @@ impl<'a> SlotLifter<'a> {
     fn shape_dedup(&mut self, prems: &[ProofId], subst: &IndexMap<String, TermId>) -> R<ViewId> {
         let row1_eq = self.eq(prems[0])?;
         let row1 = self.egg.get(prems[0]).rhs();
-        let n = self.slotted_columns(row1)?;
         let classes = self.slotted_classes(row1)?;
-        let groups: Vec<(TermId, ProofId)> = classes
+        let groups: SymmetryPremises = classes
             .iter()
             .enumerate()
             .map(|(k, &class)| {
-                Ok((
-                    self.sub(subst, &format!("_g{}", k + 1))?,
-                    self.group_premise(prems, class)?,
-                ))
+                class
+                    .map(|class| {
+                        Ok((
+                            self.sub(subst, &format!("_g{}", k + 1))?,
+                            self.group_premise(prems, class)?,
+                        ))
+                    })
+                    .transpose()
             })
             .collect::<R<_>>()?;
-        // the second row's premise is the one after the first shapeof row
-        let row2_prem = prems[1 + n + 1];
+        // Normalizing literal rigid groups can insert primitive premises before
+        // the second row, so its index is not fixed. Only the two constructor
+        // rows have this class as their left endpoint.
+        let head = self.app(row1).ok_or("not a constructor row")?.0;
+        let class = self.egg.get(prems[0]).lhs();
+        let row2_prem = prems
+            .iter()
+            .copied()
+            .skip(1)
+            .find(|&id| {
+                let proof = self.egg.get(id);
+                proof.lhs() == class
+                    && proof.rhs() != row1
+                    && self
+                        .app(proof.rhs())
+                        .is_some_and(|(other, _)| other == head)
+            })
+            .ok_or("shape dedup has no second constructor row")?;
         let row2_eq = self.eq(row2_prem)?;
         let row2 = self.egg.get(row2_prem).rhs();
         let (a, node) = self.shape_form(row1_eq, row1, &groups)?;
@@ -1236,20 +1258,6 @@ impl<'a> SlotLifter<'a> {
         }
         let s = self.out.sym(b);
         self.trans(a, s)
-    }
-
-    fn slotted_columns(&self, row: TermId) -> R<usize> {
-        let (head, _) = self.app(row).ok_or("not a row")?;
-        let ctor = self
-            .program
-            .constructors
-            .get(head)
-            .ok_or("unknown constructor")?;
-        Ok(ctor
-            .columns
-            .iter()
-            .filter(|c| !matches!(c, ColumnKind::Payload(_)))
-            .count())
     }
 
     /// Through the proof of a `_shape_class_F` row: the stored class's row
@@ -1269,10 +1277,14 @@ impl<'a> SlotLifter<'a> {
                     .iter()
                     .enumerate()
                     .map(|(k, &class)| {
-                        Ok((
-                            self.sub(substitution, &format!("_g{}", k + 1))?,
-                            self.group_premise(premise_proofs, class)?,
-                        ))
+                        class
+                            .map(|class| {
+                                Ok((
+                                    self.sub(substitution, &format!("_g{}", k + 1))?,
+                                    self.group_premise(premise_proofs, class)?,
+                                ))
+                            })
+                            .transpose()
                     })
                     .collect::<R<_>>()?;
                 Ok((row_eq, row, groups))
@@ -1345,14 +1357,18 @@ impl<'a> SlotLifter<'a> {
                         let row_eq = self.eq(prems[0])?;
                         let row = self.egg.get(prems[0]).rhs();
                         let classes = self.slotted_classes(row)?;
-                        let groups: Vec<(TermId, ProofId)> = classes
+                        let groups: SymmetryPremises = classes
                             .iter()
                             .enumerate()
-                            .map(|(k, cls)| {
-                                Ok((
-                                    self.sub(&subst, &format!("_g{}", k + 1))?,
-                                    self.group_premise(&prems, *cls)?,
-                                ))
+                            .map(|(k, &class)| {
+                                class
+                                    .map(|class| {
+                                        Ok((
+                                            self.sub(&subst, &format!("_g{}", k + 1))?,
+                                            self.group_premise(&prems, class)?,
+                                        ))
+                                    })
+                                    .transpose()
                             })
                             .collect::<R<_>>()?;
                         self.node_symmetry(row_eq, row, &groups, c, g)
@@ -1420,7 +1436,7 @@ impl<'a> SlotLifter<'a> {
     }
 
     /// The classes in a row's slotted columns, in column order.
-    fn slotted_classes(&self, row: TermId) -> R<Vec<TermId>> {
+    fn slotted_classes(&self, row: TermId) -> R<Vec<Option<TermId>>> {
         let (head, args) = self.app(row).ok_or("not a row")?;
         let ctor = self
             .program
@@ -1431,9 +1447,13 @@ impl<'a> SlotLifter<'a> {
         let mut i = 0;
         for col in &ctor.columns {
             match col {
-                ColumnKind::Child | ColumnKind::Binder => {
-                    out.push(args[i + 1]);
+                ColumnKind::Child => {
+                    out.push(Some(args[i + 1]));
                     i += 2;
+                }
+                ColumnKind::Var | ColumnKind::Binder => {
+                    out.push(None);
+                    i += 1;
                 }
                 ColumnKind::Payload(_) => i += 1,
             }
@@ -1602,7 +1622,7 @@ impl<'a> SlotLifter<'a> {
         &mut self,
         row_eq: ViewId,
         row: TermId,
-        groups: &[(TermId, ProofId)],
+        groups: &[Option<(TermId, ProofId)>],
         c: TermId,
         g: &SlotMap,
     ) -> R<ViewId> {
@@ -1614,21 +1634,29 @@ impl<'a> SlotLifter<'a> {
             .ok_or("unknown constructor")?
             .clone();
         let mut edges: Vec<SlotMap> = vec![];
-        let mut classes: Vec<TermId> = vec![];
+        let mut classes: Vec<Option<TermId>> = vec![];
         let mut i = 0;
         for col in &ctor.columns {
             match col {
-                ColumnKind::Child | ColumnKind::Binder => {
+                ColumnKind::Child => {
                     edges.push(self.slot_map(args[i])?);
-                    classes.push(args[i + 1]);
+                    classes.push(Some(args[i + 1]));
                     i += 2;
+                }
+                ColumnKind::Var | ColumnKind::Binder => {
+                    edges.push(self.slot_map(args[i])?);
+                    classes.push(None);
+                    i += 1;
                 }
                 ColumnKind::Payload(_) => i += 1,
             }
         }
         let group_values: Vec<Vec<SlotMap>> = groups
             .iter()
-            .map(|(t, _)| self.group(*t))
+            .map(|group| match group {
+                Some((g, _)) => self.group(*g),
+                None => Ok(vec![[(0, 0)].into_iter().collect()]),
+            })
             .collect::<R<_>>()?;
         let own = shape(&edges);
         for (variant, gs) in readings(&edges, &group_values) {
@@ -1652,13 +1680,12 @@ impl<'a> SlotLifter<'a> {
                     continue;
                 }
                 let gi = &gs[k];
-                let (ct, gp) = groups[k];
-                let _ = ct;
                 k += 1;
                 if is_identity(gi) {
                     continue;
                 }
-                let s = self.symmetry(classes[k - 1], gi, gp)?;
+                let (_, gp) = groups[k - 1].ok_or("a rigid port has a nonidentity reading")?;
+                let s = self.symmetry(classes[k - 1].ok_or("rigid port has no class")?, gi, gp)?;
                 let completion = self.edge_memo[&(row, j)].clone();
                 let renamed = self.rename_both(s, &completion);
                 p = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
@@ -2048,16 +2075,17 @@ impl<'a> SlotLifter<'a> {
         let mut candidates: Option<BTreeSet<String>> = None;
         for (j, col) in ctor.columns.iter().enumerate() {
             match col {
-                ColumnKind::Child | ColumnKind::Binder => {
+                ColumnKind::Child | ColumnKind::Var | ColumnKind::Binder => {
                     if let Term::Var(v) = self.out.term_dag.get(kids[j]) {
                         let edge = renaming_from_term(self.egg(), args[i]);
                         if let Some(edge) = edge {
                             for (t, s) in edge.iter() {
-                                let found: BTreeSet<String> = if v.starts_with('$') {
-                                    frame.node_atoms_with_literal(v, *s).into_iter().collect()
-                                } else {
-                                    frame.node_atoms_with(v, *t, *s).into_iter().collect()
-                                };
+                                let found: BTreeSet<String> =
+                                    if matches!(col, ColumnKind::Var | ColumnKind::Binder) {
+                                        frame.node_atoms_with_literal(v, *s).into_iter().collect()
+                                    } else {
+                                        frame.node_atoms_with(v, *t, *s).into_iter().collect()
+                                    };
                                 if found.is_empty() {
                                     continue;
                                 }
@@ -2068,7 +2096,7 @@ impl<'a> SlotLifter<'a> {
                             }
                         }
                     }
-                    i += 2;
+                    i += if *col == ColumnKind::Child { 2 } else { 1 };
                 }
                 ColumnKind::Payload(_) => i += 1,
             }
@@ -2621,7 +2649,7 @@ impl<'a> SlotLifter<'a> {
                         p = self.note(p);
                     }
                 }
-                ColumnKind::Binder => i += 2,
+                ColumnKind::Var | ColumnKind::Binder => i += 1,
                 ColumnKind::Payload(_) => i += 1,
             }
         }
@@ -2755,7 +2783,7 @@ impl<'a> SlotLifter<'a> {
                     }
                     physical += 2;
                 }
-                ColumnKind::Binder => physical += 2,
+                ColumnKind::Var | ColumnKind::Binder => physical += 1,
                 ColumnKind::Payload(_) => physical += 1,
             }
         }
@@ -2849,10 +2877,6 @@ impl<'a> SlotLifter<'a> {
             match col {
                 ColumnKind::Child => {
                     let class = args.get(i + 1).copied();
-                    let is_var_class = class.is_some_and(|c| {
-                        self.app(c)
-                            .is_some_and(|(h, _)| self.names.is_var_constructor(h))
-                    });
                     // the class the match bound the nested atom to, when the
                     // substitution names it
                     let mut sub_path = path.to_vec();
@@ -2864,11 +2888,6 @@ impl<'a> SlotLifter<'a> {
                         .and_then(|class| ctx.subst.get(class))
                         .copied();
                     match self.out.term_dag.get(kids[j]) {
-                        Term::Var(v) if v.starts_with('$') => {
-                            if !is_var_class {
-                                return false;
-                            }
-                        }
                         Term::Var(v) => {
                             let bound = ctx.classes.get(v).and_then(|c| ctx.subst.get(c));
                             if let Some(&want) = variables.get(v).or(bound)
@@ -2890,14 +2909,13 @@ impl<'a> SlotLifter<'a> {
                                     return false;
                                 }
                             }
-                            None if is_var_class => return false,
                             None => {}
                         },
                         Term::Lit(_) => {}
                     }
                     i += 2;
                 }
-                ColumnKind::Binder => i += 2,
+                ColumnKind::Var | ColumnKind::Binder => i += 1,
                 ColumnKind::Payload(_) => {
                     // a literal must be the row's value; a payload variable the
                     // substitution binds must be bound to it
@@ -3052,7 +3070,7 @@ impl<'a> SlotLifter<'a> {
                                 // and the class is the row
                                 return self.transport(r, row_eq);
                             }
-                            ColumnKind::Binder => i += 2,
+                            ColumnKind::Var | ColumnKind::Binder => i += 1,
                             ColumnKind::Payload(_) => i += 1,
                         }
                     }
@@ -3706,34 +3724,6 @@ impl<'a> SlotLifter<'a> {
         let [class_a, class_b] = classes;
         let cls_a = self.sub(&substitution, class_a?)?;
         let cls_b = self.sub(&substitution, class_b?)?;
-        let bare = |this: &Self, t: TermId| super::terms::slot_of(&this.out.term_dag, t).is_some();
-        if bare(self, claim.lhs) && bare(self, claim.rhs) {
-            // both sides are bare slots: one class, the variable's
-            if cls_a != cls_b {
-                return Err("two bare slots with different classes".into());
-            }
-            let t = self.dec(cls_a)?;
-            let r = self.reflexive(t)?;
-            let src_a = self
-                .program
-                .refresh_binders(&mut self.out.term_dag, claim.lhs);
-            let src_b = self
-                .program
-                .refresh_binders(&mut self.out.term_dag, claim.rhs);
-            let pa = self.align(r, src_a)?; // $0 = ·src_a
-            let pb = self.align(r, src_b)?; // $0 = ·src_b
-            let sa = self.out.sym(pa);
-            let result = self.trans(sa, pb)?;
-            return self.finish_claim(
-                result,
-                pb,
-                claim,
-                cls_a,
-                &premise_proofs,
-                Some(&coset),
-                &HashMap::default(),
-            );
-        }
         let bridges = HashMap::default();
         let side = |i: usize| -> R<ExpandCtx<'_>> {
             let names = query.patterns.get(i).ok_or("missing claim pattern names")?;

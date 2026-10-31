@@ -20,14 +20,11 @@ pub enum ClaimKind {
     RenamingEq,
 }
 
-/// A source query to verify. Its sort and equality kind are query context,
-/// not data carried by the proof steps.
+/// A source query to verify, with endpoint types determined by the source signatures.
 #[derive(Clone, Debug)]
 pub struct Claim {
     /// The requested notion of equality.
     pub kind: ClaimKind,
-    /// The carrier sort the two terms belong to.
-    pub sort: String,
     /// The claim's left source term.
     pub lhs: TermId,
     /// The claim's right source term.

@@ -25,13 +25,13 @@ LANG = enc.read_language(X.LANG_DIR / "toy.egg")
 
 #: The constructors this reads: exactly two slotted columns and no payload, which is the
 #: `(String Renaming U Renaming U)` shape the observer relations below are declared at.
-#: `Var` and `Null` are leaves with no edges, so nothing about them can be stranded.
+#: Variable constructors have only a rigid slot field; Null is a closed leaf.
 BINARY = {n: sig for n, sig in LANG.items() if sig.count(enc.CHILD) + sig.count(enc.BINDER) == 2 == len(sig)}
 
 # A constructor of any other shape would be dropped from the probe in silence, which is
 # the failure this file was just rescued from. Widening the relations is the fix if the
 # language grows one; leaving it uncovered is not.
-_uncovered = [n for n, sig in LANG.items() if any(c in enc.SLOTTED for c in sig) and n not in BINARY]
+_uncovered = [n for n, sig in LANG.items() if any(c in (enc.CHILD, enc.BINDER) for c in sig) and n not in BINARY]
 if _uncovered:
     raise SystemExit(f"stranded.py covers only arity-2 payload-free constructors; not: {', '.join(_uncovered)}")
 
@@ -40,13 +40,19 @@ def _observer():
     out = [
         "(relation ObsSym (U Renaming))",
         "(rule ((GroupIdx i) (= s (EclassGroup_0 c)) (= g (set-get s i))) ((ObsSym c g)))",
-        "(relation WithSym (String Renaming U Renaming U))",
-        "(relation NoSym (String Renaming U Renaming U))",
+        "(relation WithSym (String Renaming U Renaming U Renaming Renaming))",
+        "(relation NoSym (String Renaming U Renaming U Renaming Renaming))",
     ]
     for name, sig in BINARY.items():
         pat = enc.pattern(name, sig)
-        out.append(f'(rule ((= V {pat}) (ObsSym V s)) ((WithSym "{name}" m1 c1 m2 c2)))')
-        out.append(f'(rule ((= V {pat})) ((NoSym "{name}" m1 c1 m2 c2)))')
+        # Keep a uniform observer row. Binder fields have no child eclass; the
+        # explicitly seeded V node fills that unused field, with fixed domain {0}.
+        children = [f"({X.SYM.var} (map-of 0 0))" if c is enc.BINDER else f"c{i + 1}" for i, c in enumerate(sig)]
+        domains = ["(map-of 0 0)" if c is enc.BINDER else f"live{i + 1}" for i, c in enumerate(sig)]
+        live = " ".join(f"(= live{i + 1} ({X.SYM.free_vars} c{i + 1}))" for i, c in enumerate(sig) if c is enc.CHILD)
+        fields = f'"{name}" m1 {children[0]} m2 {children[1]} {domains[0]} {domains[1]}'
+        out.append(f"(rule ((= node {pat}) {live} (ObsSym node s)) ((WithSym {fields})))")
+        out.append(f"(rule ((= node {pat}) {live}) ((NoSym {fields})))")
     sizes = "\n".join(f"(print-size {n})" for n in BINARY)
     return "\n".join(
         [*out, sizes, "(run 40)", sizes, "(print-function WithSym 100000)", "(print-function NoSym 100000)"]
@@ -82,29 +88,9 @@ def parse_map(s):
 
 
 def parse_row(args):
-    """`f m1 c1 m2 c2` as printed -> (op, m1, c1, m2, c2)."""
+    """The operator, physical fields, and recorded domains of its two ports."""
     a = split_args(args)
-    return (a[0], parse_map(a[1]), a[2], parse_map(a[3]), a[4])
-
-
-def slots_of(term):
-    """Slot set of a printed `U` term. `None` when it cannot be determined."""
-    term = term.strip()
-    if term.startswith("(Var "):
-        return {int(re.findall(r"-?\d+", term)[0])}
-    if term.startswith("(Null"):
-        return set()
-    for name in BINARY:
-        if term.startswith(f"({name} "):
-            a = split_args(term[len(name) + 2 : -1])
-            out = set()
-            for m, c in ((parse_map(a[0]), a[1]), (parse_map(a[2]), a[3])):
-                cs = slots_of(c)
-                if cs is None:
-                    return None
-                out |= {m[k] for k in cs if k in m}
-            return out
-    return None  # e.g. `Unextractable`
+    return (a[0], parse_map(a[1]), a[2], parse_map(a[3]), a[4], set(parse_map(a[5])), set(parse_map(a[6])))
 
 
 def alpha_eq(x, y):
@@ -118,11 +104,10 @@ def alpha_eq(x, y):
     if x[0] != y[0] or x[2] != y[2] or x[4] != y[4]:
         return False
     rho = {}
-    for mx, my, child in ((x[1], y[1], x[2]), (x[3], y[3], x[4])):
-        cs = slots_of(child)
-        if cs is None:
+    for mx, my, sx, sy in ((x[1], y[1], x[5], y[5]), (x[3], y[3], x[6], y[6])):
+        if sx != sy:
             return False
-        kx, ky = {k: mx[k] for k in mx if k in cs}, {k: my[k] for k in my if k in cs}
+        kx, ky = {k: mx[k] for k in mx if k in sx}, {k: my[k] for k in my if k in sy}
         if set(kx) != set(ky):
             return False
         for k in kx:

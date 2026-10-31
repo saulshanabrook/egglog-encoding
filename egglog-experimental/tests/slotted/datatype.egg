@@ -10,12 +10,12 @@
 ;;;
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/datatype.egg
 
-(datatype M
+(datatype M (VM Var)
   (Num i64)
   (Succ M)
   (Prev M)
   (Add M M)
-  (Lam M M :binder 0)
+  (Lam Var M :binder 0)
   (Pair M M)
   (Same))
 
@@ -40,9 +40,9 @@
 ;;; one class and a bound slot is not one of the class's own.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let id0 (Lam $0 $0))
-(let id7 (Lam $7 $7))
-(let k (Lam $0 $3))
+(let id0 (Lam $0 (VM $0)))
+(let id7 (Lam $7 (VM $7)))
+(let k (Lam $0 (VM $3)))
 (run 0)
 
 (check (= id0 id7))

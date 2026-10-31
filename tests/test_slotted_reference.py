@@ -40,7 +40,7 @@ def test_constructor_names_translate_to_reference_syntax(name: str, term: Any, r
 
 def source(tmp_path: Path) -> Any:
     path = tmp_path / "language.egg"
-    path.write_text("(datatype U (F U U) (G U U) (Null))")
+    path.write_text("(datatype U (V Var) (F U U) (G U U) (Null))")
     src = syntax.Source(path)
     for op in src.lang.ops.values():
         op.ref = op.ctor
@@ -50,22 +50,52 @@ def source(tmp_path: Path) -> Any:
 @pytest.mark.parametrize(
     "declaration",
     [
-        "(datatype Var (Lam Var Var :binder 0) (Pair Var Var))",
-        "(datatype* (Var (Lam Var Var :binder 0) (Pair Var Var)))",
-        "(sort Var) (constructor Lam (Var Var) Var :binder 0) (constructor Pair (Var Var) Var)",
+        "(datatype Expr (Name Var) (Lam Var Expr :binder 0) (Pair Expr Expr))",
+        "(datatype* (Expr (Name Var) (Lam Var Expr :binder 0) (Pair Expr Expr)))",
+        "(sort Expr) (constructor Name (Var) Expr) (constructor Lam (Var Expr) Expr :binder 0) "
+        "(constructor Pair (Expr Expr) Expr)",
     ],
 )
-def test_var_is_an_ordinary_carrier_name(tmp_path: Path, declaration: str) -> None:
+def test_declared_variable_constructor_translates_to_reference_vars(tmp_path: Path, declaration: str) -> None:
     path = tmp_path / "language.egg"
     path.write_text(declaration)
     src = syntax.Source(path)
-    assert src.sorts == ["Var"]
-    assert src.spec == {"Lam": [syntax.BINDER, syntax.CHILD], "Pair": [syntax.CHILD, syntax.CHILD]}
-    assert src.term(syntax.parse("(Lam $a (Pair $a $b))")[0]) == (
+    assert src.sorts == ["Expr"]
+    assert src.spec == {
+        "Name": [syntax.SLOT],
+        "Lam": [syntax.BINDER, syntax.CHILD],
+        "Pair": [syntax.CHILD, syntax.CHILD],
+    }
+    assert src.carriers["Expr"].var == "Name"
+    assert src.term(syntax.parse("(Lam $a (Pair (Name $a) (Name $b)))")[0]) == (
         "Lam",
         src.slots.intern("$a"),
         ("Pair", ("var", src.slots.intern("$a")), ("var", src.slots.intern("$b"))),
     )
+
+
+def test_source_variables_require_the_declared_wrapper(tmp_path: Path) -> None:
+    src = source(tmp_path)
+    with pytest.raises(ValueError, match="explicit variable constructor"):
+        src.term(syntax.parse("(F $a (Null))")[0])
+    assert driver.term(src.lang, ("var", 7)) == "(V $7)"
+    assert driver.term(src.lang, ("F", ("var", 7), ("Null",))) == "(F (V $7) (Null))"
+    assert driver.pattern(src.lang, ("sl", "$x")) == "(V $x)"
+
+
+def test_binder_ports_are_rigid_fields_and_keep_nonpayload_indices() -> None:
+    sig = syntax.signature(["String", "Var", "i64", "Var", "U"], [0, 1])
+    assert sig == ["String", syntax.BINDER, "i64", syntax.BINDER, syntax.CHILD]
+    assert syntax.pattern("Bind", sig) == "(Bind p1 m1 p2 m2 m3 c3)"
+
+
+def test_reference_seed_preserves_the_first_workload_term(tmp_path: Path) -> None:
+    src = source(tmp_path)
+    spec = driver.reference_spec(src.lang, 3, [("Null",)], [], [], [])
+    assert [line for line in spec.splitlines() if line.startswith("term ")] == [
+        "term Null",
+        "term (var $0)",
+    ]
 
 
 def test_multipattern_side_conditions_share_their_roots(tmp_path: Path) -> None:
@@ -79,7 +109,7 @@ def test_multipattern_side_conditions_share_their_roots(tmp_path: Path) -> None:
 
 def test_generated_reference_variables_do_not_alias_user_variables(tmp_path: Path) -> None:
     src = source(tmp_path)
-    rule = syntax.parse("(rewrite (F _sl1 $x) _sl1 :when ((= _p (G $y _sl1))))")[0]
+    rule = syntax.parse("(rewrite (F _sl1 (V $x)) _sl1 :when ((= _p (G (V $y) _sl1))))")[0]
     lines = syntax.rule_lines(src, src.lang, rule)
     variable_roots = {line.split()[1] for line in lines if line.startswith("atom ") and line.split()[2] == "var"}
     assert len(variable_roots) == 2
@@ -88,7 +118,7 @@ def test_generated_reference_variables_do_not_alias_user_variables(tmp_path: Pat
     assert lhs_root not in {"_sl1", "_p", *variable_roots}
 
 
-@pytest.mark.parametrize("term", ["$a", "(F $a $b)", "(Null)"])
+@pytest.mark.parametrize("term", ["(V $a)", "(F (V $a) (V $b))", "(Null)"])
 def test_reference_translation_does_not_expand_globals_into_patterns(tmp_path: Path, term: str) -> None:
     src = source(tmp_path)
     src.lang.bound["fixed"] = src.term(syntax.parse(term)[0])
@@ -141,7 +171,7 @@ def test_unrepresented_reference_constraints_are_rejected(tmp_path: Path, option
 @pytest.mark.parametrize("option", [":fresh $new", ":fresh $x", ":lead 0", ":lead 1"])
 def test_unknown_rewrite_options_are_rejected(tmp_path: Path, option: str) -> None:
     src = source(tmp_path)
-    rule = syntax.parse(f"(rewrite (F $x a) a {option})")[0]
+    rule = syntax.parse(f"(rewrite (F (V $x) a) a {option})")[0]
     for nested in (False, True):
         with pytest.raises(SystemExit, match=f"got '{option.split()[0]}'"):
             syntax.rule_lines(src, src.lang, rule, nested=nested)

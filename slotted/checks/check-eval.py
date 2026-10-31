@@ -107,7 +107,7 @@ def complete_refinement():
         rhs = ("G", ("pv", f"a{i}"), rhs)
     source = '(include "egglog-experimental/tests/slotted/languages/toy.egg")\n'
     source += X.driver.rewrite(X.LANG, atoms, "root", rhs, name="all-refinements")
-    program = X.driver.compile_source(source + "\n(let n (Null))\n(let f (F $0 $0))\n(run 1)")
+    program = X.driver.compile_source(source + "\n(let n (Null))\n(let f (F (V $0) (V $0)))\n(run 1)")
     root, lines = X.syntax.atom_lines(X.LANG, "root", atoms)
     spec = "\n".join(
         [
@@ -131,7 +131,7 @@ def count_round_budget():
         path = Path(tmp) / "budget.egg"
         path.write_text(
             '(include "egglog-experimental/tests/slotted/languages/toy.egg")\n'
-            "(rewrite (Null) (F $0 $0))\n(let start (Null))\n(run 1)\n"
+            "(rewrite (Null) (F (V $0) (V $0)))\n(let start (Null))\n(run 1)\n"
         )
         program = X.driver.compile_source(path.read_text())
     # Installed after the requested run: any additional user-rule step is an error.

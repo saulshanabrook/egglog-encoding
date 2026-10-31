@@ -15,6 +15,7 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/redundancy-tests.egg
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 (constructor H (U U) U)
@@ -43,9 +44,9 @@
 
 (rewrite (F (Sub x x) (Sub x x)) (H (Null) (Null)) :name "both-sides")
 
-(union (Sub $3 $3) (Null))
+(union (Sub (V $3) (V $3)) (Null))
 
-(let x (F (Sub $0 $0) (Sub $1 $1)))
+(let x (F (Sub (V $0) (V $0)) (Sub (V $1) (V $1))))
 (let y (H (Null) (Null)))
 
 (run 10)
@@ -66,10 +67,10 @@
 
 (rewrite (Mul x (Null)) (Null) :name "mul-zero")
 
-(let a (F (Mul $7 (Null)) $8))
-(let b (F (Mul $9 (Null)) $8))
-(let c (F (Null) $8))
-(let d (F (Mul $7 (Null)) $3))
+(let a (F (Mul (V $7) (Null)) (V $8)))
+(let b (F (Mul (V $9) (Null)) (V $8)))
+(let c (F (Null) (V $8)))
+(let d (F (Mul (V $7) (Null)) (V $3)))
 
 (run 10)
 
@@ -92,12 +93,12 @@
 
 (rewrite (F (Sub x x) (Sub x x)) (H (Null) (Null)) :name "both-sides")
 
-(union (Sub $9 $9) (Null))
+(union (Sub (V $9) (V $9)) (Null))
 
-(let s0 (Sub $0 $0))
-(let s1 (Sub $1 $1))
+(let s0 (Sub (V $0) (V $0)))
+(let s1 (Sub (V $1) (V $1)))
 (let z (Null))
-(let w (F (Sub $0 $0) (Sub $1 $1)))
+(let w (F (Sub (V $0) (V $0)) (Sub (V $1) (V $1))))
 (let h (H (Null) (Null)))
 
 (run 10)
@@ -122,8 +123,8 @@
 (rewrite (Add x (Add y z)) (Add (Add x y) z) :name "assoc-l")
 (rewrite (Add (Add x y) z) (Add x (Add y z)) :name "assoc-r")
 
-(let a (Add (Add (Add $0 $1) $2) $3))
-(let b (Add (Add (Add $3 $2) $1) $0))
+(let a (Add (Add (Add (V $0) (V $1)) (V $2)) (V $3)))
+(let b (Add (Add (Add (V $3) (V $2)) (V $1)) (V $0)))
 
 (run 8)
 
@@ -181,40 +182,40 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(rewrite (App (Lam a a) $0) (GG a) :name "app-of-self-lam")
+(rewrite (App (Lam a a) (V $0)) (GG a) :name "app-of-self-lam")
 
-(let live (App (Lam $0 $0) $0))
+(let live (App (Lam (V $0) (V $0)) (V $0)))
 
 (run 10)
 
 (let slot_0 $0)
-(check (= live (GG slot_0)))
+(check (= live (GG (V slot_0))))
 (check (free-names-are live slot_0))
 (let slot_1 $1)
-(fail (check (= live (GG slot_1))))
+(fail (check (= live (GG (V slot_1)))))
 
 (pop)
 
 (push)
 
-(rewrite (App (Lam a a) $0) (GG a) :name "app-of-self-lam")
+(rewrite (App (Lam a a) (V $0)) (GG a) :name "app-of-self-lam")
 
-(union (Lam $0 $0) (Lam $1 $1))
+(union (Lam (V $0) (V $0)) (Lam (V $1) (V $1)))
 
-(let g (App (Lam $0 $0) $0))
+(let g (App (Lam (V $0) (V $0)) (V $0)))
 
 (run 10)
 
 ;; the slot is redundant twice over: in `lam`, from the union, and in `g`, because
 ;; the rule fired once per slot `a` could have been at
 (let slot_0_1 $0)
-(check (free-names-are (Lam slot_0_1 slot_0_1)))
+(check (free-names-are (Lam (V slot_0_1) (V slot_0_1))))
 (check (free-names-are g))
 
 ;; so every invocation of the answer is the same invocation, whichever slot it names
-(check (= g (GG slot_0_1)))
+(check (= g (GG (V slot_0_1))))
 (let slot_1_1 $1)
-(check (= g (GG slot_1_1)))
+(check (= g (GG (V slot_1_1))))
 (check (__internal-holds g GG))
 
 (pop)

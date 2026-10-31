@@ -22,7 +22,6 @@ use std::sync::Arc;
 #[derive(Debug)]
 struct SlottedClaim {
     kind: String,
-    sort: String,
     lhs: Expr,
     lhs_root: String,
     rhs: Expr,
@@ -33,7 +32,7 @@ struct SlottedClaim {
 
 impl Display for SlottedClaim {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "({} {} {} {})", self.kind, self.sort, self.lhs, self.rhs)
+        write!(f, "({} {} {})", self.kind, self.lhs, self.rhs)
     }
 }
 
@@ -134,13 +133,6 @@ impl UserDefinedCommand for RecordSource {
             state.names.rules.insert(flat.rule.name.clone(), flat);
         }
         state.sources.push(command);
-        state.names.carriers = state
-            .compiler
-            .language()
-            .carriers
-            .iter()
-            .map(|s| (s.sort.clone(), s.index as i64))
-            .collect();
         Ok(vec![])
     }
 }
@@ -161,7 +153,7 @@ impl Macro<Vec<Command>> for ProveSlotted {
         let bad = || {
             ParseError(
                 span.clone(),
-                "expected (prove-slotted (<kind> <sort> (lhs root) (rhs root) \"slot names\" \"query names\") facts...)"
+                "expected (prove-slotted (<kind> (lhs root) (rhs root) \"slot names\" \"query names\") facts...)"
                     .into(),
             )
         };
@@ -170,7 +162,6 @@ impl Macro<Vec<Command>> for ProveSlotted {
         };
         let [
             Sexp::Atom(kind, _),
-            Sexp::Atom(sort, _),
             Sexp::List(lhs, _),
             Sexp::List(rhs, _),
             names @ ..,
@@ -187,7 +178,6 @@ impl Macro<Vec<Command>> for ProveSlotted {
         let string = |s: &String| Expr::Lit(span.clone(), Literal::String(s.clone()));
         let mut parsed = vec![
             string(kind),
-            string(sort),
             datum(lhs),
             string(lhs_root),
             datum(rhs),
@@ -223,7 +213,6 @@ impl UserDefinedCommand for ProveSlotted {
     fn update(&self, graph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
         let [
             Expr::Lit(_, Literal::String(kind)),
-            Expr::Lit(_, Literal::String(sort)),
             lhs,
             Expr::Lit(_, Literal::String(lhs_root)),
             rhs,
@@ -237,7 +226,6 @@ impl UserDefinedCommand for ProveSlotted {
         };
         let claim = SlottedClaim {
             kind: kind.clone(),
-            sort: sort.clone(),
             lhs: crate::slotted::syntax::source_expr(&source_datum(lhs)?)
                 .map_err(Error::ParseError)?,
             rhs: crate::slotted::syntax::source_expr(&source_datum(rhs)?)
@@ -276,23 +264,10 @@ impl UserDefinedCommand for ProveSlotted {
     }
 }
 
-/// The carrier identities and generated rule bindings used by reconstruction.
+/// The generated rule bindings used by reconstruction.
 #[derive(Clone, Debug, Default)]
 pub(super) struct EncodingNames {
-    /// Surface sort name -> carrier index.
-    pub carriers: HashMap<String, i64>,
     pub rules: HashMap<String, FlatRewrite>,
-}
-
-impl EncodingNames {
-    /// Is this the variable constructor of a registered carrier? A user
-    /// constructor that happens to be spelled `SlottedVar_7` is not one unless
-    /// carrier 7 exists.
-    pub(super) fn is_var_constructor(&self, head: &str) -> bool {
-        head.strip_prefix("SlottedVar_")
-            .and_then(|n| n.parse::<i64>().ok())
-            .is_some_and(|n| self.carriers.values().any(|&i| i == n))
-    }
 }
 
 #[derive(Clone, Default)]
@@ -332,18 +307,8 @@ impl SlottedProofState {
                     flattened.lets.insert(name.clone(), term);
                 }
                 Command::Action(GenericAction::Union(_, a, b)) => {
-                    let lhs = program.ground_term(&mut dag, a)?;
-                    let rhs = program.ground_term(&mut dag, b)?;
-                    let sort = program
-                        .sort_of(&dag, lhs)
-                        .or_else(|| program.sort_of(&dag, rhs))
-                        .or_else(|| {
-                            (program.sorts.len() == 1)
-                                .then(|| program.sorts.first().unwrap().clone())
-                        })
-                        .ok_or_else(|| SourceError("union has no carrier sort".into()))?;
-                    program.add_union_expr(&mut dag, a, b, &sort)?;
-                    flattened.add_union_expr(&mut dag, a, b, &sort)?;
+                    program.add_union_expr(&mut dag, a, b)?;
+                    flattened.add_union_expr(&mut dag, a, b)?;
                     let union = flattened.unions.last().unwrap().clone();
                     let lhs = flattened.refresh_binders(&mut dag, union.lhs);
                     let rhs = flattened.refresh_binders(&mut dag, union.rhs);
@@ -401,7 +366,7 @@ impl SlottedProofState {
         }
         // The globals were parsed before assigning query-local slot witnesses.
         let source = query_program
-            .claim_expr(&mut dag, &claim.kind, &claim.sort, &claim.lhs, &claim.rhs)
+            .claim_expr(&mut dag, &claim.kind, &claim.lhs, &claim.rhs)
             .map_err(|e| format!("claim {claim}: {e}"))?;
         log::debug!(
             "egglog proof of claim {claim}:\n{}",

@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHILD = object()
 BINDER = object()
-SLOTTED = (CHILD, BINDER)
+SLOT = object()
+SLOTTED = (CHILD, BINDER, SLOT)
 SUBST = "subst"
 TOKEN = re.compile(r'\(|\)|"(?:\\.|[^"\\])*"|;[^\n]*|[^\s()]+')
 SLOT_LITERAL = re.compile(r"\$(?:[+-]?\d+|\w+)\Z")
@@ -37,10 +38,10 @@ class CarrierSymbols:
     reading: str
 
     @classmethod
-    def create(cls, sort, index):
+    def create(cls, sort, index, var):
         return cls(
             sort,
-            f"SlottedVar_{index}",
+            var,
             f"RenamesToLeader_{index}",
             f"Equated_{index}",
             f"FreeVars_{index}",
@@ -55,9 +56,9 @@ class CarrierSymbols:
         )
 
 
-def carrier_symbols(sorts):
+def carrier_symbols(sorts, variables):
     """The table names for one declared equality sort, in declaration order."""
-    return {sort: CarrierSymbols.create(sort, i) for i, sort in enumerate(tuple(sorts))}
+    return {sort: CarrierSymbols.create(sort, i, variables[sort]) for i, sort in enumerate(tuple(sorts))}
 
 
 def read_language(path, sorts=("U",)):
@@ -88,7 +89,7 @@ def constructor_options(name, tokens):
 
 def signature(cols, binders, sorts=("U",), name="constructor"):
     """Columns and the binding child positions as the encoder's signature."""
-    child_count = sum(col in sorts for col in cols)
+    child_count = sum(col in (*sorts, "Var") for col in cols)
     if len(set(binders)) != len(binders):
         raise SystemExit(f"constructor {name}: duplicate `:binder` position")
     if any(pos < 0 or pos >= child_count for pos in binders):
@@ -102,8 +103,17 @@ def signature(cols, binders, sorts=("U",), name="constructor"):
 
     sig, seen_kids = [], 0
     for col in cols:
-        if col in sorts:
-            sig.append(BINDER if seen_kids in binders else CHILD)
+        if col in (*sorts, "Var"):
+            if seen_kids in binders:
+                if col != "Var":
+                    raise SystemExit(f"constructor {name}: binder columns must have sort Var")
+                sig.append(BINDER)
+            elif col == "Var":
+                if cols != ["Var"]:
+                    raise SystemExit(f"constructor {name}: unbound Var is only valid in a unary variable constructor")
+                sig.append(SLOT)
+            else:
+                sig.append(CHILD)
             seen_kids += 1
         else:
             sig.append(col)
@@ -119,7 +129,7 @@ def read_typed_language_form(form, sorts=("U",)):
             f"constructor {name}: output sort {output!r} is not one of the declared equality sorts ({', '.join(sorts)})"
         )
     sig = signature(cols, constructor_options(name, form[4:]), sorts, name)
-    return name, sig, output, tuple(col for col in cols if col in sorts)
+    return name, sig, output, tuple(col for col in cols if col in (*sorts, "Var"))
 
 
 def read_correspondence(path):
@@ -161,7 +171,7 @@ def cols_of(sig):
             e, k = f"m{len(kids) + 1}", f"c{len(kids) + 1}"
             edges.append(e)
             kids.append(k)
-            order.append((e, k))
+            order.append((e, k) if col is CHILD else (e,))
         else:
             p = f"p{len(payloads) + 1}"
             payloads.append(p)
@@ -174,9 +184,11 @@ def pattern(name, sig, edges=None, kids=None, payloads=None):
     dp, de, dk, order = cols_of(sig)
     payloads, edges, kids = payloads or dp, edges or de, kids or dk
     out, pi, ci = [], 0, 0
-    for slot in order:
-        if len(slot) == 2:
-            out += [edges[ci], kids[ci]]
+    for col in sig:
+        if col in SLOTTED:
+            out.append(edges[ci])
+            if col is CHILD:
+                out.append(kids[ci])
             ci += 1
         else:
             out.append(payloads[pi])
@@ -212,7 +224,11 @@ class Op:
         self.ctor = ctor
         self.sig = list(sig)
         self.sort = sort
-        self.kid_sorts = list(kid_sorts) if kid_sorts is not None else [sort] * sum(c in SLOTTED for c in self.sig)
+        self.kid_sorts = (
+            list(kid_sorts)
+            if kid_sorts is not None
+            else [sort if c is CHILD else "Var" for c in self.sig if c in SLOTTED]
+        )
         assert len(self.kid_sorts) == sum(c in SLOTTED for c in self.sig), (
             f"{ctor}: {len(self.kid_sorts)} child sort(s) for {sum(c in SLOTTED for c in self.sig)} slotted column(s)"
         )
@@ -281,9 +297,10 @@ class TermLang:
         declared = []
         for op in self.ops.values():
             for sort in (op.sort, *op.kid_sorts):
-                if sort not in declared:
+                if sort != "Var" and sort not in declared:
                     declared.append(sort)
-        self.carriers = carriers or carrier_symbols(declared or ("U",))
+        variables = {op.sort: op.ctor for op in self.ops.values() if op.sig == [SLOT]}
+        self.carriers = carriers or carrier_symbols(declared or ("U",), variables)
         self.default_sort = next(iter(self.carriers))
 
     def __getitem__(self, name):
@@ -765,12 +782,22 @@ class Source:
         self.spec, self.output_sorts, self.child_sorts = {}, {}, {}
         self.body, self.sorts, self._ctors, self.includes = [], [], [], []
         self._read(path, text=text)
-        self.carriers = carrier_symbols(self.sorts)
+        if "Var" in self.sorts:
+            raise SystemExit("Var is the built-in sort of rigid slot names")
+        variables = {}
         for form in self._ctors:
             name, sig, output, children = read_typed_language_form(form, self.sorts)
             self.spec[name] = sig
             self.output_sorts[name] = output
             self.child_sorts[name] = children
+            if sig == [SLOT]:
+                if output in variables:
+                    raise SystemExit(f"{output}: exactly one unary variable constructor is required")
+                variables[output] = name
+        for sort in self.sorts:
+            if sort not in variables:
+                raise SystemExit(f"{sort}: exactly one unary variable constructor is required")
+        self.carriers = carrier_symbols(self.sorts, variables)
         self.lang = Terms(
             {c: Op(c, sig, sort=self.output_sorts[c], kid_sorts=self.child_sorts[c]) for c, sig in self.spec.items()},
             self.carriers,
@@ -830,6 +857,8 @@ class Source:
         """Read a fixture term for reference translation, without lowering it."""
         if isinstance(form, str):
             if SLOT_LITERAL.fullmatch(form):
+                if column not in (BINDER, SLOT):
+                    raise ValueError("a raw Var name requires an explicit variable constructor in a term position")
                 if not ground:
                     return form
                 slot = self.slots.intern(form)
@@ -843,8 +872,18 @@ class Source:
             raise ValueError(f"{self.path.name}: unbound fixture term {form!r}")
         head, *args = form
         if head == SUBST:
-            return (head, *(self.term(a, ground=ground) for a in args))
+            body, slot, replacement = args
+            return (
+                head,
+                self.term(body, ground=ground),
+                self.term(slot, BINDER, ground),
+                self.term(replacement, ground=ground),
+            )
         op = self.lang[head]
+        if op.sig == [SLOT]:
+            if len(args) != 1:
+                raise ValueError(f"{head}: a variable constructor takes exactly one Var name")
+            return self.term(args[0], SLOT, ground)
         return (
             head,
             *(

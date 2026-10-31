@@ -4,27 +4,35 @@ use crate::slotted::proofs::source::{ColumnKind, SlottedProgram};
 use crate::slotted::proofs::terms::slot_term;
 use egglog::ast::Literal;
 use egglog::proof::{Justification, Proposition};
-use egglog::{Term, TermDag};
+use egglog::{Term, TermDag, TermId};
+
+fn variable(dag: &mut TermDag, name: i64) -> TermId {
+    let slot = slot_term(dag, name);
+    dag.app("V".into(), vec![slot])
+}
 
 #[test]
 fn ordinary_guard_normal_form_requires_nested_operand_evidence() {
     for local in ["x", "@slotted-proof-v"] {
         let mut dag = TermDag::default();
         let mut program = SlottedProgram::default();
+        program.add_constructor("V", vec![ColumnKind::Var]);
         program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
         program.add_constructor("F", vec![ColumnKind::Child]);
         program.add_constructor("G", vec![ColumnKind::Child]);
         program.add_constructor("Hit", vec![]);
-        program.add_let(&mut dag, "input", "(Pair $0 $1)").unwrap();
         program
-            .add_union(&mut dag, "(F $1)", "(G $1)", "U")
+            .add_let(&mut dag, "input", "(Pair (V $0) (V $1))")
             .unwrap();
         program
-            .add_rewrite(&mut dag, &format!(r#"(rewrite (Pair $s {local}) (Hit) :when ((not-free $s (F {local}))) :name "r")"#))
+            .add_union(&mut dag, "(F (V $1))", "(G (V $1))")
+            .unwrap();
+        program
+            .add_rewrite(&mut dag, &format!(r#"(rewrite (Pair (V $s) {local}) (Hit) :when ((not-free $s (F {local}))) :name "r")"#))
             .unwrap();
         let input = program.lets["input"];
         let a = slot_term(&mut dag, 0);
-        let b = slot_term(&mut dag, 1);
+        let b = variable(&mut dag, 1);
         let hit = dag.app("Hit".into(), vec![]);
         let unit = dag.lit(Literal::Unit);
         let mut store = SlottedProofStore::new(dag);
@@ -58,6 +66,7 @@ fn ordinary_guard_normal_form_requires_nested_operand_evidence() {
 fn guard_captures_are_independent_of_a_constructor_with_the_same_name() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor(
         "free",
         vec![ColumnKind::Payload("i64".into()), ColumnKind::Child],
@@ -65,7 +74,9 @@ fn guard_captures_are_independent_of_a_constructor_with_the_same_name() {
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     program.add_constructor("Hit", vec![]);
     program.add_let(&mut dag, "n", "$0").unwrap();
-    program.add_let(&mut dag, "input", "(Pair $1 $2)").unwrap();
+    program
+        .add_let(&mut dag, "input", "(Pair (V $1) (V $2))")
+        .unwrap();
     program
         .add_rewrite(
             &mut dag,
@@ -73,8 +84,8 @@ fn guard_captures_are_independent_of_a_constructor_with_the_same_name() {
         )
         .unwrap();
     let input = program.lets["input"];
-    let one = slot_term(&mut dag, 1);
-    let two = slot_term(&mut dag, 2);
+    let one = variable(&mut dag, 1);
+    let two = variable(&mut dag, 2);
     let hit = dag.app("Hit".into(), vec![]);
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(input, input);
@@ -111,14 +122,15 @@ fn guard_captures_are_independent_of_a_constructor_with_the_same_name() {
 fn renaming_guard_checks_an_equality_witness() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("G", vec![ColumnKind::Child]);
     program.add_constructor("Hit", vec![]);
-    program.add_let(&mut dag, "a", "(F $0)").unwrap();
-    program.add_let(&mut dag, "b", "(G $1)").unwrap();
+    program.add_let(&mut dag, "a", "(F (V $0))").unwrap();
+    program.add_let(&mut dag, "b", "(G (V $1))").unwrap();
     program.add_let(&mut dag, "input", "(Pair a b)").unwrap();
-    program.add_union(&mut dag, "a", "(G $0)", "U").unwrap();
+    program.add_union(&mut dag, "a", "(G (V $0))").unwrap();
     for predicate in ["=", "renaming-=", "renaming-!="] {
         program
             .add_rewrite(
@@ -195,11 +207,12 @@ fn renaming_guard_checks_an_equality_witness() {
 fn renaming_disequality_rejects_different_spellings_of_the_same_term() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("Hit", vec![]);
     program
-        .add_let(&mut dag, "input", "(Pair (F $0) (F $1))")
+        .add_let(&mut dag, "input", "(Pair (F (V $0)) (F (V $1)))")
         .unwrap();
     for predicate in ["!=", "renaming-!="] {
         program
@@ -239,8 +252,11 @@ fn renaming_disequality_rejects_different_spellings_of_the_same_term() {
 fn free_name_guards_check_the_instantiated_terms() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child; 3]);
-    program.add_let(&mut dag, "input", "(F $0 $1 $0)").unwrap();
+    program
+        .add_let(&mut dag, "input", "(F (V $0) (V $1) (V $0))")
+        .unwrap();
     let cases = [
         ("free $s x y", true),
         ("not-free $s x y", false),
@@ -252,25 +268,30 @@ fn free_name_guards_check_the_instantiated_terms() {
         program
             .add_rewrite(
                 &mut dag,
-                &format!("(rewrite (F $s x y) y :name \"guard{i}\" :when (({condition})))"),
+                &format!("(rewrite (F (V $s) x y) y :name \"guard{i}\" :when (({condition})))"),
             )
             .unwrap();
     }
     let mut store = SlottedProofStore::new(dag);
     let input = program.lets["input"];
     let zero = slot_term(&mut store.term_dag, 0);
-    let one = slot_term(&mut store.term_dag, 1);
+    let one = variable(&mut store.term_dag, 1);
+    let zero_term = variable(&mut store.term_dag, 0);
     let root = store.fiat(input, input);
     let unit = store.term_dag.lit(Literal::Unit);
     let guard = store.fiat(unit, unit);
     for (i, (condition, valid)) in cases.iter().enumerate() {
         let proof = store.ordinary(
-            Proposition::new(input, zero),
+            Proposition::new(input, zero_term),
             Justification::Rule {
                 name: format!("guard{i}"),
-                substitution: vec![("$s".into(), zero), ("x".into(), one), ("y".into(), zero)]
-                    .into_iter()
-                    .collect(),
+                substitution: vec![
+                    ("$s".into(), zero),
+                    ("x".into(), one),
+                    ("y".into(), zero_term),
+                ]
+                .into_iter()
+                .collect(),
                 premise_proofs: vec![root, guard],
             },
         );
@@ -285,13 +306,26 @@ fn free_name_guards_check_the_instantiated_terms() {
 #[test]
 fn renaming_guards_preserve_binding_scopes_and_injectivity() {
     for (representative, candidate, valid) in [
-        ("(Lam $0 (Pair $0 $1))", "(Lam $2 (Pair $2 $3))", true),
-        ("(Lam $0 (Pair $0 $1))", "(Lam $2 (Pair $2 $2))", false),
-        ("(Pair $0 $1)", "(Pair $2 $2)", false),
-        ("(Lam $0 (Lam $0 $0))", "(Lam $1 (Lam $2 $1))", false),
+        (
+            "(Lam $0 (Pair (V $0) (V $1)))",
+            "(Lam $2 (Pair (V $2) (V $3)))",
+            true,
+        ),
+        (
+            "(Lam $0 (Pair (V $0) (V $1)))",
+            "(Lam $2 (Pair (V $2) (V $2)))",
+            false,
+        ),
+        ("(Pair (V $0) (V $1))", "(Pair (V $2) (V $2))", false),
+        (
+            "(Lam $0 (Lam $0 (V $0)))",
+            "(Lam $1 (Lam $2 (V $1)))",
+            false,
+        ),
     ] {
         let mut dag = TermDag::default();
         let mut program = SlottedProgram::default();
+        program.add_constructor("V", vec![ColumnKind::Var]);
         program.add_constructor("A", vec![]);
         program.add_constructor("Hit", vec![]);
         program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
@@ -299,9 +333,7 @@ fn renaming_guards_preserve_binding_scopes_and_injectivity() {
         program.add_let(&mut dag, "a", "(A)").unwrap();
         program.add_let(&mut dag, "b", candidate).unwrap();
         program.add_let(&mut dag, "input", "(Pair a b)").unwrap();
-        program
-            .add_union(&mut dag, "a", representative, "U")
-            .unwrap();
+        program.add_union(&mut dag, "a", representative).unwrap();
         program
             .add_rewrite(
                 &mut dag,
@@ -336,13 +368,14 @@ fn renaming_guards_preserve_binding_scopes_and_injectivity() {
 fn renaming_premises_require_a_renaming_condition() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
-    program.add_let(&mut dag, "input", "(F $0)").unwrap();
+    program.add_let(&mut dag, "input", "(F (V $0))").unwrap();
     program
         .add_rewrite(&mut dag, r#"(rewrite (F x) x :when ((= x x)) :name "r")"#)
         .unwrap();
     let input = program.lets["input"];
-    let slot = slot_term(&mut dag, 0);
+    let slot = variable(&mut dag, 0);
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(input, input);
     let refl = store.fiat(slot, slot);
@@ -405,6 +438,7 @@ fn guard_representatives_preserve_captured_operands_and_later_binder_declaration
     ] {
         let mut dag = TermDag::default();
         let mut program = SlottedProgram::default();
+        program.add_constructor("V", vec![ColumnKind::Var]);
         program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
         for name in ["A", "B", "Hit"] {
             program.add_constructor(name, vec![]);
@@ -426,10 +460,10 @@ fn guard_representatives_preserve_captured_operands_and_later_binder_declaration
         // The left term reuses $0 as a bound and a free name. Treating Lam as
         // an ordinary constructor would reject this valid renaming.
         program
-            .add_union(&mut dag, "fixed", "(Pair (Lam $0 $0) $0)", "U")
+            .add_union(&mut dag, "fixed", "(Pair (Lam $0 (V $0)) (V $0))")
             .unwrap();
         program
-            .add_union(&mut dag, "other", "(Pair (Lam $2 $2) $3)", "U")
+            .add_union(&mut dag, "other", "(Pair (Lam $2 (V $2)) (V $3))")
             .unwrap();
         let (a, b, input) = (
             program.lets["fixed"],
@@ -457,13 +491,18 @@ fn guard_representatives_preserve_captured_operands_and_later_binder_declaration
 }
 
 #[test]
-fn guard_operand_equalities_keep_their_carrier_sort() {
-    for (sort, valid) in [("U", true), ("V", false)] {
+fn guard_operand_equalities_have_the_declared_operand_type() {
+    for valid in [true, false] {
         let mut dag = TermDag::default();
         let mut program = SlottedProgram::default();
+        program.add_constructor("V", vec![ColumnKind::Var]);
         program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
-        program.add_let(&mut dag, "input", "(Pair $0 $1)").unwrap();
-        program.add_union(&mut dag, "$0", "$1", sort).unwrap();
+        program.add_sorted_constructor("OtherVar", "Other", vec![ColumnKind::Var]);
+        program
+            .add_let(&mut dag, "input", "(Pair (V $0) (V $1))")
+            .unwrap();
+        program.add_union(&mut dag, "(V $0)", "(V $1)").unwrap();
+        program.add_let(&mut dag, "other", "(OtherVar $1)").unwrap();
         program
             .add_rewrite(
                 &mut dag,
@@ -471,12 +510,13 @@ fn guard_operand_equalities_keep_their_carrier_sort() {
             )
             .unwrap();
         let input = program.lets["input"];
-        let a = slot_term(&mut dag, 0);
-        let b = slot_term(&mut dag, 1);
+        let a = variable(&mut dag, 0);
+        let b = variable(&mut dag, 1);
         let mut store = SlottedProofStore::new(dag);
         let root = store.fiat(input, input);
         let left = store.fiat(a, b);
-        let right = store.fiat(b, b);
+        let right_term = if valid { b } else { program.lets["other"] };
+        let right = store.fiat(right_term, right_term);
         let guard = RulePremise::RenamingEq { left, right };
         let proof = store.rule(
             Proposition::new(input, a),
@@ -484,10 +524,6 @@ fn guard_operand_equalities_keep_their_carrier_sort() {
             [("x".into(), a), ("y".into(), b)].into_iter().collect(),
             vec![RulePremise::Equality(root), guard],
         );
-        assert_eq!(
-            check_proof(&mut store, &program, proof).is_ok(),
-            valid,
-            "{sort}"
-        );
+        assert_eq!(check_proof(&mut store, &program, proof).is_ok(), valid);
     }
 }

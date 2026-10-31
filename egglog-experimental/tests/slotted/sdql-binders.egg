@@ -2,7 +2,7 @@
 ;;;
 ;;; Written in the SLOTTED language and compiled by
 ;;; `egglog-experimental --slotted`, so nothing below mentions a renaming, an
-;;; edge or `(Var 0)`: those are the encoding, and the point of a test at this level is
+;;; edge or rigid singleton map: those are the encoding, and the point of a test at this level is
 ;;; that it reads the way the paper does.
 ;;;
 ;;; `Sum(AppliedId, Bind<Bind<AppliedId>>)` in the reference is four slotted children of
@@ -10,11 +10,12 @@
 ;;; taken out of the class's slot set, so renaming either is invisible from outside.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor Sing (U U) U)
-(constructor Sum (U U U U) U :binder 1 2)
-(constructor Merge (U U U U U U) U :binder 2 3 4)
-(constructor Let (U U U) U :binder 1)
+(constructor Sum (U Var Var U) U :binder 1 2)
+(constructor Merge (U U Var Var Var U) U :binder 2 3 4)
+(constructor Let (U Var U) U :binder 1)
 (constructor Null () U)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -40,8 +41,8 @@
 (push)
 
 (let r (Sing (Null) (Null)))
-(let kv (Sum r $5 $6 (Sing $5 $6)))
-(let vk (Sum r $5 $6 (Sing $6 $5)))
+(let kv (Sum r $5 $6 (Sing (V $5) (V $6))))
+(let vk (Sum r $5 $6 (Sing (V $6) (V $5))))
 (run 0)
 
 (check (!= kv vk))
@@ -61,8 +62,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let first (Sum (Null) $5 $6 $5))
-(let second (Sum (Null) $5 $6 $6))
+(let first (Sum (Null) $5 $6 (V $5)))
+(let second (Sum (Null) $5 $6 (V $6)))
 (run 0)
 
 (check (!= first second))
@@ -80,9 +81,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let shadowed (Sum (Null) $5 $5 $5))
-(let inner (Sum (Null) $6 $7 $7))
-(let outer (Sum (Null) $6 $7 $6))
+(let shadowed (Sum (Null) $5 $5 (V $5)))
+(let inner (Sum (Null) $6 $7 (V $7)))
+(let outer (Sum (Null) $6 $7 (V $6)))
 (run 0)
 
 (check (= shadowed inner))
@@ -90,9 +91,9 @@
 (check (free-names-are shadowed))
 
 ;; and the same nesting law extends to all three of Merge's binders
-(let merge-shadowed (Merge (Null) (Null) $5 $5 $5 $5))
-(let merge-inner (Merge (Null) (Null) $6 $7 $8 $8))
-(let merge-outer (Merge (Null) (Null) $6 $7 $8 $6))
+(let merge-shadowed (Merge (Null) (Null) $5 $5 $5 (V $5)))
+(let merge-inner (Merge (Null) (Null) $6 $7 $8 (V $8)))
+(let merge-outer (Merge (Null) (Null) $6 $7 $8 (V $6)))
 (run 0)
 (check (= merge-shadowed merge-inner))
 (check (!= merge-shadowed merge-outer))
@@ -108,7 +109,7 @@
 (rewrite (Sum (Null) $x $x body)
          (Null)
          :name "shadowed-binders-pattern")
-(let matched (Sum (Null) $6 $7 $7))
+(let matched (Sum (Null) $6 $7 (V $7)))
 (run 1)
 (check (= matched (Null)))
 
@@ -117,10 +118,10 @@
 (push)
 
 (rewrite (Sing (Null) (Null))
-         (Sum (Null) $x $x $x)
+         (Sum (Null) $x $x (V $x))
          :name "shadowed-binders-rhs")
 (let seed (Sing (Null) (Null)))
-(let built (Sum (Null) $6 $7 $7))
+(let built (Sum (Null) $6 $7 (V $7)))
 (run 1)
 (check (= seed built))
 
@@ -136,12 +137,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(rewrite (Sing $__shadow0 (Null))
-         (Sum (Null) $x $x $__shadow0)
+(rewrite (Sing (V $__shadow0) (Null))
+         (Sum (Null) $x $x (V $__shadow0))
          :name "shadow-refresh-avoids-free-slot")
-(let seed (Sing $9 (Null)))
-(let free (Sum (Null) $5 $6 $9))
-(let captured (Sum (Null) $5 $6 $5))
+(let seed (Sing (V $9) (Null)))
+(let free (Sum (Null) $5 $6 (V $9)))
+(let captured (Sum (Null) $5 $6 (V $5)))
 (run 1)
 
 (check (= seed free))
@@ -157,7 +158,7 @@
 (push)
 
 (let r (Sing (Null) (Null)))
-(let free (Sum r $5 $6 (Sing $5 $9)))
+(let free (Sum r $5 $6 (Sing (V $5) (V $9))))
 (run 0)
 
 ;; $9 is neither bound slot, so the class depends on it and on nothing else
@@ -176,10 +177,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(rewrite (Let $free $bound $bound)
+(rewrite (Let (V $free) $bound (V $bound))
          (Null)
          :name "binder-free-distinct-spellings")
-(let distinct-spellings (Let $2 $1 $1))
+(let distinct-spellings (Let (V $2) $1 (V $1)))
 (run 1)
 (check (= distinct-spellings (Null)))
 
@@ -194,10 +195,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(rewrite (Let $x $x $x)
+(rewrite (Let (V $x) $x (V $x))
          (Null)
          :name "binder-free-same-spelling-known-limit")
-(let same-spelling (Let $2 $1 $1))
+(let same-spelling (Let (V $2) $1 (V $1)))
 (run 1)
 (fail (check (= same-spelling (Null))))
 

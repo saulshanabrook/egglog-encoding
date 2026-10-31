@@ -35,7 +35,7 @@ fn run(source: &str) -> EGraph {
 #[test]
 fn native_export_preserves_rows_types_and_binders() {
     let graph = run(
-        "(sort U) (constructor F (U U) U) (constructor Lam (U U) U :binder 0) (let a (Lam $x (F $x $y))) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor F (U U) U) (constructor Lam (Var U) U :binder 0) (let a (Lam $x (F (V $x) (V $y)))) (run 0)",
     );
     let exported = export(&graph).unwrap();
     assert_eq!((exported.counts.classes, exported.counts.nodes), (3, 3));
@@ -65,7 +65,7 @@ fn native_export_preserves_rows_types_and_binders() {
 #[test]
 fn export_checks_actual_groups_and_does_not_run_maintenance() {
     let mut graph = run(
-        "(sort U) (constructor F (U U) U) (let a (F $0 $1)) (union (F $0 $1) (F $1 $0)) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor F (U U) U) (let a (F (V $0) (V $1))) (union (F (V $0) (V $1)) (F (V $1) (V $0))) (run 0)",
     );
     let good = export(&graph).unwrap();
     assert_eq!(
@@ -80,7 +80,7 @@ fn export_checks_actual_groups_and_does_not_run_maintenance() {
         Some(2)
     );
     graph
-        .parse_and_run_program(None, "(delete (FreeVars_0 (SlottedVar_0 0)))")
+        .parse_and_run_program(None, "(delete (FreeVars_0 (V (map-of 0 0))))")
         .unwrap();
     assert!(export(&graph).unwrap_err().contains("FreeVars"));
 }
@@ -88,11 +88,11 @@ fn export_checks_actual_groups_and_does_not_run_maintenance() {
 #[test]
 fn export_supports_multiple_carriers_and_escaped_payloads() {
     let graph = run(
-        "(sort A) (sort B) (constructor Num (i64) A) (constructor Text (String) B) (let a (Num 1)) (let b (Text \"a\\\"b\")) (run 0)",
+        "(sort A) (sort B) (constructor VA (Var) A) (constructor VB (Var) B) (constructor Num (i64) A) (constructor Text (String) B) (let a (Num 1)) (let b (Text \"a\\\"b\")) (run 0)",
     );
     let exported = export(&graph).unwrap();
-    assert_eq!(exported.counts.nodes, 4);
-    assert_eq!(exported.counts.classes, 4);
+    assert_eq!(exported.counts.nodes, 2);
+    assert_eq!(exported.counts.classes, 2);
     assert!(
         exported
             .graph
@@ -104,25 +104,19 @@ fn export_supports_multiple_carriers_and_escaped_payloads() {
 }
 
 #[test]
-fn export_requires_one_variable_for_every_carrier() {
-    let mut graph = run("(datatype* (Expr) (Value (Num i64))) (let n (Num 7)) (run 0)");
-    let exported = export(&graph).unwrap();
-    assert_eq!((exported.counts.classes, exported.counts.nodes), (3, 3));
-    assert_eq!(graph.get_size("SlottedVar_0"), 1);
-    assert_eq!(graph.get_size("SlottedVar_1"), 1);
+fn export_requires_variable_metadata_for_every_carrier() {
+    let mut graph =
+        run("(datatype* (Expr (VE Var)) (Value (VV Var) (Num i64))) (let n (Num 7)) (run 0)");
+    export(&graph).unwrap();
     graph
-        .parse_and_run_program(None, "(delete (SlottedVar_1 0))")
+        .parse_and_run_program(None, "(delete (SlottedSlotLayout \"VV\" 0))")
         .unwrap();
-    assert!(
-        export(&graph)
-            .unwrap_err()
-            .contains("expected one raw variable row")
-    );
+    assert!(export(&graph).is_err());
 }
 
 #[test]
 fn export_preserves_sort_names() {
-    let graph = run(r"(datatype Expr\Name (F Expr\Name)) (let a (F $x)) (run 0)");
+    let graph = run(r"(datatype Expr\Name (V Var) (F Expr\Name)) (let a (F (V $x))) (run 0)");
     let exported = export(&graph).unwrap();
     assert_eq!(exported.counts.nodes, 2);
     assert!(
@@ -138,7 +132,7 @@ fn export_preserves_sort_names() {
 #[test]
 fn raw_edges_are_checked_before_projection() {
     let graph = run(
-        "(sort U) (constructor Null () U) (constructor F (U U) U) (constructor Lam (U U) U :binder 0) (let a (Lam $a (F $a (Null)))) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor Null () U) (constructor F (U U) U) (constructor Lam (Var U) U :binder 0) (let a (Lam $a (F (V $a) (Null)))) (run 0)",
     );
     let original = snapshot(&graph);
     document(&original).unwrap();
@@ -154,7 +148,7 @@ fn raw_edges_are_checked_before_projection() {
     bad.rows[binder].edges[0].map.insert(17, 18);
     mutants.push(("extra binder domain", bad));
     let mut bad = original.clone();
-    bad.rows[binder].edges[0].class = null;
+    bad.rows[binder].edges[0].class = Some(null);
     mutants.push(("wrong binder class", bad));
     let mut bad = original.clone();
     bad.rows.iter_mut().find(|r| r.label == "F").unwrap().edges[1]
@@ -179,11 +173,10 @@ fn raw_edges_are_checked_before_projection() {
 
 #[test]
 fn native_reads_reject_invalid_variables_renamings_and_metadata() {
-    let source =
-        "(sort U) (constructor Null () U) (constructor F (U U) U) (let a (F $0 (Null))) (run 0)";
+    let source = "(sort U) (constructor V (Var) U) (constructor Null () U) (constructor F (U U) U) (let a (F (V $0) (Null))) (run 0)";
     for mutation in [
-        "(SlottedVar_0 1)",
-        "(F (map-of 0 2 1 2) (SlottedVar_0 0) (map-empty) (Null))",
+        "(V (map-of 1 1))",
+        "(F (map-of 0 2 1 2) (V (map-of 0 0)) (map-empty) (Null))",
         "(delete (SlottedEdgeLayout \"F\" 0))",
         "(delete (SlottedNodeLayout \"Null\" 0))",
         "(set (SlottedNodeLayout \"F\" 99) ())",
@@ -196,13 +189,15 @@ fn native_reads_reject_invalid_variables_renamings_and_metadata() {
     // An identity map and a nonidentity FreeVars map can share the same keys;
     // replace the row instead of invoking its intersection merge.
     let mut graph = run(source);
-    graph.parse_and_run_program(None, "(delete (FreeVars_0 (SlottedVar_0 0))) (set (FreeVars_0 (SlottedVar_0 0)) (map-of 0 1))").unwrap();
+    graph.parse_and_run_program(None, "(delete (FreeVars_0 (V (map-of 0 0)))) (set (FreeVars_0 (V (map-of 0 0))) (map-of 0 1))").unwrap();
     assert!(export(&graph).unwrap_err().contains("identity"));
 }
 
 #[test]
 fn partial_and_inconsistent_leader_frames_are_rejected() {
-    let graph = run("(sort U) (constructor F (U U) U) (let a (F $1 $2)) (let b (F $3 $4)) (run 0)");
+    let graph = run(
+        "(sort U) (constructor V (Var) U) (constructor F (U U) U) (let a (F (V $1) (V $2))) (let b (F (V $3) (V $4))) (run 0)",
+    );
     let original = snapshot(&graph);
     document(&original).unwrap();
     let link = original
@@ -247,7 +242,7 @@ fn partial_and_inconsistent_leader_frames_are_rejected() {
 #[test]
 fn groups_are_complete_recorded_values_not_repaired_from_leader_links() {
     let graph = run(
-        "(sort U) (constructor G (U U) U) (let a (G (G $0 $1) $2)) (union (G (G $0 $1) $2) (G (G $1 $2) $0)) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor G (U U) U) (let a (G (G (V $0) (V $1)) (V $2))) (union (G (G (V $0) (V $1)) (V $2)) (G (G (V $1) (V $2)) (V $0))) (run 0)",
     );
     let original = snapshot(&graph);
     document(&original).unwrap();
@@ -282,7 +277,7 @@ fn groups_are_complete_recorded_values_not_repaired_from_leader_links() {
 #[test]
 fn export_preserves_unretired_rows_and_empty_classes() {
     let graph = run(
-        "(sort U) (constructor Null () U) (constructor F (U U) U) (let a (F $1 (Null))) (let b (F $2 (Null))) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor Null () U) (constructor F (U U) U) (let a (F (V $1) (Null))) (let b (F (V $2) (Null))) (run 0)",
     );
     let mut snapshot = snapshot(&graph);
     let before = document(&snapshot).unwrap();
@@ -322,17 +317,22 @@ fn export_preserves_unretired_rows_and_empty_classes() {
 #[test]
 fn frame_traversal_handles_both_directions_and_out_of_order_links() {
     let graph = run(
-        "(sort U) (constructor Seed (i64) U) (let a (Seed 1)) (let b (Seed 2)) (let c (Seed 3)) (run 0)",
+        "(sort U) (constructor V (Var) U) (constructor Seed (i64) U) (let variable (V $0)) (let a (Seed 1)) (let b (Seed 2)) (let c (Seed 3)) (run 0)",
     );
     let values = graph.read(|s| {
         (1..=3i64)
             .map(|i| s.eclass_of("Seed", (i,)).unwrap().unwrap())
             .collect::<Vec<_>>()
     });
-    let variable = snapshot(&graph).variable;
+    let variable = snapshot(&graph)
+        .rows
+        .iter()
+        .find(|r| r.label == "V")
+        .unwrap()
+        .class;
     for reverse in [false, true] {
         let mut snapshot = snapshot(&graph);
-        snapshot.rows.retain(|r| r.variable);
+        snapshot.rows.retain(|r| r.label == "V");
         snapshot.slots = [
             (variable, Map::from([(0, 0)])),
             (values[0], Map::from([(7, 7)])),
@@ -366,4 +366,34 @@ fn frame_traversal_handles_both_directions_and_out_of_order_links() {
         let doc = document(&snapshot).unwrap();
         assert_eq!(Graph::try_from(&doc).unwrap().counts(), (1, 1));
     }
+}
+
+#[test]
+fn rigid_slots_survive_when_variable_applications_lose_support() {
+    let graph = run("(datatype U (Name Var) (Null) (Lam Var U :binder 0))
+         (union (Name $a) (Null))
+         (let body (Lam $b (Name $a))) (run 0)");
+    let exported = export(&graph).unwrap();
+    let slotted = exported.graph.slotted.as_ref().unwrap();
+    for op in ["Name", "Lam"] {
+        let (id, _) = exported
+            .graph
+            .egraph
+            .nodes
+            .iter()
+            .find(|(_, node)| node.op == op)
+            .unwrap();
+        assert!(matches!(
+            slotted.nodes[id].arguments[0],
+            Argument::Slot { .. }
+        ));
+    }
+    assert!(
+        exported
+            .graph
+            .egraph
+            .nodes
+            .values()
+            .all(|node| node.op != "var")
+    );
 }

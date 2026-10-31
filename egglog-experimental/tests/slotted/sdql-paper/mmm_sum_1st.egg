@@ -12,12 +12,21 @@
 (let paper-input
   (Lambda $1000
     (Lambda $1001
-      (Sum $1000 $1002 $1003
-        (Sum $1003 $1004 $1005 (Sum (Get $1001 $1002) $1006 $1007 (Mult $1005 $1007)))))))
+      (Sum
+        (V $1000)
+        $1002
+        $1003
+        (Sum
+          (V $1003)
+          $1004
+          $1005
+          (Sum (Get (V $1001) (V $1002)) $1006 $1007 (Mult (V $1005) (V $1007))))))))
 ;;; Saturate the input alone, for as many iterations as the artifact allowed it.
 (run 30)
 ;;; The target arrives only now; `(run 0)` installs it without running SDQL rules.
 (let paper-target
-  (Lambda $1 (Lambda $2 (Sum $1 $3 $4 (Mult (Sum $4 $5 $6 $6) (Sum (Get $2 $3) $5 $6 $6))))))
+  (Lambda $1
+    (Lambda $2
+      (Sum (V $1) $3 $4 (Mult (Sum (V $4) $5 $6 (V $6)) (Sum (Get (V $2) (V $3)) $5 $6 (V $6)))))))
 (run 0)
 (check (= paper-input paper-target))

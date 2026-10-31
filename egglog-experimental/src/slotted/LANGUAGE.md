@@ -10,7 +10,7 @@ With `--slotted`, the following syntax is added to vanilla egglog:
 
 | Feature | Syntax | Meaning |
 | --- | --- | --- |
-| [Slots](#slots-and-terms) | `$a`, `$a0` | Variable terms in any equality sort; names in queries are local to the query |
+| [Slots](#slots-and-terms) | `$a`, `$a0` | Rigid names of sort `Var`; names in queries are local to the query |
 | [Binders](#binder-columns) | `:binder i ...` | Constructor columns that bind slots in the following term child |
 | [Equality modulo renaming](#equality) | `(renaming-= a b)`, `(renaming-!= a b)` | Equality or inequality allowing renaming of free variables |
 | [Free names](#free-names) | `(free $x a ...)` | `$x` is free in at least one listed term |
@@ -23,10 +23,10 @@ Existing egglog forms have these slotted semantics:
 
 | Form | Behavior in slotted mode |
 | --- | --- |
-| [Sorts and constructors](#sorts-and-constructors) | Every equality sort accepts slots; a constructor's term children must use its result sort |
+| [Sorts and constructors](#sorts-and-constructors) | Every equality sort declares one unary variable constructor; term children must use its result sort |
 | [`let`](#let) | Binds a term or concrete slot; references preserve its free-slot identities |
 | [`union`](#union), [`=` and `!=`](#equality) | Equality respects bound-variable alpha-equivalence and known symmetries while preserving free-variable identities |
-| [`rewrite`](#rewrite) | Pattern slots are rule-local; distinct names match distinct slots, and RHS-only slots are implicitly fresh |
+| [`rewrite`](#rewrite) | Pattern slots are rule-local; distinct names match distinct slots, and RHS-only slot literals are implicitly fresh |
 | [`check`](#check-and-fail) | Facts form an existential query, with the same local slots and matching semantics as rewrite queries |
 | [`extract`](#extract) | Returns a source term with named slots, preserving free names and avoiding capture |
 
@@ -65,8 +65,9 @@ or `--proof-extraction`.
 
 ```text
 (sort Expr)
-(constructor Lam (Expr Expr) Expr :binder 0)
-(constructor Let (Expr Expr Expr) Expr :binder 1)
+(constructor V (Var) Expr)
+(constructor Lam (Var Expr) Expr :binder 0)
+(constructor Let (Expr Var Expr) Expr :binder 1)
 (constructor App (Expr Expr) Expr)
 (constructor Num (i64) Expr)
 ```
@@ -75,50 +76,57 @@ The equivalent datatype declaration is:
 
 ```text
 (datatype Expr
-  (Lam Expr Expr :binder 0)
-  (Let Expr Expr Expr :binder 1)
+  (V Var)
+  (Lam Var Expr :binder 0)
+  (Let Expr Var Expr :binder 1)
   (App Expr Expr)
   (Num i64))
 ```
 
-Every equality sort is a **carrier** for slotted terms and accepts slot
-literals. Several carriers may be declared, including through `datatype*`.
-A constructor's term children must have the same carrier as its result.
+`Var` is a built-in sort of rigid names: distinct names cannot be unioned or
+rewritten equal. Each equality sort, or **carrier**, must declare exactly one
+unary variable constructor, such as `(V Var)`. `(V $a)` is an `Expr` term;
+`$a` itself has sort `Var`. Equating `(V $a)` with `(V $b)` does not equate
+those names or variable terms in another carrier.
+
+Declare the variable constructor together with its carrier, in the same input
+and push/pop scope. Several carriers may be declared, including through
+`datatype*`. A constructor's term children must have the same carrier as its result.
 All patterns in a query must also use one carrier, as must the terms
 in a union or comparison. Cross-carrier operations are rejected.
 
-Constructor columns are either term columns or payload columns. Payloads
+Constructor columns are term children, `Var` names, or payloads. Only the unary
+variable constructor and binder columns may take `Var`. Payloads
 support `i64` and `String` and carry no slots. Container-valued columns and
 constructor options `:cost`, `:unextractable`, and
 `:internal-term-constructor` are unsupported.
 
 ### Binder columns
 
-`:binder` lists zero-based positions among the term columns; payload columns
+`:binder` lists zero-based positions among term and `Var` columns; payload columns
 do not count. Binder positions must be distinct, contiguous, and immediately
 precede the term child they bind. Multiple binder columns act as nested
 binders around that child. Other children remain outside their scope.
 
-A binder argument must be a slot literal of the constructor's carrier.
-Compound terms, globals, and pattern variables are rejected in binder
-positions. In `(Let initializer $x body)`, `$x` binds occurrences in `body`
+Binder columns have sort `Var`. Their arguments are slot literals or globals
+bound to names; compound terms and ordinary pattern variables are rejected.
+In `(Let initializer $x body)`, `$x` binds occurrences in `body`
 and has no scope over `initializer`.
 
 ## Slots and terms
 
 | Form | Meaning |
 | --- | --- |
-| `$a`, `$a0`, `$outer_var` | A variable term, or a binding occurrence in a binder column |
+| `$a`, `$a0`, `$outer_var` | A name of sort `Var`, used in a variable constructor or binder column |
 | `(Ctor arg ...)` | A constructor application; nullary constructors also require parentheses |
 | `name` | A previously declared global, or a pattern variable in a query |
 
 Identifiers retain their spelling: `x` and `?x` are different names.
 
 Slot names contain letters, digits, or underscores; signed 64-bit numeric names
-such as `$0` and `$-1` are also accepted. Every carrier accepts slots without a
-variable declaration, even if it has no user constructors.
-The carrier is inferred from context; a bare slot is ambiguous when several
-carriers are declared and no constructor determines its sort.
+such as `$0` and `$-1` are also accepted. A slot is never implicitly converted
+to a carrier term: write `(V $a)` wherever an `Expr` term is required. Variable
+constructor arguments use slot literals or globals bound to names.
 
 Free slot names have the following meanings:
 
@@ -138,11 +146,11 @@ Binders introduce a scope for their bound occurrences in every context.
 Bound names may change under alpha-equivalence; free names remain significant.
 
 ```slotted
-(datatype Expr (Lam Expr Expr :binder 0))
-(let id (Lam $a $a))
+(datatype Expr (V Var) (Lam Var Expr :binder 0))
+(let id (Lam $a (V $a)))
 (let free_a0 $a0)
-(let constant (Lam $a free_a0))
-(check (= id (Lam $renamed $renamed)))
+(let constant (Lam $a (V free_a0)))
+(check (= id (Lam $renamed (V $renamed))))
 (check (!= id constant))
 (check (free-names-are constant free_a0))
 ```
@@ -160,8 +168,8 @@ rewrites.
 ```
 
 Constructs `term` and binds a global to it. Global names cannot start with `$`
-or be rebound. `(let v $x)` binds the concrete slot named `x`; a slot global
-gets its carrier from the context where it is used, like a slot literal.
+or be rebound. `(let v $x)` binds the concrete name `x` at sort `Var`;
+`(let e (V $x))` binds a term at the constructor's carrier sort.
 References to a global preserve its free-slot identities and follow its
 e-class through subsequent unions and maintenance. This applies in both
 checks and rewrites.
@@ -174,8 +182,9 @@ checks and rewrites.
 
 Asserts equality while preserving the free-variable identities written in
 `a` and `b`. A union can introduce symmetries or remove dependence on a slot.
-For example, unioning `(F $a $b)` with `(F $b $a)` introduces a swap symmetry;
-unioning it with `(F $b $c)` makes both slots redundant.
+Both operands must have the same carrier sort; `Var` operands are rejected.
+For example, unioning `(F (V $a) (V $b))` with `(F (V $b) (V $a))` introduces
+a swap symmetry; unioning it with `(F (V $b) (V $c))` makes both slots redundant.
 
 ### `rewrite`
 
@@ -187,8 +196,8 @@ Asserts `lhs = rhs` for each match. `:name` and `:when` are optional. `:name`
 assigns the rule name. `:when` takes one list of facts; repeated `:when` clauses
 or facts without the surrounding list are rejected.
 
-The left side is a constructor pattern, slot, global, or variable bound by the
-multipattern. The right side is a matched variable, global, slot, constructed
+The left side is a constructor pattern, term global, or variable bound by the
+multipattern. The right side is a matched variable, term global, constructed
 term, or [substitution](#substitution). Literal payloads and payload pattern
 variables are supported; payload computations and other primitive calls are
 unsupported. Only the default ruleset is supported.
@@ -209,7 +218,7 @@ invocations, including their free-variable identities. In this example, `m`
 identifies the stored memory and `p` requires the same address:
 
 ```slotted
-(datatype Expr (Num i64) (Mem0) (Store Expr Expr Expr) (LoadFrom Expr Expr))
+(datatype Expr (V Var) (Num i64) (Mem0) (Store Expr Expr Expr) (LoadFrom Expr Expr))
 (rewrite (LoadFrom m p) v
          :when ((= m (Store m0 p v))) :name "load-after-store")
 (let m1 (Store (Mem0) (Num 7) (Num 42)))
@@ -223,7 +232,7 @@ identifies the stored memory and `p` requires the same address:
 An unbound left-hand variable is rejected. The multipattern can bind it:
 
 ```slotted
-(datatype Expr (F Expr Expr) (G Expr) (N))
+(datatype Expr (V Var) (F Expr Expr) (G Expr) (N))
 (let start (F (N) (N)))
 (rewrite child (G child) :when ((= parent (F child other))))
 (run 1)
@@ -232,23 +241,25 @@ An unbound left-hand variable is rejected. The multipattern can bind it:
 
 #### Fresh slots
 
-A slot appearing on the right-hand side but absent from the multipattern is
-implicitly fresh with respect to the match, including free slots inside matched
-terms.
+A slot literal appearing on the right-hand side but absent from the multipattern
+is implicitly fresh with respect to the match, including free slots inside matched
+terms. A global bound to a `Var` keeps its concrete identity instead. Using such
+a global as a binder can capture that name in the body; use a fresh slot literal
+when the rewrite must avoid capture.
 
 Here `$binder` names the fresh slot in the rewrite. The global `free_slot`
 refers to a concrete slot in the input. The rewrite wraps that input in a
 lambda without capturing its free slot:
 
 ```slotted
-(datatype Expr (Wrap Expr) (Lam Expr Expr :binder 0))
+(datatype Expr (V Var) (Wrap Expr) (Lam Var Expr :binder 0))
 (let free_slot $free)
 (rewrite (Wrap e) (Lam $binder e))
-(let result (Wrap free_slot))
+(let result (Wrap (V free_slot)))
 (run 1)
-(check (= result (Lam $bound free_slot)) (not-free $bound free_slot))
+(check (= result (Lam $bound (V free_slot))) (not-free $bound (V free_slot)))
 (check (free-names-are result free_slot))
-(fail (check (= result (Lam $bound $bound))))
+(fail (check (= result (Lam $bound (V $bound)))))
 ```
 
 The checks use the global `free_slot` to refer to the input's concrete slot.
@@ -263,7 +274,8 @@ binder instead of the input's free slot.
 (subst body $x replacement)
 ```
 
-Replaces free occurrences of `$x` in `body` with `replacement`, avoiding
+Replaces free occurrences of `(V $x)` in `body`, using the carrier's variable
+constructor, with `replacement`, avoiding
 capture by binders. It must be the complete right-hand side of a rewrite.
 `body` and `replacement` must be matched variables or globals of the rewrite's
 carrier; the middle argument must be a slot literal.
@@ -273,9 +285,9 @@ round, with deterministic tie-breaking. It can fail if a class requiring
 substitution has no finite tree representative.
 
 ```slotted
-(datatype Expr (Let Expr Expr Expr :binder 1) (Num i64))
+(datatype Expr (V Var) (Let Expr Var Expr :binder 1) (Num i64))
 (rewrite (Let value $x body) (subst body $x value))
-(let result (Let (Num 7) $bound $bound))
+(let result (Let (Num 7) $bound (V $bound)))
 (run 1)
 (check (= result (Num 7)))
 ```
@@ -283,7 +295,7 @@ substitution has no finite tree representative.
 #### Slot constraints and capture
 
 Different explicit slot names in a query must match distinct slots:
-`(F $x $y)` does not match `(F $a $a)`. A pattern slot may coincide with a free
+`(F (V $x) (V $y))` does not match `(F (V $a) (V $a))`. A pattern slot may coincide with a free
 slot inside a matched term. Repeating a slot name in independent binder
 columns does not require the binders' bodies to be equal; sharing a body
 pattern variable imposes that relationship.
@@ -299,8 +311,8 @@ matched term under a binder, a `not-free` guard can exclude captures:
 Without the guard, occurrences of `$y` free in `e` can become bound.
 
 **Scope limitation:** reusing one pattern slot name for a free occurrence and
-a binder can cause a missed match. For example, `(Let $x $x $x)` uses `$x` in
-both roles. `(Let $free $bound $bound)` distinguishes them. See
+a binder can cause a missed match. For example, `(Let (V $x) $x (V $x))` uses `$x` in
+both roles. `(Let (V $free) $bound (V $bound))` distinguishes them. See
 [issue #81](https://github.com/saulshanabrook/egglog-encoding/issues/81).
 
 #### Nested-matcher compatibility
@@ -333,20 +345,20 @@ queries. It does not add terms or apply user rewrites. `fail` asserts that
 there is no matching assignment.
 
 ```slotted
-(datatype Expr (Pair Expr Expr))
+(datatype Expr (V Var) (Pair Expr Expr))
 (let a $a)
 (let b $b)
-(let pair (Pair a b))
-(check (= pair (Pair $x body)) (not-free $x body))
-(check (= a $local))
-(check (= b $local))
-(fail (check (= a $shared) (= b $shared)))
-(check (!= a b))
+(let pair (Pair (V a) (V b)))
+(check (= pair (Pair (V $x) body)) (not-free $x body))
+(check (= (V a) (V $local)))
+(check (= (V b) (V $local)))
+(fail (check (= (V a) (V $shared)) (= (V b) (V $shared))))
+(check (!= (V a) (V b)))
 ```
 
 The two `$local` occurrences belong to separate checks. Within the single
 check using `$shared`, both facts must use the same slot, so it has no match.
-Pattern variables must be bound by a constructor pattern, slot, or global
+Pattern variables must be bound by a constructor pattern or term global
 in the query; `(check (= x y))` alone does not bind `x` or `y`.
 
 Disequality filters each candidate match. For example,
@@ -375,22 +387,22 @@ Free names are preserved. Binders and other slots private to the chosen
 representative receive fresh names such as `$0` and `$1`.
 
 ```slotted
-(datatype Expr (Lam Expr Expr :binder 0) (Pair Expr Expr))
-(let term (Lam $bound (Pair $bound $free)))
+(datatype Expr (V Var) (Lam Var Expr :binder 0) (Pair Expr Expr))
+(let term (Lam $bound (Pair (V $bound) (V $free))))
 (extract term)
 ```
 
 Output:
 
 ```text
-(Lam $0 (Pair $0 $free))
+(Lam $0 (Pair (V $0) (V $free)))
 ```
 
 The result can be read back as a slotted term. In the Rust output, slots use
 [`egglog::Term::Var`] nodes in the [`egglog::TermDag`].
 
-Tree size counts constructor and variable occurrences; payloads and binder
-declarations contribute no additional cost. A missing finite tree is an error.
+Tree size counts constructor occurrences, including the variable constructor;
+payloads and `Var` arguments contribute no additional cost. A missing finite tree is an error.
 Only the single-term form is supported; a variant count is rejected.
 
 ## Query predicates
@@ -405,32 +417,33 @@ by a pattern or be a global bound to a concrete slot.
 
 `=` respects bound-variable alpha-equivalence and known class symmetries while
 preserving free-variable identities. `renaming-=` compares the underlying
-slotted classes and permits renaming free variables. Within one carrier, all
-bare slots are equal modulo renaming.
+slotted classes and permits renaming free variables. All applications of a
+carrier's variable constructor are equal modulo renaming. These comparisons
+apply to carrier terms, not bare `Var` names.
 
 ```slotted
-(datatype Expr (Lam Expr Expr :binder 0))
+(datatype Expr (V Var) (Lam Var Expr :binder 0))
 (let c $c)
 (let d $d)
-(let id (Lam $bound $bound))
-(let p (Lam $bound c))
-(let q (Lam $bound d))
-(check (= id (Lam $other $other)))
+(let id (Lam $bound (V $bound)))
+(let p (Lam $bound (V c)))
+(let q (Lam $bound (V d)))
+(check (= id (Lam $other (V $other))))
 (check (renaming-= p q))
 (check (!= p q))
 (check (renaming-!= p id))
-(check (renaming-= c d))
-(check (!= c d))
+(check (renaming-= (V c) (V d)))
+(check (!= (V c) (V d)))
 ```
 
 The same distinctions apply to comparisons between matched variables:
 
 ```slotted
-(datatype Expr (Pair Expr Expr) (Related Expr Expr))
-(let pair (Pair $a $b))
+(datatype Expr (V Var) (Pair Expr Expr) (Related Expr Expr))
+(let pair (Pair (V $a) (V $b)))
 (rewrite (Pair a b) (Related a b) :when ((renaming-= a b)))
 (run 1)
-(check (= pair (Related $left $right)))
+(check (= pair (Related (V $left) (V $right))))
 ```
 
 Here `a` and `b` are equal modulo renaming. A guard `(= a b)` or the repeated
@@ -439,10 +452,10 @@ pattern variable in `(Pair a a)` would require the same free-variable identity.
 Known symmetries can make terms equal despite different written slot orders:
 
 ```slotted
-(datatype Expr (F Expr Expr))
+(datatype Expr (V Var) (F Expr Expr))
 (rewrite (F x y) (F y x) :name "comm")
-(let a (F $a $b))
-(let b (F $b $a))
+(let a (F (V $a) (V $b)))
+(let b (F (V $b) (V $a)))
 (run 1)
 (check (= a b))
 ```
@@ -457,12 +470,12 @@ slots and slots made redundant by equations. `free` and `not-free` require at
 least one term. `free-names-are` takes one term and zero or more slot names.
 
 ```slotted
-(datatype Expr (Lam Expr Expr :binder 0) (Mult Expr Expr) (Null))
+(datatype Expr (V Var) (Lam Var Expr :binder 0) (Mult Expr Expr) (Null))
 (let a $a)
 (let c $c)
-(let k (Lam $bound $c))
-(let id (Lam $bound $bound))
-(let m (Mult $a (Null)))
+(let k (Lam $bound (V $c)))
+(let id (Lam $bound (V $bound)))
+(let m (Mult (V $a) (Null)))
 (check (free-names-are k c))
 (check (free-names-are id))
 (check (free a m))
@@ -479,9 +492,9 @@ use egglog_experimental::slotted::{Compiler, new_egraph};
 
 let mut compiler = Compiler::default();
 let program = compiler.compile(None, r#"
-    (datatype Expr (Lam Expr Expr :binder 0))
-    (let id (Lam $a $a))
-    (check (= id (Lam $b $b)))
+    (datatype Expr (V Var) (Lam Var Expr :binder 0))
+    (let id (Lam $a (V $a)))
+    (check (= id (Lam $b (V $b))))
 "#)?;
 let mut egraph = new_egraph();
 egraph.parse_and_run_program(None, &program)?;

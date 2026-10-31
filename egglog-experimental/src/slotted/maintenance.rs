@@ -1,6 +1,6 @@
 //! Invariant maintenance, emitted independently of user rewrites.
 use super::model::*;
-use super::syntax::machinery;
+use super::syntax::{machinery, quote};
 
 pub(super) const MACHINERY: &str = "(seq (saturate (seq (saturate (seq (saturate (run slotted)) (run slotted-empty) (run slotted-restore))) (saturate (run slotted-migrate)) (saturate (seq (saturate (run slotted-group)) (run slotted-shrink) (run slotted-restore))) (run slotted-shape))) (saturate (run slotted-read)))";
 
@@ -52,7 +52,8 @@ pub(super) fn carrier(s: &Symbols, proofs: bool) -> String {
     format!(
         include_str!("templates/carrier.egg"),
         sort = s.sort,
-        var = s.var,
+        sort_name = quote(&s.sort),
+        var_name = quote(&s.var),
         renames = s.renames,
         equated = s.equated,
         free_vars = s.free_vars,
@@ -96,10 +97,13 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
             }
             _ => {
                 edge_cols.push(physical);
-                out.push(format!(
-                    "(set (SlottedEdgeLayout \"{name}\" {physical}) ())"
-                ));
-                physical += 2;
+                let layout = if *col == Column::Child {
+                    "SlottedEdgeLayout"
+                } else {
+                    "SlottedSlotLayout"
+                };
+                out.push(format!("(set ({layout} \"{name}\" {physical}) ())"));
+                physical += if *col == Column::Child { 2 } else { 1 };
             }
         }
     }
@@ -121,12 +125,25 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
     if n == 0 {
         return machinery(&out.join("\n"));
     }
-    let groups = names("g", n);
+    let groups = op
+        .children()
+        .iter()
+        .enumerate()
+        .map(|(i, column)| {
+            if **column == Column::Child {
+                format!("g{}", i + 1)
+            } else {
+                "(set-of (map-of 0 0))".into()
+            }
+        })
+        .collect::<Vec<String>>();
     let shapes = names("s", n);
     let group_facts = groups
         .iter()
         .zip(&kids)
-        .map(|(g, k)| format!("(= {g} ({} {k}))", s.group))
+        .zip(op.children())
+        .filter(|(_, column)| **column == Column::Child)
+        .map(|((g, k), _)| format!("(= {g} ({} {k}))", s.group))
         .collect::<Vec<_>>()
         .join(" ");
     let cache = |es: &[String]| {
@@ -202,7 +219,7 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
     }
     let node_cols = &node[name.len() + 2..node.len() - 1];
     for j in 0..n {
-        if op.children()[j] == &Column::Binder {
+        if op.children()[j] != &Column::Child {
             continue;
         }
         let pinned = fold(
@@ -225,6 +242,9 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
         .join(" ");
     out.push(format!("(rule (({} e2 m e1) (= e2 {node}) (!= e1 e2) (= e2 (ordering-max e1 e2)) (= nodeslots {slots}) (= R (find-mapping-total (map-domain m) nodeslots (map-domain m) m)) {pulls}) ((union e1 {moved}) (delete {node})) :ruleset slotted-migrate :name \"slotted/migration/{name}\")",s.renames));
     for pos in 0..n {
+        if op.children()[pos] != &Column::Child {
+            continue;
+        }
         let mut es = edges.clone();
         let mut ks = kids.clone();
         es[pos] = format!("(compose {} m)", edges[pos]);
@@ -232,20 +252,14 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
         let new = op.node(name, &es, &ks, &pays);
         let child = &kids[pos];
         let edge = &edges[pos];
-        let bound = if op.children()[pos] == &Column::Binder {
-            format!("(= bound{pos} (map-get {} 0))", es[pos])
-        } else {
-            String::new()
-        };
-        out.push(format!("(rule (({} {child} m c') (= node {node}) {bound} (= {child} (ordering-max {child} c')) (guard (or (bool-!= {child} c') (bool= (compose m m) m))) (guard (or (bool-!= {child} c') (bool-!= (compose {edge} m) {edge})))) ((union node {new}) (delete {node})) :ruleset slotted-migrate :name \"slotted/child-update/{name}/{pos}\")",s.renames));
+        out.push(format!("(rule (({} {child} m c') (= node {node}) (= {child} (ordering-max {child} c')) (guard (or (bool-!= {child} c') (bool= (compose m m) m))) (guard (or (bool-!= {child} c') (bool-!= (compose {edge} m) {edge})))) ((union node {new}) (delete {node})) :ruleset slotted-migrate :name \"slotted/child-update/{name}/{pos}\")",s.renames));
     }
     if let Some(covered) = op.covered() {
         let binders = op.binders();
         let mut es = edges.clone();
-        let mut ks = kids.clone();
+        let ks = kids.clone();
         for (i, &pos) in binders.iter().enumerate() {
             es[pos] = format!("mvar{i}");
-            ks[pos] = format!("({} 0)", s.var);
         }
         let bound_node = op.node(name, &es, &ks, &pays);
         let uncovered = (0..n)

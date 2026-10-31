@@ -9,6 +9,7 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/rewrite-tests.egg
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 (constructor G (U U) U)
@@ -29,8 +30,8 @@
 
 (rewrite (F x (F x (Null))) (G x (Null)) :name "fold")
 
-(let a (F $17 (F $17 (Null))))
-(let b (G $17 (Null)))
+(let a (F (V $17) (F (V $17) (Null))))
+(let b (G (V $17) (Null)))
 
 (run 10)
 
@@ -50,8 +51,8 @@
 
 (rewrite (F x y) (F y x) :name "comm")
 
-(let a (F $12 $13))
-(let b (F $13 $12))
+(let a (F (V $12) (V $13)))
+(let b (F (V $13) (V $12)))
 
 (run 10)
 
@@ -71,11 +72,11 @@
 
 (rewrite (H (F x y) (F y x)) (Null) :name "collapse")
 
-(let a (F $1 $2))
-(let b (F $2 $1))
+(let a (F (V $1) (V $2)))
+(let b (F (V $2) (V $1)))
 (union a b)
 
-(let c (H (F $7 $8) (F $7 $8)))
+(let c (H (F (V $7) (V $8)) (F (V $7) (V $8))))
 (let d (Null))
 
 (run 10)
@@ -99,9 +100,9 @@
 
 (rewrite (F (Sub x x) (Sub x x)) (H (Null) (Null)) :name "both-sides")
 
-(union (Sub $0 $0) (Null))
+(union (Sub (V $0) (V $0)) (Null))
 
-(let x (F (Sub $0 $0) (Sub $1 $1)))
+(let x (F (Sub (V $0) (V $0)) (Sub (V $1) (V $1))))
 (let y (H (Null) (Null)))
 
 (run 10)

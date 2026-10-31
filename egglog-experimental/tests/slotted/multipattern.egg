@@ -46,11 +46,12 @@
 ;;; now offered only the slots the match's substitution carries, which is what the
 ;;; reference offers, and `K1` is a regression test in the curated corpus.
 (sort U)
+(constructor V (Var) U)
 
 (constructor Num (i64) U)
 (constructor Add (U U) U)
 (constructor Mul (U U) U)
-(constructor Lam (U U) U :binder 0)
+(constructor Lam (Var U) U :binder 0)
 (constructor App (U U) U)
 (constructor Pair (U U) U)
 (constructor Root (U) U)
@@ -74,7 +75,7 @@
          :when ((= f (Lam $v body)))
          :name "beta-guarded")
 ;; (fun y. y + y) 3   ->   3 + 3
-(let e (App (Lam $0 (Add $0 $0)) (Num 3)))
+(let e (App (Lam $0 (Add (V $0) (V $0))) (Num 3)))
 (let want (Add (Num 3) (Num 3)))
 ;; The function is not a lambda, so the premise fails and nothing fires. The claim
 ;; names `want` rather than `(Num 3)` because that is what a MISFIRE would produce:
@@ -182,7 +183,7 @@
          :when ((= f (Lam $x body))
                 (= g (Lam $x body)))
          :name "same-literal-names-both")
-(let one-name (Pair (Lam $0 $0) (Lam $0 $0)))
+(let one-name (Pair (Lam $0 (V $0)) (Lam $0 (V $0))))
 (run 4)
 (check (= one-name (Same)))
 (pop)
@@ -191,7 +192,7 @@
          :when ((= f (Lam $x body))
                 (= g (Lam $y body)))
          :name "two-literals-two-slots")
-(let two-names (Pair (Lam $0 $0) (Lam $0 $0)))
+(let two-names (Pair (Lam $0 (V $0)) (Lam $0 (V $0))))
 (run 4)
 (fail (check (= two-names (Same))))
 (pop)
@@ -213,20 +214,20 @@
 (rewrite (Pair (Lam $y body) e) (Lam $y (Pair body e))
          :when ((not-free $y e))
          :name "pair-under-lam")
-(let pushed (Pair (Lam $0 (App $0 $0)) $2))
+(let pushed (Pair (Lam $0 (App (V $0) (V $0))) (V $2)))
 (run 2)
 (let slot_2 $2)
-(check (= pushed (Lam $5 (Pair (App $5 $5) slot_2))) (not-free $5 slot_2))
+(check (= pushed (Lam $5 (Pair (App (V $5) (V $5)) (V slot_2)))) (not-free $5 (V slot_2)))
 (check (free-names-are pushed slot_2))
-(fail (check (renaming-= pushed (Lam $5 (Pair (App $5 $5) $5)))))
+(fail (check (renaming-= pushed (Lam $5 (Pair (App (V $5) (V $5)) (V $5))))))
 (pop)
 (push)
 ;; the same rule without the guard: the aliasing reading fires, and the captured term
 ;; joins the class -- which is what the guard is for, stated as a positive claim
 (rewrite (Pair (Lam $y body) e) (Lam $y (Pair body e)) :name "pair-under-lam-unguarded")
-(let captured (Pair (Lam $0 (App $0 $0)) $2))
+(let captured (Pair (Lam $0 (App (V $0) (V $0))) (V $2)))
 (run 2)
-(check (renaming-= captured (Lam $5 (Pair (App $5 $5) $5))))
+(check (renaming-= captured (Lam $5 (Pair (App (V $5) (V $5)) (V $5)))))
 (pop)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; A multipattern and a slot side condition on one rule: eta, but only where the
@@ -237,18 +238,18 @@
 ;;; its SLOTS.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(rewrite (Lam $v (App f $v)) f
+(rewrite (Lam $v (App f (V $v))) f
          :when ((not-free $v f)
                 (= f (Lam $w g)))
          :name "eta-lam")
 ;; fun y. (fun z. z + z) y   ->   fun z. z + z
-(let eta (Lam $0 (App (Lam $1 (Add $1 $1)) $0)))
-(let reduced (Lam $1 (Add $1 $1)))
+(let eta (Lam $0 (App (Lam $1 (Add (V $1) (V $1))) (V $0))))
+(let reduced (Lam $1 (Add (V $1) (V $1))))
 ;; the function is not a lambda: the shape premise fails
-(let notlam (Lam $0 (App (Num 5) $0)))
+(let notlam (Lam $0 (App (Num 5) (V $0))))
 ;; the function IS a lambda but mentions the bound slot: the side condition fails
-(let held (Lam $0 (App (Lam $1 (Add $1 $0)) $0)))
-(let inner (Lam $1 (Add $1 $0)))
+(let held (Lam $0 (App (Lam $1 (Add (V $1) (V $0))) (V $0))))
+(let inner (Lam $1 (Add (V $1) (V $0))))
 (run 6)
 (check (= eta reduced))
 (fail (check (= notlam (Num 5))))
@@ -303,29 +304,29 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 (rewrite (Root e) (Minted)
-         :when ((= p (Mul $s $s))
-                (= q (App $t $t))
-                (= r (Add $u $u)))
+         :when ((= p (Mul (V $s) (V $s)))
+                (= q (App (V $t) (V $t)))
+                (= r (Add (V $u) (V $u))))
          :name "cross-slots")
 (let root3 (Root (Num 1)))
 ;; each names a different slot, which is what the three atoms have to solve separately
-(let mss (Mul $0 $0))
-(let att (App $1 $1))
-(let auu (Add $2 $2))
+(let mss (Mul (V $0) (V $0)))
+(let att (App (V $1) (V $1)))
+(let auu (Add (V $2) (V $2)))
 (run 4)
 (check (= root3 (Minted)))
 (pop)
 (push)
 ;; the Add's children are DIFFERENT slots, so `(Add $u $u)` has nothing to match
 (rewrite (Root e) (Minted)
-         :when ((= p (Mul $s $s))
-                (= q (App $t $t))
-                (= r (Add $u $u)))
+         :when ((= p (Mul (V $s) (V $s)))
+                (= q (App (V $t) (V $t)))
+                (= r (Add (V $u) (V $u))))
          :name "cross-slots")
 (let root4 (Root (Num 1)))
-(let mss2 (Mul $0 $0))
-(let att2 (App $1 $1))
-(let a23 (Add $2 $3))
+(let mss2 (Mul (V $0) (V $0)))
+(let att2 (App (V $1) (V $1)))
+(let a23 (Add (V $2) (V $3)))
 (run 4)
 (fail (check (= root4 (Minted))))
 (pop)
@@ -353,14 +354,14 @@
 ;;; which is when generalising is worth anything -- and a lone lambda is left alone.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(rewrite (Lam $x (Add $x a))
-         (App (Lam $n (Lam $x (Add $x $n))) a)
-         :when ((= other (Lam $y (Add $y b)))
+(rewrite (Lam $x (Add (V $x) a))
+         (App (Lam $n (Lam $x (Add (V $x) (V $n)))) a)
+         :when ((= other (Lam $y (Add (V $y) b)))
                 (!= a b))
          :name "abstract-constant")
-(let f2 (Lam $0 (Add $0 (Num 2))))
-(let f3 (Lam $0 (Add $0 (Num 3))))
-(let g  (Lam $1 (Lam $0 (Add $0 $1))))
+(let f2 (Lam $0 (Add (V $0) (Num 2))))
+(let f3 (Lam $0 (Add (V $0) (Num 3))))
+(let g  (Lam $1 (Lam $0 (Add (V $0) (V $1)))))
 (let a2 (App g (Num 2)))
 (let a3 (App g (Num 3)))
 ;; the body is not an `Add` over the bound slot, so the left-hand side refuses it
@@ -376,16 +377,16 @@
 (push)
 ;; ONE lambda of that shape, so no second constant differs from it: nothing to
 ;; generalise over, and `(!= a b)` refuses the match
-(rewrite (Lam $x (Add $x a))
-         (App (Lam $n (Lam $x (Add $x $n))) a)
-         :when ((= other (Lam $y (Add $y b)))
+(rewrite (Lam $x (Add (V $x) a))
+         (App (Lam $n (Lam $x (Add (V $x) (V $n)))) a)
+         :when ((= other (Lam $y (Add (V $y) b)))
                 (!= a b))
          :name "abstract-constant")
 
 ;; Nothing else is built here on purpose. A general lambda would itself be a lambda of
 ;; that shape over a different constant, which is the second match the rule wants -- so
 ;; naming one to compare against would supply what the claim is asserting is absent.
-(let lone (Lam $0 (Add $0 (Num 2))))
+(let lone (Lam $0 (Add (V $0) (Num 2))))
 (run 3)
 
 (check (__internal-not-holds lone App))
@@ -402,15 +403,15 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 (rewrite (Root r) (Fired)
-         :when ((= r (Add $x b0))
+         :when ((= r (Add (V $x) b0))
                 (= r (Mul a1 b1))
                 (= r (Pair a2 b2))
                 (free $x a2))
          :name "carried-slot-refinement")
 (let n99 (Num 99))
-(let redundant-add (Add $0 $1))
-(let redundant-mul (Mul $2 $3))
-(let redundant-pair (Pair $4 $5))
+(let redundant-add (Add (V $0) (V $1)))
+(let redundant-mul (Mul (V $2) (V $3)))
+(let redundant-pair (Pair (V $4) (V $5)))
 (union redundant-add n99)
 (union redundant-mul n99)
 (union redundant-pair n99)
@@ -428,9 +429,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 (rewrite (Store x x x) (Root x) :name "repeated-pvar-symmetry")
-(let add01 (Add $0 $1))
-(let add10 (Add $1 $0))
-(union (Add $2 $3) (Add $3 $2))
+(let add01 (Add (V $0) (V $1)))
+(let add10 (Add (V $1) (V $0)))
+(union (Add (V $2) (V $3)) (Add (V $3) (V $2)))
 (let repeated-symmetry (Store add01 add10 add01))
 (run 4)
 (check (= repeated-symmetry (Root add01)))

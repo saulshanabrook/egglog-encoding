@@ -113,11 +113,11 @@ def translate(term, names=None):
         if re.fullmatch(r"-?[0-9]+", term):
             return ["Num", term]
         if term.startswith("$") or term.startswith("var_"):
-            return names.slot(term)
+            return ["V", names.slot(term)]
         return ["Symbol", f'"{term}"']
     op, *args = term
     if op == "var":
-        return names.slot(args[0])
+        return ["V", names.slot(args[0])]
     if op == "lambda":
         return ["Lambda", names.slot(args[0]), translate(args[1], names)]
     if op == "let":

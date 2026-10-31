@@ -4,8 +4,8 @@ use super::format::{
     Claim, ClaimKind, RulePremise, RuleProof, SlottedConclusion, SlottedProof, SlottedProofStore,
 };
 use super::guards::{GuardValidators, proof_body};
-use super::source::{ColumnKind, SlottedProgram, SourceFact, pattern_term};
-use super::terms::{all_slots, instantiate, rename, slot_of};
+use super::source::{SlottedProgram, SourceFact, pattern_term};
+use super::terms::{all_slots, rename, slot_of};
 use super::{HashMap, HashSet};
 use egglog::ast::{
     Literal, ResolvedExpr, ResolvedExprExt, ResolvedFact, ResolvedNCommand, ResolvedVar,
@@ -84,13 +84,11 @@ pub enum SlottedCheckError {
     },
     /// The checked root proves a different claim.
     #[error(
-        "the claim ({kind}, in {sort}) is not what the proof shows: it proves {proven}, the claim is {claim}"
+        "the claim ({kind}) is not what the proof shows: it proves {proven}, the claim is {claim}"
     )]
     Claim {
         /// The requested equality kind.
         kind: String,
-        /// The claim's carrier sort.
-        sort: String,
         /// The proposition established by the proof.
         proven: String,
         /// The proposition requested by the source.
@@ -98,26 +96,14 @@ pub enum SlottedCheckError {
     },
 }
 
-/// A verified equality and its carrier sort. Sort-independent equalities, such
-/// as slot reflexivity, may be used in any carrier; other equalities retain
-/// the sort of their source axiom or rewrite. The checker derives the sort;
-/// the proof does not supply it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Checked {
-    /// The equality established by the derivation.
-    pub proposition: Proposition,
-    /// Its carrier sort, or `None` for a sort-independent equality.
-    pub sort: Option<String>,
-}
-
-type CheckedProofs = HashMap<ProofId, Checked>;
+type CheckedProofs = HashMap<ProofId, Proposition>;
 
 /// Check an equality proof and every proof it depends on, returning what it proves.
 pub fn check_proof(
     store: &mut SlottedProofStore,
     program: &SlottedProgram,
     root: ProofId,
-) -> Result<Checked, SlottedCheckError> {
+) -> Result<Proposition, SlottedCheckError> {
     let mut ordinary = ProofStore::new(
         std::mem::take(&mut store.term_dag),
         HashMap::default(),
@@ -153,15 +139,10 @@ pub fn check_claim(
     claim: &Claim,
     conclusion: &SlottedConclusion,
 ) -> Result<(), SlottedCheckError> {
-    let Checked {
-        proposition: proven,
-        sort,
-    } = check_proof(store, program, conclusion.proof)?;
+    let proven = check_proof(store, program, conclusion.proof)?;
     let lhs = program.refresh_binders(&mut store.term_dag, claim.lhs);
     let rhs = program.refresh_binders(&mut store.term_dag, claim.rhs);
-    let same_sort = sort.as_deref().is_none_or(|s| s == claim.sort);
-    let holds = same_sort
-        && proven.lhs == lhs
+    let holds = proven.lhs == lhs
         && proven.rhs == rename(&mut store.term_dag, &conclusion.renaming, rhs)
         && match claim.kind {
             ClaimKind::RenamingEq => true,
@@ -180,22 +161,9 @@ pub fn check_claim(
                 ClaimKind::Eq => "=".into(),
                 ClaimKind::RenamingEq => "renaming-=".into(),
             },
-            sort: claim.sort.clone(),
-            proven: match sort {
-                Some(s) => format!("{} in {s}", store.proposition_to_string(&proven)),
-                None => store.proposition_to_string(&proven),
-            },
+            proven: store.proposition_to_string(&proven),
             claim: store.proposition_to_string(&Proposition::new(claim.lhs, claim.rhs)),
         })
-    }
-}
-
-/// The sort two parts of a derivation agree on, or the two they disagree on.
-fn join_sorts(a: Option<String>, b: Option<String>) -> Result<Option<String>, (String, String)> {
-    match (a, b) {
-        (Some(a), Some(b)) if a != b => Err((a, b)),
-        (Some(a), _) => Ok(Some(a)),
-        (None, b) => Ok(b),
     }
 }
 
@@ -212,7 +180,7 @@ fn check_one(
     program: &SlottedProgram,
     id: ProofId,
     checked: &CheckedProofs,
-) -> Result<Checked, SlottedCheckError> {
+) -> Result<Proposition, SlottedCheckError> {
     let proof = store.get(id);
     let step = |step: &'static str, detail: String| SlottedCheckError::Step {
         proof: id,
@@ -243,14 +211,16 @@ fn check_one(
                 unreachable!("Fiat has no premises")
             })
             .map_err(|e| step("literal", e.to_string()))?;
-        return Ok(Checked {
-            proposition,
-            sort: None,
-        });
+        return Ok(proposition);
     }
     let dag = ordinary.term_dag_mut();
-    for term in [claimed.lhs, claimed.rhs] {
-        check_term_sort(program, dag, term, None).map_err(|e| step("sort", e))?;
+    let lhs_sort = check_term_sort(program, dag, claimed.lhs, None).map_err(|e| step("sort", e))?;
+    check_term_sort(program, dag, claimed.rhs, Some(&lhs_sort)).map_err(|e| step("sort", e))?;
+    if lhs_sort == "Var" && claimed.lhs != claimed.rhs {
+        return Err(step(
+            "rigid variable",
+            "distinct Var names cannot be equal".into(),
+        ));
     }
     if let SlottedProof::Ordinary(proof) = proof
         && matches!(
@@ -262,93 +232,48 @@ fn check_one(
         )
     {
         ordinary
-            .check_step(id, proof, &[], context, |_, p| {
-                Ok(checked[&p].proposition.clone())
-            })
+            .check_step(id, proof, &[], context, |_, p| Ok(checked[&p].clone()))
             .map_err(|e| step("equality", e.to_string()))?;
     }
     let dag = ordinary.term_dag_mut();
-    let (derived, sort) = match proof {
+    let derived = match proof {
         SlottedProof::Rule(proof) => {
-            return check_rule(ordinary, validators, program, id, proof, checked)
-                .map(|(proposition, sort)| Checked { proposition, sort });
+            return check_rule(ordinary, validators, program, id, proof, checked);
         }
         SlottedProof::Alpha { proof, .. } => {
             let p = premise(proof);
-            if !program.alpha_eq(dag, p.proposition.rhs, claimed.rhs) {
+            if !program.alpha_eq(dag, p.rhs, claimed.rhs) {
                 return Err(step(
                     "alpha",
                     "right endpoints are not alpha-equivalent".into(),
                 ));
             }
-            (Proposition::new(p.proposition.lhs, claimed.rhs), p.sort)
+            Proposition::new(p.lhs, claimed.rhs)
         }
         SlottedProof::Equivariance {
             proof, renaming, ..
         } => {
             let p = premise(proof);
-            let lhs = rename(dag, renaming, p.proposition.lhs);
-            let rhs = rename(dag, renaming, p.proposition.rhs);
-            (Proposition::new(lhs, rhs), p.sort)
+            let lhs = rename(dag, renaming, p.lhs);
+            let rhs = rename(dag, renaming, p.rhs);
+            Proposition::new(lhs, rhs)
         }
         SlottedProof::Ordinary(proof) => {
-            let sort = match proof.justification() {
+            match proof.justification() {
                 Justification::Fiat => {
                     let reflexive =
                         claimed.lhs == claimed.rhs && program.is_built(dag, claimed.lhs);
-                    let union = program.union_sort(claimed.lhs, claimed.rhs);
-                    if !(reflexive || union.is_some()) {
+                    if !(reflexive || program.is_union(claimed.lhs, claimed.rhs)) {
                         return Err(SlottedCheckError::InvalidFiat {
                             proof: id,
                             claim: proposition_string(dag, claimed),
                         });
                     }
-                    union
-                        .map(str::to_owned)
-                        .or_else(|| program.sort_of(dag, claimed.lhs))
                 }
-                Justification::Sym(inner) => premise(inner).sort,
-                Justification::Trans(left, right) => {
-                    join_sorts(premise(left).sort, premise(right).sort).map_err(|(a, b)| {
-                        step("trans", format!("joins a proof in {a} with one in {b}"))
-                    })?
-                }
-                Justification::Congr {
-                    proof,
-                    child_index,
-                    child_proof,
-                } => {
-                    let (p, c) = (premise(proof), premise(child_proof));
-                    let Term::App(head, _) = dag.get(p.proposition.rhs) else {
-                        unreachable!("ordinary congruence validated the parent")
-                    };
-                    let ctor = &program.constructors[head];
-                    let column_sort = ctor
-                        .column_sort(*child_index)
-                        .expect("ordinary congruence validated the column");
-                    if let Some(s) = &c.sort
-                        && s != column_sort
-                    {
-                        return Err(step(
-                            "congr",
-                            format!(
-                                "the child proof is in {s}, but column {child_index} of {head} is {column_sort}"
-                            ),
-                        ));
-                    }
-                    p.sort.or(Some(ctor.sort.clone()))
-                }
-                Justification::Proj { proof, child_index } => {
-                    let p = premise(proof);
-                    let Term::App(head, _) = dag.get(p.proposition.rhs) else {
-                        unreachable!("ordinary projection validated the parent")
-                    };
-                    program
-                        .constructors
-                        .get(head)
-                        .and_then(|c| c.column_sort(*child_index))
-                        .map(str::to_owned)
-                }
+                Justification::Sym(_)
+                | Justification::Trans(..)
+                | Justification::Congr { .. }
+                | Justification::Proj { .. } => {}
                 Justification::Rule { .. } => {
                     unreachable!("rules have typed premises in the slotted store")
                 }
@@ -361,7 +286,7 @@ fn check_one(
                     ));
                 }
             };
-            (claimed.clone(), sort)
+            claimed.clone()
         }
     };
     if &derived != claimed {
@@ -374,24 +299,21 @@ fn check_one(
             ),
         ));
     }
-    Ok(Checked {
-        proposition: derived,
-        sort,
-    })
+    Ok(derived)
 }
 
-/// The sort each variable of a pattern must take, from the columns it occurs in.
+/// Check a ground term against source constructor signatures and return its sort.
 fn check_term_sort(
     program: &SlottedProgram,
     dag: &TermDag,
     term: TermId,
     expected: Option<&str>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let actual = match dag.get(term) {
-        Term::Lit(Literal::Int(_)) => Some("i64"),
-        Term::Lit(Literal::String(_)) => Some("String"),
+        Term::Lit(Literal::Int(_)) => "i64",
+        Term::Lit(Literal::String(_)) => "String",
         Term::Lit(_) => return Err("unsupported payload literal".into()),
-        Term::Var(_) if slot_of(dag, term).is_some() => None,
+        Term::Var(_) if slot_of(dag, term).is_some() => "Var",
         Term::Var(v) => return Err(format!("uninstantiated variable {v}")),
         Term::App(head, children) => {
             let ctor = program
@@ -401,30 +323,21 @@ fn check_term_sort(
             if children.len() != ctor.columns.len() {
                 return Err(format!("wrong arity for {head}"));
             }
-            for ((&child, kind), sort) in children.iter().zip(&ctor.columns).zip(ctor.input_sorts())
-            {
-                if *kind == ColumnKind::Binder && slot_of(dag, child).is_none() {
-                    return Err(format!("{head} requires a slot in its binder column"));
-                }
+            for (&child, sort) in children.iter().zip(ctor.input_sorts()) {
                 check_term_sort(program, dag, child, Some(sort))?;
             }
-            Some(ctor.sort.as_str())
+            ctor.sort.as_str()
         }
     };
-    if let Some(expected) = expected {
-        let matches = match actual {
-            Some(actual) => actual == expected,
-            None => !matches!(expected, "i64" | "String"),
-        };
-        if !matches {
-            return Err(format!(
-                "{} has sort {}, expected {expected}",
-                dag.to_string(term),
-                actual.unwrap_or("slot")
-            ));
-        }
+    if let Some(expected) = expected
+        && actual != expected
+    {
+        return Err(format!(
+            "{} has sort {actual}, expected {expected}",
+            dag.to_string(term)
+        ));
     }
-    Ok(())
+    Ok(actual.to_owned())
 }
 
 fn check_rule(
@@ -434,7 +347,7 @@ fn check_rule(
     id: ProofId,
     proof: &RuleProof,
     checked: &CheckedProofs,
-) -> Result<(Proposition, Option<String>), SlottedCheckError> {
+) -> Result<Proposition, SlottedCheckError> {
     let RuleProof {
         name,
         substitution,
@@ -473,10 +386,8 @@ fn check_rule(
         variable,
     };
 
-    let (lhs_expr, rhs_expr) = rule.endpoints();
-    let lhs_pattern = pattern_term(dag, lhs_expr);
+    let (_, rhs_expr) = rule.endpoints();
     let rhs_pattern = pattern_term(dag, rhs_expr);
-    let sort = lhs_expr.output_type().name().to_owned();
     for var in rule.patterns().flat_map(|expr| expr.vars()) {
         let term = *bindings
             .get(&var.name)
@@ -485,12 +396,12 @@ fn check_rule(
             .map_err(|e| fail(format!("binding {}: {e}", var.name)))?;
     }
 
-    // Slot literals: each is bound to a slot, and different literals to different
-    // slots -- `(F $x $y)` does not match `(F $0 $0)`.
+    // Distinct $ literals require distinct names; plain Var locals accepted by
+    // the source-program API can alias.
     let literals: Vec<_> = rule
         .patterns()
         .flat_map(|expr| expr.vars())
-        .filter(|var| program.sorts.contains(var.sort.name()))
+        .filter(|var| var.sort.name() == "Var")
         .map(|var| var.name)
         .filter(|name| !rule.globals.contains_key(name))
         .collect();
@@ -514,7 +425,6 @@ fn check_rule(
         }
     }
 
-    let lhs = instantiate(dag, lhs_pattern, &bindings).map_err(unbound)?;
     // Right-hand-side slot literals absent from the body must be fresh.
     let body_vars: HashSet<String> = rule
         .rule
@@ -524,7 +434,6 @@ fn check_rule(
         .flat_map(|expr| expr.vars())
         .map(|var| var.name)
         .collect();
-    let rhs = instantiate(dag, rhs_pattern, &bindings).map_err(unbound)?;
     for var in rule.pattern_vars(dag, rhs_pattern) {
         if body_vars.contains(&var) {
             continue;
@@ -589,15 +498,9 @@ fn check_rule(
                 };
                 let mut variables = Vec::new();
                 for (arg, &p) in args.iter().zip([left, right]) {
-                    let checked = &checked[&p];
-                    let p = &checked.proposition;
+                    let p = &checked[&p];
                     check_term_sort(program, dag, p.rhs, Some(arg.output_type().name()))
                         .map_err(&fail)?;
-                    join_sorts(
-                        Some(arg.output_type().name().to_owned()),
-                        checked.sort.clone(),
-                    )
-                    .map_err(|(a, b)| fail(format!("condition is in {a}, its premise in {b}")))?;
                     let variable = symbols.fresh("argument");
                     substitution.insert(variable.clone(), p.rhs);
                     let var = ResolvedExpr::Var(
@@ -615,7 +518,7 @@ fn check_rule(
                 let unit = dag.lit(Literal::Unit);
                 (variables, Proposition::new(unit, unit))
             } else {
-                (args.clone(), equality(premise)?.proposition.clone())
+                (args.clone(), equality(premise)?.clone())
             };
             let head = validators.resolve(head.name(), args).map_err(&fail)?;
             body.push(ResolvedFact::Fact(ResolvedExpr::Call(
@@ -629,10 +532,10 @@ fn check_rule(
             let condition_sort = match fact {
                 ResolvedFact::Eq(_, expr, _) | ResolvedFact::Fact(expr) => expr.output_type(),
             };
-            join_sorts(Some(condition_sort.name().to_owned()), checked.sort.clone())
-                .map_err(|(a, b)| fail(format!("condition is in {a}, its premise in {b}")))?;
+            check_term_sort(program, dag, checked.lhs, Some(condition_sort.name()))
+                .map_err(&fail)?;
             body.push(fact.clone());
-            premises.push(checked.proposition.clone());
+            premises.push(checked.clone());
         }
     }
     let native_rule = egglog::ast::ResolvedRule {
@@ -654,14 +557,7 @@ fn check_rule(
             Ok(premises[p.index()].clone())
         })
         .map_err(|e| fail(e.to_string()))?;
-    let instance =
-        (claimed.lhs, claimed.rhs) == (lhs, rhs) || (claimed.lhs, claimed.rhs) == (rhs, lhs);
-    let sort = if instance {
-        Some(sort)
-    } else {
-        program.sort_of(ordinary.term_dag(), claimed.lhs)
-    };
-    Ok((proven, sort))
+    Ok(proven)
 }
 
 #[cfg(test)]

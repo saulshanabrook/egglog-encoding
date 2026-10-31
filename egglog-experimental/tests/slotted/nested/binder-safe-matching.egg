@@ -1,15 +1,16 @@
 ; Run with --nested-compat: this expects the nested matcher's aliasing policy.
 ; Under full multipattern matching the rule needs an explicit not-free guard.
 (sort U)
+(constructor V (Var) U)
 
 ; (Sum $i ?b) means sum i=0..10 of ?b
 ; ?b is supposed to have $i as a free variable.
-(constructor Sum (U U) U :binder 0)
+(constructor Sum (Var U) U :binder 0)
 (constructor Mul (U U) U)
 
-(let x (Mul $4 (Sum $5 $5)))
-(let y (Sum $5 (Mul $4 $5)))
-(let z (Sum $1 (Mul $1 $1)))
+(let x (Mul (V $4) (Sum $5 (V $5))))
+(let y (Sum $5 (Mul (V $4) (V $5))))
+(let z (Sum $1 (Mul (V $1) (V $1))))
 
 (rewrite
     (Mul ?a (Sum $12 ?b)) ; This pattern should guarantee that $12 doesn't come up in ?a.

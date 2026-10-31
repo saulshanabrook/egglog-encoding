@@ -48,72 +48,93 @@ fn extract_with_mode(source: &str, proof_mode: ProofMode) -> Vec<(u64, String)> 
 #[test]
 fn source_terms_preserve_free_names_and_freshen_binders() {
     let outputs = extract(
-        "(datatype Expr (Lam Expr Expr :binder 0) (Pair Expr Expr))
-         (let result (Lam $bound (Pair $bound $free)))
+        "(datatype Expr (VExpr Var) (Lam Var Expr :binder 0) (Pair Expr Expr))
+         (let result (Lam $bound (Pair (VExpr $bound) (VExpr $free))))
          (extract result)",
     );
-    assert_eq!(outputs, [(4, "(Lam $0 (Pair $0 $free))".into())]);
+    assert_eq!(
+        outputs,
+        [(4, "(Lam $0 (Pair (VExpr $0) (VExpr $free)))".into())]
+    );
 }
 
 #[test]
 fn binder_scope_does_not_capture_other_children() {
     let outputs = extract(
-        "(datatype Expr (Let Expr Expr Expr :binder 1) (Pair Expr Expr))
-         (let result (Let $same $same (Pair $same $free)))
+        "(datatype Expr (VExpr Var) (Let Expr Var Expr :binder 1) (Pair Expr Expr))
+         (let result (Let (VExpr $same) $same (Pair (VExpr $same) (VExpr $free))))
          (extract result)",
     );
-    assert_eq!(outputs, [(5, "(Let $same $0 (Pair $0 $free))".into())]);
+    assert_eq!(
+        outputs,
+        [(
+            5,
+            "(Let (VExpr $same) $0 (Pair (VExpr $0) (VExpr $free)))".into()
+        )]
+    );
 }
 
 #[test]
 fn nested_binders_and_numeric_free_names_remain_distinct() {
     let outputs = extract(
-        "(datatype Expr (Lam Expr Expr :binder 0) (Pair Expr Expr))
-         (let result (Lam $outer (Lam $inner (Pair $outer (Pair $inner $0)))))
+        "(datatype Expr (VExpr Var) (Lam Var Expr :binder 0) (Pair Expr Expr))
+         (let result (Lam $outer (Lam $inner (Pair (VExpr $outer) (Pair (VExpr $inner) (VExpr $0))))))
          (extract result)",
     );
     assert_eq!(
         outputs,
-        [(7, "(Lam $1 (Lam $2 (Pair $1 (Pair $2 $0))))".into())]
+        [(
+            7,
+            "(Lam $1 (Lam $2 (Pair (VExpr $1) (Pair (VExpr $2) (VExpr $0)))))".into()
+        )]
     );
 }
 
 #[test]
 fn multiple_binders_cover_only_the_following_child() {
     let outputs = extract(
-        "(datatype Expr (Bind Expr Expr Expr Expr :binder 0 1) (Pair Expr Expr))
-         (let result (Bind $a $b (Pair $a $b) $a))
+        "(datatype Expr (VExpr Var) (Bind Var Var Expr Expr :binder 0 1) (Pair Expr Expr))
+         (let result (Bind $a $b (Pair (VExpr $a) (VExpr $b)) (VExpr $a)))
          (extract result)",
     );
-    assert_eq!(outputs, [(5, "(Bind $0 $1 (Pair $0 $1) $a)".into())]);
+    assert_eq!(
+        outputs,
+        [(
+            5,
+            "(Bind $0 $1 (Pair (VExpr $0) (VExpr $1)) (VExpr $a))".into()
+        )]
+    );
 }
 
 #[test]
 fn payloads_keep_their_source_positions_and_escaping() {
     let outputs = extract(
         r#"
-        (datatype Expr (Tagged String Expr i64 Expr :binder 0))
-        (let result (Tagged "a\"b\\c" $x 7 $x))
+        (datatype Expr (VExpr Var) (Tagged String Var i64 Expr :binder 0))
+        (let result (Tagged "a\"b\\c" $x 7 (VExpr $x)))
         (extract result)
     "#,
     );
-    assert_eq!(outputs, [(2, r#"(Tagged "a\"b\\c" $0 7 $0)"#.into())]);
+    assert_eq!(
+        outputs,
+        [(2, r#"(Tagged "a\"b\\c" $0 7 (VExpr $0))"#.into())]
+    );
 }
 
 #[test]
-fn bare_slots_and_aliases_can_be_extracted() {
+fn variable_terms_and_aliases_preserve_the_declared_constructor() {
     for slot in ["$free", "$-1", "$0", "$a0"] {
         let outputs = extract(&format!(
-            "(sort Expr) (let original {slot}) (let result original) (extract result)"
+            "(sort Expr)\n(constructor Variable (Var) Expr) (let original (Variable {slot})) (let result original) (extract result)"
         ));
-        assert_eq!(outputs, [(1, slot.into())]);
+        assert_eq!(outputs, [(1, format!("(Variable {slot})"))]);
     }
 }
 
 #[test]
 fn extraction_uses_the_smallest_source_tree_at_the_current_leader() {
     let outputs = extract(
-        "(datatype Expr (Num i64) (Pair Expr Expr) (Lam Expr Expr :binder 0))
+        "(datatype Expr (VExpr Var) (Num i64) (Pair Expr Expr) (Lam Var Expr :binder 0))
          (let small (Lam $x (Num 1)))
          (let result (Pair (Num 2) (Num 3)))
          (union result small)
@@ -125,13 +146,13 @@ fn extraction_uses_the_smallest_source_tree_at_the_current_leader() {
 #[test]
 fn extraction_preserves_the_requested_names_after_slot_shrinking() {
     let outputs = extract(
-        "(datatype Expr (Pair Expr Expr) (Wrap Expr))
-         (let small (Wrap $right))
-         (let result (Pair $left $right))
+        "(datatype Expr (VExpr Var) (Pair Expr Expr) (Wrap Expr))
+         (let small (Wrap (VExpr $right)))
+         (let result (Pair (VExpr $left) (VExpr $right)))
          (union result small)
          (extract result)",
     );
-    assert_eq!(outputs, [(2, "(Wrap $right)".into())]);
+    assert_eq!(outputs, [(2, "(Wrap (VExpr $right))".into())]);
 }
 
 #[test]
@@ -140,7 +161,7 @@ fn extraction_constructs_a_new_term_and_supports_multiple_carriers() {
     let source = compiler
         .compile(
             None,
-            "(datatype* (A (Num i64)) (B (Wrap B))) (extract (Wrap $free)) (extract (Num 9))",
+            "(datatype* (A (VA Var) (Num i64)) (B (VB Var) (Wrap B))) (extract (Wrap (VB $free))) (extract (Num 9))",
         )
         .unwrap();
     let outputs = new_egraph().parse_and_run_program(None, &source).unwrap();
@@ -154,7 +175,7 @@ fn extraction_constructs_a_new_term_and_supports_multiple_carriers() {
             }
         })
         .collect();
-    assert_eq!(outputs, ["(Wrap $free)", "(Num 9)"]);
+    assert_eq!(outputs, ["(Wrap (VB $free))", "(Num 9)"]);
 }
 
 #[test]
@@ -164,7 +185,7 @@ fn a_class_without_a_finite_tree_returns_an_error() {
     let source = compiler
         .compile(
             None,
-            "(datatype Expr (Null) (Wrap Expr)) (let result (Null)) (union result (Wrap result))",
+            "(datatype Expr (VExpr Var) (Null) (Wrap Expr)) (let result (Null)) (union result (Wrap result))",
         )
         .unwrap();
     graph.parse_and_run_program(None, &source).unwrap();

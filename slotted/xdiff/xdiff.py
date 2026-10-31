@@ -233,36 +233,13 @@ def rhs_text(t):
     return syntax.pat_sexpr(LANG, syntax.rhs_of(LANG, t))
 
 
-def check_encodable(case):
-    """Reject a case the encoding cannot represent faithfully.
-
-    A `U` value is an e-node, not an invocation, so a bare `(var $k)` at top level
-    encodes as `(Var 0)` for every k -- the slot is lost. Such a case is not a
-    faithful translation, and it is not shift-equivalent either, since shifting
-    changes what it means on one side only. Slots inside a compound term ride in
-    the stored edges and are fine; `null` has no slot to lose.
-
-    This has been mistaken for a machinery bug twice. Use a compound term with the
-    same slots instead -- `LEAF0` below.
-    """
-    tops = list(case.terms) + list(case.probes)
-    for a, b in case.unions:
-        tops += [a, b]
-    bad = [t for t in tops if t[0] == "var"]
-    if bad:
-        raise AssertionError(
-            f"{case.name}: bare leaf at top level {bad} -- the encoding cannot "
-            f"carry its slot; use a compound term with the same slots"
-        )
-
-
 # -------------------------------------------------------------- rule compiler
 def _child(c):
     """An atom's child, in the encoder's grammar.
 
-    A child written `$v` is a slot literal, not a pattern variable: the encoding stores
-    a binder's slot as an edge to `(Var 0)`, so the child position is that literal
-    class. One written `#k` is the PAYLOAD LEAF `k`, reached through its own class --
+    A child written `$v` names a variable occurrence, or a rigid Var in a binder
+    position. The source renderer adds the declared variable constructor only
+    in a term position. One written `#k` is the PAYLOAD LEAF `k`, reached through its own class --
     the same spelling the oracle's `atom` line uses for one.
     """
     if c.startswith("#"):
@@ -319,7 +296,6 @@ def check_case(case, verbose=False, stats=None):
     fails = []
     if stats is None:
         stats = {}
-    check_encodable(case)
 
     # 1. machinery baseline: no rule, both sides must already agree
     bare = Case(case.name, case.terms, case.unions, [], None, case.probes, case.rounds)
@@ -412,8 +388,7 @@ def check_case(case, verbose=False, stats=None):
 
 # ------------------------------------------------------------- curated corpus
 V0, V1, V2 = ("var", 0), ("var", 1), ("var", 2)
-# A compound term whose only slot is V0, for the top-level positions
-# where a bare leaf would lose its slot (see check_encodable).
+# A compound term whose only slot is V0, used for redundancy cases.
 LEAF0 = ("Sub", V0, V0)
 NUL = ("Null",)
 
@@ -1579,15 +1554,7 @@ def _flatten_fresh(t, ctr, rng, memo):
 
 
 def rand_top(rng, depth):
-    """A term safe to use at top level.
-
-    A bare leaf cannot be encoded faithfully: an encoding `U` value is a *node*,
-    not an invocation, so `(var $n)` collapses to `(Var 0)` and loses `n`. Then
-    `union (var $0) (var $2)` -- a real statement about the variable class in the
-    reference -- becomes a no-op in the encoding, and the two sides diverge for
-    reasons that have nothing to do with matching. Slots inside a compound term
-    ride in the stored edges and survive.
-    """
+    """A compound seed with an operator for the generated rules to match."""
     t = rand_term(rng, depth)
     if t[0] in ("var", "Null"):
         t = (rng.choice(BINOPS), t, rand_term(rng, 0))
@@ -1783,9 +1750,7 @@ def rand_case(rng, i):
             s1, s2 = rng.sample(sa, 2)
             b = swap_slots(a, s1, s2)
         elif rng.random() < 0.5 and sa:
-            # `LEAF0` rather than a bare `(var $0)`: a bare leaf loses its slot
-            # (see check_encodable), and although slot 0 happens to survive, the
-            # slot-renaming check shifts it to one that would not.
+            # Keep the established closed/one-slot redundancy distribution.
             b = ("Null",) if rng.random() < 0.5 else LEAF0
         else:
             b = rand_top(rng, rng.randrange(0, 2))

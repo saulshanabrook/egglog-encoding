@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const LANGUAGE: &str = "(datatype U (Null) (F U U) (G U U) (H U U) (Lam U U :binder 0))";
+const LANGUAGE: &str = "(datatype U (V Var) (Null) (F U U) (G U U) (H U U) (Lam Var U :binder 0))";
 
 fn evaluate(compiler: &mut Compiler, graph: &mut egglog::EGraph, source: &str) {
     let encoded = compiler.compile(None, source).unwrap();
@@ -19,7 +19,7 @@ fn string_payloads_preserve_quotes_and_backslashes() {
     evaluate(
         &mut compiler,
         &mut graph,
-        r#"(datatype U (Text String)) (let value (Text "a\"b\\c"))"#,
+        r#"(datatype U (V Var) (Text String)) (let value (Text "a\"b\\c"))"#,
     );
     graph
         .parse_and_run_program(None, r#"(check (= text (Text "a\"b\\c")))"#)
@@ -36,12 +36,12 @@ fn transformation_emits_ordinary_egglog() {
         &mut graph,
         r#"
         (rewrite (F a b) (G b a) :when () :name "swap")
-        (let start (F $1 $2))
+        (let start (F (V $1) (V $2)))
         (run 1)
         (let slot_2 $2)
         (let slot_1 $1)
-        (check (= start (G slot_2 slot_1)))
-        (check (!= start (G slot_1 slot_2)))
+        (check (= start (G (V slot_2) (V slot_1))))
+        (check (!= start (G (V slot_1) (V slot_2))))
         (check (free-names-are start slot_1 slot_2))
     "#,
     );
@@ -53,33 +53,33 @@ fn checks_and_rule_guards_agree_on_equality() {
     // case's premise. Expected answers distinguish class identity, free slots,
     // alpha-equivalence, sharing, symmetries, and redundant slots.
     let cases = [
-        ("", "$a", "$a", true, true),
-        ("", "$a", "$b", false, true),
+        ("", "(V $a)", "(V $a)", true, true),
+        ("", "(V $a)", "(V $b)", false, true),
         ("", "(Null)", "(Hit)", false, false),
-        ("", "(F $a $b)", "(G $a $b)", false, false),
-        ("", "(F $a $b)", "(F $b $a)", false, true),
-        ("", "(F $a $a)", "(F $a $b)", false, false),
-        ("", "(Lam $a $a)", "(Lam $b $b)", true, true),
-        ("", "(Lam $x $a)", "(Lam $x $b)", false, true),
-        ("", "(Lam $a $a)", "(Lam $x $a)", false, false),
+        ("", "(F (V $a) (V $b))", "(G (V $a) (V $b))", false, false),
+        ("", "(F (V $a) (V $b))", "(F (V $b) (V $a))", false, true),
+        ("", "(F (V $a) (V $a))", "(F (V $a) (V $b))", false, false),
+        ("", "(Lam $a (V $a))", "(Lam $b (V $b))", true, true),
+        ("", "(Lam $x (V $a))", "(Lam $x (V $b))", false, true),
+        ("", "(Lam $a (V $a))", "(Lam $x (V $a))", false, false),
         (
-            "(union (F $a $b) (F $b $a))",
-            "(F $a $b)",
-            "(F $b $a)",
+            "(union (F (V $a) (V $b)) (F (V $b) (V $a)))",
+            "(F (V $a) (V $b))",
+            "(F (V $b) (V $a))",
             true,
             true,
         ),
         (
-            "(union (F $a $b) (G $a (Null)))",
-            "(F $a $b)",
-            "(F $a $c)",
+            "(union (F (V $a) (V $b)) (G (V $a) (Null)))",
+            "(F (V $a) (V $b))",
+            "(F (V $a) (V $c))",
             true,
             true,
         ),
         (
-            "(union (F $a $b) (G $a (Null)))",
-            "(F $a $b)",
-            "(F $b $c)",
+            "(union (F (V $a) (V $b)) (G (V $a) (Null)))",
+            "(F (V $a) (V $b))",
+            "(F (V $b) (V $c))",
             false,
             true,
         ),
@@ -148,37 +148,37 @@ fn named_slots_persist_across_inputs_and_scopes() {
     let mut compiler = Compiler::default();
     let mut graph = egglog_experimental::slotted::new_egraph();
     evaluate(&mut compiler, &mut graph, LANGUAGE);
-    evaluate(&mut compiler, &mut graph, "(let a (F $a $a0))");
+    evaluate(&mut compiler, &mut graph, "(let a (F (V $a) (V $a0)))");
     evaluate(
         &mut compiler,
         &mut graph,
-        "(push) (let local (F $temp $-9223372036854775808)) (pop)",
+        "(push) (let local (F (V $temp) (V $-9223372036854775808))) (pop)",
     );
     evaluate(
         &mut compiler,
         &mut graph,
         r#"
-        (let b (F $a $-9223372036854775808))
+        (let b (F (V $a) (V $-9223372036854775808)))
         (run 0)
         (let slot_a $a)
         (let slot_a0 $a0)
-        (check (= a (F slot_a slot_a0)))
+        (check (= a (F (V slot_a) (V slot_a0))))
         (check (free-names-are a slot_a slot_a0))
         (let slot_minus_9223372036854775808 $-9223372036854775808)
         (check (free-names-are b slot_a slot_minus_9223372036854775808))
         (check (!= a b))
-        (check (!= slot_a slot_minus_9223372036854775808))
+        (check (!= (V slot_a) (V slot_minus_9223372036854775808)))
     "#,
     );
     assert!(
         compiler
-            .compile(None, "(let bad (F $fresh missing))")
+            .compile(None, "(let bad (F (V $fresh) missing))")
             .is_err()
     );
     evaluate(
         &mut compiler,
         &mut graph,
-        "(let valid (F $fresh $a)) (run 0) (let slot_fresh $fresh)\n(check (free-names-are valid slot_fresh slot_a))",
+        "(let valid (F (V $fresh) (V $a))) (run 0) (let slot_fresh $fresh)\n(check (free-names-are valid slot_fresh slot_a))",
     );
 }
 
@@ -189,11 +189,11 @@ fn binder_columns_require_slots() {
     evaluate(&mut compiler, &mut graph, LANGUAGE);
     for source in [
         "(let bad (Lam (Null) (Null)))",
-        "(let alias (F $a $a)) (let bad (Lam alias (Null)))",
+        "(let alias (F (V $a) (V $a))) (let bad (Lam alias (Null)))",
         "(rewrite (Lam x a) a)",
         "(rewrite (F x a) (Lam x a))",
-        "(let bad (F $9223372036854775808 $a))",
-        "(let bad (F $ $a))",
+        "(let bad (F (V $9223372036854775808) (V $a)))",
+        "(let bad (F (V $) (V $a)))",
     ] {
         assert!(
             compiler.compile(None, source).is_err(),
@@ -204,18 +204,21 @@ fn binder_columns_require_slots() {
         &mut compiler,
         &mut graph,
         r#"
-        (constructor Tagged (String U U) U :binder 0)
-        (let id (Tagged "lambda" $a $a))
+        (constructor Tagged (String Var U) U :binder 0)
+        (let id (Tagged "lambda" $a (V $a)))
         (run 0)
-        (check (= id (Tagged "lambda" $b $b)))
+        (check (= id (Tagged "lambda" $b (V $b))))
         (check (free-names-are id))
     "#,
     );
 }
 
 #[test]
-fn sorts_support_slots_without_user_constructors() {
-    for declaration in ["(sort Expr)", "(datatype Expr)"] {
+fn sorts_can_have_only_a_variable_constructor() {
+    for declaration in [
+        "(sort Expr)\n(constructor VExpr (Var) Expr)",
+        "(datatype Expr (VExpr Var))",
+    ] {
         let mut compiler = Compiler::default();
         let mut graph = egglog_experimental::slotted::new_egraph();
         evaluate(&mut compiler, &mut graph, declaration);
@@ -225,18 +228,20 @@ fn sorts_support_slots_without_user_constructors() {
             r#"
             (run 0)
             (let slot_a $a)
-(check (= slot_a slot_a))
             (let slot_b $b)
-(check (!= slot_a slot_b))
-            (check (renaming-= slot_a slot_b))
+            (let a (VExpr slot_a))
+            (let b (VExpr slot_b))
+            (check (= a a))
+            (check (!= a b))
+            (check (renaming-= a b))
         "#,
         );
-        assert_eq!(graph.get_size("SlottedVar_0"), 1);
+        assert_eq!(graph.get_size("VExpr"), 1);
     }
 }
 
 #[test]
-fn slots_work_in_every_carrier_and_var_is_an_ordinary_name() {
+fn slots_work_in_every_carrier_with_distinct_variable_constructors() {
     let mut compiler = Compiler::default();
     let mut graph = egglog_experimental::slotted::new_egraph();
     evaluate(
@@ -244,15 +249,15 @@ fn slots_work_in_every_carrier_and_var_is_an_ordinary_name() {
         &mut graph,
         r#"
         (datatype*
-            (Expr (Lam Expr Expr :binder 0))
-            (Var (Name String) (Wrap Var))
-            (Ty (Pair Ty Ty)))
-        (let id (Lam $a $a))
+            (Expr (VExpr Var) (Lam Var Expr :binder 0))
+            (Named (Variable Var) (Name String) (Wrap Named))
+            (Ty (VTy Var) (Pair Ty Ty)))
+        (let id (Lam $a (VExpr $a)))
         (let name (Wrap (Name "x")))
-        (let variable (Wrap $a))
-        (let ty (Pair $a $b))
+        (let variable (Wrap (Variable $a)))
+        (let ty (Pair (VTy $a) (VTy $b)))
         (run 0)
-        (check (= id (Lam $b $b)))
+        (check (= id (Lam $b (VExpr $b))))
         (check (free-names-are name))
         (let slot_a $a)
         (check (free-names-are variable slot_a))
@@ -260,11 +265,15 @@ fn slots_work_in_every_carrier_and_var_is_an_ordinary_name() {
         (check (free-names-are ty slot_a slot_b))
     "#,
     );
-    for table in ["SlottedVar_0", "SlottedVar_1", "SlottedVar_2"] {
+    for table in ["VExpr", "Variable", "VTy"] {
         assert_eq!(graph.get_size(table), 1);
     }
     assert!(compiler.compile(None, "(let bad (Lam $a name))").is_err());
-    assert!(compiler.compile(None, "(datatype Bad ($Var))").is_err());
+    assert!(
+        compiler
+            .compile(None, "(datatype Bad (VBad Var) ($Var))")
+            .is_err()
+    );
 }
 
 #[test]
@@ -276,12 +285,12 @@ fn scopes_restore_declarations_globals_and_rules() {
         &mut graph,
         r#"
         (push)
-        (datatype U (F U))
-        (let local (F $0))
+        (datatype U (V Var) (F U))
+        (let local (F (V $0)))
         (rewrite (F a) (F (F a)))
         (pop)
-        (datatype U (F U U))
-        (let local (F $1 $2))
+        (datatype U (V Var) (F U U))
+        (let local (F (V $1) (V $2)))
         (run 0)
         (let slot_1 $1)
         (let slot_2 $2)
@@ -291,12 +300,12 @@ fn scopes_restore_declarations_globals_and_rules() {
     evaluate(
         &mut compiler,
         &mut graph,
-        "(push) (datatype V (Zero)) (let n (Zero)) (run 0)",
+        "(push) (datatype Local (VLocal Var) (Zero)) (let n (Zero)) (run 0)",
     );
     evaluate(
         &mut compiler,
         &mut graph,
-        "(pop) (datatype V (One)) (let n (One)) (run 0)",
+        "(pop) (datatype Local (VLocal Var) (One)) (let n (One)) (run 0)",
     );
     assert!(compiler.compile(None, "(let bad (Zero))").is_err());
 }
@@ -307,18 +316,18 @@ fn compilation_errors_are_transactional_and_located() {
     let error = compiler
         .compile(
             Some("bad.egg".into()),
-            "(datatype U (F U))\n(let x missing)",
+            "(datatype U (V Var) (F U))\n(let x missing)",
         )
         .unwrap_err();
     assert!(error.to_string().contains("bad.egg"));
     assert!(compiler.compile(None, LANGUAGE).is_ok());
     for source in [
         "(ruleset slotted-group)",
-        r#"(datatype "bad)" (Zero))"#,
+        r#"(datatype "bad)" (Variable Var) (Zero))"#,
         r#"(constructor "bad)" () U)"#,
-        "(let x (F $0 $1)) (let x x)",
-        "(constructor SlottedVar_0 () U)",
-        "(sort Idx)",
+        "(let x (F (V $0) (V $1))) (let x x)",
+        "(constructor SlottedSlotLayout () U)",
+        "(sort Idx)\n(constructor VIdx (Var) Idx)",
         "(rewrite (F a b) a :when (= a b))",
         "(rewrite (Lam x a) a)",
         "(constructor Broken (U U) U :binder 18446744073709551615)",
@@ -343,14 +352,14 @@ fn matching_policy_changes_aliasing() {
             &mut compiler,
             &mut graph,
             r#"
-            (union (G $0 (Null)) (Null))
-            (let start (F $1 (Null)))
+            (union (G (V $0) (Null)) (Null))
+            (let start (F (V $1) (Null)))
             (let slot_1 $1)
             (rewrite (F a (G b n)) (H a b))
             (run 1)
         "#,
         );
-        let claim = "(check (= start (H slot_1 slot_1)))";
+        let claim = "(check (= start (H (V slot_1) (V slot_1))))";
         let claim = if no_aliasing {
             format!("(fail {claim})")
         } else {
@@ -369,7 +378,7 @@ fn compatibility_cli_uses_the_same_matching_policy_for_checks_and_rules() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    write!(child.stdin.take().unwrap(), "{LANGUAGE}\n(rewrite (F a (G b n)) (H a b))\n(check (= (F $a (G $b (Null))) (F $a (G $b (Null)))))").unwrap();
+    write!(child.stdin.take().unwrap(), "{LANGUAGE}\n(rewrite (F a (G b n)) (H a b))\n(check (= (F (V $a) (G (V $b) (Null))) (F (V $a) (G (V $b) (Null)))))").unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
@@ -394,14 +403,14 @@ fn compatibility_cli_uses_the_same_matching_policy_for_checks_and_rules() {
 fn checks_and_rule_guards_agree_on_free_names() {
     for no_aliasing in [false, true] {
         for (body, predicate, expected) in [
-            ("(Lam $bound $a)", "free $a body", true),
-            ("(Lam $bound $b)", "free $a body", false),
-            ("(Lam $bound $a)", "not-free $a body", false),
-            ("(Lam $bound $b)", "not-free $a body", true),
-            ("(Lam $bound $a)", "free-names-are body $a", true),
-            ("(Lam $bound $b)", "free-names-are body $a", false),
-            ("(Lam $bound $bound)", "free-names-are body", true),
-            ("(F $a $b)", "free-names-are body $a", false),
+            ("(Lam $bound (V $a))", "free $a body", true),
+            ("(Lam $bound (V $b))", "free $a body", false),
+            ("(Lam $bound (V $a))", "not-free $a body", false),
+            ("(Lam $bound (V $b))", "not-free $a body", true),
+            ("(Lam $bound (V $a))", "free-names-are body $a", true),
+            ("(Lam $bound (V $b))", "free-names-are body $a", false),
+            ("(Lam $bound (V $bound))", "free-names-are body", true),
+            ("(F (V $a) (V $b))", "free-names-are body $a", false),
         ] {
             let mut compiler = Compiler::new(Options {
                 no_aliasing,
@@ -430,12 +439,12 @@ fn checks_and_rule_guards_agree_on_free_names() {
                 &format!(
                     r#"
 {LANGUAGE}
-(let seed (F $a {body}))
+(let seed (F (V $a) {body}))
 (let checked_body {body})
 (let concrete_a $a)
 (run 0)
 {check}
-(rewrite (F $a body) (Null) :when (({predicate})))
+(rewrite (F (V $a) body) (Null) :when (({predicate})))
 (run 1)
 (check ({result} seed Null))
 "#
@@ -473,12 +482,12 @@ fn cli_reuses_files_includes_serialization_and_timing_reports() {
     std::fs::write(temp.0.join("language.egg"), LANGUAGE).unwrap();
     std::fs::write(
         temp.0.join("first.egg"),
-        "(include \"language.egg\")\n(let input (F $a $a0))",
+        "(include \"language.egg\")\n(let input (F (V $a) (V $a0)))",
     )
     .unwrap();
     std::fs::write(
         temp.0.join("second.egg"),
-        "(rewrite (F a b) (G b a))\n(run 1)\n(let slot_a0 $a0)\n(let slot_a $a)\n(check (= input (G slot_a0 slot_a)))",
+        "(rewrite (F a b) (G b a))\n(run 1)\n(let slot_a0 $a0)\n(let slot_a $a)\n(check (= input (G (V slot_a0) (V slot_a))))",
     )
     .unwrap();
     let result = cli()
@@ -521,7 +530,7 @@ fn repl(source: &str) -> std::process::Output {
 #[test]
 fn cli_transforms_complete_stdin_commands() {
     let result = repl(&format!(
-        "{LANGUAGE}\n(let input (F $a\n $a0))\n(let slot_a $a)\n(let slot_a0 $a0)\n(run 0)\n(check (free-names-are input slot_a slot_a0))"
+        "{LANGUAGE}\n(let input (F (V $a)\n (V $a0)))\n(let slot_a $a)\n(let slot_a0 $a0)\n(run 0)\n(check (free-names-are input slot_a slot_a0))"
     ));
     assert!(
         result.status.success(),
@@ -536,19 +545,19 @@ fn cli_transforms_complete_stdin_commands() {
 #[test]
 fn cli_recovers_compiler_and_egraph_after_failed_inputs() {
     let result = repl(
-        "(datatype U (Null)) (function broken)\n\
-         (datatype U (Null) (One))\n\
-         (let transient (Null)) (check (= (Null) (One))) (let later (One))\n\
-         (fail (check (= (Null) (Null))))\n\
-         (let transient (One)) (let later (Null)) (run 0)\n\
-         (check (__internal-holds transient One)) (check (__internal-holds later Null))\n\
-         (push)\n\
-         (pop) (datatype V (Gone)) (check (= (Null) (One)))\n\
-         (pop)\n\
-         (datatype V (Kept)) (let x (Kept)) (run 0) (check (__internal-holds x Kept))\n\
-         (datatype W (BadCtor)) (function cost (Missing) i64 :no-merge)\n\
-         (datatype W (GoodCtor))\n\
-         (let typed (GoodCtor)) (run 0) (check (__internal-holds typed GoodCtor))",
+        "(datatype U (VVar Var) (Null)) (function broken)
+(datatype U (VVar Var) (Null) (One))
+(let transient (Null)) (check (= (Null) (One))) (let later (One))
+(fail (check (= (Null) (Null))))
+(let transient (One)) (let later (Null)) (run 0)
+(check (__internal-holds transient One)) (check (__internal-holds later Null))
+(push)
+(pop) (datatype V (VV Var) (Gone)) (check (= (Null) (One)))
+(pop)
+(datatype V (VV Var) (Kept)) (let x (Kept)) (run 0) (check (__internal-holds x Kept))
+(datatype W (VW Var) (BadCtor)) (function cost (Missing) i64 :no-merge)
+(datatype W (VW Var) (GoodCtor))
+(let typed (GoodCtor)) (run 0) (check (__internal-holds typed GoodCtor))",
     );
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
@@ -590,11 +599,11 @@ fn side_patterns_can_bind_the_rewrite_root() {
         &mut compiler,
         &mut graph,
         r#"
-        (let start (F (G $a $b) (Null)))
-        (rewrite child (H $x $y) :when ((= parent (F child n)) (= child (G $x $y))))
+        (let start (F (G (V $a) (V $b)) (Null)))
+        (rewrite child (H (V $x) (V $y)) :when ((= parent (F child n)) (= child (G (V $x) (V $y)))))
         (run 1)
-        (check (= (G $a $b) (H $a $b)))
-        (check (!= (G $a $b) (H $b $a)))
+        (check (= (G (V $a) (V $b)) (H (V $a) (V $b))))
+        (check (!= (G (V $a) (V $b)) (H (V $b) (V $a))))
     "#,
     );
     for source in [
@@ -615,7 +624,7 @@ fn proofs_keep_reused_rule_names_distinct_across_scopes() {
         .compile(
             None,
             r#"
-        (datatype U (Num i64) (Wrap U))
+        (datatype U (V Var) (Num i64) (Wrap U))
         (push)
         (rewrite (Num n) (Wrap (Num n)) :name "repeat")
         (let a (Num 1))

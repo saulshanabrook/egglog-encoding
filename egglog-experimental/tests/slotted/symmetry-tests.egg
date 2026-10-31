@@ -11,6 +11,7 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/symmetry-tests.egg
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 (constructor G (U U) U)
@@ -26,14 +27,14 @@
 ;;; ground alpha-equivalence, with no rules at all
 ;;;
 ;;; f($20,$1) and f($7,$8) are one class invoked at different slots: equal up to
-;;; renaming, not equal. Same for a bare slot, which is the variable class under
-;;; a renaming rather than a class of its own.
+;;; renaming, not equal. The explicit variable terms `(V $20)` and `(V $7)`
+;;; likewise share a class while preserving their distinct invocation names.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let a (F $20 $1))
-(let a2 (F $20 $1))
-(let b (F $7 $8))
+(let a (F (V $20) (V $1)))
+(let a2 (F (V $20) (V $1)))
+(let b (F (V $7) (V $8)))
 
 (run 0)
 
@@ -42,10 +43,10 @@
 (check (renaming-= a b))
 
 (let slot_3 $3)
-(check (= slot_3 slot_3))
+(check (= (V slot_3) (V slot_3)))
 (let slot_4 $4)
-(check (!= slot_3 slot_4))
-(check (renaming-= slot_3 slot_4))
+(check (!= (V slot_3) (V slot_4)))
+(check (renaming-= (V slot_3) (V slot_4)))
 
 (pop)
 
@@ -60,9 +61,9 @@
 
 (rewrite (F x y) (F y x) :name "comm")
 
-(let a (G (F $1 $2) (Null)))
-(let b (G (F $2 $1) (Null)))
-(let c (G (F $1 $3) (Null)))
+(let a (G (F (V $1) (V $2)) (Null)))
+(let b (G (F (V $2) (V $1)) (Null)))
+(let c (G (F (V $1) (V $3)) (Null)))
 
 (run 10)
 
@@ -81,10 +82,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let a0 (P (P $0 $1) $2))
-(let a1 (P (P $1 $2) $0))
-(let a2 (P (P $2 $0) $1))
-(let a3 (P (P $1 $0) $2))
+(let a0 (P (P (V $0) (V $1)) (V $2)))
+(let a1 (P (P (V $1) (V $2)) (V $0)))
+(let a2 (P (P (V $2) (V $0)) (V $1)))
+(let a3 (P (P (V $1) (V $0)) (V $2)))
 (union a0 a1)
 
 (run 0)
@@ -103,12 +104,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(union (F $1 $2) (G $2 $1))
-(union (G $3 $4) (H $3 $4))
+(union (F (V $1) (V $2)) (G (V $2) (V $1)))
+(union (G (V $3) (V $4)) (H (V $3) (V $4)))
 
-(let f43 (F $4 $3))
-(let h34 (H $3 $4))
-(let h43 (H $4 $3))
+(let f43 (F (V $4) (V $3)))
+(let h34 (H (V $3) (V $4)))
+(let h43 (H (V $4) (V $3)))
 
 (run 0)
 
@@ -126,16 +127,16 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let f12 (F $1 $2))
-(union f12 (G $1 $2))
-(union f12 (G $2 $1))
+(let f12 (F (V $1) (V $2)))
+(union f12 (G (V $1) (V $2)))
+(union f12 (G (V $2) (V $1)))
 
-(let f21 (F $2 $1))
-(let f13 (F $1 $3))
-(let g12 (G $1 $2))
-(let g21 (G $2 $1))
-(let p1 (H (F $1 $2) (Null)))
-(let p2 (H (F $2 $1) (Null)))
+(let f21 (F (V $2) (V $1)))
+(let f13 (F (V $1) (V $3)))
+(let g12 (G (V $1) (V $2)))
+(let g21 (G (V $2) (V $1)))
+(let p1 (H (F (V $1) (V $2)) (Null)))
+(let p2 (H (F (V $2) (V $1)) (Null)))
 
 (run 0)
 
@@ -155,8 +156,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let a (K $5 $5))
-(let b (K $5 $6))
+(let a (K (V $5) (V $5)))
+(let b (K (V $5) (V $6)))
 
 (run 0)
 
@@ -178,11 +179,11 @@
 
 (rewrite (F x x) x :name "idem")
 
-(let a01 (A $0 $1))
-(union a01 (A $1 $0))
+(let a01 (A (V $0) (V $1)))
+(union a01 (A (V $1) (V $0)))
 
-(let t (F (A $0 $1) (A $1 $0)))
-(let s (F (A $0 $1) (A $0 $2)))
+(let t (F (A (V $0) (V $1)) (A (V $1) (V $0))))
+(let s (F (A (V $0) (V $1)) (A (V $0) (V $2))))
 
 (run 10)
 
@@ -203,9 +204,9 @@
 
 (rewrite (F x x) x :name "idem")
 
-(let a01 (A $0 $1))
-(let t (F (A $0 $1) (A $1 $0)))
-(let u (F (A $0 $1) (A $0 $1)))
+(let a01 (A (V $0) (V $1)))
+(let t (F (A (V $0) (V $1)) (A (V $1) (V $0))))
+(let u (F (A (V $0) (V $1)) (A (V $0) (V $1))))
 
 (run 10)
 
@@ -225,11 +226,11 @@
 
 (rewrite (T x (T x x)) x :name "three")
 
-(let a01 (A $0 $1))
-(union a01 (A $1 $0))
+(let a01 (A (V $0) (V $1)))
+(union a01 (A (V $1) (V $0)))
 
-(let e (T (A $0 $1) (T (A $1 $0) (A $0 $1))))
-(let s (T (A $0 $1) (T (A $1 $0) (A $0 $2))))
+(let e (T (A (V $0) (V $1)) (T (A (V $1) (V $0)) (A (V $0) (V $1)))))
+(let s (T (A (V $0) (V $1)) (T (A (V $1) (V $0)) (A (V $0) (V $2)))))
 
 (run 10)
 
@@ -249,11 +250,11 @@
 
 (rewrite (F (G x y) z) (G x (F y z)) :name "rot")
 
-(let a (F (G $1 $2) $3))
-(let b (G $1 (F $2 $3)))
-(let c (F (G $5 $5) $6))
-(let d (G $5 (F $5 $6)))
-(let e (G $2 (F $1 $3)))
+(let a (F (G (V $1) (V $2)) (V $3)))
+(let b (G (V $1) (F (V $2) (V $3))))
+(let c (F (G (V $5) (V $5)) (V $6)))
+(let d (G (V $5) (F (V $5) (V $6))))
+(let e (G (V $2) (F (V $1) (V $3))))
 
 (run 10)
 

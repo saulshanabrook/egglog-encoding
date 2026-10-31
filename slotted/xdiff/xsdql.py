@@ -628,9 +628,9 @@ def substitution_regression_cases():
     # The two bodies are one e-class. The pinned oracle's SynExprSubst keeps the source
     # body, and the reference's ExtractionSubst would choose it too: a Bind slot is
     # data in its enclosing e-node, not an AST child, so its costs are 3 versus 4. In
-    # the encoding each binder is another edge to Var; counting those markers as
-    # children used to reverse the costs to 5 versus 4 and therefore the result beta
-    # built. Binder layout metadata now keeps marker edges out of AstSize.
+    # an earlier encoding each binder had an edge to a variable class; counting
+    # those markers as children reversed the costs to 5 versus 4 and the result beta
+    # built. Rigid binder fields now carry names directly and have no AST cost.
     _, cost, cost_unions = driver.fixture_block(BETA_FIXTURE, "g")
     out.append(
         Case(

@@ -23,6 +23,7 @@ fn map_container(data: std::collections::BTreeMap<Value, Value>) -> MapContainer
 /// Install the fixed runtime vocabulary once, before evaluating lowered code.
 /// Ordinary egglog sorts and primitives are still used for the storage containers.
 pub(super) fn register(eg: &mut EGraph) {
+    add_base_sort(eg, super::var_sort::VarSort, span!()).unwrap();
     add_base_sort(eg, NamesSort, span!()).unwrap();
     add_base_sort(eg, BindingSort, span!()).unwrap();
     add_base_sort(eg, FrameSort, span!()).unwrap();

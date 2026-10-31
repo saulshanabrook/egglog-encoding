@@ -3,19 +3,17 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Pair U U) (F U) (Hit))
-(let input (Pair $a $b))
-(let side (F $b))
-(rewrite (Pair $x $y) (Hit) :when ((not-free $x (F $y))) :name "guard")
+(datatype U (V Var) (Pair U U) (F U) (Hit))
+(let input (Pair (V $a) (V $b)))
+(let side (F (V $b)))
+(rewrite (Pair (V $x) (V $y)) (Hit) :when ((not-free $x (F (V $y)))) :name "guard")
 (run 1)
 (check (= input (Hit)))
 
 Proof:
+(let t0 (Pair (V $a) (V $b)))
 (Rule
-  (= (Pair $a $b) (Hit))
+  (= t0 (Hit))
   (name "guard")
-  (premises
-    (Fiat (= (Pair $a $b) (Pair $a $b)))
-    (Fiat (= (F $b) (F $b)))
-    (Fiat (= () ())))
+  (premises (Fiat (= t0 t0)) (Fiat (= (F (V $b)) (F (V $b)))) (Fiat (= () ())))
   (substitution ($x $a) ($y $b)))

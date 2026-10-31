@@ -3,21 +3,28 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Pair U U) (Hit))
-(let input (Pair $a $b))
-(rewrite (Pair $x $y) (Hit)
-  :when ((renaming-= $x $y) (not-free $x $y) (!= $x $y)) :name "guards")
+(datatype U (V Var) (Pair U U) (Hit))
+(let input (Pair (V $a) (V $b)))
+(rewrite (Pair (V $x) (V $y)) (Hit)
+  :when ((renaming-= (V $x) (V $y)) (not-free $x (V $y)) (!= (V $x) (V $y))) :name "guards")
 (run 1)
 (check (= input (Hit)))
 
 Proof:
-(let prf0 (Fiat (= () ())))
+(let t0 (Pair (V $a) (V $b)))
+(let prf0 (Fiat (= (V $a) (V $a))))
+(let prop0 (= (V $b) (V $b)))
+(let prf1 (Equivariance prop0 prf0 (renaming ($a $b) ($b $a))))
+(let prf2 (Fiat (= () ())))
 (Rule
-  (= (Pair $a $b) (Hit))
+  (= t0 (Hit))
   (name "guards")
   (premises
-    (Fiat (= (Pair $a $b) (Pair $a $b)))
-    (RenamingEq (renaming-= $a $b) (Fiat (= $a $a)) (Fiat (= $b $b)))
+    (Fiat (= t0 t0))
+    (RenamingEq (renaming-= (V $a) (V $b)) prf0 (Fiat prop0))
+    prf1
+    prf2
     prf0
-    prf0)
+    prf1
+    prf2)
   (substitution ($x $a) ($y $b)))

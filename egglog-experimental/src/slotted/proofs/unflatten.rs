@@ -130,7 +130,7 @@ fn source_fiat(
     claimed: Proposition,
 ) -> Result<ProofId> {
     if claimed.lhs == claimed.rhs && program.is_built(&store.term_dag, claimed.lhs)
-        || program.union_sort(claimed.lhs, claimed.rhs).is_some()
+        || program.is_union(claimed.lhs, claimed.rhs)
     {
         return Ok(store.fiat(claimed.lhs, claimed.rhs));
     }

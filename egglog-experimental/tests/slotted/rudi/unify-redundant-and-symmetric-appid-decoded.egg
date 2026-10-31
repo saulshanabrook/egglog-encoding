@@ -1,14 +1,15 @@
 (sort U)
+(constructor V (Var) U)
 
-(constructor Lam (U U) U :binder 0)
+(constructor Lam (Var U) U :binder 0)
 (constructor App (U U) U)
 (constructor Add (U U) U)
 
 (constructor Rel (U U) U)
 (constructor Truth () U)
 
-(let a01 (Add $0 $1))
-(let a10 (Add $1 $0))
+(let a01 (Add (V $0) (V $1)))
+(let a10 (Add (V $1) (V $0)))
 (union a01 a10)
 
 (let example (App (Lam $0 (Lam $1 a01))
@@ -21,14 +22,14 @@
 ;;; its own rule: one literal in both chains, or the two literals swapped.
 (rewrite
     (Truth)
-    (Rel $x $x)
+    (Rel (V $x) (V $x))
     :when ((App (Lam $x (Lam $y a))
           (Lam $x (Lam $y a))))
     :name "straight"
 )
 (rewrite
     (Truth)
-    (Rel $x $y)
+    (Rel (V $x) (V $y))
     :when ((App (Lam $x (Lam $y a))
           (Lam $y (Lam $x a))))
     :name "swapped"
@@ -37,6 +38,6 @@
 (run 10)
 
 (let slot_0 $0)
-(check (= (Rel slot_0 slot_0) (Truth)))
+(check (= (Rel (V slot_0) (V slot_0)) (Truth)))
 (let slot_1 $1)
-(check (= (Rel slot_0 slot_1) (Truth)))
+(check (= (Rel (V slot_0) (V slot_1)) (Truth)))

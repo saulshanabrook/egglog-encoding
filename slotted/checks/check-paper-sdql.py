@@ -99,6 +99,7 @@ MMM_RULES = {
 ARTIFACT_RULE_SEMANTICS_SHA256 = "6e3bd146e08bf0fc5036a469236d612cd6bd7176357a9c6e7877e4d09effbaa2"
 
 SELECTED_CONSTRUCTORS = {
+    "V",
     "Lambda",
     "Sing",
     "Add",
@@ -142,6 +143,16 @@ def rewrites(path: pathlib.Path) -> dict[str, tuple[Any, ...]]:
     semantics, so those guards are discounted; `checks/language.py guards` requires them.
     """
     src = syntax.Source(path)
+
+    def artifact_form(form):
+        # The pinned artifact represents variable occurrences implicitly. Erase
+        # only the declared unary Var wrapper when comparing source semantics.
+        if isinstance(form, (list, tuple)):
+            if len(form) == 2 and isinstance(form[0], str) and src.spec.get(form[0]) == [syntax.SLOT]:
+                return form[1]
+            return [artifact_form(arg) for arg in form]
+        return form
+
     out = {}
     for form in syntax.parse(path.read_text()):
         if not (isinstance(form, list) and form and form[0] == "rewrite"):
@@ -152,7 +163,9 @@ def rewrites(path: pathlib.Path) -> dict[str, tuple[Any, ...]]:
         owed = syntax.capture_guards(src.lang, lhs, rhs)
         conds = [c for c in rule["conds"] if c[0] or not all((c[1], v) in owed for v in c[2])]
         semantics = dict(rule, conds=conds)
-        out[rule["name"]] = tuple(semantics[key] for key in ("lhs", "rhs", "conds", "equalities", "diseq", "same"))
+        out[rule["name"]] = tuple(
+            artifact_form(semantics[key]) for key in ("lhs", "rhs", "conds", "equalities", "diseq", "same")
+        )
     return out
 
 

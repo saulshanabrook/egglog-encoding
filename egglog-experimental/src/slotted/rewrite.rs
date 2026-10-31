@@ -35,9 +35,12 @@ fn build(
                 slots: Slots::Name(pv.clone()),
             })
         }
+        Term::Slot(_) if sort != "Var" => Err(format!(
+            "term has sort Var, expected {sort}; use the variable constructor"
+        )),
         Term::Slot(s) => Ok(Built {
             edge: format!("(ren {} {})", q.frame, quote(s)),
-            value: format!("({} 0)", lang.symbols(sort).var),
+            value: String::new(),
             slots: Slots::Name(s.clone()),
         }),
         Term::Node(n, args) => {
@@ -66,8 +69,13 @@ fn build(
                 });
             }
             let mut built = Vec::new();
-            for c in &children {
-                built.push(build(lang, c, sort, q, actions, false)?);
+            for (c, column) in children.iter().zip(op.children()) {
+                let input_sort = if *column == Column::Child {
+                    sort
+                } else {
+                    "Var"
+                };
+                built.push(build(lang, c, input_sort, q, actions, false)?);
             }
             let value = q.fresh(&format!("built_{}", n.to_lowercase()));
             let mut edges = built.iter().map(|b| b.edge.clone()).collect::<Vec<_>>();
@@ -183,7 +191,7 @@ fn substitute(
         q.fresh("t_ren"),
         q.fresh("back"),
     );
-    let inputs = format!("{bc} {bx} ({} 0) {tr} {tc} {}", s.var, quote(&s.free_vars));
+    let inputs = format!("{bc} {bx} {tr} {tc} {}", quote(&s.free_vars));
     Ok(vec![
         format!(
             "(let {needed} (map-union (map-image {bm}) (map-union (map-image {tm}) (map-of {x} {x}))))"
@@ -252,6 +260,7 @@ pub(super) fn compile(
             }
         }
     }
+    fresh.retain(|name| !r.conditions.concrete_slots.contains_key(name));
     r.conditions.fresh.extend(fresh);
     let mut q = query::compile(
         lang,

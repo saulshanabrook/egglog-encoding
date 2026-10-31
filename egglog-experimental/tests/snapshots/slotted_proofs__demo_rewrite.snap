@@ -3,15 +3,15 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (F U))
-(let input (F $a))
+(datatype U (V Var) (F U))
+(let input (F (V $a)))
 (rewrite (F x) x :name "unwrap")
 (run 1)
-(check (= input $a))
+(check (= input (V $a)))
 
 Proof:
 (Rule
-  (= (F $a) $a)
+  (= (F (V $a)) (V $a))
   (name "unwrap")
-  (premises (Fiat (= (F $a) (F $a))))
-  (substitution (x $a)))
+  (premises (Fiat (= (F (V $a)) (F (V $a)))))
+  (substitution (x (V $a))))

@@ -64,7 +64,7 @@ def node_rules():
                 f"(rule ((= n {pat}) (!= (map-length {edges[i]}) (map-length (map-image {edges[i]}))))\n"
                 f"      ((NotInjective {edges[i]})) :ruleset obs)"
             )
-            if kid_cols[i] is enc.BINDER:
+            if kid_cols[i] in (enc.BINDER, enc.SLOT):
                 continue
             out.append(
                 f"(rule ((= n {pat})\n"

@@ -28,3 +28,6 @@
 (function SlottedEdgeLayout (String i64) Unit :no-merge :internal-hidden)
 (function SlottedBinderLayout (String i64 i64 i64 String) Unit :no-merge :internal-hidden)
 (function SlottedPayloadLayout (String i64 String) Unit :no-merge :internal-hidden)
+
+(function SlottedCarrierLayout (String i64 String) Unit :no-merge :internal-hidden)
+(function SlottedSlotLayout (String i64) Unit :no-merge :internal-hidden)

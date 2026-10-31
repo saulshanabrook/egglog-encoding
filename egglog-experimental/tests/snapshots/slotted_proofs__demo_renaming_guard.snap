@@ -3,22 +3,23 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Pair U U) (F U) (G U) (Hit))
-(union (F $a) (G $a))
-(let input (Pair $a $b))
-(let side (G $b))
-(rewrite (Pair $x $y) (Hit) :when ((renaming-= (F $x) (G $y))) :name "guard")
+(datatype U (V Var) (Pair U U) (F U) (G U) (Hit))
+(union (F (V $a)) (G (V $a)))
+(let input (Pair (V $a) (V $b)))
+(let side (G (V $b)))
+(rewrite (Pair (V $x) (V $y)) (Hit) :when ((renaming-= (F (V $x)) (G (V $y)))) :name "guard")
 (run 1)
 (check (= input (Hit)))
 
 Proof:
+(let t0 (Pair (V $a) (V $b)))
 (Rule
-  (= (Pair $a $b) (Hit))
+  (= t0 (Hit))
   (name "guard")
   (premises
-    (Fiat (= (Pair $a $b) (Pair $a $b)))
+    (Fiat (= t0 t0))
     (RenamingEq
-      (renaming-= (F $a) (G $b))
-      (Fiat (= (F $a) (G $a)))
-      (Fiat (= (G $b) (G $b)))))
+      (renaming-= (F (V $a)) (G (V $b)))
+      (Fiat (= (F (V $a)) (G (V $a))))
+      (Fiat (= (G (V $b)) (G (V $b))))))
   (substitution ($x $a) ($y $b)))

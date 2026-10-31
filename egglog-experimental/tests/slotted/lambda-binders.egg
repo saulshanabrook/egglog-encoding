@@ -1,19 +1,18 @@
 ;;; The paper's `lambda` language: what a binder does to a class's slots.
 ;;;
-;;; Written in the SLOTTED language, so `lam $5. $5` is `(Lam $5 $5)` and not a pair of
-;;; renamings into `(Var 0)`. A bound slot still rides in an edge to the variable class
-;;; once compiled -- the bound slot has to be a slot of the NODE so that renamings act
-;;; on it, and a node's slots come only from the images of its edges -- but that is the
-;;; encoding's business, and a test of the language should not have to say it.
+;;; Written in the SLOTTED language, so `lam $5. $5` is `(Lam $5 (V $5))`.
+;;; The binder is a rigid Var name; the variable occurrence is a term in U.
+;;; Renamings act on both, while equality of U terms never equates Var names.
 ;;;
 ;;; `Lam` and `Let` bind their column 0. `App` binds nothing, which is what makes the
 ;;; last section a test rather than a tautology.
 
 (sort U)
+(constructor V (Var) U)
 
-(constructor Lam (U U) U :binder 0)
+(constructor Lam (Var U) U :binder 0)
 (constructor App (U U) U)
-(constructor Let (U U U) U :binder 0)
+(constructor Let (Var U U) U :binder 0)
 (constructor Null () U)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -23,8 +22,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let id5 (Lam $5 $5))
-(let id6 (Lam $6 $6))
+(let id5 (Lam $5 (V $5)))
+(let id6 (Lam $6 (V $6)))
 (run 0)
 
 (check (= id5 id6))
@@ -38,8 +37,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let id5 (Lam $5 $5))
-(let const (Lam $5 $7))
+(let id5 (Lam $5 (V $5)))
+(let const (Lam $5 (V $7)))
 (run 0)
 
 (check (!= id5 const))
@@ -57,8 +56,8 @@
 (push)
 
 (let f (App (Null) (Null)))
-(let l5 (Let $5 $5 f))
-(let l6 (Let $6 $6 f))
+(let l5 (Let $5 (V $5) f))
+(let l6 (Let $6 (V $6) f))
 (run 0)
 
 (check (= l5 l6))
@@ -71,8 +70,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(let a (App $5 $5))
-(let l (Lam $5 $5))
+(let a (App (V $5) (V $5)))
+(let l (Lam $5 (V $5)))
 (run 0)
 
 (check (!= a l))

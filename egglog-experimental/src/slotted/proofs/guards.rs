@@ -3,6 +3,7 @@
 use super::HashMap;
 use super::source::{SlottedProgram, SourceRule, pattern_term};
 use super::terms::{instantiate, slot_of};
+use crate::slotted::var_sort::VarSort;
 use egglog::ast::{Literal, ResolvedExpr, ResolvedExprExt, ResolvedFact, Span};
 use egglog::prelude::BaseSort;
 use egglog::sort::UnitSort;
@@ -135,14 +136,55 @@ impl Primitive for GuardSignature {
     }
 
     fn get_type_constraints(&self, span: &Span) -> Box<dyn egglog::constraint::TypeConstraint> {
-        egglog::constraint::AllEqualTypeConstraint::new(self.0, span.clone())
-            .with_output_sort(UnitSort.to_arcsort())
-            .into_box()
+        Box::new(GuardTypeConstraint {
+            name: self.0,
+            span: span.clone(),
+        })
     }
 }
 
 impl PurePrim for GuardSignature {
     fn apply(&self, _: PureState<'_, '_>, _: &[Value]) -> Option<Value> {
         None
+    }
+}
+
+/// Source guards have rigid name operands and independently typed term operands.
+struct GuardTypeConstraint {
+    name: &'static str,
+    span: Span,
+}
+
+impl egglog::constraint::TypeConstraint for GuardTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[egglog::AtomTerm],
+        typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn egglog::constraint::Constraint<egglog::AtomTerm, egglog::ArcSort>>> {
+        use egglog::constraint::{AllEqualTypeConstraint, assign};
+        let name = self
+            .name
+            .strip_prefix("slotted-proof-")
+            .unwrap_or(self.name);
+        if !matches!(name, "free" | "not-free" | "free-names-are") {
+            return AllEqualTypeConstraint::new(self.name, self.span.clone())
+                .with_output_sort(UnitSort.to_arcsort())
+                .get(arguments, typeinfo);
+        }
+        let Some((output, inputs)) = arguments.split_last() else {
+            return vec![];
+        };
+        let mut constraints = vec![assign(output.clone(), UnitSort.to_arcsort())];
+        let slots = if name == "free-names-are" {
+            inputs.get(1..).unwrap_or_default()
+        } else {
+            inputs.get(..1).unwrap_or_default()
+        };
+        constraints.extend(
+            slots
+                .iter()
+                .map(|arg| assign(arg.clone(), VarSort.to_arcsort())),
+        );
+        constraints
     }
 }

@@ -20,11 +20,11 @@ pub(super) struct Symbols {
 }
 
 impl Symbols {
-    pub fn new(sort: &str, i: usize) -> Self {
+    pub fn new(sort: &str, i: usize, var: &str) -> Self {
         Self {
             sort: sort.into(),
             index: i,
-            var: format!("SlottedVar_{i}"),
+            var: var.into(),
             renames: format!("RenamesToLeader_{i}"),
             equated: format!("Equated_{i}"),
             free_vars: format!("FreeVars_{i}"),
@@ -44,6 +44,8 @@ impl Symbols {
 pub enum Column {
     /// A child in the constructor's carrier sort.
     Child,
+    /// A rigid slot name in the carrier's variable constructor.
+    Var,
     /// A slot binding the following child column.
     Binder,
     /// A literal or variable of the named payload sort.
@@ -55,7 +57,7 @@ pub enum Column {
 pub struct Constructor {
     /// The constructor name.
     pub name: String,
-    /// The result sort, also used by child and binder columns.
+    /// The result sort, also used by child columns.
     pub sort: String,
     /// Argument roles in source order.
     pub columns: Vec<Column>,
@@ -66,7 +68,8 @@ impl Constructor {
     pub fn column_sort(&self, index: usize) -> Option<&str> {
         self.columns.get(index).map(|column| match column {
             Column::Payload(sort) => sort.as_str(),
-            _ => self.sort.as_str(),
+            Column::Var | Column::Binder => "Var",
+            Column::Child => self.sort.as_str(),
         })
     }
 
@@ -96,7 +99,8 @@ impl Constructor {
             .iter()
             .map(|c| match c {
                 Column::Payload(s) => s.clone(),
-                _ => format!("Renaming {}", self.sort),
+                Column::Var | Column::Binder => "Renaming".into(),
+                Column::Child => format!("Renaming {}", self.sort),
             })
             .collect::<Vec<_>>()
             .join(" ")
@@ -115,7 +119,10 @@ impl Constructor {
                 args.push(pays[p].clone());
                 p += 1;
             } else {
-                args.extend([edges[k].clone(), kids[k].clone()]);
+                args.push(edges[k].clone());
+                if *col == Column::Child {
+                    args.push(kids[k].clone());
+                }
                 k += 1;
             }
         }
@@ -170,6 +177,7 @@ impl Language {
     }
     pub fn sort_of(&self, t: &Term) -> Option<&str> {
         match t {
+            Term::Slot(_) => Some("Var"),
             Term::Node(n, _) => Some(&self.constructors[n].sort),
             Term::Global(n) => self.sort_of(&self.globals[n]),
             _ => None,
@@ -202,21 +210,16 @@ impl Language {
             _ => BTreeSet::new(),
         }
     }
-    pub fn encode(&self, t: &Term, sort: &str) -> String {
+    pub fn encode(&self, t: &Term) -> String {
         match t {
-            Term::Slot(_) => format!("({} 0)", self.symbols(sort).var),
-            Term::Global(n) if self.global_slot(n).is_some() => {
-                format!("({} 0)", self.symbols(sort).var)
-            }
+            Term::Slot(_) => self.edge(t),
+            Term::Global(n) if self.global_slot(n).is_some() => self.edge(t),
             Term::Global(n) => format!("${n}"),
             Term::Node(n, args) => {
                 let op = &self.constructors[n];
                 let (kids, pays) = op.split(args);
                 let edges = kids.iter().map(|k| self.edge(k)).collect::<Vec<_>>();
-                let children = kids
-                    .iter()
-                    .map(|k| self.encode(k, &op.sort))
-                    .collect::<Vec<_>>();
+                let children = kids.iter().map(|k| self.encode(k)).collect::<Vec<_>>();
                 let pays = pays
                     .iter()
                     .map(|p| match p {
@@ -251,18 +254,6 @@ impl Language {
                     .into_iter()
                     .flat_map(|s| [s.to_string(), s.to_string()]),
             )
-        }
-    }
-    pub fn encode_top(&self, t: &Term, sort: &str) -> String {
-        if let Term::Global(n) = t
-            && let Some(slot) = self.global_slot(n)
-        {
-            return self.encode_top(&Term::Slot(slot.into()), sort);
-        }
-        if let Term::Slot(s) = t {
-            format!("({} {})", self.symbols(sort).var, self.slot_names.id(s))
-        } else {
-            self.encode(t, sort)
         }
     }
     /// Nested binder columns with the same spelling shadow outer columns.

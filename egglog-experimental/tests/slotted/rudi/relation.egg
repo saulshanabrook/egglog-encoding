@@ -1,6 +1,7 @@
 ; This file emulates the use of rules / relations.
 
 (sort U)
+(constructor V (Var) U)
 (constructor Thingy (U U U) U)
 
 (constructor RelA (U) U)
@@ -9,7 +10,7 @@
 
 (let truth (Truth))
 
-(union truth (RelA (Thingy $0 $1 $2)))
+(union truth (RelA (Thingy (V $0) (V $1) (V $2))))
 
 (rewrite
     (Truth)
@@ -26,12 +27,12 @@
 (let slot_3 $3)
 (let slot_4 $4)
 (let slot_5 $5)
-(check (= (Truth) (RelB (Thingy slot_0 slot_1 slot_2) (Thingy slot_3 slot_4 slot_5))))
+(check (= (Truth) (RelB (Thingy (V slot_0) (V slot_1) (V slot_2)) (Thingy (V slot_3) (V slot_4) (V slot_5)))))
 
-(check (= (Truth) (RelB (Thingy slot_0 slot_1 slot_2) (Thingy slot_0 slot_4 slot_5))))
-(check (= (Truth) (RelB (Thingy slot_0 slot_1 slot_2) (Thingy slot_3 slot_0 slot_5))))
-(check (= (Truth) (RelB (Thingy slot_0 slot_1 slot_2) (Thingy slot_3 slot_4 slot_0))))
+(check (= (Truth) (RelB (Thingy (V slot_0) (V slot_1) (V slot_2)) (Thingy (V slot_0) (V slot_4) (V slot_5)))))
+(check (= (Truth) (RelB (Thingy (V slot_0) (V slot_1) (V slot_2)) (Thingy (V slot_3) (V slot_0) (V slot_5)))))
+(check (= (Truth) (RelB (Thingy (V slot_0) (V slot_1) (V slot_2)) (Thingy (V slot_3) (V slot_4) (V slot_0)))))
 
-(check (= (Truth) (RelB (Thingy slot_0 slot_1 slot_2) (Thingy slot_2 slot_1 slot_0))))
+(check (= (Truth) (RelB (Thingy (V slot_0) (V slot_1) (V slot_2)) (Thingy (V slot_2) (V slot_1) (V slot_0)))))
 
-(check (free-names-are (Thingy slot_0 slot_1 slot_2) slot_0 slot_1 slot_2))
+(check (free-names-are (Thingy (V slot_0) (V slot_1) (V slot_2)) slot_0 slot_1 slot_2))

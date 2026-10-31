@@ -3,7 +3,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (sort {sort})
-(constructor {var} (i64) {sort})
+(set (SlottedCarrierLayout {sort_name} {index} {var_name}) ())
 (relation {renames} ({sort} Renaming {sort}))
 (relation {equated} ({sort} Renaming {sort}))
 (function {free_vars} ({sort}) Renaming :merge (map-intersect old new))
@@ -16,8 +16,6 @@
 (relation {big_reading} ({sort} Renaming))
 (relation {reading} ({sort} Renaming Renaming))
 
-(set (SlottedNodeLayout "{var}" 1) ())
-(set ({free_vars} ({var} 0)) (map-of 0 0))
 
 (rule (({equated} _a _m _b)
        (!= _a _b)
@@ -117,14 +115,6 @@
        (!= _m _m2))
       ((delete ({renames} _f _m _l))
        ({renames} _f _m2 _l)) :ruleset slotted :name "slotted/restate-edge/{index}")
-
-(rule ((= _e ({var} _v))
-       (!= _v 0))
-      (({equated} _e (map-insert (map-empty) 0 _v) ({var} 0))
-       (delete ({var} _v))) :ruleset slotted :name "slotted/var-normalize/{index}")
-
-({renames} ({var} 0) (map-insert (map-empty) 0 0) ({var} 0))
-(set ({group} ({var} 0)) (set-of (map-insert (map-empty) 0 0)))
 
 (rule (({renames} _a _m _c)
        (= _grp ({group} _c))

@@ -234,11 +234,8 @@ def verify(ga, gb, witness, *, checker=None):
 
 
 # ------------------------------------------------------------------- the runners
-#: A carrier's machinery seeds `(Var 0)` unconditionally, so that class exists on the
-#: encoding side whether or not the case mentions it. Adding the same term to the
-#: reference makes the two graphs comparable as wholes, rather than needing classes to
-#: be dropped from one side by a rule about which ones "do not count". It is an ordinary
-#: term to the reference, so any rule that fires on it fires on the encoding's copy too.
+#: Generated source programs explicitly seed `(V $0)`. Seed the corresponding
+#: ordinary variable term in the reference so the complete graphs agree.
 #:
 #: `(Null)` is NOT seeded. It is an ordinary constructor of the language under test, and
 #: neither side has a class for it unless a term built one.

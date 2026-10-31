@@ -76,6 +76,9 @@ def reference_spec(lang, rounds, terms, unions, rules, probes):
     """The reference protocol shared by generated cases and source fixtures."""
     lines = [f"rounds {rounds}"]
     lines.extend(f"term {lang.sexpr(t)}" for t in terms)
+    # The reference's goal is relative to its first term. Seed the shared
+    # variable only after the workload inputs so that root keeps its meaning.
+    lines.append("term (var $0)")
     lines.extend(f"union {lang.sexpr(a)} {lang.sexpr(b)}" for a, b in unions)
     lines.extend(rules)
     lines.extend(f"probe {lang.sexpr(t)}" for t in probes)
@@ -154,7 +157,7 @@ def compile_source(text, *, no_aliasing=False):
 def term(lang, t):
     """A generated ground term in the public source language."""
     if t[0] == "var":
-        return f"${t[1]}"
+        return f"({lang.symbols_for(lang.default_sort).var} ${t[1]})"
     op = lang[t[0]]
     kids, pays = op.split(t[1:])
     return node(op, [f"${lang.slot(k)}" if i in op.binders else term(lang, k) for i, k in enumerate(kids)], pays)
@@ -176,16 +179,18 @@ def node(op, kids, pays):
     return "(" + " ".join(parts) + ")"
 
 
-def pattern(lang, t):
-    if t[0] in ("pv", "sl"):
+def pattern(lang, t, *, binder=False):
+    if t[0] == "pv":
         return t[1]
+    if t[0] == "sl":
+        return t[1] if binder else f"({lang.symbols_for(lang.default_sort).var} {t[1]})"
     if t[0] == "cls":
         return term(lang, t[1])
     if t[0] == ref.SUBST:
-        return "(subst " + " ".join(pattern(lang, a) for a in t[1:]) + ")"
+        return "(subst " + " ".join(pattern(lang, a, binder=i == 1) for i, a in enumerate(t[1:])) + ")"
     op = lang[t[0]]
     kids, pays = op.split(t[1:])
-    return node(op, [pattern(lang, k) for k in kids], pays)
+    return node(op, [pattern(lang, k, binder=i in op.binders) for i, k in enumerate(kids)], pays)
 
 
 def rewrite(lang, atoms, root, rhs, *, conds=(), name=None):
@@ -193,7 +198,8 @@ def rewrite(lang, atoms, root, rhs, *, conds=(), name=None):
     facts = []
     for r, op, kids, *payloads in atoms:
         pays = payloads[0] if payloads else lang[op].pays
-        facts.append(f"(= {r} {node(lang[op], [pattern(lang, k) for k in kids], pays)})")
+        children = [pattern(lang, k, binder=i in lang[op].binders) for i, k in enumerate(kids)]
+        facts.append(f"(= {r} {node(lang[op], children, pays)})")
     facts.extend(f"({'free' if want else 'not-free'} {slot} {' '.join(pvars)})" for want, slot, pvars in conds)
     options = f" :when ({' '.join(facts)})"
     if name:
@@ -216,13 +222,10 @@ def maintenance():
 def source_program(language, lang, rules, terms, unions, probes, rounds, *, defer_probes=False):
     """Build the source input shared by partition and proof tests."""
     source = [f'(include "egglog-experimental/tests/slotted/languages/{language}.egg")', *dict.fromkeys(rules)]
+    source.append(f"(let _variable_seed ({lang.symbols_for(lang.default_sort).var} $0))")
     source.extend(f"(let _t{i} {term(lang, t)})" for i, t in enumerate(terms))
     source.extend(f"(union {term(lang, a)} {term(lang, b)})" for a, b in unions)
-    # A bare slot has no source-level global representation. The partition
-    # observer needs only its class, which is the canonical variable node.
-    symbols = lang.symbols_for(lang.default_sort)
-    var = f"({symbols.var} 0)"
-    probe_terms = [var if t[0] == "var" else f"(let _p{i} {term(lang, t)})" for i, t in enumerate(probes)]
+    probe_terms = [f"(let _p{i} {term(lang, t)})" for i, t in enumerate(probes)]
     if not defer_probes:
         source.extend(probe_terms)
     source.append(f"(run {rounds})")
@@ -234,7 +237,6 @@ def source_program(language, lang, rules, terms, unions, probes, rounds, *, defe
 
 def probe_observer(lang, probes):
     symbols = lang.symbols_for(lang.default_sort)
-    var = f"({symbols.var} 0)"
     # Observations run after the budget, without another rewrite or maintenance round.
     observer = [
         f"""
@@ -246,7 +248,7 @@ def probe_observer(lang, probes):
       ((SameClass i j)) :ruleset probes)
 """
     ]
-    observer.extend(f"(ProbeId {var if t[0] == 'var' else f'$_p{i}'} {i})" for i, t in enumerate(probes))
+    observer.extend(f"(ProbeId $_p{i} {i})" for i, _ in enumerate(probes))
     observer += ["(run-schedule (saturate (run probes)))", "(print-function SameClass 100000)"]
     return "\n".join(observer) + "\n"
 
@@ -345,7 +347,8 @@ def fixture_block(path, anchor):
             _, name, body = form
             if name in named:
                 raise ValueError(f"{path.name}: duplicate global {name!r} in fixture case {anchor!r}")
-            term = src.term(body)
+            column = ref.SLOT if isinstance(body, str) and ref.SLOT_LITERAL.fullmatch(body) else ref.CHILD
+            term = src.term(body, column)
             src.lang.bound[name] = term
             named[name] = fixture_term(term, named)
         elif form[0] == "union":

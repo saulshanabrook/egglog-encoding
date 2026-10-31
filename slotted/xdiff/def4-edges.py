@@ -1,8 +1,8 @@
 """Check edge domains against their children's live slot sets (Definition 4).
 
 Ordinary child edges must satisfy `(map-domain m) = (FreeVars c)`.
-Binder-marker edges instead have domain `{0}` and point to the variable class:
-they name a bound slot rather than an invocation of that class.
+Rigid Var and binder fields instead have domain `{0}` and no child eclass:
+they name a slot directly.
 
 Observer rules cover the constructors in `egglog-experimental/tests/slotted/languages/toy.egg`.
 
@@ -37,15 +37,10 @@ def obs():
         pat = enc.pattern(name, sig)
         for i in range(len(kids)):
             where = f'"{name} child {i + 1}"'
-            if kid_cols[i] is enc.BINDER:
+            if kid_cols[i] in (enc.BINDER, enc.SLOT):
                 out.append(
                     f"(rule ((= v {pat})\n"
                     f"       (!= (map-domain {edges[i]}) (map-of 0 0)))\n"
-                    f"      ((BadDomain {where} {edges[i]} (map-of 0 0))) :ruleset def4)"
-                )
-                out.append(
-                    f"(rule ((= v {pat})\n"
-                    f"       (!= {kids[i]} ({X.SYM.var} 0)))\n"
                     f"      ((BadDomain {where} {edges[i]} (map-of 0 0))) :ruleset def4)"
                 )
                 continue

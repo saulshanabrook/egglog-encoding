@@ -36,7 +36,7 @@ fn leader_reversals_preserve_identities_and_symmetries() {
         for reverse in [false, true] {
             for symmetric in [false, true] {
                 let mut graph = new_egraph();
-                let mut program = format!("{base}\n(let $v (SlottedVar_0 0))\n");
+                let mut program = format!("{base}\n(let $v (V (map-of 0 0)))\n");
                 for (name, ctor) in ["a", "b", "c"]
                     .into_iter()
                     .zip(order.map(|i| ["F", "G", "H"][i]))
@@ -90,7 +90,7 @@ fn child_unions_preserve_fresh_shapes_and_cosets() {
                 children.reverse();
             }
             let mut program = format!(
-                "{base}\n(let $v (SlottedVar_0 0))\n{}\n{maintenance}\n(Equated_0 $b (map-of 0 1 1 0) $b)\n{maintenance}\n",
+                "{base}\n(let $v (V (map-of 0 0)))\n{}\n{maintenance}\n(Equated_0 $b (map-of 0 1 1 0) $b)\n{maintenance}\n",
                 children.join("\n")
             );
             for i in order {
@@ -218,8 +218,8 @@ fn exporting_does_not_run_another_user_round() {
         .compile(
             None,
             r#"
-(datatype U (Null) (F U U))
-(rewrite (Null) (F $a $a))
+(datatype U (V Var) (Null) (F U U))
+(rewrite (Null) (F (V $a) (V $a)))
 (let start (Null))
 (run 1)
 "#,

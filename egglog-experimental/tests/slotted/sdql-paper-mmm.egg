@@ -55,15 +55,15 @@
   "sum-sum-vert-fuse-2"
   :when
   ((not-free $k1 body1) (not-free $k2 body2) (not-free $v2 body2)))
-(rewrite (Get dict key) (Sum dict $k $v (IfThen (Equality $k key) $v)) :name "get-to-sum")
+(rewrite (Get dict key) (Sum dict $k $v (IfThen (Equality (V $k) key) (V $v))) :name "get-to-sum")
 (rewrite
-  (Sum dict $k $v (IfThen (Equality $k key) body))
-  (Let key $k (Let (Get dict $k) $v body))
+  (Sum dict $k $v (IfThen (Equality (V $k) key) body))
+  (Let key $k (Let (Get dict (V $k)) $v body))
   :name
   "sum-to-get"
   :when
   ((not-free $k dict) (not-free $k key) (not-free $v key)))
-(rewrite (Sum e1 $k $v (Sing $k $v)) e1 :name "sum-sing")
+(rewrite (Sum e1 $k $v (Sing (V $k) (V $v))) e1 :name "sum-sing")
 (rewrite (Unique e) e :name "unique-rm")
 
 (let paper-input
@@ -74,33 +74,33 @@
           (Lambda $5
             (Lambda $6
               (Sum
-                (Sum $1 $7 $8
+                (Sum (V $1) $7 $8
                   (Let
-                    (Get $1 (Add $7 (Num 1)))
+                    (Get (V $1) (Add (V $7) (Num 1)))
                     $9
-                    (Sing $7
+                    (Sing (V $7)
                       (Sum
-                        (SubArray $2 $8 (Sub $9 (Num 1)))
+                        (SubArray (V $2) (V $8) (Sub (V $9) (Num 1)))
                         $10
                         $11
-                        (Sing (Unique $11) (Get $3 $10))))))
+                        (Sing (Unique (V $11)) (Get (V $3) (V $10)))))))
                 $7
                 $8
-                (Sing $7
-                  (Sum $8 $9 $10
-                    (Mult $10
+                (Sing (V $7)
+                  (Sum (V $8) $9 $10
+                    (Mult (V $10)
                       (Get
-                        (Sum $4 $11 $12
+                        (Sum (V $4) $11 $12
                           (Let
-                            (Get $4 (Add $11 (Num 1)))
+                            (Get (V $4) (Add (V $11) (Num 1)))
                             $13
-                            (Sing $11
+                            (Sing (V $11)
                               (Sum
-                                (SubArray $5 $12 (Sub $13 (Num 1)))
+                                (SubArray (V $5) (V $12) (Sub (V $13) (Num 1)))
                                 $14
                                 $15
-                                (Sing (Unique $15) (Get $6 $14))))))
-                        $9))))))))))))
+                                (Sing (Unique (V $15)) (Get (V $6) (V $14)))))))
+                        (V $9)))))))))))))
 ;;; Saturate the input alone: the target arrives only afterwards, so this shows
 ;;; reachability rather than joinability.
 (run 30)
@@ -111,18 +111,18 @@
         (Lambda $4
           (Lambda $5
             (Lambda $6
-              (Sum $1 $7 $8
-                (Sing $7
+              (Sum (V $1) $7 $8
+                (Sing (V $7)
                   (Sum
-                    (SubArray $2 $8 (Sub (Get $1 (Add $7 (Num 1))) (Num 1)))
+                    (SubArray (V $2) (V $8) (Sub (Get (V $1) (Add (V $7) (Num 1))) (Num 1)))
                     $9
                     $10
                     (Mult
-                      (Get $3 $9)
+                      (Get (V $3) (V $9))
                       (Sum
-                        (SubArray $5 (Get $4 $10) (Sub (Get $4 (Add $10 (Num 1))) (Num 1)))
+                        (SubArray (V $5) (Get (V $4) (V $10)) (Sub (Get (V $4) (Add (V $10) (Num 1))) (Num 1)))
                         $11
                         $12
-                        (Sing $12 (Get $6 $11))))))))))))))
+                        (Sing (V $12) (Get (V $6) (V $11)))))))))))))))
 (run 0)
 (check (= paper-input paper-target))

@@ -260,3 +260,37 @@ Validation logs: `/tmp/slotted-proof-wrapper-final-check.log`,
 that invalid step construction reports the conflicting inputs without changing
 the store. Root `make check` passed again, including all 96 experimental unit
 tests. Validation log: `/tmp/slotted-malformed-step-check.log`.
+
+
+## Rigid Var names
+
+The source language uses a built-in rigid `Var` sort and requires one unary
+variable constructor per equality sort, as requested. Terms use explicit
+applications such as `(V $a)`; binders hold `Var` names directly. Equalities
+between variable applications cannot equate names or cross carrier sorts.
+
+The implementation covers declarations, matching, maintenance, substitution,
+extraction, export, proof lifting, fixtures, generators, and documentation.
+Proof claims and checker results carry no sort annotation; the checker returns
+egglog's `Proposition` and verifies endpoint signatures. Ordinary checker
+semantics remain unchanged. `subst` retains its existing proof restriction.
+
+Regression tests cover cross-carrier equality, rigid binder fields after support
+loss, concrete globals and fresh names, substitution capture avoidance, and
+invalid declarations and layouts. Tests remain in separate files.
+
+Claude Fable found no correctness blockers. Its cleanup suggestions removed
+dead checks and redundant state, improved declaration diagnostics, and clarified
+concrete global binders. The literal-name filter remains because the direct
+source API also accepts ordinary Var locals, which may alias.
+
+Root `make check` passed in an isolated checkout: 298 Python tests, the full
+Rust workspace, 108 experimental unit tests, 23 proof integration tests, four
+rigid-Var regressions, 43 compatible slotted fixtures, 31 runtime/differential
+checks, 24 generated benchmark proofs, and all seven default proof-fuzz profiles.
+The original reference goal root is preserved when tests insert a variable seed;
+a regression covers that ordering. `subst` and incompatible no-aliasing workloads
+retain their explicit skips.
+
+Validation: `/tmp/var-sort-check-complete.log`. Review:
+`/tmp/var-sort-fable-review.txt`.

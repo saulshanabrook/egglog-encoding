@@ -13,12 +13,13 @@
 ;;; by the same argument. The reference asserts `eg.slots(id).is_empty()`.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 
 
-(let f01 (F $0 $1))
-(let f12 (F $1 $2))
+(let f01 (F (V $0) (V $1)))
+(let f12 (F (V $1) (V $2)))
 (union f01 f12)
 
 (run 0)

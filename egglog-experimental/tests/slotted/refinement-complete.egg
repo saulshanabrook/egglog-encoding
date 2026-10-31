@@ -3,7 +3,7 @@
 ;;; the former 64-entry prefix omitted.
 (include "egglog-experimental/tests/slotted/languages/toy.egg")
 
-(let seed (F $0 $0))
+(let seed (F (V $0) (V $0)))
 (let result (Null))
 (rewrite (Null) (G a0 (G a1 (G a2 (G a3 (G a4 a5)))))
          :when ((= p0 (F a0 a0))
@@ -16,4 +16,4 @@
 (run 1)
 (let slot_0 $0)
 (let slot_1 $1)
-(check (= result (G slot_0 (G slot_0 (G slot_0 (G slot_0 (G slot_0 slot_1)))))))
+(check (= result (G (V slot_0) (G (V slot_0) (G (V slot_0) (G (V slot_0) (G (V slot_0) (V slot_1))))))))

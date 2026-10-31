@@ -8,16 +8,24 @@ use egglog::proof::{Justification, Proposition};
 use egglog::{TermDag, TermId};
 use egglog_numeric_id::NumericId;
 
+fn variable(dag: &mut TermDag, name: i64) -> TermId {
+    let slot = slot_term(dag, name);
+    dag.app("V".into(), vec![slot])
+}
+
 fn figure_3() -> (SlottedProofStore, SlottedProgram, Claim) {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Mul", vec![ColumnKind::Child, ColumnKind::Child]);
     program.add_constructor("Null", vec![]);
-    program.add_let(&mut dag, "m7", "(Mul $7 (Null))").unwrap();
+    program
+        .add_let(&mut dag, "m7", "(Mul (V $7) (Null))")
+        .unwrap();
     program.add_let(&mut dag, "zero", "(Null)").unwrap();
-    program.add_union(&mut dag, "m7", "zero", "U").unwrap();
+    program.add_union(&mut dag, "m7", "zero").unwrap();
     let claim = program
-        .claim(&mut dag, "=", "U", "(Mul $9 (Null))", "zero")
+        .claim(&mut dag, "=", "(Mul (V $9) (Null))", "zero")
         .unwrap();
     (SlottedProofStore::new(dag), program, claim)
 }
@@ -33,10 +41,9 @@ fn redundancy_by_equivariance() {
     let proven = check_proof(&mut store, &program, proof).unwrap();
     // Equivariance acts on both endpoints; `(Null)` has no slots.
     assert_eq!(
-        store.proposition_to_string(&proven.proposition),
-        "(Mul $9 (Null)) = (Null)"
+        store.proposition_to_string(&proven),
+        "(Mul (V $9) (Null)) = (Null)"
     );
-    assert_eq!(proven.sort.as_deref(), Some("U"));
     check_claim(
         &mut store,
         &program,
@@ -66,13 +73,7 @@ fn equivariance_checks_both_endpoints() {
     let union = store.fiat(term, zero);
     let sigma = Renaming::new([(7, 9), (9, 7)]).unwrap();
     let transported = store.equivariance(union, sigma.clone());
-    assert_eq!(
-        check_proof(&mut store, &program, transported)
-            .unwrap()
-            .sort
-            .as_deref(),
-        Some("U")
-    );
+    check_proof(&mut store, &program, transported).unwrap();
     let forged = store.add(SlottedProof::Equivariance {
         proposition: Proposition::new(term, zero),
         proof: union,
@@ -91,13 +92,16 @@ fn equivariance_checks_both_endpoints() {
 fn claim_witnesses_distinguish_free_and_bound_names() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
-    program.add_let(&mut dag, "free", "(F $0)").unwrap();
-    program.add_let(&mut dag, "bound", "(Lam $0 $0)").unwrap();
-    let free = program.claim(&mut dag, "=", "U", "free", "(F $1)").unwrap();
+    program.add_let(&mut dag, "free", "(F (V $0))").unwrap();
+    program
+        .add_let(&mut dag, "bound", "(Lam $0 (V $0))")
+        .unwrap();
+    let free = program.claim(&mut dag, "=", "free", "(F (V $1))").unwrap();
     let bound = program
-        .claim(&mut dag, "=", "U", "bound", "(Lam $1 $1)")
+        .claim(&mut dag, "=", "bound", "(Lam $1 (V $1))")
         .unwrap();
     let mut store = SlottedProofStore::new(dag);
     let proof = store.fiat(free.lhs, free.lhs);
@@ -130,24 +134,40 @@ fn claim_witnesses_distinguish_free_and_bound_names() {
 fn alpha_checks_scopes_payloads_and_its_premise() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     program.add_sorted_constructor("Num", "U", vec![ColumnKind::Payload("i64".into())]);
-    let source = "(Lam $0 (Lam $0 (Pair $0 (Pair $2 (Num 1)))))";
+    let source = "(Lam $0 (Lam $0 (Pair (V $0) (Pair (V $2) (Num 1)))))";
     program.add_let(&mut dag, "input", source).unwrap();
     let input = program.lets["input"];
     assert_eq!(dag.to_string(input), source);
     let mut store = SlottedProofStore::new(dag);
     let premise = store.fiat(input, input);
     for (target, valid) in [
-        ("(Lam $3 (Lam $4 (Pair $4 (Pair $2 (Num 1)))))", true),
-        ("(Lam $3 (Lam $4 (Pair $3 (Pair $2 (Num 1)))))", false),
-        ("(Lam $2 (Lam $4 (Pair $4 (Pair $2 (Num 1)))))", false),
-        ("(Lam $3 (Lam $4 (Pair $4 (Pair $5 (Num 1)))))", false),
-        ("(Lam $3 (Lam $4 (Pair $4 (Pair $2 (Num 2)))))", false),
+        (
+            "(Lam $3 (Lam $4 (Pair (V $4) (Pair (V $2) (Num 1)))))",
+            true,
+        ),
+        (
+            "(Lam $3 (Lam $4 (Pair (V $3) (Pair (V $2) (Num 1)))))",
+            false,
+        ),
+        (
+            "(Lam $2 (Lam $4 (Pair (V $4) (Pair (V $2) (Num 1)))))",
+            false,
+        ),
+        (
+            "(Lam $3 (Lam $4 (Pair (V $4) (Pair (V $5) (Num 1)))))",
+            false,
+        ),
+        (
+            "(Lam $3 (Lam $4 (Pair (V $4) (Pair (V $2) (Num 2)))))",
+            false,
+        ),
     ] {
         let rhs = program
-            .claim(&mut store.term_dag, "=", "U", "input", target)
+            .claim(&mut store.term_dag, "=", "input", target)
             .unwrap()
             .rhs;
         let proof = store.alpha(premise, rhs);
@@ -179,10 +199,13 @@ fn alpha_checks_scopes_payloads_and_its_premise() {
 fn congruence_cannot_put_a_constructor_in_a_binder_column() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     program.add_constructor("K", vec![]);
-    program.add_let(&mut dag, "input", "(Lam $0 $0)").unwrap();
-    program.add_union(&mut dag, "$0", "(K)", "U").unwrap();
+    program
+        .add_let(&mut dag, "input", "(Lam $0 (V $0))")
+        .unwrap();
+    program.add_union(&mut dag, "$0", "(K)").unwrap();
     let input = program.lets["input"];
     let union = &program.unions[0];
     let mut store = SlottedProofStore::new(dag);
@@ -193,7 +216,7 @@ fn congruence_cannot_put_a_constructor_in_a_binder_column() {
         check_proof(&mut store, &program, proof)
             .unwrap_err()
             .to_string()
-            .contains("binder column")
+            .contains("expected Var")
     );
 }
 
@@ -201,18 +224,19 @@ fn congruence_cannot_put_a_constructor_in_a_binder_column() {
 fn source_globals_cannot_be_overridden_by_a_rule_substitution() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
-    program.add_let(&mut dag, "fixed", "$0").unwrap();
-    program.add_let(&mut dag, "input", "(F $1)").unwrap();
+    program.add_let(&mut dag, "fixed", "(V $0)").unwrap();
+    program.add_let(&mut dag, "input", "(F (V $1))").unwrap();
     program
         .add_rewrite(&mut dag, r#"(rewrite (F x) fixed :name "r")"#)
         .unwrap();
     // A later scope cannot change what the rule captured.
-    program.add_let(&mut dag, "fixed", "$2").unwrap();
+    program.add_let(&mut dag, "fixed", "(V $2)").unwrap();
     let input = program.lets["input"];
-    let old = slot_term(&mut dag, 0);
-    let x = slot_term(&mut dag, 1);
-    let new = slot_term(&mut dag, 2);
+    let old = variable(&mut dag, 0);
+    let x = variable(&mut dag, 1);
+    let new = variable(&mut dag, 2);
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(input, input);
     for (rhs, substitution, valid) in [
@@ -237,18 +261,19 @@ fn source_globals_cannot_be_overridden_by_a_rule_substitution() {
 fn rule_side_patterns_require_explicit_alpha_and_preserve_free_names() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("Pair", vec![ColumnKind::Child, ColumnKind::Child]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     program.add_constructor("K", vec![]);
     program
-        .add_let(&mut dag, "child", "(Lam $0 (Pair $0 $3))")
+        .add_let(&mut dag, "child", "(Lam $0 (Pair (V $0) (V $3)))")
         .unwrap();
     program.add_let(&mut dag, "root", "(F child)").unwrap();
     program
         .add_rewrite(
             &mut dag,
-            r#"(rewrite (F x) (K) :when ((= x (Lam $a (Pair $a $b)))) :name "r")"#,
+            r#"(rewrite (F x) (K) :when ((= x (Lam $a (Pair (V $a) (V $b))))) :name "r")"#,
         )
         .unwrap();
     let (root, child) = (program.lets["root"], program.lets["child"]);
@@ -259,7 +284,9 @@ fn rule_side_patterns_require_explicit_alpha_and_preserve_free_names() {
     let a = slot_term(&mut store.term_dag, 1);
     for (free_slot, convert, valid) in [(3, false, false), (3, true, true), (4, true, false)] {
         let b = slot_term(&mut store.term_dag, free_slot);
-        let pair = store.term_dag.app("Pair".into(), vec![a, b]);
+        let va = store.term_dag.app("V".into(), vec![a]);
+        let vb = store.term_dag.app("V".into(), vec![b]);
+        let pair = store.term_dag.app("Pair".into(), vec![va, vb]);
         let lam = store.term_dag.app("Lam".into(), vec![a, pair]);
         let side = if convert {
             store.alpha(side, lam)
@@ -284,6 +311,7 @@ fn rule_side_patterns_require_explicit_alpha_and_preserve_free_names() {
 fn original_conditions_require_evidence_in_source_order() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     for name in ["F", "G", "H"] {
         program.add_constructor(name, vec![ColumnKind::Child]);
     }
@@ -325,7 +353,7 @@ fn original_conditions_require_evidence_in_source_order() {
 #[test]
 fn fiat_needs_a_built_term_or_a_union() {
     let (mut store, program, _claim) = figure_3();
-    let s9 = slot_term(&mut store.term_dag, 9);
+    let s9 = variable(&mut store.term_dag, 9);
     let null = store.term_dag.app("Null".into(), vec![]);
     let bogus = store.term_dag.app("Mul".into(), vec![s9, null]);
     let proof = store.fiat(bogus, bogus);
@@ -342,6 +370,7 @@ fn fiat_needs_a_built_term_or_a_union() {
 fn rule_instances_and_minted_slots() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child, ColumnKind::Child]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     program.add_constructor("App", vec![ColumnKind::Child, ColumnKind::Child]);
@@ -349,17 +378,19 @@ fn rule_instances_and_minted_slots() {
     program
         .add_let(&mut dag, "t", "(F (Num 1) (Num 2))")
         .unwrap();
-    program.add_let(&mut dag, "u", "(F $1 (Num 2))").unwrap();
+    program
+        .add_let(&mut dag, "u", "(F (V $1) (Num 2))")
+        .unwrap();
     program
         .add_rewrite(
             &mut dag,
-            r#"(rewrite (F x y) (Lam $s (App (F x y) $s)) :name "wrap")"#,
+            r#"(rewrite (F x y) (Lam $s (App (F x y) (V $s))) :name "wrap")"#,
         )
         .unwrap();
     program
         .add_rewrite(
             &mut dag,
-            r#"(rewrite (Lam $x (App f $x)) f :name "eta" :when ((not-free $x f)))"#,
+            r#"(rewrite (Lam $x (App f (V $x))) f :name "eta" :when ((not-free $x f)))"#,
         )
         .unwrap();
     let mut store = SlottedProofStore::new(dag);
@@ -369,7 +400,8 @@ fn rule_instances_and_minted_slots() {
     let num1 = store.term_dag.app("Num".into(), vec![one]);
     let num2 = store.term_dag.app("Num".into(), vec![two]);
     let s4 = slot_term(&mut store.term_dag, 4);
-    let app = store.term_dag.app("App".into(), vec![t, s4]);
+    let v4 = store.term_dag.app("V".into(), vec![s4]);
+    let app = store.term_dag.app("App".into(), vec![t, v4]);
     let wrapped = store.term_dag.app("Lam".into(), vec![s4, app]);
     let root = store.fiat(t, t);
     let wrap = store.ordinary(
@@ -401,15 +433,16 @@ fn rule_instances_and_minted_slots() {
 
     // minting a slot the other bindings mention is refused
     let s1 = slot_term(&mut store.term_dag, 1);
-    let f1 = store.term_dag.app("F".into(), vec![s1, num2]);
-    let app1 = store.term_dag.app("App".into(), vec![f1, s1]);
+    let v1 = store.term_dag.app("V".into(), vec![s1]);
+    let f1 = store.term_dag.app("F".into(), vec![v1, num2]);
+    let app1 = store.term_dag.app("App".into(), vec![f1, v1]);
     let bad_wrapped = store.term_dag.app("Lam".into(), vec![s1, app1]);
     let f1_root = store.ordinary(Proposition::new(f1, f1), Justification::Fiat);
     let bad = store.ordinary(
         Proposition::new(f1, bad_wrapped),
         Justification::Rule {
             name: "wrap".into(),
-            substitution: vec![("x".into(), s1), ("y".into(), num2), ("$s".into(), s1)]
+            substitution: vec![("x".into(), v1), ("y".into(), num2), ("$s".into(), s1)]
                 .into_iter()
                 .collect(),
             premise_proofs: vec![f1_root],
@@ -422,21 +455,26 @@ fn rule_instances_and_minted_slots() {
 fn minted_slots_avoid_source_globals() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
-    program.add_let(&mut dag, "fixed", "$0").unwrap();
-    program.add_let(&mut dag, "input", "(F $1)").unwrap();
+    program.add_let(&mut dag, "fixed", "(V $0)").unwrap();
+    program.add_let(&mut dag, "input", "(F (V $1))").unwrap();
     program
-        .add_rewrite(&mut dag, r#"(rewrite (F x) (Pair fixed $fresh) :name "r")"#)
+        .add_rewrite(
+            &mut dag,
+            r#"(rewrite (F x) (Pair fixed (V $fresh)) :name "r")"#,
+        )
         .unwrap();
     let input = program.lets["input"];
-    let zero = slot_term(&mut dag, 0);
-    let one = slot_term(&mut dag, 1);
+    let zero = variable(&mut dag, 0);
+    let one = variable(&mut dag, 1);
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(input, input);
     for (slot, valid) in [(0, false), (1, false), (2, true), (37, true)] {
         let fresh = slot_term(&mut store.term_dag, slot);
-        let rhs = store.term_dag.app("Pair".into(), vec![zero, fresh]);
+        let term = store.term_dag.app("V".into(), vec![fresh]);
+        let rhs = store.term_dag.app("Pair".into(), vec![zero, term]);
         let proof = store.ordinary(
             Proposition::new(input, rhs),
             Justification::Rule {
@@ -452,161 +490,21 @@ fn minted_slots_avoid_source_globals() {
 }
 
 #[test]
-fn equality_conditions_keep_their_source_sort() {
-    for condition in ["(= x y)", "(= fixed other)"] {
-        let mut dag = TermDag::default();
-        let mut program = SlottedProgram::default();
-        program.add_sorted_constructor("PairA", "A", vec![ColumnKind::Child; 2]);
-        program.add_sorted_constructor("HitA", "A", vec![]);
-        program.add_let(&mut dag, "input", "(PairA $0 $1)").unwrap();
-        program.add_let(&mut dag, "fixed", "$0").unwrap();
-        program.add_let(&mut dag, "other", "$1").unwrap();
-        program.add_union(&mut dag, "$0", "$1", "B").unwrap();
-        program
-            .add_rewrite(
-                &mut dag,
-                &format!(r#"(rewrite (PairA x y) (HitA) :when ({condition}) :name "r")"#),
-            )
-            .unwrap();
-        let input = program.lets["input"];
-        let zero = slot_term(&mut dag, 0);
-        let one = slot_term(&mut dag, 1);
-        let hit = dag.app("HitA".into(), vec![]);
-        let mut store = SlottedProofStore::new(dag);
-        let root = store.fiat(input, input);
-        let side = store.fiat(zero, one);
-        let proof = store.ordinary(
-            Proposition::new(input, hit),
-            Justification::Rule {
-                name: "r".into(),
-                substitution: vec![("x".into(), zero), ("y".into(), one)]
-                    .into_iter()
-                    .collect(),
-                premise_proofs: vec![root, side],
-            },
-        );
-        let error = check_proof(&mut store, &program, proof).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("condition is in A, its premise in B"),
-            "{error}"
-        );
-    }
-}
-
-#[test]
-fn global_root_rules_keep_their_source_sort() {
-    for source in [
-        r#"(rewrite fixed (WA fixed) :name "r")"#,
-        r#"(rewrite fixed other :name "r")"#,
-        r#"(rewrite fixed x :when ((= x (WA y))) :name "r")"#,
-    ] {
-        let mut dag = TermDag::default();
-        let mut program = SlottedProgram::default();
-        program.add_sorted_constructor("WA", "A", vec![ColumnKind::Child]);
-        program.add_sorted_constructor("WB", "B", vec![ColumnKind::Child]);
-        program.add_let(&mut dag, "fixed", "$0").unwrap();
-        program.add_let(&mut dag, "other", "(WA $0)").unwrap();
-        program.add_let(&mut dag, "b", "(WB $0)").unwrap();
-        program.add_rewrite(&mut dag, source).unwrap();
-        let (fixed, other, b) = (
-            program.lets["fixed"],
-            program.lets["other"],
-            program.lets["b"],
-        );
-        let mut store = SlottedProofStore::new(dag);
-        let root = store.fiat(fixed, fixed);
-        let side = store.fiat(other, other);
-        let premises = if program.rewrites["r"].conditions().is_empty() {
-            vec![root]
-        } else {
-            vec![root, side]
-        };
-        let proof = store.ordinary(
-            Proposition::new(fixed, other),
-            Justification::Rule {
-                name: "r".into(),
-                substitution: vec![("x".into(), other), ("y".into(), fixed)]
-                    .into_iter()
-                    .collect(),
-                premise_proofs: premises,
-            },
-        );
-        assert_eq!(
-            check_proof(&mut store, &program, proof)
-                .unwrap()
-                .sort
-                .as_deref(),
-            Some("A")
-        );
-        let parent = store.fiat(b, b);
-        let crossed = store.congr(parent, 0, proof).unwrap();
-        let error = check_proof(&mut store, &program, crossed).unwrap_err();
-        assert!(
-            error.to_string().contains("column 0 of WB is B")
-                || error.to_string().contains("expected B"),
-            "{source}: {error}"
-        );
-    }
-}
-
-#[test]
-fn constructor_conditions_determine_a_slot_rules_carrier() {
-    let mut dag = TermDag::default();
-    let mut program = SlottedProgram::default();
-    program.add_sorted_constructor("WA", "A", vec![ColumnKind::Child]);
-    program.add_sorted_constructor("WB", "B", vec![ColumnKind::Child]);
-    program.add_let(&mut dag, "fixed", "$0").unwrap();
-    program.add_let(&mut dag, "side", "(WA $0)").unwrap();
-    program.add_let(&mut dag, "b", "(WB $0)").unwrap();
-    program
-        .add_rewrite(
-            &mut dag,
-            r#"(rewrite fixed $fresh :when ((WA x)) :name "r")"#,
-        )
-        .unwrap();
-    let (fixed, side, b) = (
-        program.lets["fixed"],
-        program.lets["side"],
-        program.lets["b"],
-    );
-    let fresh = slot_term(&mut dag, 2);
-    let mut store = SlottedProofStore::new(dag);
-    let root = store.fiat(fixed, fixed);
-    let side = store.fiat(side, side);
-    let proof = store.ordinary(
-        Proposition::new(fixed, fresh),
-        Justification::Rule {
-            name: "r".into(),
-            substitution: vec![("x".into(), fixed), ("$fresh".into(), fresh)]
-                .into_iter()
-                .collect(),
-            premise_proofs: vec![root, side],
-        },
-    );
-    assert_eq!(
-        check_proof(&mut store, &program, proof)
-            .unwrap()
-            .sort
-            .as_deref(),
-        Some("A")
-    );
-    let parent = store.fiat(b, b);
-    let crossed = store.congr(parent, 0, proof).unwrap();
-    assert!(check_proof(&mut store, &program, crossed).is_err());
-}
-
-#[test]
 fn slot_literals_are_distinct_slots() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child, ColumnKind::Child]);
     program.add_constructor("A", vec![]);
-    program.add_let(&mut dag, "ff", "(F $0 $0)").unwrap();
-    program.add_let(&mut dag, "fa", "(F (A) $0)").unwrap();
     program
-        .add_rewrite(&mut dag, r#"(rewrite (F $x $y) (A) :name "distinct")"#)
+        .add_let(&mut dag, "ff", "(F (V $0) (V $0))")
+        .unwrap();
+    program.add_let(&mut dag, "fa", "(F (A) (V $0))").unwrap();
+    program
+        .add_rewrite(
+            &mut dag,
+            r#"(rewrite (F (V $x) (V $y)) (A) :name "distinct")"#,
+        )
         .unwrap();
     let mut store = SlottedProofStore::new(dag);
     let (ff, fa) = (program.lets["ff"], program.lets["fa"]);
@@ -639,120 +537,7 @@ fn slot_literals_are_distinct_slots() {
         },
     );
     let err = check_proof(&mut store, &program, non_slot).unwrap_err();
-    assert!(err.to_string().contains("not a slot"), "{err}");
-}
-
-#[test]
-fn equalities_stay_in_their_sort() {
-    let mut dag = TermDag::default();
-    let mut program = SlottedProgram::default();
-    program.add_sorted_constructor("WA", "A", vec![ColumnKind::Child]);
-    program.add_sorted_constructor("WB", "B", vec![ColumnKind::Child]);
-    program.add_let(&mut dag, "wa0", "(WA $0)").unwrap();
-    program.add_let(&mut dag, "wa1", "(WA $1)").unwrap();
-    program.add_let(&mut dag, "wb0", "(WB $0)").unwrap();
-    program.add_union(&mut dag, "wa0", "wa1", "A").unwrap();
-    program
-        .add_rewrite(&mut dag, r#"(rewrite (WA x) x :name "unwrap")"#)
-        .unwrap();
-    let mut store = SlottedProofStore::new(dag);
-    let (wa0, wa1, wb0) = (
-        program.lets["wa0"],
-        program.lets["wa1"],
-        program.lets["wb0"],
-    );
-    let s0 = slot_term(&mut store.term_dag, 0);
-    let s1 = slot_term(&mut store.term_dag, 1);
-    let unwrap = |store: &mut SlottedProofStore, term: TermId, slot: TermId| {
-        let root = store.fiat(term, term);
-        store.ordinary(
-            Proposition::new(term, slot),
-            Justification::Rule {
-                name: "unwrap".into(),
-                substitution: vec![("x".into(), slot)].into_iter().collect(),
-                premise_proofs: vec![root],
-            },
-        )
-    };
-    // in A: $0 = (WA $0) = (WA $1) = $1
-    let p0 = unwrap(&mut store, wa0, s0);
-    let p1 = unwrap(&mut store, wa1, s1);
-    let union = store.fiat(wa0, wa1);
-    let back = store.sym(p0);
-    let left = store.trans(back, union).unwrap();
-    let slots = store.trans(left, p1).unwrap();
-    let proven = check_proof(&mut store, &program, slots).unwrap();
-    assert_eq!(store.proposition_to_string(&proven.proposition), "$0 = $1");
-    assert_eq!(proven.sort.as_deref(), Some("A"));
-    // which says nothing about B's slots
-    let refl = store.fiat(wb0, wb0);
-    let crossed = store.congr(refl, 0, slots).unwrap();
-    let err = check_proof(&mut store, &program, crossed).unwrap_err();
-    assert!(err.to_string().contains("column 0 of WB is B"), "{err}");
-}
-
-#[test]
-fn variable_root_rules_keep_the_sort_of_their_binding() {
-    for (rule, premise) in [
-        (
-            r#"(rewrite x y :when ((= p (PairA x y))) :name "r")"#,
-            ("pair", "pair"),
-        ),
-        (
-            r#"(rewrite x y :when ((= x (WA y))) :name "r")"#,
-            ("zero", "wa"),
-        ),
-    ] {
-        let mut dag = TermDag::default();
-        let mut program = SlottedProgram::default();
-        program.add_sorted_constructor("PairA", "A", vec![ColumnKind::Child; 2]);
-        program.add_sorted_constructor("WA", "A", vec![ColumnKind::Child]);
-        program.add_sorted_constructor("WB", "B", vec![ColumnKind::Child]);
-        for (name, term) in [
-            ("zero", "$0"),
-            ("one", "$1"),
-            ("pair", "(PairA $0 $1)"),
-            ("wa", "(WA $1)"),
-            ("wb", "(WB $0)"),
-        ] {
-            program.add_let(&mut dag, name, term).unwrap();
-        }
-        program.add_union(&mut dag, "zero", "wa", "A").unwrap();
-        program.add_rewrite(&mut dag, rule).unwrap();
-        let (s0, s1, wb) = (
-            program.lets["zero"],
-            program.lets["one"],
-            program.lets["wb"],
-        );
-        let mut store = SlottedProofStore::new(dag);
-        let root = store.fiat(s0, s0);
-        let side = store.fiat(program.lets[premise.0], program.lets[premise.1]);
-        let proof = store.ordinary(
-            Proposition::new(s0, s1),
-            Justification::Rule {
-                name: "r".into(),
-                substitution: vec![
-                    ("x".into(), s0),
-                    ("y".into(), s1),
-                    ("p".into(), program.lets["pair"]),
-                ]
-                .into_iter()
-                .collect(),
-                premise_proofs: vec![root, side],
-            },
-        );
-        assert_eq!(
-            check_proof(&mut store, &program, proof)
-                .unwrap()
-                .sort
-                .as_deref(),
-            Some("A")
-        );
-        let refl = store.fiat(wb, wb);
-        let crossed = store.congr(refl, 0, proof).unwrap();
-        let err = check_proof(&mut store, &program, crossed).unwrap_err();
-        assert!(err.to_string().contains("column 0 of WB is B"), "{err}");
-    }
+    assert!(err.to_string().contains("expected Var"), "{err}");
 }
 
 #[test]
@@ -799,4 +584,134 @@ fn corrupt_and_cyclic_proofs_are_rejected() {
     let second = store.ordinary(Proposition::new(m7, zero), Justification::Sym(first));
     let err = check_proof(&mut store, &program, second).unwrap_err();
     assert!(err.to_string().contains("cyclic"), "{err}");
+}
+
+#[test]
+fn variable_term_equality_cannot_equate_names_or_other_carriers() {
+    let mut dag = TermDag::default();
+    let mut program = SlottedProgram::default();
+    program.add_sorted_constructor("VA", "A", vec![ColumnKind::Var]);
+    program.add_sorted_constructor("VB", "B", vec![ColumnKind::Var]);
+    program.add_sorted_constructor("LamA", "A", vec![ColumnKind::Binder, ColumnKind::Child]);
+    program.add_union(&mut dag, "(VA $0)", "(VA $1)").unwrap();
+    program.add_let(&mut dag, "b0", "(VB $0)").unwrap();
+    program.add_let(&mut dag, "b1", "(VB $1)").unwrap();
+    program
+        .add_let(&mut dag, "lam", "(LamA $0 (VA $0))")
+        .unwrap();
+    let a0 = program.unions[0].lhs;
+    let a1 = program.unions[0].rhs;
+    let b0 = program.lets["b0"];
+    let b1 = program.lets["b1"];
+    let zero = slot_term(&mut dag, 0);
+    let one = slot_term(&mut dag, 1);
+    let mut store = SlottedProofStore::new(dag);
+    let terms = store.fiat(a0, a1);
+    check_proof(&mut store, &program, terms).unwrap();
+    let name = store.project(terms, 0).unwrap();
+    assert_eq!(
+        check_proof(&mut store, &program, name).unwrap(),
+        Proposition::new(one, one)
+    );
+    for proof in [
+        store.fiat(zero, one),
+        store.ordinary(
+            Proposition::new(zero, one),
+            Justification::Proj {
+                proof: terms,
+                child_index: 0,
+            },
+        ),
+        store.fiat(b0, b1),
+    ] {
+        assert!(check_proof(&mut store, &program, proof).is_err());
+    }
+    let lam = program.lets["lam"];
+    let parent = store.fiat(lam, lam);
+    assert!(store.congr(parent, 0, terms).is_err());
+    // Even a malformed recorded source union cannot equate rigid names.
+    program.add_union(&mut store.term_dag, "$0", "$1").unwrap();
+    let names = store.fiat(zero, one);
+    assert!(
+        check_proof(&mut store, &program, names)
+            .unwrap_err()
+            .to_string()
+            .contains("distinct Var names")
+    );
+}
+
+#[test]
+fn transitivity_cannot_bridge_constructor_sorts() {
+    let mut dag = TermDag::default();
+    let mut program = SlottedProgram::default();
+    program.add_sorted_constructor("VA", "A", vec![ColumnKind::Var]);
+    program.add_sorted_constructor("VB", "B", vec![ColumnKind::Var]);
+    program.add_union(&mut dag, "(VA $0)", "(VA $1)").unwrap();
+    program.add_union(&mut dag, "(VB $1)", "(VB $2)").unwrap();
+    let [a, b] = program.unions.as_slice() else {
+        unreachable!()
+    };
+    let mut store = SlottedProofStore::new(dag);
+    let left = store.fiat(a.lhs, a.rhs);
+    let right = store.fiat(b.lhs, b.rhs);
+    assert!(store.trans(left, right).is_err());
+    let forged = store.ordinary(
+        Proposition::new(a.lhs, b.rhs),
+        Justification::Trans(left, right),
+    );
+    assert!(
+        check_proof(&mut store, &program, forged)
+            .unwrap_err()
+            .to_string()
+            .contains("expected A")
+    );
+}
+
+#[test]
+fn native_rule_bindings_and_conditions_preserve_constructor_sorts() {
+    let mut dag = TermDag::default();
+    let mut program = SlottedProgram::default();
+    program.add_sorted_constructor("VA", "A", vec![ColumnKind::Var]);
+    program.add_sorted_constructor("VB", "B", vec![ColumnKind::Var]);
+    program.add_sorted_constructor("WA", "A", vec![ColumnKind::Child]);
+    program.add_sorted_constructor("PairA", "A", vec![ColumnKind::Child; 2]);
+    for (name, term) in [
+        ("a0", "(VA $0)"),
+        ("a1", "(VA $1)"),
+        ("b1", "(VB $1)"),
+        ("wa", "(WA (VA $1))"),
+        ("pair", "(PairA (VA $0) (VA $1))"),
+    ] {
+        program.add_let(&mut dag, name, term).unwrap();
+    }
+    program.add_union(&mut dag, "a0", "wa").unwrap();
+    program
+        .add_rewrite(&mut dag, r#"(rewrite x y :when ((= x (WA y))) :name "r")"#)
+        .unwrap();
+    let a0 = program.lets["a0"];
+    let a1 = program.lets["a1"];
+    let b1 = program.lets["b1"];
+    let wa = program.lets["wa"];
+    let mut store = SlottedProofStore::new(dag);
+    let root = store.fiat(a0, a0);
+    let side = store.fiat(a0, wa);
+    for (binding, valid) in [(a1, true), (b1, false)] {
+        let rule = store.ordinary(
+            Proposition::new(a0, a1),
+            Justification::Rule {
+                name: "r".into(),
+                substitution: [("x".into(), a0), ("y".into(), binding)]
+                    .into_iter()
+                    .collect(),
+                premise_proofs: vec![root, side],
+            },
+        );
+        assert_eq!(check_proof(&mut store, &program, rule).is_ok(), valid);
+    }
+    for invalid in [
+        r#"(rewrite (VA $x) (VB $x) :name "cross")"#,
+        r#"(rewrite $x $y :when ((= p (PairA (VA $x) (VA $y)))) :name "names")"#,
+    ] {
+        assert!(program.add_rewrite(&mut store.term_dag, invalid).is_err());
+    }
 }

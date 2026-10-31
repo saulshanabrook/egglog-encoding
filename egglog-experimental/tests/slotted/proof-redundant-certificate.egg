@@ -1,8 +1,8 @@
 ; A redundant-slot certificate must retain its swap through an intermediate
 ; class whose representative contains neither name.
-(datatype U (H U U))
+(datatype U (V Var) (H U U))
 (rewrite x1 (H x3 x3) :when ((= x3 (H x1 x2))))
-(let _p0 (H $0 $2))
-(let _p2 (H $0 $0))
+(let _p0 (H (V $0) (V $2)))
+(let _p2 (H (V $0) (V $0)))
 (run 2)
 (check (renaming-= _p0 _p2))

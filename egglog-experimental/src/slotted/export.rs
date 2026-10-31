@@ -1,7 +1,7 @@
 //! Export the logical slotted graph directly from a live egglog database.
 //!
 //! Native table reads have no visualization limits. We validate raw edges before
-//! changing frames or replacing binder edges with slot literals, since those
+//! changing frames or projecting rigid slot fields into slot literals, since those
 //! operations could otherwise hide malformed rows. Every constructor row survives
 //! export, including duplicates that coincide after frame translation.
 
@@ -107,7 +107,7 @@ pub fn export_named(
 
 #[derive(Clone, Debug)]
 struct Edge {
-    class: Value,
+    class: Option<Value>,
     map: Map,
 }
 
@@ -118,7 +118,6 @@ struct Row {
     edges: Vec<Edge>,
     binders: Vec<usize>,
     covered: Option<usize>,
-    variable: bool,
     subsumed: bool,
 }
 
@@ -136,7 +135,6 @@ struct Snapshot {
     links: Vec<Link>,
     groups: BTreeMap<Value, Vec<Map>>,
     rows: Vec<Row>,
-    variable: Value,
     raw_nodes: usize,
 }
 
@@ -223,30 +221,7 @@ impl Snapshot {
             })
             .map_err(|e| e.to_string())?;
         let mut rows = Vec::new();
-        graph
-            .constructor_enodes(&symbols.var, |row| {
-                if graph.value_to_base::<i64>(row.children[0]) != 0 {
-                    error = Some("variable payload must be canonical slot 0".into());
-                }
-                rows.push(Row {
-                    class: row.eclass,
-                    label: "var".into(),
-                    edges: vec![],
-                    binders: vec![],
-                    covered: None,
-                    variable: true,
-                    subsumed: row.subsumed,
-                });
-            })
-            .map_err(|e| e.to_string())?;
-        if rows.len() != 1 {
-            return Err(format!(
-                "expected one raw variable row, found {}",
-                rows.len()
-            ));
-        }
-        let variable = rows[0].class;
-        let mut raw_nodes = graph.get_size(&symbols.var);
+        let mut raw_nodes = 0;
         for op in constructors.values().filter(|op| op.sort == symbols.sort) {
             raw_nodes += graph.get_size(&op.name);
             let spelling = names.get(&op.name);
@@ -267,7 +242,6 @@ impl Snapshot {
             links,
             groups,
             rows,
-            variable,
             raw_nodes,
         })
     }
@@ -283,7 +257,9 @@ impl Snapshot {
         for row in &self.rows {
             adjacency.entry(row.class).or_default();
             for edge in &row.edges {
-                adjacency.entry(edge.class).or_default();
+                if let Some(class) = edge.class {
+                    adjacency.entry(class).or_default();
+                }
             }
         }
         for link in &self.links {
@@ -357,7 +333,7 @@ impl Snapshot {
             }
             components.push(rep);
         }
-        self.validate_rows(&reps)?;
+        self.validate_rows()?;
         let up: BTreeMap<_, _> = frames.iter().map(|(c, m)| (*c, inverse(m))).collect();
         let mut groups: BTreeMap<Value, BTreeSet<Map>> =
             components.iter().map(|c| (*c, BTreeSet::new())).collect();
@@ -433,27 +409,22 @@ impl Snapshot {
             };
             let mut arguments = Vec::new();
             let mut children = Vec::new();
-            if row.variable {
-                arguments.push(Argument::Slot { slot: slot(0) });
-            }
-            for (i, edge) in row.edges.iter().enumerate() {
-                if row.binders.contains(&i) {
-                    // Validate the raw {0 -> bound} edge first, then preserve the
-                    // actual bound name even when the variable class has lost slot 0.
-                    arguments.push(Argument::Slot {
-                        slot: slot(edge.map[&0]),
-                    });
-                } else {
-                    let rep = reps[&edge.class];
+            for edge in &row.edges {
+                if let Some(class) = edge.class {
+                    let rep = reps[&class];
                     let child = representative_nodes
                         .get(&rep)
                         .ok_or("child class has no constructor row")?;
                     children.push(child.clone());
                     arguments.push(Argument::Child {
-                        renaming: compose(&edge.map, &frames[&edge.class])
+                        renaming: compose(&edge.map, &frames[&class])
                             .iter()
                             .map(|(a, b)| (a.to_string(), slot(*b)))
                             .collect(),
+                    });
+                } else {
+                    arguments.push(Argument::Slot {
+                        slot: slot(edge.map[&0]),
                     });
                 }
             }
@@ -472,23 +443,16 @@ impl Snapshot {
         Ok(components.len())
     }
 
-    /// Check the original edge domains and binder targets before projection can
+    /// Check the original edge and rigid slot domains before projection can
     /// discard them. A node's free slots must contain its class's live slots.
-    fn validate_rows(&self, reps: &BTreeMap<Value, Value>) -> Result<(), String> {
+    fn validate_rows(&self) -> Result<(), String> {
         for row in &self.rows {
             let mut free = BTreeSet::new();
             let mut bound = BTreeSet::new();
-            if row.variable {
-                free.insert(0);
-            }
             for &i in &row.binders {
                 let edge = &row.edges[i];
-                if edge.map.keys().copied().collect::<Vec<_>>() != [0]
-                    || reps[&edge.class] != reps[&self.variable]
-                {
-                    return Err(
-                        "binder must point to the variable class with exactly domain {0}".into(),
-                    );
+                if edge.class.is_some() || edge.map.keys().copied().collect::<Vec<_>>() != [0] {
+                    return Err("binder must be a rigid slot with exactly domain {0}".into());
                 }
                 bound.insert(edge.map[&0]);
             }
@@ -496,8 +460,12 @@ impl Snapshot {
                 if row.binders.contains(&i) {
                     continue;
                 }
-                if edge.map.keys().ne(self.slots[&edge.class].keys()) {
-                    return Err("edge domain differs from child FreeVars".into());
+                if let Some(class) = edge.class {
+                    if edge.map.keys().ne(self.slots[&class].keys()) {
+                        return Err("edge domain differs from child FreeVars".into());
+                    }
+                } else if edge.map.keys().copied().collect::<Vec<_>>() != [0] {
+                    return Err("variable must be a rigid slot with exactly domain {0}".into());
                 }
                 free.extend(
                     edge.map
@@ -540,12 +508,19 @@ fn read_row(
                 });
                 column += 1;
             }
-            _ => {
+            Column::Child => {
                 edges.push(Edge {
-                    class: values[column + 1],
+                    class: Some(values[column + 1]),
                     map: renaming(graph, values[column])?,
                 });
                 column += 2;
+            }
+            Column::Var | Column::Binder => {
+                edges.push(Edge {
+                    class: None,
+                    map: renaming(graph, values[column])?,
+                });
+                column += 1;
             }
         }
     }
@@ -581,7 +556,6 @@ fn read_row(
         edges,
         binders: op.binders(),
         covered: op.covered(),
-        variable: false,
         subsumed,
     })
 }

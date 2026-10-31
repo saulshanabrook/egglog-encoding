@@ -1,6 +1,6 @@
 //! `slotted-subst`: substitution for the slotted e-graph encoding.
 //!
-//! `(slotted-subst body x var t_ren t [free_vars])` replaces, inside `body`, the variable
+//! `(slotted-subst body x t_ren t [free_vars])` replaces, inside `body`, the variable
 //! sitting at slot `x` of `body`'s frame with the invocation `t_ren * t`, and
 //! returns a class spelled in `body`'s frame whose slots are
 //! `(slots(body) \ {x}) ∪ im(t_ren)`.
@@ -25,7 +25,7 @@
 //!
 //! # Binders
 //!
-//! Binder metadata identifies each marker edge and the one child edge it covers.
+//! Binder metadata identifies each rigid marker field and the one child edge it covers.
 //! Markers are node data rather than AST children: they contribute no extraction
 //! cost and are never traversed as terms. Rebuilding alpha-refreshes their private
 //! names and changes only their covered edge. That both stops substitution below a
@@ -62,7 +62,6 @@ type Rows = HashMap<Value, Vec<(usize, SmallVec<[Value; 8]>)>>;
 #[derive(Hash, PartialEq, Eq)]
 struct CarrierKey {
     renaming_sort: String,
-    var: Value,
     free_vars: String,
 }
 
@@ -82,7 +81,6 @@ struct Substitutions(Mutex<HashMap<CarrierKey, SubstSnapshot>>);
 
 /// Validated and extracted once per carrier in a rule-application phase.
 struct SubstSnapshot {
-    var: Value,
     free_vars: String,
     terms: Terms,
     slots_used: BTreeSet<Slot>,
@@ -90,13 +88,12 @@ struct SubstSnapshot {
 }
 
 impl SubstSnapshot {
-    fn load(state: &FullState<'_, '_>, var: Value, free_vars: String) -> Result<Self, String> {
+    fn load(state: &FullState<'_, '_>, free_vars: String) -> Result<Self, String> {
         let layouts = Layouts::load(state, &free_vars)?;
         let mut names: Vec<String> = layouts.constructors.keys().cloned().collect();
         names.sort();
-        let (terms, slots_used) = build_terms(state, &layouts, var, &free_vars, &names)?;
+        let (terms, slots_used) = build_terms(state, &layouts, &free_vars, &names)?;
         Ok(Self {
-            var,
             free_vars,
             terms,
             slots_used,
@@ -114,13 +111,12 @@ pub const SLOTTED_SUBST_FRAME: &str = "slotted-subst-frame";
 /// A slot name, as a renaming spells it.
 type Slot = i64;
 
-/// The slot the primitive's contract fixes for `var`: the variable class is
-/// `(Var 0)`, so "the variable at slot `s`" is `var` reached by an edge
-/// `0 -> s`.
+/// Every rigid slot field is the singleton renaming `0 -> slot`.
 const VAR_SLOT: Slot = 0;
 
 const NODE_LAYOUT: &str = "SlottedNodeLayout";
 const EDGE_LAYOUT: &str = "SlottedEdgeLayout";
+const SLOT_LAYOUT: &str = "SlottedSlotLayout";
 const BINDER_LAYOUT: &str = "SlottedBinderLayout";
 /// Optional: `(ctor, column, sort)` for payload columns, so a payload is spelt as its
 /// value rather than as an internal id when the smallest term is chosen.
@@ -148,6 +144,7 @@ struct Node {
     ctor: String,
     args: Vec<Value>,
     edges: Vec<Edge>,
+    slots: BTreeMap<usize, Slot>,
     binders: Vec<Binder>,
     /// per column, a payload's value as text, where the metadata says its sort
     payload_text: Vec<Option<String>>,
@@ -155,10 +152,7 @@ struct Node {
 
 impl Node {
     fn children(&self) -> impl Iterator<Item = Value> + '_ {
-        self.edges
-            .iter()
-            .filter(|edge| !self.binders.iter().any(|binder| binder.marker == edge.col))
-            .map(|edge| edge.child)
+        self.edges.iter().map(|edge| edge.child)
     }
 }
 
@@ -173,6 +167,7 @@ struct BinderLayout {
 struct Layout {
     arity: usize,
     edges: Vec<usize>,
+    slots: Vec<usize>,
     binders: Vec<BinderLayout>,
     /// payload columns whose sort the metadata names: `i64` or `String`
     payloads: BTreeMap<usize, String>,
@@ -224,8 +219,7 @@ impl Fresh {
 
 /// Substitute `t_ren * t` for the variable at slot `x` of `body`'s frame.
 ///
-/// `var` is the class every variable lives in; `x` names the slot in `body`'s
-/// own frame. Returns the result as an invocation -- the class, and the renaming
+/// `x` names the slot in `body`'s own frame. Returns the result as an invocation -- the class, and the renaming
 /// carrying its slots into `body`'s frame -- because the result is not always a
 /// freshly built node: a body that cannot name `x` comes back as itself, and the
 /// variable itself comes back as `t`, each under the renaming it was reached by.
@@ -262,7 +256,6 @@ fn substitute(
     let mut rebuild = Rebuild {
         terms: &cache.terms,
         x,
-        var: cache.var,
         t_ren: t_ren.clone(),
         t,
         memo: HashMap::new(),
@@ -275,7 +268,6 @@ fn substitute(
 struct Rebuild<'t> {
     terms: &'t Terms,
     x: Slot,
-    var: Value,
     t_ren: Renaming,
     t: Value,
     memo: HashMap<(Value, Renaming), (Value, Renaming)>,
@@ -298,9 +290,6 @@ impl Rebuild<'_> {
         if !m.values().any(|slot| *slot == self.x) {
             return Some((c, m));
         }
-        if c == self.var && m.get(&VAR_SLOT) == Some(&self.x) {
-            return Some((self.t, self.t_ren.clone()));
-        }
         if let Some(hit) = self.memo.get(&(c, m.clone())) {
             return Some(hit.clone());
         }
@@ -308,6 +297,19 @@ impl Rebuild<'_> {
         // The chosen e-node's cost strictly exceeds its children's, so the
         // recursion terminates even where the e-graph is cyclic.
         let node = self.terms.nodes[&c][*self.terms.best.get(&c)?].clone();
+        // The variable constructor is the only node with a non-binding slot
+        // field. Read its name in the current frame before substituting.
+        if let Some((_, &slot)) = node
+            .slots
+            .iter()
+            .find(|(col, _)| !node.binders.iter().any(|binder| binder.marker == **col))
+        {
+            return Some(if m.get(&slot) == Some(&self.x) {
+                (self.t, self.t_ren.clone())
+            } else {
+                (c, m)
+            });
+        }
         let mut args = node.args.clone();
         let mut slots = Renaming::new();
 
@@ -316,12 +318,10 @@ impl Rebuild<'_> {
         // covers. An uncovered sibling using the old spelling remains free.
         let mut refreshed = Vec::with_capacity(node.binders.len());
         for binder in &node.binders {
-            let marker = node.edges.iter().find(|edge| edge.col == binder.marker)?;
-            let old = *marker.ren.get(&VAR_SLOT)?;
+            let old = *node.slots.get(&binder.marker)?;
             let fresh = self.fresh.take()?;
             let marker_ren = Renaming::from([(VAR_SLOT, fresh)]);
             args[binder.marker] = intern(state, &marker_ren);
-            args[binder.marker + 1] = self.var;
             refreshed.push((*binder, old, fresh));
         }
 
@@ -335,13 +335,6 @@ impl Rebuild<'_> {
         // and the edge stopped being injective.
         let mut private: BTreeMap<Slot, Slot> = BTreeMap::new();
         for edge in &node.edges {
-            if refreshed
-                .iter()
-                .any(|(binder, _, _)| binder.marker == edge.col)
-            {
-                continue;
-            }
-
             let mut child_frame = Renaming::new();
             for (from, to) in &edge.ren {
                 let bound = refreshed
@@ -410,7 +403,6 @@ fn intern(state: &mut FullState<'_, '_>, ren: &Renaming) -> Value {
 fn build_terms(
     state: &FullState<'_, '_>,
     layouts: &Layouts,
-    var: Value,
     free_vars: &str,
     names: &[String],
 ) -> Result<(Terms, BTreeSet<Slot>), String> {
@@ -439,26 +431,19 @@ fn build_terms(
                 .map(|frame| frame.keys().copied().collect())
                 .unwrap_or_default(),
         );
-        // A row that does not parse as a term of this carrier -- another sort's, with
-        // its own variable class -- is no term here, and no walk reaches it.
         let parsed: Vec<Node> = parsed_rows
             .iter()
-            .filter_map(|(ctor, children)| {
-                parse_node(state, layouts, var, &names[*ctor], children)
-                    .map_err(|err| {
-                        log::debug!("{SLOTTED_SUBST}: skipping a row of {}: {err}", names[*ctor])
-                    })
-                    .ok()
-            })
-            .collect();
+            .map(|(ctor, children)| parse_node(state, layouts, &names[*ctor], children))
+            .collect::<Result<_, _>>()?;
         for node in &parsed {
+            slots_used.extend(node.slots.values().copied());
             for edge in &node.edges {
                 slots_used.extend(edge.ren.keys().chain(edge.ren.values()).copied());
             }
         }
         nodes.insert(*eclass, parsed);
     }
-    let best = cheapest(&nodes, &public, var);
+    let best = cheapest(&nodes, &public);
     Ok((Terms { nodes, best }, slots_used))
 }
 
@@ -468,7 +453,6 @@ fn build_terms(
 fn cheapest(
     nodes: &HashMap<Value, Vec<Node>>,
     public: &HashMap<Value, BTreeSet<Slot>>,
-    var: Value,
 ) -> HashMap<Value, usize> {
     let mut order: Vec<Value> = nodes.keys().copied().collect();
     order.sort_unstable();
@@ -513,11 +497,11 @@ fn cheapest(
             if size(node, &cost).as_ref() != Some(class_size) {
                 continue;
             }
-            let tpl = Arc::new(if eclass == var {
-                var_template(node)
-            } else {
-                template(node, &templates, public.get(&eclass).unwrap_or(&no_public))
-            });
+            let tpl = Arc::new(template(
+                node,
+                &templates,
+                public.get(&eclass).unwrap_or(&no_public),
+            ));
             if chosen
                 .as_ref()
                 .is_none_or(|(_, least)| tpl.compare(least).is_lt())
@@ -555,12 +539,7 @@ fn template(
     let intern = |key: InnerKey, inner: &mut BTreeMap<InnerKey, Name>, out: &mut Template| {
         *inner.entry(key).or_insert_with(|| out.fresh_inner())
     };
-    let bound_name = |binder: &Binder| {
-        node.edges
-            .iter()
-            .find(|edge| edge.col == binder.marker)
-            .and_then(|edge| edge.ren.get(&VAR_SLOT).copied())
-    };
+    let bound_name = |binder: &Binder| node.slots.get(&binder.marker).copied();
     // a name in the node's frame, as seen from the edge at `col`
     let classify =
         |name: Slot, col: usize, inner: &mut BTreeMap<InnerKey, Name>, out: &mut Template| {
@@ -581,28 +560,31 @@ fn template(
     out.text(&node.ctor);
     out.text("(");
     for col in 0..node.args.len() {
-        if let Some(edge) = node.edges.iter().find(|edge| edge.col == col) {
-            if let Some(binder) = node.binders.iter().find(|binder| binder.marker == col) {
+        if let Some(slot) = node.slots.get(&col) {
+            let name = if node.binders.iter().any(|binder| binder.marker == col) {
                 out.text("bind");
-                let name = intern(InnerKey::Bound(binder.marker), &mut inner, &mut out);
-                out.slot(name);
+                intern(InnerKey::Bound(col), &mut inner, &mut out)
             } else {
-                let child = templates
-                    .get(&edge.child)
-                    .expect("a smallest node's children are spelt before it");
-                let names = child
-                    .public
-                    .iter()
-                    .map(|slot| {
-                        let name = match edge.ren.get(slot) {
-                            Some(name) => classify(*name, col, &mut inner, &mut out),
-                            None => intern(InnerKey::Uncovered(col, *slot), &mut inner, &mut out),
-                        };
-                        (*slot, name)
-                    })
-                    .collect();
-                out.child(Arc::clone(child), names);
-            }
+                classify(*slot, col, &mut inner, &mut out)
+            };
+            out.slot(name);
+            out.text(",");
+        } else if let Some(edge) = node.edges.iter().find(|edge| edge.col == col) {
+            let child = templates
+                .get(&edge.child)
+                .expect("a smallest node's children are spelt before it");
+            let names = child
+                .public
+                .iter()
+                .map(|slot| {
+                    let name = match edge.ren.get(slot) {
+                        Some(name) => classify(*name, col, &mut inner, &mut out),
+                        None => intern(InnerKey::Uncovered(col, *slot), &mut inner, &mut out),
+                    };
+                    (*slot, name)
+                })
+                .collect();
+            out.child(Arc::clone(child), names);
             out.text(",");
         } else if node.edges.iter().any(|edge| edge.col + 1 == col) {
             continue; // the child column of an edge, spelt with its renaming
@@ -617,22 +599,10 @@ fn template(
     out
 }
 
-/// The variable class's own spelling: its one slot, public, so a parent's spelling
-/// says which of its slots each variable occurrence names.
-fn var_template(node: &Node) -> Template {
-    let mut out = Template::default();
-    out.text(&node.ctor);
-    out.text("(");
-    out.slot(Name::Public(VAR_SLOT));
-    out.text(",)");
-    out
-}
-
 /// Decode a constructor row from the compiler-emitted physical layout.
 fn parse_node(
     state: &FullState<'_, '_>,
     layouts: &Layouts,
-    var: Value,
     ctor: &str,
     children: &[Value],
 ) -> Result<Node, String> {
@@ -658,6 +628,16 @@ fn parse_node(
         });
     }
 
+    let mut slots = BTreeMap::new();
+    for &col in &layout.slots {
+        let ren = decode_renaming(state, children[col])?;
+        if ren.len() != 1 || !ren.contains_key(&VAR_SLOT) {
+            return Err(format!(
+                "constructor {ctor} slot at column {col} must be {{0 -> slot}}"
+            ));
+        }
+        slots.insert(col, ren[&VAR_SLOT]);
+    }
     let mut binders = Vec::new();
     for binder in &layout.binders {
         if binder
@@ -665,16 +645,6 @@ fn parse_node(
             .is_some_and(|(col, expected)| children[col] != expected)
         {
             continue;
-        }
-        let marker = edges
-            .iter()
-            .find(|edge| edge.col == binder.marker)
-            .expect("validated binder marker edge");
-        if marker.child != var || marker.ren.len() != 1 || !marker.ren.contains_key(&VAR_SLOT) {
-            return Err(format!(
-                "constructor {ctor} binder marker at column {} must be {{0 -> slot}} * var",
-                binder.marker
-            ));
         }
         binders.push(Binder {
             marker: binder.marker,
@@ -693,6 +663,7 @@ fn parse_node(
         ctor: ctor.to_owned(),
         args: children.to_vec(),
         edges,
+        slots,
         binders,
         payload_text,
     })
@@ -825,6 +796,12 @@ fn validate_free_vars(state: &FullState<'_, '_>, free_vars: &str) -> Result<(), 
             "{free_vars} has an unsupported schema; proof-encoded or user-replaced metadata is not supported"
         ));
     }
+    let signature = state
+        .function_schema(free_vars)
+        .map_err(|e| e.to_string())?;
+    if !signature.input[0].is_eq_sort() || signature.outputs[0].name() != "Renaming" {
+        return Err(format!("{free_vars} must map a carrier sort to Renaming"));
+    }
     Ok(())
 }
 
@@ -869,6 +846,19 @@ fn validate_constructor_layout(
         }
     }
 
+    for &slot in &layout.slots {
+        if slot >= layout.arity || !occupied.insert(slot) {
+            return Err(format!(
+                "overlapping or out-of-range {SLOT_LAYOUT} column {slot} for {ctor}"
+            ));
+        }
+        if action.schema.get(slot) != Some(&ColumnTy::Id) {
+            return Err(format!(
+                "{SLOT_LAYOUT} for {ctor} marks a non-Id column {slot}"
+            ));
+        }
+    }
+
     // The slotted source language currently admits only base payloads.  An
     // unoccupied Id column could be an equality-sort or arbitrary container
     // payload; the erased runtime schema cannot distinguish those cases or say
@@ -889,9 +879,9 @@ fn validate_constructor_layout(
                 "{BINDER_LAYOUT} for {ctor} must cover an edge after its marker"
             ));
         }
-        if !layout.edges.contains(&binder.marker) || !layout.edges.contains(&binder.covered) {
+        if !layout.slots.contains(&binder.marker) || !layout.edges.contains(&binder.covered) {
             return Err(format!(
-                "{BINDER_LAYOUT} for {ctor} names a column which is not in {EDGE_LAYOUT}"
+                "{BINDER_LAYOUT} for {ctor} must name a {SLOT_LAYOUT} marker and {EDGE_LAYOUT} body"
             ));
         }
         if !exact_binders.insert((binder.marker, binder.covered, binder.discriminator)) {
@@ -948,6 +938,7 @@ impl Layouts {
                 Layout {
                     arity,
                     edges: Vec::new(),
+                    slots: Vec::new(),
                     binders: Vec::new(),
                     payloads: BTreeMap::new(),
                 },
@@ -978,6 +969,23 @@ impl Layouts {
             layout.edges.push(col);
         }
 
+        for row in metadata_rows(state, SLOT_LAYOUT, &[string, integer])? {
+            let ctor = state.value_to_base::<S>(row[0]).into_inner();
+            let col = index(
+                state.value_to_base::<i64>(row[1]),
+                &format!("{SLOT_LAYOUT} column for {ctor}"),
+            )?;
+            let layout = layouts
+                .constructors
+                .get_mut(&ctor)
+                .ok_or_else(|| format!("{SLOT_LAYOUT} names unknown constructor {ctor}"))?;
+            if layout.slots.contains(&col) {
+                return Err(format!(
+                    "duplicate {SLOT_LAYOUT} row for {ctor} column {col}"
+                ));
+            }
+            layout.slots.push(col);
+        }
         Self::load_binders(state, string, integer, &mut layouts)?;
         // Without payload metadata, use the raw value's spelling.
         if live_schema(state, PAYLOAD_LAYOUT).is_ok() {
@@ -995,12 +1003,56 @@ impl Layouts {
         }
         for (ctor, layout) in &mut layouts.constructors {
             layout.edges.sort_unstable();
+            layout.slots.sort_unstable();
             layout
                 .binders
                 .sort_by_key(|binder| (binder.marker, binder.covered, binder.discriminator));
             validate_constructor_layout(state, ctor, layout, string)?;
         }
         validate_free_vars(state, free_vars)?;
+        let carrier = state
+            .function_schema(free_vars)
+            .map_err(|e| e.to_string())?
+            .input[0]
+            .name()
+            .to_owned();
+        let mut variables = Vec::new();
+        let mut retained = HashMap::new();
+        for (name, layout) in layouts.constructors {
+            let signature = state.constructor_schema(&name).map_err(|e| e.to_string())?;
+            if signature.outputs[0].name() != carrier {
+                continue;
+            }
+            for &col in &layout.edges {
+                if signature.input[col].name() != "Renaming"
+                    || signature.input[col + 1].name() != carrier
+                {
+                    return Err(format!("invalid child sorts for {name} column {col}"));
+                }
+            }
+            for &col in &layout.slots {
+                if signature.input[col].name() != "Renaming" {
+                    return Err(format!("invalid rigid slot sort for {name} column {col}"));
+                }
+            }
+            let unbound = layout
+                .slots
+                .iter()
+                .any(|col| !layout.binders.iter().any(|b| b.marker == *col));
+            if unbound {
+                if layout.arity != 1 || layout.slots != [0] || !layout.binders.is_empty() {
+                    return Err(format!("invalid variable constructor {name}"));
+                }
+                variables.push(name.clone());
+            }
+            retained.insert(name, layout);
+        }
+        if variables.len() != 1 {
+            return Err(format!(
+                "carrier {carrier} must have exactly one variable constructor"
+            ));
+        }
+        layouts.constructors = retained;
         Ok(layouts)
     }
 
@@ -1100,18 +1152,17 @@ impl Primitive for SlottedSubst {
 
 impl FullPrim for SlottedSubst {
     fn apply<'a, 'db>(&self, mut state: FullState<'a, 'db>, args: &[Value]) -> Option<Value> {
-        let (body, x, var, t_ren, t, free_vars) = match args {
-            [body, x, var, t_ren, t] => (*body, *x, *var, *t_ren, *t, CLASS_SLOTS.to_owned()),
-            [body, x, var, t_ren, t, free_vars] => (
+        let (body, x, t_ren, t, free_vars) = match args {
+            [body, x, t_ren, t] => (*body, *x, *t_ren, *t, CLASS_SLOTS.to_owned()),
+            [body, x, t_ren, t, free_vars] => (
                 *body,
                 *x,
-                *var,
                 *t_ren,
                 *t,
                 state.value_to_base::<S>(*free_vars).into_inner(),
             ),
             _ => panic!(
-                "{} takes five or six arguments; the typechecker admitted {}",
+                "{} takes four or five arguments; the typechecker admitted {}",
                 self.name(),
                 args.len()
             ),
@@ -1143,13 +1194,12 @@ impl FullPrim for SlottedSubst {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let carrier = CarrierKey {
             renaming_sort: self.renaming.name().to_owned(),
-            var,
             free_vars: free_vars.clone(),
         };
         let cache = match guard.entry(carrier) {
             hashbrown::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hashbrown::hash_map::Entry::Vacant(entry) => {
-                match SubstSnapshot::load(&state, var, free_vars) {
+                match SubstSnapshot::load(&state, free_vars) {
                     Ok(snapshot) => entry.insert(snapshot),
                     Err(err) => {
                         log::error!("{}: {err}", self.name());
@@ -1161,7 +1211,7 @@ impl FullPrim for SlottedSubst {
         let key = ResultKey {
             body,
             slot: x,
-            replacement_frame: args[3],
+            replacement_frame: args[2],
             replacement: t,
         };
         let result = match cache.results.get(&key) {
@@ -1186,7 +1236,7 @@ impl FullPrim for SlottedSubst {
     }
 }
 
-/// `(slotted-subst body x var t_ren t [free_vars])`, where the optional string
+/// `(slotted-subst body x t_ren t [free_vars])`, where the optional string
 /// names the carrier's class-slot function (default: `FreeVars`).
 /// `slotted-subst-frame` has the same inputs and a `Renaming` result.
 struct SlottedSubstTypeConstraint {
@@ -1203,11 +1253,9 @@ impl TypeConstraint for SlottedSubstTypeConstraint {
         arguments: &[AtomTerm],
         typeinfo: &TypeInfo,
     ) -> Vec<Box<dyn Constraint<AtomTerm, ArcSort>>> {
-        let (body, x, var, t_ren, t, free_vars, out) = match arguments {
-            [body, x, var, t_ren, t, out] => (body, x, var, t_ren, t, None, out),
-            [body, x, var, t_ren, t, free_vars, out] => {
-                (body, x, var, t_ren, t, Some(free_vars), out)
-            }
+        let (body, x, t_ren, t, free_vars, out) = match arguments {
+            [body, x, t_ren, t, out] => (body, x, t_ren, t, None, out),
+            [body, x, t_ren, t, free_vars, out] => (body, x, t_ren, t, Some(free_vars), out),
             _ => {
                 return vec![constraint::impossible(
                     constraint::ImpossibleConstraint::ArityMismatch {
@@ -1216,7 +1264,7 @@ impl TypeConstraint for SlottedSubstTypeConstraint {
                             head: self.name.clone(),
                             args: arguments.to_vec(),
                         },
-                        expected: if arguments.len() > 6 { 7 } else { 6 },
+                        expected: if arguments.len() > 5 { 6 } else { 5 },
                     },
                 )];
             }
@@ -1236,7 +1284,7 @@ impl TypeConstraint for SlottedSubstTypeConstraint {
         // The class arguments share one eq-sort, as does the result when it is
         // the class half; `xor` defers the choice until the surrounding program
         // pins it down.
-        let mut shared = vec![body, var, t];
+        let mut shared = vec![body, t];
         match self.half {
             Half::Class => shared.push(out),
             Half::Frame => cs.push(constraint::assign(out.clone(), self.renaming.clone())),

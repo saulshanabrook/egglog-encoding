@@ -4,7 +4,7 @@ Encodes a slotted e-graph — one where a class carries named slots and nodes ar
 
 A slotted e-graph, from Schneider et al., [*Slotted E-Graphs* (PLDI 2025)](https://michel-steuwer.github.io/files/publications/2025/PLDI-2025.pdf), gives every e-class a set of **slots** and lets a
 node reach a child under a **renaming** of them. That is what makes
-`(lam $0 $0)` and `(lam $1 $1)` one class rather than two, without a separate
+`(Lam $0 (V $0))` and `(Lam $1 (V $1))` one class rather than two, without a separate
 alpha-equivalence pass.
 
 Egglog has no notion of a slot, so the encoding puts one in: a child column
@@ -27,9 +27,10 @@ The running example is:
 
 ```
 (sort Math)
+(constructor V (Var) Math)
 (constructor Add (Math Math) Math)
-(let a (Add $0 $1))
-(let b (Add $1 $0))
+(let a (Add (V $0) (V $1)))
+(let b (Add (V $1) (V $0)))
 (union a b)
 (rewrite (Add x y) (Add y x) :name "comm")
 ```
@@ -149,7 +150,7 @@ in front of its own variables.
 ```
 (sort Renaming (Map i64 i64))
 (sort Math)
-(constructor Var (i64) Math)
+(constructor V (Renaming) Math)
 (relation RenamesToLeader (Math Renaming Math))
 (relation Equated (Math Renaming Math))
 (function FreeVars (Math) Renaming :merge (map-intersect old new))
@@ -162,14 +163,14 @@ in front of its own variables.
 **`Renaming`** is a partial injection on slots, spelled as a map from `i64` to
 `i64`. `compose`, `inverse`, `map-image` and `map-domain` are primitives on it.
 
-**`Var`** is the one variable class seeded for every carrier. Every variable is
-`(Var 0)` reached by an
-edge `0 -> s`, so *which* slot a variable names lives in the renaming and not in
-the value. Its class slots are seeded outright:
+**`V`** is the source's unique unary variable constructor for `Math`. Its
+`Var` argument becomes a singleton renaming `{0 -> s}`: `(V $s)` lowers to
+`(V (map-of 0 s))`. The same shape and maintenance rules used for other
+constructors relate its different name choices. Its slot field has the identity
+group, never an eclass group. No variable node is seeded automatically.
 
-```
-(set (FreeVars (Var 0)) (map-of 0 0))
-```
+The source `Var` sort is rigid. Equations may make `V` applications equal or
+remove their dependence on a name, but cannot equate the names themselves.
 
 **`RenamesToLeader f m l`** reads `f = m * l`: `m` carries `l`'s slots to `f`'s.
 A class is a connected component of this relation, and its leader is the
@@ -365,18 +366,6 @@ where no other rule's write to the key can land between them.
        (delete (GroupReplace c))) :ruleset slotted-restore)
 ```
 
-**One variable class.** `(Var v)` with `v` other than 0 is restated as `(Var 0)` under
-`{0 -> v}` and deleted. `Var` is handled separately from the user constructors, so
-its identity is seeded as a fact.
-
-```
-(rule ((= e (Var v)) (!= v 0))
-      ((Equated e (map-insert (map-empty) 0 v) (Var 0))
-       (delete (Var v))) :ruleset slotted)
-(RenamesToLeader (Var 0) (map-insert (map-empty) 0 0) (Var 0))
-(set (EclassGroup (Var 0)) (set-of (map-insert (map-empty) 0 0)))
-```
-
 **The same invocation is one value.** Two renamings of a leader's slots name one
 invocation exactly when they differ by a symmetry, so the invocation has a canonical
 name: the least of `m ∘ g` over the group, which `coset-min` picks. A member reaching
@@ -423,8 +412,9 @@ A child column expands to a renaming column and a class column, so
 (constructor Add (Renaming Math Renaming Math) Math)
 ```
 
-and `(Add $0 $1)` is stored as
-`(Add (map-of 0 0) (Var 0) (map-of 0 1) (Var 0))`. Each constructor then gets one
+and `(Add (V $0) (V $1))` lowers to
+`(Add (map-of 0 0) (V (map-of 0 0)) (map-of 1 1) (V (map-of 0 1)))`.
+Maintenance relates the two variable nodes under renaming. Each constructor then gets one
 block of rules: class slots, the shape index, migration, and one child-update per child
 column.
 
@@ -534,30 +524,27 @@ Part II explains how the current implementation keeps one.
 
 ## Binders
 
-Every carrier accepts slot literals such as `$a` or `$0`.
-For example, `(datatype Expr (Lam Expr Expr :binder 0))`
-uses `Expr` for both the binder and body. `:binder i` marks a carrier column
-whose argument must be a slot literal. It lowers to a variable child and its
-renaming, using the constructor's carrier. The bound slot is
-stored as an edge `0 -> s` to `(Var 0)` like any other, so a binder is not a
-different kind of column — what differs is that the slot is taken out of the
-class's slot set over the column the binder **covers**, which is the one right
-after it. `let` binds in its body and leaves its value's occurrence free.
+Binder columns have source sort `Var`. For example,
+`(datatype Expr (V Var) (Lam Var Expr :binder 0))` lowers `Lam` to
+`(constructor Lam (Renaming Renaming Expr) Expr)`. The first field stores the
+bound name as a singleton `{0 -> s}`. The body has an ordinary renaming and
+class pair. Removing the bound name from the body's public support makes the
+lambda independent of that name; other children remain outside its scope.
 
 One rule per bound slot does the taking out: the node's edge to its leader is
 restated without the bound slot, and the class-slot transport above then intersects
 that slot away, so the class does not depend on what it binds.
 
 ```
-(rule ((RenamesToLeader (Lam mvar (Var 0) m2 c2) ml l)
+(rule ((RenamesToLeader (Lam mvar m2 c2) ml l)
        (= v (map-get mvar 0)))
-      ((Equated (Lam mvar (Var 0) m2 c2) (inverse (map-remove (inverse ml) v)) l)) :ruleset slotted)
+      ((Equated (Lam mvar m2 c2) (inverse (map-remove (inverse ml) v)) l)) :ruleset slotted)
 ```
 
-In the constructor's own block the binder column needs no special case in the shape
-index, since the variable class's group holds the identity alone, and its
-child-update also requires `(map-get (compose m1 m) 0)` to exist: a bound name may be
-renamed but not lost.
+Shape computation uses the identity group for each rigid slot field. These fields
+have no child-update rule: an equation between `V` applications cannot change a
+binder name. Migration transports the singleton name with a total renaming even
+when the surrounding class has lost its free slots.
 
 When a bound slot collides with a free one the machinery renames the bound one
 first, to a slot the node does not use, which keeps it alpha-renameable.
@@ -627,11 +614,11 @@ Every column of a matched node is then an equation between occurrences:
   `v`'s class;
 - a literal at edge `e`: `Node(a, e(0)) = Lit("$x")`.
 
-Take a match of `sum-fact-3` against `(Sum r $x $y (Sing $z $x))`, where `r` is some
+Take a match of `sum-fact-3` against `(Sum r $x $y (Sing (V $z) (V $x)))`, where `r` is some
 term with one free slot. Say the `Sum` node stores `r`'s slot as 0, `z` as 1, `x` as 2
 and `y` as 3, so its class's slots are `{0, 1}`; the `Sing` node stores `z` as 0 and
-`x` as 1, and the edge from the `Sum` node to it is `{0 -> 1, 1 -> 2}`; the bare slots
-`$z` and `$x` are the variable class with its one slot 0, reached by the edges
+`x` as 1, and the edge from the `Sum` node to it is `{0 -> 1, 1 -> 2}`. The variable
+applications `(V $z)` and `(V $x)` share a class with one slot 0, reached by the edges
 `{0 -> 0}` and `{0 -> 1}`. The equations close into four blocks:
 
 ```
@@ -705,9 +692,8 @@ that schedule. Part II gives the emitted arrangement.
 
 ```
 (rule (;; egglog's own match of the two atoms, one row pattern each: an ordinary
-       ;; column is an edge and a class, a binder column an edge and the variable
-       ;; class (Var 0)
-       (= cls_p (Sum e0_R cls_R e0_lit_x (Var 0) e0_lit_y (Var 0) e0_t1 cls_t1))
+       ;; term column is an edge and a class; a binder column is a singleton map
+       (= cls_p (Sum e0_R cls_R e0_lit_x e0_lit_y e0_t1 cls_t1))
        (= cls_t1 (Sing e1_e1 cls_e1 e1_e2 cls_e2))
        ;; _t1 is bound by the first atom and read again by the second, so the second
        ;; reading may differ by a symmetry of its class: the whole group goes to the
@@ -736,7 +722,7 @@ that schedule. Part II gives the emitted arrangement.
        (map-not-contains (map-image (ren m "e1")) (map-get (ren m "$x") 0))
        (map-not-contains (map-image (ren m "e1")) (map-get (ren m "$y") 0)))
       (;; the right-hand side bottom-up, each column's renaming read out of m
-       (let built_sum (Sum (ren m "R") cls_R (ren m "$x") (Var 0) (ren m "$y") (Var 0) (ren m "e2") cls_e2))
+       (let built_sum (Sum (ren m "R") cls_R (ren m "$x") (ren m "$y") (ren m "e2") cls_e2))
        ;; the built node's free slots: R's image, and e2's with the bound $x, $y taken out
        (let built_sum_slots (node-slots m (names "R") (names "$x" "$y" "e2") (names "$x" "$y")))
        ;; a built child sits at the identity, its slot set as the edge
@@ -883,10 +869,10 @@ phase, most of it in iterations where nothing matched.
 Each row records the key its columns give, in `_pinned_Add`, so a matching rule that
 holds the parent row looks the key up and joins the readings on it exactly — egglog
 cannot join on a value a primitive computes inside the same rule, and keying the
-readings by row instead multiplied the index's work by the number of rows. One rule per
-child column that is not a binder; a binder column's child is the variable class, which
-no atom reads, though its edge pins its slot. A claim's subterms are read the same way,
-parent first.
+readings by row instead multiplied the index's work by the number of rows. There is
+one rule per term child. Rigid Var and binder fields have no child class to read,
+but their singleton maps still pin their names. A claim's subterms are read the
+same way, parent first.
 
 ```
 (function CosetReps (Math Renaming) Group :merge new)
@@ -920,7 +906,7 @@ In the compiled rule the nested root's group becomes a lookup, a join, and one r
 handed to the binding:
 
 ```
-       (= pinned_t1 (_pinned_Sum e0_R cls_R e0_lit_x (Var 0) e0_lit_y (Var 0) e0_t1 cls_t1 4))
+       (= pinned_t1 (_pinned_Sum e0_R cls_R e0_lit_x e0_lit_y e0_t1 cls_t1 4))
        (Reading cls_t1 pinned_t1 sym_t1)
        (= atom_t1 (atom "_t1" (root "_t1" (FreeVars cls_t1) sym_t1) ...))
 ```
@@ -952,7 +938,7 @@ join rather than a primitive filter applied after joining all lengths.
 ```
 (relation _matched_sum-fact-3 (Frames i64 U U U U U))
 
-(rule ((= cls_p (Sum e0_R cls_R e0_lit_x (Var 0) e0_lit_y (Var 0) e0_t1 cls_t1))
+(rule ((= cls_p (Sum e0_R cls_R e0_lit_x e0_lit_y e0_t1 cls_t1))
        ...
        (= refined (refinements (anchor f "_p")))
        (= refined_len (vec-length refined))
@@ -1003,8 +989,8 @@ once.
 
 ```
 (let shape_sum (shape (ren m "R") (ren m "$x") (ren m "$y") (ren m "e2")))
-(let built_sum (Sum (vec-get shape_sum 0) cls_R (vec-get shape_sum 1) (Var 0)
-                    (vec-get shape_sum 2) (Var 0) (vec-get shape_sum 3) cls_e2))
+(let built_sum (Sum (vec-get shape_sum 0) cls_R (vec-get shape_sum 1)
+                    (vec-get shape_sum 2) (vec-get shape_sum 3) cls_e2))
 (let built_sum_slots (node-slots m (names "R") (names "$x" "$y" "e2") (names "$x" "$y")))
 ;; the frame's names for those slots, read off the canonical ones; `compose` drops a
 ;; canonical slot the node binds

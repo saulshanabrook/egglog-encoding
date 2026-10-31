@@ -1,9 +1,9 @@
 ; Restricting a node symmetry can remove a slot. Its full symmetry still
 ; supplies the proof that the slot can be renamed independently.
-(datatype U (H U U) (G U U))
+(datatype U (V Var) (H U U) (G U U))
 (rewrite x1 (H x3 x3) :when ((= x3 (G x1 x2))))
-(union (G $1 $0) (G $0 $1))
-(let _p2 (H $0 $1))
-(let _p3 (H $0 $0))
+(union (G (V $1) (V $0)) (G (V $0) (V $1)))
+(let _p2 (H (V $0) (V $1)))
+(let _p3 (H (V $0) (V $0)))
 (run 1)
 (check (renaming-= _p2 _p3))

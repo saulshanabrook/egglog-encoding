@@ -12,6 +12,7 @@
 ;;; while an unrelated `k($1,$2)` stays out.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor Mul (U U) U)
 (constructor Swp (U U) U)
@@ -21,13 +22,13 @@
 
 (rewrite (Mul x y) (Swp y x) :name "comm")
 
-(let m (Mul $7 $8))
+(let m (Mul (V $7) (V $8)))
 (let z (Null))
 (union m z)
 
-(let s12 (Swp $1 $2))
-(let s21 (Swp $2 $1))
-(let k12 (K $1 $2))
+(let s12 (Swp (V $1) (V $2)))
+(let s21 (Swp (V $2) (V $1)))
+(let k12 (K (V $1) (V $2)))
 
 (run 10)
 

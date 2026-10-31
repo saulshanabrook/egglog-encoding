@@ -27,8 +27,9 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/binder-scope.egg
 
 (sort U)
+(constructor V (Var) U)
 
-(constructor Let (U U U) U :binder 0)
+(constructor Let (Var U U) U :binder 0)
 (constructor App (U U) U)
 (constructor Sym (String) U)
 
@@ -36,10 +37,10 @@
 ;; uncovered, so a slot occurring there stays free.
 
 ;; let $0 = (var $0) in f1 (var $0) -- the bound slot collides with the value's
-(let l0 (Let $0 (App (Sym "f1") $0) $0))
+(let l0 (Let $0 (App (Sym "f1") (V $0)) (V $0)))
 
 ;; let $1 = (var $0) in f1 (var $1) -- the same term, bound slot renamed
-(let l1 (Let $1 (App (Sym "f1") $1) $0))
+(let l1 (Let $1 (App (Sym "f1") (V $1)) (V $0)))
 
 (run 0)
 
@@ -65,12 +66,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 
-(rewrite (App (Sym "seed") $x)
-         (App (Let $x (Sym "body") $x) (Sym "arg"))
+(rewrite (App (Sym "seed") (V $x))
+         (App (Let $x (Sym "body") (V $x)) (Sym "arg"))
          :name "nested-rhs-binder-scope")
 
-(let s0 (App (Sym "seed") $0))
-(let s1 (App (Sym "seed") $1))
+(let s0 (App (Sym "seed") (V $0)))
+(let s1 (App (Sym "seed") (V $1)))
 
 (run 1)
 

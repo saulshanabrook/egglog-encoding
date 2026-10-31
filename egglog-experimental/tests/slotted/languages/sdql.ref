@@ -11,6 +11,7 @@
 ;;; constructor from the array language's `let`. Symbol payloads need `sym:` so
 ;;; the reference parser does not interpret them as operator tags.
 
+V            var
 Lambda       lambda
 Sing         sing
 Add          +

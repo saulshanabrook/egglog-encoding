@@ -18,8 +18,9 @@
 ;;; `slotted/checks/check-paper-sdql.py` keeps these definitions semantically identical to the
 ;;; corresponding rules in `languages/sdql.egg` and checks both fixture transcriptions.
 (sort U)
+(constructor V (Var) U)
 
-(constructor Lambda (U U) U :binder 0)
+(constructor Lambda (Var U) U :binder 0)
 (constructor Sing (U U) U)
 (constructor Add (U U) U)
 (constructor Mult (U U) U)
@@ -30,8 +31,8 @@
 (constructor IfThen (U U) U)
 (constructor SubArray (U U U) U)
 (constructor Unique (U) U)
-(constructor Sum (U U U U) U :binder 1 2)
-(constructor Let (U U U) U :binder 1)
+(constructor Sum (U Var Var U) U :binder 1 2)
+(constructor Let (U Var U) U :binder 1)
 (constructor Num (i64) U)
 
 (rewrite (Let t $x body) (subst body $x t) :name "beta")
@@ -39,24 +40,24 @@
 (rewrite (Add e (Num 0)) e :name "add-zero")
 (rewrite (Sub e (Num 0)) e :name "sub-zero")
 (rewrite (Equality a b) (Equality b a) :name "eq-comm")
-(rewrite (Sum (Sum R $k2 $v2 (Sing $k2 body1)) $k1 $v1 body2)
-         (Sum R $k2 $v2 (Let $k2 $k1 (Let body1 $v1 body2)))
+(rewrite (Sum (Sum R $k2 $v2 (Sing (V $k2) body1)) $k1 $v1 body2)
+         (Sum R $k2 $v2 (Let (V $k2) $k1 (Let body1 $v1 body2)))
          :name "sum-sum-vert-fuse-1"
     :when ((not-free $k1 body1) (not-free $k2 body2) (not-free $v2 body2)))
 (rewrite (Sum (Sum R $k2 $v2 (Sing (Unique key) body1)) $k1 $v1 body2)
          (Sum R $k2 $v2 (Let (Unique key) $k1 (Let body1 $v1 body2)))
          :name "sum-sum-vert-fuse-2"
     :when ((not-free $k1 body1) (not-free $k2 body2) (not-free $v2 body2)))
-(rewrite (Sum (Range st en) $k $v (IfThen (Equality $v key) body))
+(rewrite (Sum (Range st en) $k $v (IfThen (Equality (V $v) key) body))
          (Sum (Range st en) $k $v
-           (IfThen (Equality $k (Sub key (Sub st (Num 1)))) body))
+           (IfThen (Equality (V $k) (Sub key (Sub st (Num 1)))) body))
          :name "sum-range-1"
     :when ((not-free $k st) (not-free $v st)))
 (rewrite (Get dict key)
-         (Sum dict $k $v (IfThen (Equality $k key) $v))
+         (Sum dict $k $v (IfThen (Equality (V $k) key) (V $v)))
          :name "get-to-sum")
-(rewrite (Sum dict $k $v (IfThen (Equality $k key) body))
-         (Let key $k (Let (Get dict $k) $v body))
+(rewrite (Sum dict $k $v (IfThen (Equality (V $k) key) body))
+         (Let key $k (Let (Get dict (V $k)) $v body))
          :name "sum-to-get"
          :when ((not-free $k dict) (not-free $k key) (not-free $v key)))
 (rewrite (Get (Range st en) idx)
@@ -71,25 +72,25 @@
         (Lambda $4
           (Lambda $5
             (Lambda $6
-              (Mult $1
+              (Mult (V $1)
                 (Sum
-                  (Sum $2 $7 $8
+                  (Sum (V $2) $7 $8
                     (Let
-                      (Get $2 (Add $7 (Num 1)))
+                      (Get (V $2) (Add (V $7) (Num 1)))
                       $9
-                      (Sing $7
+                      (Sing (V $7)
                         (Sum
-                          (SubArray $3 $8 (Sub $9 (Num 1)))
+                          (SubArray (V $3) (V $8) (Sub (V $9) (Num 1)))
                           $10 $11
-                          (Sing (Unique $11) (Get $4 $10))))))
+                          (Sing (Unique (V $11)) (Get (V $4) (V $10)))))))
                   $7 $8
-                  (Mult $8
-                    (Sum $8 $9 $10
-                      (Mult $10
+                  (Mult (V $8)
+                    (Sum (V $8) $9 $10
+                      (Mult (V $10)
                         (Get
-                          (Sum (Range (Num 1) $6) $11 $12
-                            (Sing (Unique $12) (Get $5 $12)))
-                          $9)))))))))))))
+                          (Sum (Range (Num 1) (V $6)) $11 $12
+                            (Sing (Unique (V $12)) (Get (V $5) (V $12))))
+                          (V $9))))))))))))))
 
 ;;; Saturate the input alone: declaring the target before this point would seed the
 ;;; graph with the answer and test joinability rather than the artifact's reachability.
@@ -105,19 +106,19 @@
         (Lambda $4
           (Lambda $5
             (Lambda $6
-              (Mult $1
-                (Sum $2 $7 $8
+              (Mult (V $1)
+                (Sum (V $2) $7 $8
                   (Mult
                     (Sum
-                      (SubArray $3 $8
-                        (Sub (Get $2 (Add $7 (Num 1))) (Num 1)))
+                      (SubArray (V $3) (V $8)
+                        (Sub (Get (V $2) (Add (V $7) (Num 1))) (Num 1)))
                       $9 $10
-                      (Sing $10 (Get $4 $9)))
+                      (Sing (V $10) (Get (V $4) (V $9))))
                     (Sum
-                      (SubArray $3 $8
-                        (Sub (Get $2 (Add $7 (Num 1))) (Num 1)))
+                      (SubArray (V $3) (V $8)
+                        (Sub (Get (V $2) (Add (V $7) (Num 1))) (Num 1)))
                       $9 $10
-                      (Mult (Get $4 $9) (Get $5 $10)))))))))))))
+                      (Mult (Get (V $4) (V $9)) (Get (V $5) (V $10))))))))))))))
 
 (run 0)
 (check (= paper-input paper-target))

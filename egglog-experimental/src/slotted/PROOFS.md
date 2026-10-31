@@ -17,10 +17,12 @@ source proof   ← flattened proof   ← egglog proof
 # Terms
 
 A term is what the language writes: a constructor applied to children, a payload
-literal, or a slot such as `$a`. A binder column holds the bound slot itself.
-Ordinary proof steps compare terms syntactically: `(Lam $a $a)` and
-`(Lam $b $b)` are different terms. Equivariance explicitly transports proofs
-between slot names. Alpha changes bound names by scope. The final claim records
+literal, or a rigid `Var` name such as `$a`. Each carrier declares exactly one unary
+variable constructor, for example `(V Var)` in `Math`; `(V $a)` is a `Math` term.
+A binder column holds a `Var` name directly. Ordinary proof steps compare terms
+syntactically: `(Lam $a (V $a))` and `(Lam $b (V $b))` are different terms.
+Equivariance explicitly transports proofs between slot names. Alpha changes
+bound names by scope. The final claim records
 how its requested terms are named in the proof.
 
 Printed proofs preserve source slot names in terms, substitutions, and renamings.
@@ -36,9 +38,11 @@ Source axioms and rule instances retain their bound names. Lifting may give
 binders distinct names to reconstruct encoded matches; explicit Alpha steps
 justify those changes.
 
-The checker associates each equality with its carrier sort. An equality derived
-from a source union or rewrite retains that sort through composition and
-congruence. Reflexivity of bare slots and literals is sort-independent.
+The checker derives each endpoint's type from constructor signatures and rigid
+values. Both endpoints must have the same type, and a `Var` equality must be
+reflexive. Neither propositions nor claims carry a sort annotation. An equality
+between `(V $a)` and `(V $b)` cannot establish `$a = $b`, change a binder name,
+or establish equality between another carrier's variable terms.
 
 # Propositions
 
@@ -126,16 +130,17 @@ one `RenamingEq` premise for the source condition.
 
 **Alpha.** From `a = b`, derive `a = c` when `b` and `c` are alpha-equivalent.
 The checker compares binding scopes and preserves free names, constructor heads,
-payloads, and the carrier sort. The premise establishes existence; Alpha cannot
-introduce an arbitrary term without a proof. Its printed form is
+and payloads. The premise establishes existence; Alpha cannot introduce an
+arbitrary term without a proof. Its printed form is
 `(Alpha (= a c) premise)`.
 
 **Trans.** From `a = b` and `b = c`, derive `a = c`. The middle terms must
-be syntactically identical and their carrier sorts must agree.
+be syntactically identical. Endpoint typing prevents composition across sorts.
 
 **Congr.** From `a = F(..., c, ...)` and `c = d`, derive `a = F(..., d, ...)`.
 The selected child must match the child proof's left endpoint exactly; the
-child proof must have the column's sort. No renaming is performed by this rule.
+child proof's endpoints must have the column's declared type. No renaming is
+performed by this rule.
 The printed form is `(Congr (= lhs rhs) parent-proof child-proof index)`, where
 `index` is the zero-based constructor argument position, including binder columns.
 
@@ -144,16 +149,16 @@ exist, and the result has that argument's sort. This establishes existence of a
 subterm without requiring a separate source axiom.
 
 **Equivariance.** From `a = b`, derive `rename(m, a) = rename(m, b)` for a finite
-slot permutation `m`. The checker recomputes both endpoints and preserves the
-proof's carrier sort. This rule applies only the slotted theory's action on slots;
-it does not rename payload values or constructor names.
+slot permutation `m`. The checker recomputes both endpoints and checks their
+types. This rule applies only the slotted theory's action on slots; it does not
+rename payload values or constructor names.
 
 # Claims
 
 A printed claim is an instance of the source query. Query-local slots take the
 names selected by the match; globals retain their concrete source names. For
-example, after `(let p (F $a))`, `(check (= p (F $b)))` can print a proof of
-`(F $a) = (F $a)`: `$b` is a query variable, not a request to rename `$a`.
+example, after `(let p (F (V $a)))`, `(check (= p (F (V $b))))` can print a proof
+of `(F (V $a)) = (F (V $a))`: the query match selects `$a` for `$b`.
 This instantiation happens before constructing the equality and its renaming witness.
 
 A claim carries an ordinary proof and a separate renaming witness `m`. For source
@@ -164,8 +169,8 @@ terms `a` and `b`, the proof must have exactly the endpoints
 free slots of `a`. The latter is sufficient by equivariance with `m⁻¹` and
 alpha-equivalence of bound names. `(check (renaming-= a b))` allows any witness,
 but still checks the actual ordinary equality proof and its endpoints. The
-proof must have the claim's carrier sort, or no sort at all. Negative claims
-and other claim forms are checked, not proved.
+source signatures determine the terms' types. Negative claims and other claim
+forms are checked, not proved.
 
 When the witness changes the spelling of `b`, the display wraps the proof in
 `(Claim (= a (rename m b)) proof)`. A renaming prints as
@@ -174,8 +179,8 @@ root equality, not another inference rule. For example, alpha-renaming needs onl
 
 ```lisp
 (Claim
-  (= (Lam $a $a) (rename (renaming ($a $b) ($b $a)) (Lam $b $b)))
-  (Fiat (= (Lam $a $a) (Lam $a $a))))
+  (= (Lam $a (V $a)) (rename (renaming ($a $b) ($b $a)) (Lam $b (V $b))))
+  (Fiat (= (Lam $a (V $a)) (Lam $a (V $a)))))
 ```
 
 # Normalization
@@ -227,16 +232,17 @@ The proof-compatible encoding represents these operations as follows:
 
 **Source recording.** `(slotted-source command)` retains declarations, globals,
 unions, and original rewrites as native source syntax. Records execute in source
-order and follow `push`/`pop`; later declarations cannot change an earlier axiom's
-sort or a rewrite's captured globals. Rewrites retain nested expressions and the
+order and follow `push`/`pop`; later declarations cannot change earlier axioms or
+a rewrite's captured globals. Rewrites retain nested expressions and the
 original `:when` order. Unnamed rewrites receive names unique across scopes and
 successive inputs.
 
 The checker uses native egglog rules, with a rewrite desugared to its root fact,
 original conditions, and union action. Constructor and binder information comes
-from the source declarations. Each claim retains its source expressions and the
-mapping from source slot names to encoded IDs; the checker does not read encoded
-tables.
+from the source declarations. The resolver registers `Var` as a base sort and
+uses ordinary egglog type inference for rule variables. Each claim retains its
+source expressions and the mapping from source slot names to encoded IDs; the
+checker does not read encoded tables.
 
 # Proof lifting
 
@@ -269,7 +275,10 @@ derivations, and fresh-slot supply across expansions. Its core is a denotation
 `dec` from encoded terms to source terms:
 `dec(F(m1, c1, ..., mk, ck)) = F(m̂1·dec(c1), ...)`, where
 each edge is completed to a bijection by naming the child's redundant slots with
-fresh names, and `dec(SlottedVar_N 0)` is `$0`. Every encoded fact then denotes an
+fresh names. A rigid name column is a singleton renaming: `dec(V({0→a}))` is
+`(V $a)`. Binder columns use the same physical representation, with fresh bound
+names when needed. They have no child eclass or group premise; shape operations
+use the identity group for these columns. Every encoded fact then denotes an
 ordinary proposition, and every maintenance rule firing has a fixed derivation.
 The helper in [`proofs/coordinates.rs`](proofs/coordinates.rs) retains the encoded
 edge coordinates needed by later reconstruction. Restating an edge in different

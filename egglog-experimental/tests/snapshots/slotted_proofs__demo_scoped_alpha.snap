@@ -3,17 +3,19 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Lam U U :binder 0))
-(let input (Lam $a (Lam $a $a)))
+(datatype U (V Var) (Lam Var U :binder 0))
+(let input (Lam $a (Lam $a (V $a))))
 (run 0)
-(check (= input (Lam $b (Lam $c $c))))
+(check (= input (Lam $b (Lam $c (V $c)))))
 
 Proof:
-(let t0 (Lam $v0 (Lam $v1 $v1)))
-(let t1 (Lam $a (Lam $a $a)))
+(let t0 (Lam $v0 (Lam $v1 (V $v1))))
+(let t1 (Lam $a (Lam $a (V $a))))
 (let prf0 (Alpha (= t1 t0) (Fiat (= t1 t1))))
 (Claim
   (=
     t0
-    (rename (renaming ($b $v0) ($c $v1) ($v0 $b) ($v1 $c)) (Lam $b (Lam $c $c))))
+    (rename
+      (renaming ($b $v0) ($c $v1) ($v0 $b) ($v1 $c))
+      (Lam $b (Lam $c (V $c)))))
   (Trans (= t0 t0) (Sym (= t0 t1) prf0) prf0))

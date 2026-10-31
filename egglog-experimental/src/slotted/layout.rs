@@ -61,6 +61,21 @@ impl Layouts {
     pub fn load(graph: &EGraph) -> Result<Self, String> {
         let text = |v| graph.value_to_base::<S>(v).into_inner();
         let integer = |v| graph.value_to_base::<i64>(v);
+        let mut carriers = BTreeMap::new();
+        let mut indices = BTreeSet::new();
+        for row in rows(graph, "SlottedCarrierLayout", &["String", "i64", "String"])? {
+            let sort = text(row[0]);
+            let index = usize::try_from(integer(row[1]))
+                .map_err(|_| format!("negative carrier index for {sort}"))?;
+            let variable = text(row[2]);
+            if !indices.insert(index)
+                || carriers
+                    .insert(sort.clone(), Symbols::new(&sort, index, &variable))
+                    .is_some()
+            {
+                return Err(format!("conflicting carrier layout for {sort}"));
+            }
+        }
         let mut arities = BTreeMap::new();
         for row in rows(graph, "SlottedNodeLayout", &["String", "i64"])? {
             let name = text(row[0]);
@@ -90,6 +105,9 @@ impl Layouts {
         for row in rows(graph, "SlottedEdgeLayout", &["String", "i64"])? {
             add(text(row[0]), integer(row[1]), Column::Child)?;
         }
+        for row in rows(graph, "SlottedSlotLayout", &["String", "i64"])? {
+            add(text(row[0]), integer(row[1]), Column::Var)?;
+        }
         for row in rows(graph, "SlottedPayloadLayout", &["String", "i64", "String"])? {
             add(text(row[0]), integer(row[1]), Column::Payload(text(row[2])))?;
         }
@@ -108,13 +126,12 @@ impl Layouts {
                 ));
             }
             let col = columns.get_mut(&name).and_then(|c| c.get_mut(&marker));
-            if col.as_deref() != Some(&Column::Child) {
+            if col.as_deref() != Some(&Column::Var) {
                 return Err(format!("invalid binder column {marker} for {name}"));
             }
             *col.unwrap() = Column::Binder;
             covered.entry(name).or_default().insert(body);
         }
-        let mut carriers = BTreeMap::new();
         let mut constructors = BTreeMap::new();
         for (name, arity) in arities {
             let function = graph
@@ -130,21 +147,6 @@ impl Layouts {
             }
             let sort = schema.output().name().to_owned();
             let cols = columns.remove(&name).unwrap_or_default();
-            if let Some(index) = name
-                .strip_prefix("SlottedVar_")
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                if arity != 1 || schema.input[0].name() != "i64" || !cols.is_empty() {
-                    return Err(format!("invalid variable layout for {name}"));
-                }
-                if carriers
-                    .insert(sort.clone(), Symbols::new(&sort, index))
-                    .is_some()
-                {
-                    return Err(format!("multiple variable constructors for {sort}"));
-                }
-                continue;
-            }
             let mut physical = 0;
             let mut out = Vec::new();
             let mut edge_columns = Vec::new();
@@ -161,7 +163,14 @@ impl Layouts {
                         }
                         physical += 1;
                     }
-                    Column::Child | Column::Binder => {
+                    Column::Var | Column::Binder => {
+                        edge_columns.push(col);
+                        if schema.input.get(col).map(|s| s.name()) != Some("Renaming") {
+                            return Err(format!("slot type mismatch for {name} column {col}"));
+                        }
+                        physical += 1;
+                    }
+                    Column::Child => {
                         edge_columns.push(col);
                         if schema.input.get(col).map(|s| s.name()) != Some("Renaming")
                             || schema.input.get(col + 1).map(|s| s.name()) != Some(sort.as_str())
@@ -180,7 +189,17 @@ impl Layouts {
                 columns: out,
             };
             let binders = op.binders();
-            let covered_column = op.covered().and_then(|i| edge_columns.get(i)).copied();
+            let covered_column = op.covered().and_then(|i| {
+                (op.children().get(i).copied() == Some(&Column::Child))
+                    .then(|| edge_columns.get(i).copied())
+                    .flatten()
+            });
+            let variable = carriers.get(&op.sort).is_some_and(|s| s.var == name);
+            if (variable && op.columns != [Column::Var])
+                || (!variable && op.columns.contains(&Column::Var))
+            {
+                return Err(format!("invalid variable layout for {name}"));
+            }
             if physical != arity
                 || (!binders.is_empty() && covered_column.is_none())
                 || covered.remove(&name).unwrap_or_default() != covered_column.into_iter().collect()
@@ -204,15 +223,22 @@ impl Layouts {
         for (name, function) in graph.functions_iter() {
             if has_kind(graph, function, FunctionSubtype::Constructor)
                 && !function.is_let_binding()
-                && (carriers.contains_key(function.func_type().output().name())
-                    || name.starts_with("SlottedVar_"))
+                && carriers.contains_key(function.func_type().output().name())
                 && !constructors.contains_key(name)
-                && !carriers.values().any(|s| s.var == *name)
             {
                 return Err(format!("missing node layout for constructor {name}"));
             }
         }
         for s in carriers.values() {
+            if !constructors
+                .get(&s.var)
+                .is_some_and(|op| op.sort == s.sort && op.columns == [Column::Var])
+            {
+                return Err(format!(
+                    "missing variable constructor {} for {}",
+                    s.var, s.sort
+                ));
+            }
             for (name, kind, input, output) in [
                 (
                     &s.free_vars,

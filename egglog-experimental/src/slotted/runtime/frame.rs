@@ -282,7 +282,9 @@ impl Frame {
         let mut slots = BTreeSet::new();
         for binding in bindings {
             let edge = match binding {
-                Binding::Child { edge, .. } | Binding::Leaf { edge } => edge,
+                Binding::Child { edge, .. }
+                | Binding::Leaf { edge }
+                | Binding::Lit { edge, .. } => edge,
                 _ => return None,
             };
             slots.extend(edge.values().copied());
@@ -736,10 +738,7 @@ impl Frame {
 
     fn renaming(&self, name: &Name) -> Option<Renaming> {
         let numbers = self.numbering();
-        if name.is_literal() {
-            if !self.literals.contains_key(name) {
-                return None;
-            }
+        if self.literals.contains_key(name) {
             return Some(Renaming::from([(0, numbers[self.block_of_lit(name)?])]));
         }
         let cs = self.free_vars.get(name)?;
@@ -881,12 +880,14 @@ impl Frame {
 }
 
 /// The CLIQUES: must these two occurrences be different slots? Two slots of one
-/// e-node, two slots of one class, or two different literals.
+/// e-node, two slots of one class, or two distinct pattern slot literals.
+/// Concrete global labels may alias one another and pattern slots; their source
+/// coordinates are distinguished by the global frame's root and node cliques.
 fn apart(o: &Occ, p: &Occ) -> bool {
     match (o, p) {
         (Occ::Node(a, s), Occ::Node(b, t)) => a == b && s != t,
         (Occ::Var(v, s), Occ::Var(w, t)) => v == w && s != t,
-        (Occ::Lit(x), Occ::Lit(y)) => x != y,
+        (Occ::Lit(x), Occ::Lit(y)) => x.is_literal() && y.is_literal() && x != y,
         _ => false,
     }
 }
@@ -1212,6 +1213,9 @@ impl BaseSort for NamesSort {
         names_to_term(termdag, &names.0)
     }
 }
+
+#[cfg(test)]
+mod global_tests;
 
 #[cfg(test)]
 mod tests {

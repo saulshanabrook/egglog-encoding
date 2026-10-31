@@ -3,14 +3,14 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (Mul U U) (Zero))
-(let input (Mul $a (Zero)))
+(datatype U (V Var) (Mul U U) (Zero))
+(let input (Mul (V $a) (Zero)))
 (union input (Zero))
 (run 0)
-(check (= (Mul $b (Zero)) (Zero)))
+(check (= (Mul (V $b) (Zero)) (Zero)))
 
 Proof:
 (Equivariance
-  (= (Mul $b (Zero)) (Zero))
-  (Fiat (= (Mul $a (Zero)) (Zero)))
+  (= (Mul (V $b) (Zero)) (Zero))
+  (Fiat (= (Mul (V $a) (Zero)) (Zero)))
   (renaming ($a $b) ($b $a)))

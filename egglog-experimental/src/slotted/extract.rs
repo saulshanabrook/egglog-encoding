@@ -35,11 +35,7 @@ impl TreeCostModel<BigUint> for TreeSize<'_> {
                 if *column == Column::Child {
                     children.push(physical + 1);
                 }
-                physical += if matches!(column, Column::Payload(_)) {
-                    1
-                } else {
-                    2
-                };
+                physical += if *column == Column::Child { 2 } else { 1 };
             }
         }
         children
@@ -127,16 +123,7 @@ impl Decoder<'_> {
         let Term::App(name, args) = self.encoded.get(id) else {
             return Err(error("expected a constructor term"));
         };
-        let result = if self.layouts.carriers.iter().any(|s| s.var == *name) {
-            let [slot] = args.as_slice() else {
-                return Err(error("invalid variable constructor"));
-            };
-            let Term::Lit(Literal::Int(slot)) = self.encoded.get(*slot) else {
-                return Err(error("invalid variable slot"));
-            };
-            let name = self.name(&mut frame, *slot);
-            self.output.var(name)
-        } else {
+        let result = {
             let op = self
                 .layouts
                 .constructors
@@ -152,10 +139,13 @@ impl Decoder<'_> {
                     let edge = self.edge(args[physical])?;
                     if *column == Column::Binder {
                         let slot = *edge.get(&0).ok_or_else(|| error("binder lacks its slot"))?;
+                        if edge.len() != 1 {
+                            return Err(error("binder must have exactly domain {0}"));
+                        }
                         binders.insert(slot, self.fresh());
                     }
                     edges.push(edge);
-                    physical += 2;
+                    physical += if *column == Column::Child { 2 } else { 1 };
                 }
             }
             let mut children = Vec::new();
@@ -172,7 +162,20 @@ impl Decoder<'_> {
                     }
                     Column::Binder => {
                         children.push(self.output.var(binders[&edges[child][&0]].clone()));
-                        physical += 2;
+                        physical += 1;
+                        child += 1;
+                    }
+                    Column::Var => {
+                        let edge = &edges[child];
+                        let slot = *edge
+                            .get(&0)
+                            .ok_or_else(|| error("variable lacks its slot"))?;
+                        if edge.len() != 1 {
+                            return Err(error("variable must have exactly domain {0}"));
+                        }
+                        let name = self.name(&mut frame, slot);
+                        children.push(self.output.var(name));
+                        physical += 1;
                         child += 1;
                     }
                     Column::Child => {

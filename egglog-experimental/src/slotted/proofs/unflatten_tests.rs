@@ -7,18 +7,19 @@ use egglog::TermDag;
 fn reconstructs_nested_binders_after_a_shape_change() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     for head in ["F", "G"] {
         program.add_constructor(head, vec![ColumnKind::Child]);
     }
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     program
-        .add_let(&mut dag, "input", "(F (G (Lam $0 $0)))")
+        .add_let(&mut dag, "input", "(F (G (Lam $0 (V $0))))")
         .unwrap();
     program
-        .add_let(&mut dag, "target", "(F (Lam $3 (Lam $4 $4)))")
+        .add_let(&mut dag, "target", "(F (Lam $3 (Lam $4 (V $4))))")
         .unwrap();
     program
-        .add_union(&mut dag, "(G (Lam $1 $1))", "(Lam $2 (Lam $1 $1))", "U")
+        .add_union(&mut dag, "(G (Lam $1 (V $1)))", "(Lam $2 (Lam $1 (V $1)))")
         .unwrap();
     let target = program.lets.shift_remove("target").unwrap();
     let mut store = SlottedProofStore::new(dag);
@@ -41,9 +42,14 @@ fn reconstructs_nested_binders_after_a_shape_change() {
 fn reconstruction_preserves_shared_sibling_names() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
-    program.add_let(&mut dag, "input", "(Pair $0 $0)").unwrap();
-    program.add_let(&mut dag, "target", "(Pair $1 $2)").unwrap();
+    program
+        .add_let(&mut dag, "input", "(Pair (V $0) (V $0))")
+        .unwrap();
+    program
+        .add_let(&mut dag, "target", "(Pair (V $1) (V $2))")
+        .unwrap();
     let target = program.lets.shift_remove("target").unwrap();
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(program.lets["input"], program.lets["input"]);
@@ -55,22 +61,23 @@ fn reconstruction_preserves_shared_sibling_names() {
 fn reconstruction_tries_equal_children_before_renaming_them() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     for head in ["F", "G", "H"] {
         program.add_constructor(head, vec![ColumnKind::Child]);
     }
     program
-        .add_let(&mut dag, "input", "(Pair $0 (G $0))")
+        .add_let(&mut dag, "input", "(Pair (V $0) (G (V $0)))")
         .unwrap();
     program
-        .add_let(&mut dag, "target", "(Pair $0 (F $0))")
+        .add_let(&mut dag, "target", "(Pair (V $0) (F (V $0)))")
         .unwrap();
     for (lhs, rhs) in [
-        ("(G $0)", "(H $1)"),
-        ("(G $0)", "(H $0)"),
-        ("(H $0)", "(F $0)"),
+        ("(G (V $0))", "(H (V $1))"),
+        ("(G (V $0))", "(H (V $0))"),
+        ("(H (V $0))", "(F (V $0))"),
     ] {
-        program.add_union(&mut dag, lhs, rhs, "U").unwrap();
+        program.add_union(&mut dag, lhs, rhs).unwrap();
     }
     let target = program.lets.shift_remove("target").unwrap();
     let mut store = SlottedProofStore::new(dag);
@@ -89,15 +96,16 @@ fn reconstruction_tries_equal_children_before_renaming_them() {
 fn renaming_guard_lifts_child_equalities_through_congruence() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     for head in ["F", "G", "H"] {
         program.add_constructor(head, vec![ColumnKind::Child]);
     }
-    program.add_let(&mut dag, "a", "(F (G $0))").unwrap();
-    program.add_let(&mut dag, "b", "(F (H $0))").unwrap();
+    program.add_let(&mut dag, "a", "(F (G (V $0)))").unwrap();
+    program.add_let(&mut dag, "b", "(F (H (V $0)))").unwrap();
     program.add_let(&mut dag, "input", "(Pair a b)").unwrap();
     program
-        .add_union(&mut dag, "(G $0)", "(H $0)", "U")
+        .add_union(&mut dag, "(G (V $0))", "(H (V $0))")
         .unwrap();
     let mut store = SlottedProofStore::new(dag);
     let root = store.fiat(program.lets["input"], program.lets["input"]);

@@ -1,4 +1,5 @@
 (sort U)
+(constructor V (Var) U)
 
 (constructor Lam (U U) U)
 (constructor App (U U) U)
@@ -7,21 +8,21 @@
 
 (let t (Truth))
 
-(let l0 (Lam $0 $0))
-(let l1 (Lam $1 $1))
+(let l0 (Lam (V $0) (V $0)))
+(let l1 (Lam (V $1) (V $1)))
 (union l0 l1)
 
-(let g (App (Lam $0 $0) $0))
+(let g (App (Lam (V $0) (V $0)) (V $0)))
 
 (rewrite
     (Truth)
-    (GG a $0)
-    :when ((App (Lam a a) $0))
+    (GG a (V $0))
+    :when ((App (Lam a a) (V $0)))
 )
 
 (run 10)
 
 (let slot_0 $0)
-(check (= t (GG slot_0 slot_0)))
+(check (= t (GG (V slot_0) (V slot_0))))
 (let slot_1 $1)
-(check (= t (GG slot_0 slot_1)))
+(check (= t (GG (V slot_0) (V slot_1))))

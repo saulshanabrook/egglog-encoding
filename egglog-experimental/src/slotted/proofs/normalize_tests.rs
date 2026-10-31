@@ -9,15 +9,20 @@ use egglog::util::IndexMap;
 fn transported_rules_keep_renaming_premises_in_source_coordinates() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
     for name in ["F", "G", "H"] {
         program.add_constructor(name, vec![ColumnKind::Child]);
     }
-    for (name, term) in [("a", "(F $0)"), ("b", "(H $1)"), ("input", "(Pair a b)")] {
+    for (name, term) in [
+        ("a", "(F (V $0))"),
+        ("b", "(H (V $1))"),
+        ("input", "(Pair a b)"),
+    ] {
         program.add_let(&mut dag, name, term).unwrap();
     }
-    program.add_union(&mut dag, "a", "(G $0)", "U").unwrap();
-    program.add_union(&mut dag, "b", "(G $1)", "U").unwrap();
+    program.add_union(&mut dag, "a", "(G (V $0))").unwrap();
+    program.add_union(&mut dag, "b", "(G (V $1))").unwrap();
     program
         .add_rewrite(
             &mut dag,
@@ -74,19 +79,20 @@ fn transported_rules_keep_renaming_premises_in_source_coordinates() {
 fn transports_binder_children_and_preserves_source_axioms() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
     program.add_constructor("G", vec![ColumnKind::Child]);
     program.add_constructor("Wrap", vec![ColumnKind::Child]);
     program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
     for (name, term) in [
-        ("f", "(F $0)"),
-        ("g", "(G $0)"),
-        ("lam", "(Lam $0 (F $0))"),
-        ("wrap", "(Wrap (Lam $0 (F $0)))"),
+        ("f", "(F (V $0))"),
+        ("g", "(G (V $0))"),
+        ("lam", "(Lam $0 (F (V $0)))"),
+        ("wrap", "(Wrap (Lam $0 (F (V $0))))"),
     ] {
         program.add_let(&mut dag, name, term).unwrap();
     }
-    program.add_union(&mut dag, "f", "g", "U").unwrap();
+    program.add_union(&mut dag, "f", "g").unwrap();
     let mut store = SlottedProofStore::new(dag);
     let union = store.fiat(program.lets["f"], program.lets["g"]);
     let lam = store.fiat(program.lets["lam"], program.lets["lam"]);
@@ -101,8 +107,8 @@ fn transports_binder_children_and_preserves_source_axioms() {
         expected
     );
     assert_eq!(
-        store.term_dag.to_string(expected.proposition.rhs),
-        "(Wrap (Lam $1 (G $1)))"
+        store.term_dag.to_string(expected.rhs),
+        "(Wrap (Lam $1 (G (V $1))))"
     );
     for id in store.dependencies(normalized) {
         if let SlottedProof::Equivariance { proof, .. } = store.get(id) {
@@ -113,15 +119,16 @@ fn transports_binder_children_and_preserves_source_axioms() {
         }
     }
     let again = store.simplify(normalized);
-    assert_eq!(store.proposition(again), &expected.proposition);
+    assert_eq!(store.proposition(again), &expected);
 }
 
 #[test]
 fn inverse_transports_cancel_without_trusting_new_fiats() {
     let mut dag = TermDag::default();
     let mut program = SlottedProgram::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
     program.add_constructor("F", vec![ColumnKind::Child]);
-    program.add_let(&mut dag, "f", "(F $0)").unwrap();
+    program.add_let(&mut dag, "f", "(F (V $0))").unwrap();
     let mut store = SlottedProofStore::new(dag);
     let source = store.fiat(program.lets["f"], program.lets["f"]);
     let rho = Renaming::new([(0, 1), (1, 2), (2, 0)]).unwrap();

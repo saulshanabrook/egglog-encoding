@@ -3,16 +3,16 @@ source: egglog-experimental/tests/slotted_proofs.rs
 expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
 ---
 Source:
-(datatype U (F U) (Pair U U))
-(let reserved (Pair $v0 $v2))
-(let input (F $a))
+(datatype U (V Var) (F U) (Pair U U))
+(let reserved (Pair (V $v0) (V $v2)))
+(let input (F (V $a)))
 (rewrite (F v1) v1 :name "unwrap")
 (run 1)
-(check (= input $a))
+(check (= input (V $a)))
 
 Proof:
 (Rule
-  (= (F $a) $a)
+  (= (F (V $a)) (V $a))
   (name "unwrap")
-  (premises (Fiat (= (F $a) (F $a))))
-  (substitution (v1 $a)))
+  (premises (Fiat (= (F (V $a)) (F (V $a)))))
+  (substitution (v1 (V $a))))

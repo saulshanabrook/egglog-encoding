@@ -595,15 +595,14 @@ def rand_case(rng, i):
     ctr = [0]
     while True:
         t = rand_term(rng, rng.randrange(2, 5), set(), ctr)
-        # a bare `(var $k)` at top level loses its slot in the encoding: a `U` value
-        # is an e-node, and every var node is the one canonical `(Var 0)`
+        # Seed a compound term so a selected rewrite has an operator to match.
         if t[0] != "var":
             break
     rules = rng.sample(ALL_RULES, rng.randrange(1, 3))
     # Probing every subterm is what makes the sweep observe anything: `eta`,
     # `let-unused` and `let-var-same` equate a term with one of its own subterms,
-    # and the constructive rules feed those. A bare `(var $k)` is left out -- the
-    # encoding cannot carry its slot at top level.
+    # and the constructive rules feed those. Keep the established compound-term
+    # probe distribution for this sweep.
     probes, seen = [], set()
     for s in subterms(t):
         if s[0] == "var" or s in seen:

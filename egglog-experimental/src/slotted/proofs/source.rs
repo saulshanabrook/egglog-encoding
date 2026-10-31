@@ -4,6 +4,7 @@ use super::format::{Claim, ClaimKind};
 use super::guards::{GUARDS, GuardSignature};
 use super::terms::{FreshSlots, Renaming, slot_of};
 use super::{HashMap, HashSet};
+use crate::slotted::var_sort::VarSort;
 use egglog::ast::{
     Expr, Fact, FunctionDecl, GenericAction, GenericActions, ResolvedExpr, ResolvedFact,
     ResolvedRule, Rule, Schema,
@@ -18,16 +19,13 @@ use std::fmt::{self, Display, Formatter};
 
 pub use crate::slotted::model::{Column as ColumnKind, Constructor};
 
-/// A top-level `(union a b)`, with the carrier sort the compiler gave it: two bare
-/// slots carry no sort of their own.
+/// The resolved endpoints of a top-level `(union a b)`.
 #[derive(Clone, Debug)]
 pub struct Union {
     /// The union's left source term.
     pub lhs: TermId,
     /// The union's right source term.
     pub rhs: TermId,
-    /// The carrier sort containing both terms.
-    pub sort: String,
 }
 
 /// A native source rule with its declaration-scoped global bindings.
@@ -163,11 +161,13 @@ impl SlottedProgram {
         );
     }
 
-    /// The carrier sort a term names by its head constructor. A bare slot or a
-    /// literal names none.
+    /// A ground term's sort, determined by its constructor or rigid value.
     pub fn sort_of(&self, dag: &TermDag, term: TermId) -> Option<String> {
         match dag.get(term) {
             Term::App(head, _) => self.constructors.get(head).map(|c| c.sort.clone()),
+            Term::Var(_) if slot_of(dag, term).is_some() => Some("Var".into()),
+            Term::Lit(egglog::ast::Literal::Int(_)) => Some("i64".into()),
+            Term::Lit(egglog::ast::Literal::String(_)) => Some("String".into()),
             _ => None,
         }
     }
@@ -199,9 +199,8 @@ impl SlottedProgram {
         dag: &mut TermDag,
         lhs: &str,
         rhs: &str,
-        sort: &str,
     ) -> Result<(), SourceError> {
-        self.add_union_expr(dag, &parse_expr(lhs)?, &parse_expr(rhs)?, sort)
+        self.add_union_expr(dag, &parse_expr(lhs)?, &parse_expr(rhs)?)
     }
 
     pub(super) fn add_union_expr(
@@ -209,15 +208,10 @@ impl SlottedProgram {
         dag: &mut TermDag,
         lhs: &Expr,
         rhs: &Expr,
-        sort: &str,
     ) -> Result<(), SourceError> {
         let lhs = self.ground_term(dag, lhs)?;
         let rhs = self.ground_term(dag, rhs)?;
-        self.unions.push(Union {
-            lhs,
-            rhs,
-            sort: sort.to_string(),
-        });
+        self.unions.push(Union { lhs, rhs });
         Ok(())
     }
 
@@ -226,18 +220,16 @@ impl SlottedProgram {
         &self,
         dag: &mut TermDag,
         kind: &str,
-        sort: &str,
         lhs: &str,
         rhs: &str,
     ) -> Result<Claim, SourceError> {
-        self.claim_expr(dag, kind, sort, &parse_expr(lhs)?, &parse_expr(rhs)?)
+        self.claim_expr(dag, kind, &parse_expr(lhs)?, &parse_expr(rhs)?)
     }
 
     pub(super) fn claim_expr(
         &self,
         dag: &mut TermDag,
         kind: &str,
-        sort: &str,
         lhs: &Expr,
         rhs: &Expr,
     ) -> Result<Claim, SourceError> {
@@ -248,12 +240,7 @@ impl SlottedProgram {
         };
         let lhs = self.ground_term(dag, lhs)?;
         let rhs = self.ground_term(dag, rhs)?;
-        Ok(Claim {
-            kind,
-            sort: sort.to_string(),
-            lhs,
-            rhs,
-        })
+        Ok(Claim { kind, lhs, rhs })
     }
 
     /// Parse and record a rewrite under the `:name` in its source text.
@@ -314,6 +301,8 @@ impl SlottedProgram {
     ) -> Result<SourceRule, SourceError> {
         let err = |e: &dyn Display| SourceError(e.to_string());
         let mut graph = EGraph::default();
+        egglog::prelude::add_base_sort(&mut graph, VarSort, source.span.clone())
+            .map_err(|e| err(&e))?;
         let source_terms: Vec<_> = std::iter::once(&source.lhs)
             .chain(std::iter::once(&source.rhs))
             .chain(source.conditions.iter().flat_map(|fact| match fact {
@@ -451,60 +440,31 @@ impl SlottedProgram {
             no_decomp: false,
             include_subsumed: false,
         };
-        let mut sorts = BTreeSet::new();
-        fn carrier(
-            program: &SlottedProgram,
-            dag: &TermDag,
-            expr: &Expr,
-            sorts: &mut BTreeSet<String>,
-        ) {
-            match expr {
-                Expr::Call(_, head, args) => {
-                    if let Some(op) = program.constructors.get(head) {
-                        sorts.insert(op.sort.clone());
-                    } else {
-                        for arg in args {
-                            carrier(program, dag, arg, sorts);
-                        }
-                    }
-                }
-                Expr::Var(_, name) => {
-                    if let Some(sort) = program
-                        .lets
-                        .get(name)
-                        .and_then(|&term| program.sort_of(dag, term))
-                    {
-                        sorts.insert(sort);
-                    }
-                }
-                _ => {}
-            }
-        }
-        for expr in &source_terms {
-            carrier(self, dag, expr, &mut sorts);
-        }
-        let sort = if sorts.len() == 1 {
-            sorts.first()
-        } else if sorts.is_empty() && carriers.len() == 1 {
-            carriers.first()
-        } else {
-            None
-        }
-        .ok_or_else(|| SourceError("cannot determine one carrier sort for the rewrite".into()))?;
-        let ty = graph
-            .get_sort_by_name(sort)
-            .ok_or_else(|| SourceError(format!("unknown sort {sort}")))?
-            .clone();
-        let binding_names: BTreeSet<_> = source_terms
+        // Slot literals have the rigid Var sort. Captured globals retain the
+        // sort of their source term; constructor signatures infer all other locals.
+        let var_ty = VarSort.to_arcsort();
+        let mut bindings: IndexMap<_, _> = source_terms
             .iter()
             .flat_map(|expr| expr.vars())
             .filter(|name| name.starts_with('$') && !payload_vars.contains(name))
-            .chain(globals.keys().cloned())
+            .map(|name| (name, (source.span.clone(), var_ty.clone())))
             .collect();
-        let mut bindings: IndexMap<_, _> = binding_names
-            .into_iter()
-            .map(|name| (name, (source.span.clone(), ty.clone())))
-            .collect();
+        for (name, &term) in &globals {
+            let sort = self
+                .sort_of(dag, term)
+                .ok_or_else(|| SourceError(format!("unknown sort for global {name}")))?;
+            let ty = graph
+                .get_sort_by_name(&sort)
+                .ok_or_else(|| SourceError(format!("unknown sort {sort}")))?
+                .clone();
+            bindings.insert(name.clone(), (source.span.clone(), ty));
+        }
+        let expression_sort = |expr: &Expr| match expr {
+            Expr::Call(_, head, _) => self.constructors.get(head).map(|c| c.sort.clone()),
+            Expr::Var(_, name) if name.starts_with('$') => Some("Var".into()),
+            Expr::Var(_, name) => globals.get(name).and_then(|&t| self.sort_of(dag, t)),
+            Expr::Lit(_, lit) => Some(egglog::sort::literal_sort(lit).name().to_owned()),
+        };
         // Infer plain facts in their source context: guards return Unit, while
         // constructor patterns return the carrier. Remove these type constraints
         // after resolution; the checker sees the original facts.
@@ -517,11 +477,18 @@ impl SlottedProgram {
                 let guard = i > 0 && matches!(expr, Expr::Call(_, head, _) if is_guard(head));
                 let name = symbols.fresh("source-fact");
                 let sort = if guard {
-                    UnitSort.to_arcsort()
+                    Some(UnitSort.to_arcsort())
                 } else {
-                    ty.clone()
+                    expression_sort(expr).map(|sort| {
+                        graph
+                            .get_sort_by_name(&sort)
+                            .expect("source sort is registered")
+                            .clone()
+                    })
                 };
-                bindings.insert(name.clone(), (expr.span(), sort));
+                if let Some(sort) = sort {
+                    bindings.insert(name.clone(), (expr.span(), sort));
+                }
                 *fact = Fact::Eq(expr.span(), Expr::Var(expr.span(), name), expr.clone());
                 true
             })
@@ -664,6 +631,7 @@ impl SlottedProgram {
                 for (col, &child) in ctor.columns.iter().zip(children) {
                     match col {
                         ColumnKind::Payload(_) => {}
+                        ColumnKind::Var => self.free_slots_into(dag, child, out),
                         ColumnKind::Binder => {
                             if let Some(slot) = slot_of(dag, child) {
                                 bound.push(slot);
@@ -751,7 +719,7 @@ impl SlottedProgram {
                             children[bj] = super::terms::slot_term(dag, f);
                         }
                     }
-                    ColumnKind::Payload(_) => {}
+                    ColumnKind::Var | ColumnKind::Payload(_) => {}
                 }
             }
         }
@@ -812,15 +780,9 @@ impl SlottedProgram {
 
     /// Whether either orientation of an equality was asserted by a source union.
     pub fn is_union(&self, lhs: TermId, rhs: TermId) -> bool {
-        self.union_sort(lhs, rhs).is_some()
-    }
-
-    /// The sort of the source union between the two terms, in either direction.
-    pub fn union_sort(&self, lhs: TermId, rhs: TermId) -> Option<&str> {
         self.unions
             .iter()
-            .find(|u| (u.lhs, u.rhs) == (lhs, rhs) || (u.lhs, u.rhs) == (rhs, lhs))
-            .map(|u| u.sort.as_str())
+            .any(|u| (u.lhs, u.rhs) == (lhs, rhs) || (u.lhs, u.rhs) == (rhs, lhs))
     }
 }
 

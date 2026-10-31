@@ -80,6 +80,7 @@ impl Default for State {
             rules: 0,
             extracts: 0,
             reserved: [
+                "Var",
                 "Names",
                 "Binding",
                 "Frame",
@@ -175,13 +176,38 @@ impl Compiler {
             self.state.initialized = true;
         }
         for sort in sorts {
+            if sort == "Var" {
+                return Err(ParseError(
+                    fallback.clone(),
+                    "Var is a built-in rigid sort".into(),
+                ));
+            }
             if self.state.lang.carriers.iter().any(|s| s.sort == sort) {
                 return Err(ParseError(
                     fallback.clone(),
                     format!("equality sort {sort:?} is declared more than once"),
                 ));
             }
-            let s = Symbols::new(&sort, self.state.lang.carriers.len());
+            let variables = ctors
+                .iter()
+                .filter_map(|form| {
+                    let (_, args) = form.call().ok()?;
+                    (args.len() >= 3
+                        && args[2].atom().ok()? == sort
+                        && args[1].list().ok()?.len() == 1
+                        && args[1].list().ok()?[0].atom().ok()? == "Var")
+                        .then(|| args[0].atom().unwrap())
+                })
+                .collect::<Vec<_>>();
+            let [variable] = variables.as_slice() else {
+                return Err(ParseError(
+                    fallback.clone(),
+                    format!(
+                        "equality sort {sort:?} requires exactly one unary variable constructor with input Var"
+                    ),
+                ));
+            };
+            let s = Symbols::new(&sort, self.state.lang.carriers.len(), variable);
             self.emit(
                 &mut out,
                 maintenance::carrier(&s, self.options.proof_mode != ProofMode::Disabled),
@@ -304,7 +330,10 @@ impl Compiler {
             .iter()
             .map(Form::atom)
             .collect::<Result<Vec<_>, _>>()?;
-        let child_count = cols.iter().filter(|s| carriers.contains(**s)).count();
+        let child_count = cols
+            .iter()
+            .filter(|s| **s == "Var" || carriers.contains(**s))
+            .count();
         let mut binders = BTreeSet::new();
         let mut in_binder = false;
         for f in &args[3..] {
@@ -337,20 +366,37 @@ impl Compiler {
                 ));
             }
         }
+        let variable = cols == ["Var"] && binders.is_empty();
+        let designated = &self.state.lang.symbols(&sort).var;
+        if variable && !designated.is_empty() && *designated != name {
+            return Err(format!(
+                "equality sort {sort:?} already has variable constructor {designated}"
+            ));
+        }
         let mut child = 0;
         let mut columns = Vec::new();
         for col in cols {
-            if carriers.contains(col) {
+            if col == "Var" {
+                columns.push(if binders.contains(&child) {
+                    Column::Binder
+                } else if variable {
+                    Column::Var
+                } else {
+                    return Err(format!("constructor {name}: Var arguments must be binders or the unary variable constructor"));
+                });
+                child += 1;
+            } else if carriers.contains(col) {
                 if col != sort {
                     return Err(format!(
                         "constructor {name}: cross-sort slotted children are not supported"
                     ));
                 }
-                columns.push(if binders.contains(&child) {
-                    Column::Binder
-                } else {
-                    Column::Child
-                });
+                if binders.contains(&child) {
+                    return Err(format!(
+                        "constructor {name}: binder columns must have sort Var"
+                    ));
+                }
+                columns.push(Column::Child);
                 child += 1;
             } else if ["i64", "String"].contains(&col) {
                 columns.push(Column::Payload(col.into()));
@@ -391,10 +437,7 @@ impl Compiler {
                 let encoded = if bare_slot {
                     String::new()
                 } else {
-                    format!(
-                        "(let ${name} {})",
-                        self.state.lang.encode(&t, &self.sort_of(&t)?)
-                    )
+                    format!("(let ${name} {})", self.state.lang.encode(&t))
                 };
                 self.state.lang.globals.insert(name.into(), t);
                 Ok(format!("{encoded}{}", self.source_record(f.render())))
@@ -404,10 +447,16 @@ impl Compiler {
                     return Err("union expects two terms".into());
                 }
                 let (sort, terms) = self.common(args)?;
+                if sort == "Var" {
+                    return Err(
+                        "Var names are rigid and cannot be unioned; use the variable constructor"
+                            .into(),
+                    );
+                }
                 Ok(format!(
                     "(union {} {}){}",
-                    self.state.lang.encode_top(&terms[0], &sort),
-                    self.state.lang.encode_top(&terms[1], &sort),
+                    self.state.lang.encode(&terms[0]),
+                    self.state.lang.encode(&terms[1]),
                     self.source_record(f.render())
                 ))
             }
@@ -449,6 +498,12 @@ impl Compiler {
                 }
                 let t = self.term(&args[0], true, None)?;
                 let sort = self.sort_of(&t)?;
+                if sort == "Var" {
+                    return Err(
+                        "extract expects a term in an equality sort; use the variable constructor"
+                            .into(),
+                    );
+                }
                 self.state.extracts += 1;
                 let i = self.state.extracts;
                 let names = self
@@ -461,7 +516,7 @@ impl Compiler {
                     .join(" ");
                 Ok(format!(
                     "(let $$slotted_extract{i} {})\n{}\n(slotted-extract $$slotted_extract{i} {} {names})",
-                    self.state.lang.encode(&t, &sort),
+                    self.state.lang.encode(&t),
                     maintenance::schedule(0, false),
                     self.state.lang.edge(&t),
                 ))
@@ -481,14 +536,9 @@ impl Compiler {
             .lang
             .sort_of(t)
             .map(str::to_owned)
-            .or_else(|| {
-                (self.state.lang.carriers.len() == 1)
-                    .then(|| self.state.lang.carriers[0].sort.clone())
-            })
-            .ok_or_else(|| {
-                "bare slot has no equality-sort context; put it under a constructor".into()
-            })
+            .ok_or_else(|| "cannot determine the term's sort".into())
     }
+
     fn common(&mut self, forms: &[Form]) -> Result<(String, Vec<Term>), String> {
         let terms = forms
             .iter()
@@ -537,7 +587,7 @@ impl Compiler {
                     }
                     return Ok(Term::Subst(Box::new([
                         self.term(&args[0], false, expected)?,
-                        self.term(&args[1], false, expected)?,
+                        self.term(&args[1], false, Some("Var"))?,
                         self.term(&args[2], false, expected)?,
                     ])));
                 }
@@ -576,12 +626,23 @@ impl Compiler {
                             }
                         }
                         Column::Child => self.term(a, ground, Some(&op.sort))?,
-                        Column::Binder => {
-                            let t = self.term(a, ground, Some(&op.sort))?;
-                            if !matches!(t, Term::Slot(_)) {
-                                return Err(format!("{head}'s binder column takes a slot literal"));
+                        Column::Var | Column::Binder => {
+                            let t = self.term(a, ground, Some("Var"))?;
+                            match &t {
+                                Term::Slot(_) => t,
+                                Term::Global(n) if self.state.lang.global_slot(n).is_some() => {
+                                    if ground {
+                                        Term::Slot(self.state.lang.global_slot(n).unwrap().into())
+                                    } else {
+                                        t
+                                    }
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "{head}'s Var column takes a slot literal or a global name"
+                                    ));
+                                }
                             }
-                            t
                         }
                     });
                 }
@@ -607,6 +668,13 @@ impl Compiler {
 
     fn global_terms(&self, p: &mut Pattern, term: &mut Term, sort: Option<&str>) {
         match term {
+            Term::Global(n) if self.state.lang.global_slot(n).is_some() => {
+                let slot = self.state.lang.global_slot(n).unwrap();
+                p.conditions
+                    .concrete_slots
+                    .insert(n.clone(), self.state.lang.slot_names.id(slot));
+                *term = Term::Slot(n.clone());
+            }
             Term::Global(_) => {
                 let root = p.names.fresh("_global");
                 p.values
@@ -614,8 +682,8 @@ impl Compiler {
                 *term = Term::Variable(root);
             }
             Term::Node(op, args) => {
-                let sort = &self.state.lang.constructors[op].sort;
-                for arg in args {
+                let constructor = &self.state.lang.constructors[op];
+                for (arg, sort) in args.iter_mut().zip(constructor.input_sorts()) {
                     self.global_terms(p, arg, Some(sort));
                 }
             }
@@ -642,11 +710,19 @@ impl Compiler {
                 p.atoms.extend(atoms);
                 p.patterns += 1;
             }
-            Term::Slot(_) | Term::Global(_) => {
+            Term::Slot(_) => {
+                return Err("a term pattern needs a variable constructor around its slot".into());
+            }
+            Term::Global(_) => {
                 let sort = self.state.lang.sort_of(&term).map(str::to_owned);
+                if sort.as_deref() == Some("Var") {
+                    return Err(
+                        "a term pattern needs a variable constructor around its slot".into(),
+                    );
+                }
                 p.values.push((root, term, sort));
             }
-            _ => return Err("expected a constructor pattern, global, or slot".into()),
+            _ => return Err("expected a constructor pattern or term global".into()),
         }
         Ok(())
     }
@@ -769,7 +845,7 @@ impl Compiler {
                 (self.state.lang.carriers.len() == 1)
                     .then(|| self.state.lang.carriers[0].sort.clone())
             })
-            .ok_or("bare slot has no equality-sort context; put it under a constructor")?;
+            .ok_or("query has no equality-sort context; include a constructor pattern")?;
         p.conditions.values = p
             .values
             .drain(..)
@@ -908,10 +984,11 @@ impl Compiler {
         let command = match head {
             "sort" if args.len() == 1 => {
                 let sort = args[0].symbol()?;
-                self.state
-                    .lang
-                    .carriers
-                    .push(Symbols::new(sort, self.state.lang.carriers.len()));
+                self.state.lang.carriers.push(Symbols::new(
+                    sort,
+                    self.state.lang.carriers.len(),
+                    "",
+                ));
                 Command::Sort {
                     span: egglog::span!(),
                     name: sort.into(),
@@ -924,6 +1001,15 @@ impl Compiler {
             }
             "constructor" => {
                 let op = self.constructor(&form)?;
+                if op.columns == [Column::Var] {
+                    self.state
+                        .lang
+                        .carriers
+                        .iter_mut()
+                        .find(|s| s.sort == op.sort)
+                        .unwrap()
+                        .var = op.name.clone();
+                }
                 let command = Command::Constructor {
                     span: egglog::span!(),
                     name: op.name.clone(),
@@ -1017,8 +1103,7 @@ impl Compiler {
         p.proof_names.readings = q.readings.clone();
         p.proof_names.frame = q.frame.clone();
         let proof = format!(
-            "(prove-slotted ({kind} {} ({} {}) ({} {}) {} {}) {})",
-            q.sorts[&roots[0]],
+            "(prove-slotted ({kind} ({} {}) ({} {}) {} {}) {})",
             terms[0].render(),
             roots[0],
             terms[1].render(),
@@ -1108,7 +1193,7 @@ impl Compiler {
             let mut names = Pattern::new(args).names;
             let mut pattern = vec![Form::Atom(ctor.into())];
             for column in op.columns {
-                let stem = if column == Column::Binder {
+                let stem = if matches!(column, Column::Var | Column::Binder) {
                     "$_bound"
                 } else {
                     "_child"

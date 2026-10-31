@@ -16,6 +16,7 @@ mod query;
 mod rewrite;
 mod slots;
 mod syntax;
+pub(crate) mod var_sort;
 pub use frontend::{Compiler, Options, ProofMode};
 
 mod runtime;

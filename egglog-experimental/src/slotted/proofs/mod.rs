@@ -13,7 +13,7 @@ pub mod source;
 pub mod terms;
 mod unflatten;
 
-pub use checker::{Checked, SlottedCheckError, check_claim, check_proof};
+pub use checker::{SlottedCheckError, check_claim, check_proof};
 pub use format::{
     Claim, ClaimKind, ProofId, RulePremise, RuleProof, SlottedConclusion, SlottedProof,
     SlottedProofStore,

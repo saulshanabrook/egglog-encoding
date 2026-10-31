@@ -1,7 +1,7 @@
 ; Names introduced by a child equality must not capture a sibling's names.
-(datatype U (Sub U U) (Null))
+(datatype U (V Var) (Sub U U) (Null))
 (rewrite x2 x1 :when ((= x3 (Sub x1 x2))))
-(let _p1 (Sub $0 (Null)))
-(let _p6 (Sub $0 $0))
+(let _p1 (Sub (V $0) (Null)))
+(let _p6 (Sub (V $0) (V $0)))
 (run 1)
 (check (renaming-= _p1 _p6))
