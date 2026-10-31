@@ -1673,15 +1673,17 @@ impl EGraph {
     }
 
     fn eval_actions(&mut self, batch: ActionBatch<'_>) -> Result<(), Error> {
-        let (actions, recognize) = match batch {
-            ActionBatch::Resolved(actions) => (actions, true),
+        let actions = match batch {
+            ActionBatch::Resolved(actions, calls) => {
+                if let Some(prepared) = self.prepare_resolved_ground_actions(actions, calls) {
+                    return self.eval_ground_actions(prepared);
+                }
+                actions
+            }
             ActionBatch::Ground(prepared) => return self.eval_ground_actions(prepared),
             #[cfg(test)]
-            ActionBatch::CompiledOracle(actions) => (actions, false),
+            ActionBatch::CompiledOracle(actions) => actions,
         };
-        if recognize && let Some(prepared) = self.prepare_resolved_ground_action(actions) {
-            return self.eval_ground_actions(vec![prepared]);
-        }
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
@@ -2366,14 +2368,18 @@ impl EGraph {
                     panic!("Globals should have been desugared away: {name} = {contents}")
                 }
                 _ => {
-                    self.eval_actions(ActionBatch::Resolved(&ResolvedActions::new(vec![
-                        action.clone(),
-                    ])))?;
+                    self.eval_actions(ActionBatch::Resolved(
+                        &ResolvedActions::new(vec![action.clone()]),
+                        &mut GroundActionCache::default(),
+                    ))?;
                 }
             },
             // One `eval_actions` call, so the block's `let`s stay local.
             ResolvedNCommand::CoreActions(actions) => {
-                self.eval_actions(ActionBatch::Resolved(&actions))?;
+                self.eval_actions(ActionBatch::Resolved(
+                    &actions,
+                    &mut GroundActionCache::default(),
+                ))?;
             }
             ResolvedNCommand::LetBegin(..) => {
                 unreachable!("LetBegin is removed by remove_globals")
@@ -2986,44 +2992,59 @@ impl EGraph {
         let mut ground_calls = GroundActionCache::default();
 
         loop {
-            // This probe retains the ordinary frontend; recognition happens in eval_actions.
+            // Keep normal parsing/macros; only emit execution plans inside eval_actions.
             let next = program.next_item(self, &mut ground_calls, false);
             let item = match next {
                 Ok(Some(item)) => item,
                 Ok(None) => break,
                 Err(error) => {
-                    self.flush_ground_actions(&mut pending)?;
+                    self.flush_resolved_actions(
+                        &mut pending,
+                        &mut pending_lookups,
+                        &mut ground_calls,
+                    )?;
                     return Err(error);
                 }
             };
             match item {
                 ProgramItem::Prepared(prepared) => {
-                    if prepared.union.is_some() {
-                        // Equality changes can reach unnamed tables and container
-                        // callbacks. Keep each union's original commit/rebuild.
-                        self.flush_ground_actions(&mut pending)?;
-                        pending_lookups = 0;
-                        self.run_timed_command(CommandPhase::Actions, |graph| {
-                            graph.eval_actions(ActionBatch::Ground(vec![prepared]))
-                        })?;
-                    } else {
-                        pending_lookups += prepared.lookups.len();
-                        pending.push(prepared);
-                        // These are only prediction-aware native constructor inserts:
-                        // no equality changes, opaque callbacks, or reads needing a
-                        // preceding commit. Bound retained plans, not graph capabilities.
-                        if pending.len() >= 256 || pending_lookups >= 16_384 {
-                            self.flush_ground_actions(&mut pending)?;
-                            pending_lookups = 0;
-                        }
-                    }
+                    self.flush_resolved_actions(
+                        &mut pending,
+                        &mut pending_lookups,
+                        &mut ground_calls,
+                    )?;
+                    self.run_timed_command(CommandPhase::Actions, |graph| {
+                        graph.eval_actions(ActionBatch::Ground(vec![prepared]))
+                    })?;
                 }
                 ProgramItem::Command(command) => {
-                    // Ordinary functions/globals/primitives, observations, declarations,
-                    // scopes and includes see all preceding constructor insertions.
-                    self.flush_ground_actions(&mut pending)?;
-                    pending_lookups = 0;
-                    ground_calls.clear();
+                    let timer = Instant::now();
+                    let preflight = if run_commands {
+                        match &command {
+                            Command::Action(action) => {
+                                typechecking::ClosedAction::from_action(action)
+                                    .and_then(|closed| {
+                                        self.ground_action_lookups(closed, &mut ground_calls)
+                                    })
+                                    .map(|_| matches!(action, Action::Union(..)))
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    self.overall_report.typecheck += timer.elapsed();
+                    // Opaque constraints and metadata changes must see the committed prefix.
+                    if preflight.is_none() || preflight == Some(true) {
+                        self.flush_resolved_actions(
+                            &mut pending,
+                            &mut pending_lookups,
+                            &mut ground_calls,
+                        )?;
+                        if preflight.is_none() {
+                            ground_calls.clear();
+                        }
+                    }
                     // handle include specially- we keep them as-is for desugaring
                     if let Command::Include(span, file) = &command {
                         let include_timer = Instant::now();
@@ -3046,7 +3067,17 @@ impl EGraph {
                         desugared.extend(resolved.resolved);
                         desugared_before_proofs.extend(resolved.resolved_before_proofs);
                     } else {
-                        let resolved = self.resolve_command(command)?;
+                        let resolved = match self.resolve_command(command) {
+                            Ok(resolved) => resolved,
+                            Err(error) => {
+                                self.flush_resolved_actions(
+                                    &mut pending,
+                                    &mut pending_lookups,
+                                    &mut ground_calls,
+                                )?;
+                                return Err(error);
+                            }
+                        };
                         // Execution callers discard resolved trees; retaining them here
                         // duplicates large proof programs. Keep only the checker's history.
                         if run_commands {
@@ -3059,23 +3090,71 @@ impl EGraph {
                             desugared.extend(resolved.desugared.clone());
                         }
 
-                        for processed in resolved.desugared {
-                            // even in desugar mode we still run push and pop
-                            if run_commands
-                                || matches!(
-                                    processed,
-                                    ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
-                                )
-                            {
-                                let result = self.run_command(processed)?;
-                                outputs.extend(result);
+                        let timer = Instant::now();
+                        let admitted =
+                            preflight.and_then(|is_union| match resolved.desugared.as_slice() {
+                                [ResolvedNCommand::CoreAction(action)]
+                                    if matches!(action, ResolvedAction::Union(..)) == is_union =>
+                                {
+                                    typechecking::ClosedAction::from_action(action)
+                                        .and_then(|closed| {
+                                            self.ground_action_lookups(closed, &mut ground_calls)
+                                        })
+                                        .map(|lookups| (lookups, is_union))
+                                }
+                                _ => None,
+                            });
+                        self.overall_report.typecheck += timer.elapsed();
+                        if let Some((lookups, is_union)) = admitted {
+                            let ResolvedNCommand::CoreAction(action) =
+                                resolved.desugared.into_iter().next().unwrap()
+                            else {
+                                unreachable!("admission requires one resolved action")
+                            };
+                            if is_union {
+                                let actions = ResolvedActions::new(vec![action]);
+                                self.run_timed_command(CommandPhase::Actions, |graph| {
+                                    graph.eval_actions(ActionBatch::Resolved(
+                                        &actions,
+                                        &mut ground_calls,
+                                    ))
+                                })?;
+                            } else {
+                                pending_lookups += lookups;
+                                pending.push(action);
+                                if pending.len() >= 256 || pending_lookups >= 16_384 {
+                                    self.flush_resolved_actions(
+                                        &mut pending,
+                                        &mut pending_lookups,
+                                        &mut ground_calls,
+                                    )?;
+                                }
+                            }
+                        } else {
+                            self.flush_resolved_actions(
+                                &mut pending,
+                                &mut pending_lookups,
+                                &mut ground_calls,
+                            )?;
+                            ground_calls.clear();
+                            for processed in resolved.desugared {
+                                // even in desugar mode we still run push and pop
+                                if run_commands
+                                    || matches!(
+                                        processed,
+                                        ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
+                                    )
+                                {
+                                    let result = self.run_command(processed)?;
+                                    outputs.extend(result);
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        self.flush_ground_actions(&mut pending)?;
+        self.flush_resolved_actions(&mut pending, &mut pending_lookups, &mut ground_calls)?;
 
         Ok(ResolvedNCommandsWithOutput {
             outputs,

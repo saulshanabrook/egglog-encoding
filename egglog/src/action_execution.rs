@@ -1,5 +1,5 @@
 //! Prepare restricted constructor actions without effects; execute them through
-//! the same command dispatch as resolved actions. Only insertion-only runs share
+//! the existing action owner. Only insertion-only runs share
 //! a commit. Unions retain an individual rebuild boundary.
 
 use crate::*;
@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use std::rc::Rc;
 
 pub(super) enum ActionBatch<'a> {
-    Resolved(&'a ResolvedActions),
+    Resolved(&'a ResolvedActions, &'a mut GroundActionCache),
     Ground(Vec<GroundActions>),
     #[cfg(test)]
     CompiledOracle(&'a ResolvedActions),
@@ -49,30 +49,7 @@ impl EGraph {
                 if !permit_call(head) {
                     return None;
                 }
-                if let Some(cached) = calls.get(head) {
-                    return cached.clone();
-                }
-                let call = self.type_info.closed_call_type(head).and_then(|func| {
-                    let function = self.functions.get(&func.name)?;
-                    if func.subtype != FunctionSubtype::Constructor
-                        || function.subtype() != FunctionSubtype::Constructor
-                        || func.role.is_global()
-                        || function.is_view()
-                        || function.is_let_binding()
-                        || self.type_info.indexes.contains_key(&func.name)
-                        || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
-                    {
-                        return None;
-                    }
-                    let table = egglog_bridge::TableAction::for_constructor_insertions(
-                        &self.backend,
-                        function.backend_id,
-                    )?;
-                    (table.input_arity() == func.input.len())
-                        .then(|| (func.clone(), Rc::new(table)))
-                });
-                calls.insert(head.into(), call.clone());
-                call
+                self.cached_ground_call(head, calls)
             },
             &mut |_, table, args: SmallVec<[usize; 4]>| {
                 let index = prepared.lookups.len();
@@ -86,27 +63,103 @@ impl EGraph {
         Some(prepared)
     }
 
-    pub(super) fn prepare_resolved_ground_action(
+    fn cached_ground_call(
+        &self,
+        head: &str,
+        calls: &mut GroundActionCache,
+    ) -> Option<(Arc<FuncType>, Rc<egglog_bridge::TableAction>)> {
+        if let Some(cached) = calls.get(head) {
+            return cached.clone();
+        }
+        let call = self.type_info.closed_call_type(head).and_then(|func| {
+            let function = self.functions.get(&func.name)?;
+            if func.subtype != FunctionSubtype::Constructor
+                || function.subtype() != FunctionSubtype::Constructor
+                || func.role.is_global()
+                || function.is_view()
+                || function.is_let_binding()
+                || self.type_info.indexes.contains_key(&func.name)
+                || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
+                // Closed children cannot supply a custom/base sort. Avoid its callbacks in preflight.
+                || func
+                    .input
+                    .iter()
+                    .any(|sort| !(sort.as_ref() as &dyn Any).is::<EqSort>())
+            {
+                return None;
+            }
+            let table = egglog_bridge::TableAction::for_constructor_insertions(
+                &self.backend,
+                function.backend_id,
+            )?;
+            (table.input_arity() == func.input.len()).then(|| (func.clone(), Rc::new(table)))
+        });
+        calls.insert(head.into(), call.clone());
+        call
+    }
+
+    pub(super) fn ground_action_lookups<Node: typechecking::CallView>(
+        &self,
+        action: typechecking::ClosedAction<&Node>,
+        calls: &mut GroundActionCache,
+    ) -> Option<usize> {
+        if self.proof_state.original_typechecking.is_some() {
+            return None;
+        }
+        let mut lookups = 0;
+        self.type_info.check_closed_action(
+            action,
+            &mut |head| self.cached_ground_call(head, calls),
+            &mut |_, _, _: Vec<()>| {
+                lookups += 1;
+                Some(())
+            },
+        )?;
+        Some(lookups)
+    }
+
+    pub(super) fn prepare_resolved_ground_actions(
         &self,
         actions: &ResolvedActions,
-    ) -> Option<GroundActions> {
-        let action = match actions.0.as_slice() {
-            [ResolvedAction::Expr(_, expr)] => Some(typechecking::ClosedAction::Expr(expr)),
-            [ResolvedAction::Union(_, left, right)] => {
-                Some(typechecking::ClosedAction::Union(left, right))
-            }
-            _ => None,
-        };
-        let mut calls = GroundActionCache::default();
-        self.prepare_ground_action(action, &mut calls, |_| true)
+        calls: &mut GroundActionCache,
+    ) -> Option<Vec<GroundActions>> {
+        if actions.0.is_empty()
+            || actions.0.len() > 1
+                && actions
+                    .0
+                    .iter()
+                    .any(|action| !matches!(action, ResolvedAction::Expr(..)))
+        {
+            return None;
+        }
+        actions
+            .0
+            .iter()
+            .map(|action| {
+                self.prepare_ground_action(
+                    typechecking::ClosedAction::from_action(action),
+                    calls,
+                    |_| true,
+                )
+            })
+            .collect()
     }
 
     pub(super) fn eval_ground_actions(
         &mut self,
         prepared: Vec<GroundActions>,
     ) -> Result<(), Error> {
+        #[cfg(test)]
+        let batch_event = (
+            prepared.len(),
+            prepared
+                .first()
+                .and_then(|action| action.lookups.first())
+                .map(|(table, _)| table.clone()),
+        );
         let union = egglog_bridge::UnionAction::new(&self.backend);
-        self.backend
+        let result = self
+            .backend
             .run_actions(Some(&self.type_info), |state| {
                 let mut values = Vec::new();
                 let mut arguments = Vec::new();
@@ -133,19 +186,32 @@ impl EGraph {
                     }
                 }
             })
-            .map_err(|error| Error::BackendError(error.to_string()))
+            .map_err(|error| Error::BackendError(error.to_string()));
+        #[cfg(test)]
+        if result.is_ok() {
+            tests::BATCH_EVENTS.with(|events| events.borrow_mut().push(batch_event));
+            tests::ORDER_LOG.with(|slot| {
+                if let Some(log) = slot.borrow().as_ref() {
+                    log.lock().unwrap().push("commit");
+                }
+            });
+        }
+        result
     }
 
     /// Drain exactly once through command dispatch. Failed batches are never
     /// replayed: rows and extension effects are not transactional.
-    pub(super) fn flush_ground_actions(
+    pub(super) fn flush_resolved_actions(
         &mut self,
-        pending: &mut Vec<GroundActions>,
+        pending: &mut Vec<ResolvedAction>,
+        lookups: &mut usize,
+        calls: &mut GroundActionCache,
     ) -> Result<(), Error> {
-        if !pending.is_empty() {
-            let prepared = std::mem::take(pending);
+        let actions = ResolvedActions::new(std::mem::take(pending));
+        *lookups = 0;
+        if !actions.0.is_empty() {
             self.run_timed_command(CommandPhase::Actions, |graph| {
-                graph.eval_actions(ActionBatch::Ground(prepared))
+                graph.eval_actions(ActionBatch::Resolved(&actions, calls))
             })?;
         }
         Ok(())

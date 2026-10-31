@@ -1,5 +1,13 @@
 use super::*;
 
+type BatchEvent = (usize, Option<Rc<egglog_bridge::TableAction>>);
+type OrderLog = Arc<std::sync::Mutex<Vec<&'static str>>>;
+
+std::thread_local! {
+    pub(super) static BATCH_EVENTS: std::cell::RefCell<Vec<BatchEvent>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub(super) static ORDER_LOG: std::cell::RefCell<Option<OrderLog>> = const { std::cell::RefCell::new(None) };
+}
+
 // Compare prepared actions with the existing resolved-command compiler.
 fn run_ground_action_oracle(
     graph: &mut EGraph,
@@ -150,10 +158,103 @@ fn resolved_constructor_actions_prepare_for_direct_execution() {
         panic!("expected one resolved action");
     };
     let actions = ResolvedActions::new(vec![action]);
-    assert!(graph.prepare_resolved_ground_action(&actions).is_some());
+    let mut calls = GroundActionCache::default();
+    assert!(
+        graph
+            .prepare_resolved_ground_actions(&actions, &mut calls)
+            .is_some()
+    );
     assert_eq!(graph.get_size("F"), 0);
-    graph.eval_actions(ActionBatch::Resolved(&actions)).unwrap();
+    graph
+        .eval_actions(ActionBatch::Resolved(&actions, &mut calls))
+        .unwrap();
     assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
+fn resolved_batches_coalesce_and_keep_metadata_across_flushes_and_unions() {
+    for threads in [1, 4] {
+        let mut graph = EGraph::default();
+        graph.backend.set_num_threads(threads);
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        BATCH_EVENTS.with(|events| events.borrow_mut().clear());
+        let mut source = "(F (A))\n".repeat(257);
+        source.push_str("(union (A) (B))\n(F (A))");
+        graph.parse_and_run_program(None, &source).unwrap();
+        let events = BATCH_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        assert_eq!(
+            events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
+            [256, 1, 1, 1]
+        );
+        let first = events[0].1.as_ref().unwrap();
+        assert!(
+            events
+                .iter()
+                .all(|(_, table)| Rc::ptr_eq(first, table.as_ref().unwrap())),
+            "the A handle must stay interned across bounded flushes and the union"
+        );
+        assert_eq!(graph.get_size("F"), 1);
+    }
+}
+
+#[test]
+fn opaque_constraint_and_read_observe_the_committed_prefix() {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct ObservePrefix {
+        order: Arc<Mutex<Vec<&'static str>>>,
+        observed: Arc<AtomicUsize>,
+    }
+    impl Primitive for ObservePrefix {
+        fn name(&self) -> &str {
+            "observe-f-prefix"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            self.order.lock().unwrap().push("constraints");
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ObservePrefix {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            let size = state.table_size("F")?;
+            self.observed.store(size, Ordering::SeqCst);
+            self.order.lock().unwrap().push("read");
+            Some(state.base_values().get(size as i64))
+        }
+    }
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::new(AtomicUsize::new(usize::MAX));
+    let mut graph = EGraph::default();
+    graph.add_read_primitive(
+        ObservePrefix {
+            order: order.clone(),
+            observed: observed.clone(),
+        },
+        None,
+    );
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    order.lock().unwrap().clear();
+    ORDER_LOG.with(|slot| *slot.borrow_mut() = Some(order.clone()));
+    let result = graph.parse_and_run_program(None, "(F (A)) (observe-f-prefix)");
+    ORDER_LOG.with(|slot| slot.borrow_mut().take());
+    result.unwrap();
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert_eq!(graph.get_size("F"), 1);
+    let order = order.lock().unwrap();
+    let commit = order.iter().position(|event| *event == "commit").unwrap();
+    let constraints = order
+        .iter()
+        .position(|event| *event == "constraints")
+        .unwrap();
+    let read = order.iter().position(|event| *event == "read").unwrap();
+    assert!(commit < constraints && constraints < read, "{order:?}");
 }
 
 #[test]
