@@ -1,6 +1,6 @@
 //! Prepare restricted constructor actions without effects; execute them through
-//! the same command dispatch as resolved actions. Each action retains its own
-//! commit and rebuild boundary.
+//! the same command dispatch as resolved actions. Only insertion-only runs share
+//! a commit. Unions retain an individual rebuild boundary.
 
 use crate::*;
 
@@ -83,6 +83,18 @@ impl EGraph {
                 }
             })
             .map_err(|error| Error::BackendError(error.to_string()))
+    }
+
+    /// Drain exactly once through command dispatch. Failed batches are never
+    /// replayed: rows and extension effects are not transactional.
+    pub(super) fn flush_ground_actions(
+        &mut self,
+        pending: &mut Vec<GroundActions>,
+    ) -> Result<(), Error> {
+        if !pending.is_empty() {
+            self.run_command(ExecutableCommand::PreparedActions(std::mem::take(pending)))?;
+        }
+        Ok(())
     }
 }
 

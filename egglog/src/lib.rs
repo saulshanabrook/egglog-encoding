@@ -2966,6 +2966,8 @@ impl EGraph {
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
+        let mut pending = Vec::new();
+        let mut pending_lookups = 0;
 
         for before_expanded_command in program {
             // First do user-provided macro expansion for this command,
@@ -2983,7 +2985,13 @@ impl EGraph {
                 macro_type_info,
             );
             self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = macro_expanded?;
+            let macro_expanded = match macro_expanded {
+                Ok(commands) => commands,
+                Err(error) => {
+                    self.flush_ground_actions(&mut pending)?;
+                    return Err(error);
+                }
+            };
 
             for command in macro_expanded {
                 let timer = Instant::now();
@@ -2993,8 +3001,28 @@ impl EGraph {
                 };
                 self.overall_report.typecheck += timer.elapsed();
                 if let Some(prepared) = prepared {
-                    self.run_command(ExecutableCommand::PreparedActions(vec![prepared]))?;
+                    if prepared.union.is_some() {
+                        // Equality changes can reach unnamed tables and container
+                        // callbacks. Keep each union's original commit/rebuild.
+                        self.flush_ground_actions(&mut pending)?;
+                        pending_lookups = 0;
+                        self.run_command(ExecutableCommand::PreparedActions(vec![prepared]))?;
+                    } else {
+                        pending_lookups += prepared.lookups.len();
+                        pending.push(prepared);
+                        // These are only prediction-aware native constructor inserts:
+                        // no equality changes, opaque callbacks, or reads needing a
+                        // preceding commit. Bound retained plans, not graph capabilities.
+                        if pending.len() >= 256 || pending_lookups >= 16_384 {
+                            self.flush_ground_actions(&mut pending)?;
+                            pending_lookups = 0;
+                        }
+                    }
                 } else {
+                    // Ordinary functions/globals/primitives, observations, declarations,
+                    // scopes and includes see all preceding constructor insertions.
+                    self.flush_ground_actions(&mut pending)?;
+                    pending_lookups = 0;
                     // handle include specially- we keep them as-is for desugaring
                     if let Command::Include(span, file) = &command {
                         let include_timer = Instant::now();
@@ -3040,6 +3068,7 @@ impl EGraph {
                 }
             }
         }
+        self.flush_ground_actions(&mut pending)?;
 
         Ok(ResolvedNCommandsWithOutput {
             outputs,
