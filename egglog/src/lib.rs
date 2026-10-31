@@ -2985,38 +2985,73 @@ impl EGraph {
                     return Err(error.into());
                 }
             };
-            // First do user-provided macro expansion for this command,
-            // which may rely on type information from previous commands.
-            let macro_type_info = self
-                .proof_state
-                .original_typechecking
-                .as_ref()
-                .map(|egraph| &egraph.type_info)
-                .unwrap_or(&self.type_info);
-            let macro_timer = Instant::now();
-            let macro_expanded = self.command_macros.apply(
-                before_expanded_command,
-                &mut self.parser.symbol_gen,
-                macro_type_info,
-            );
-            self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = match macro_expanded {
-                Ok(commands) => commands,
-                Err(error) => {
-                    self.flush_ground_actions(&mut pending)?;
-                    return Err(error);
+            let mut prepared_before_macros = None;
+            if run_commands
+                && self.proof_state.original_typechecking.is_none()
+                && let Command::Action(action) = &before_expanded_command
+            {
+                let head = match action {
+                    Action::Expr(_, Expr::Call(_, head, _)) => Some(Some(head.as_str())),
+                    Action::Union(..) => Some(None),
+                    _ => None,
+                };
+                if let Some(head) = head {
+                    // The ordinary parser has already produced this owned AST.
+                    // Skip command macros only when every macro promises an
+                    // unchanged singleton, no error and no effects for this action.
+                    let timer = Instant::now();
+                    let preserved = self
+                        .command_macros
+                        .preserves_closed_constructor_action(head);
+                    self.overall_report.frontend_other += timer.elapsed();
+                    if preserved {
+                        let timer = Instant::now();
+                        prepared_before_macros =
+                            self.prepare_ground_action(action, &mut ground_calls, |head| {
+                                self.parser.can_parse_constructor_call(head)
+                            });
+                        self.overall_report.typecheck += timer.elapsed();
+                    }
+                }
+            }
+            let macro_expanded = if prepared_before_macros.is_some() {
+                vec![before_expanded_command]
+            } else {
+                // Expansion may rely on type information from previous commands.
+                let macro_type_info = self
+                    .proof_state
+                    .original_typechecking
+                    .as_ref()
+                    .map(|egraph| &egraph.type_info)
+                    .unwrap_or(&self.type_info);
+                let macro_timer = Instant::now();
+                let expanded = self.command_macros.apply(
+                    before_expanded_command,
+                    &mut self.parser.symbol_gen,
+                    macro_type_info,
+                );
+                self.overall_report.frontend_other += macro_timer.elapsed();
+                match expanded {
+                    Ok(commands) => commands,
+                    Err(error) => {
+                        self.flush_ground_actions(&mut pending)?;
+                        return Err(error);
+                    }
                 }
             };
 
             for command in macro_expanded {
-                let timer = Instant::now();
-                let prepared = match &command {
-                    Command::Action(action) if run_commands => {
-                        self.prepare_ground_action(action, &mut ground_calls)
-                    }
-                    _ => None,
-                };
-                self.overall_report.typecheck += timer.elapsed();
+                let prepared = prepared_before_macros.take().or_else(|| {
+                    let timer = Instant::now();
+                    let prepared = match &command {
+                        Command::Action(action) if run_commands => {
+                            self.prepare_ground_action(action, &mut ground_calls, |_| true)
+                        }
+                        _ => None,
+                    };
+                    self.overall_report.typecheck += timer.elapsed();
+                    prepared
+                });
                 if let Some(prepared) = prepared {
                     if prepared.union.is_some() {
                         // Equality changes can reach unnamed tables and container

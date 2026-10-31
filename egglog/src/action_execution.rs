@@ -33,6 +33,7 @@ impl EGraph {
         &self,
         action: &Action,
         calls: &mut GroundActionCache,
+        permit_call: impl Fn(&str) -> bool,
     ) -> Option<GroundActions> {
         if self.proof_state.original_typechecking.is_some() {
             return None;
@@ -44,6 +45,9 @@ impl EGraph {
         let checked = self.type_info.check_closed_action(
             action,
             &mut |head| {
+                if !permit_call(head) {
+                    return None;
+                }
                 if let Some(cached) = calls.get(head) {
                     return cached.clone();
                 }

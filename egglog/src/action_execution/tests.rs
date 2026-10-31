@@ -48,6 +48,122 @@ fn assert_action_graphs_equal(left: &EGraph, right: &EGraph) {
 }
 
 #[test]
+fn opted_in_macros_skip_only_prepared_ast_actions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PreserveAndCount(Arc<AtomicUsize>);
+    impl CommandMacro for PreserveAndCount {
+        fn preserves_closed_constructor_action(&self, _: Option<&str>) -> bool {
+            true
+        }
+
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            // Test instrumentation only: eligible commands are unchanged.
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if matches!(command, Command::Check(..)) {
+                Err(Error::BackendError("expected macro rejection".into()))
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+
+    for materialized in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T) (G T))")
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        graph
+            .command_macros
+            .register(Arc::new(PreserveAndCount(calls.clone())));
+        let source = "(F (A)) (union (A) (B)) (F (B))";
+        if materialized {
+            let commands = graph.parse_program(None, source).unwrap();
+            graph.run_program(commands).unwrap();
+        } else {
+            graph.parse_and_run_program(None, source).unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(graph.get_size("F"), 1);
+
+        // A promised outer head is insufficient when pure preparation declines.
+        graph.parse_and_run_program(None, "(+ 1 2)").unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let error = graph
+            .parse_and_run_program(None, "(G (A)) (check (= (A) (A)))")
+            .unwrap_err();
+        assert!(error.to_string().contains("expected macro rejection"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(graph.get_size("G"), 1);
+
+        // Rust-supplied ASTs can name a head shadowed by a parser macro. The
+        // preservation promise's parser-precedence precondition still applies.
+        graph
+            .parser
+            .add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                Ok(Expr::Call(span, "B".into(), vec![]))
+            })));
+        graph
+            .run_program(vec![Command::Action(Action::Expr(
+                Span::Panic,
+                Expr::Call(Span::Panic, "A".into(), vec![]),
+            ))])
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[test]
+fn default_deny_macros_preserve_expansion_and_error_prefix() {
+    struct ExpandOrReject;
+    impl CommandMacro for ExpandOrReject {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            if let Command::Action(Action::Expr(span, Expr::Call(_, head, _))) = &command {
+                if head == "A" {
+                    let extra = Command::Action(Action::Expr(
+                        span.clone(),
+                        Expr::Call(span.clone(), "Extra".into(), vec![]),
+                    ));
+                    return Ok(vec![command, extra]);
+                }
+                if head == "B" {
+                    return Err(Error::BackendError(
+                        "expected default-deny rejection".into(),
+                    ));
+                }
+            }
+            Ok(vec![command])
+        }
+    }
+
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (Extra))")
+        .unwrap();
+    graph.command_macros.register(Arc::new(ExpandOrReject));
+    let error = graph.parse_and_run_program(None, "(A) (B)").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("expected default-deny rejection")
+    );
+    assert_eq!(graph.get_size("A"), 1);
+    assert_eq!(graph.get_size("Extra"), 1);
+    assert_eq!(graph.get_size("B"), 0);
+}
+
+#[test]
 fn ground_actions_match_compiled_execution() {
     for threads in [1, 4] {
         let mut direct = EGraph::default();
@@ -146,7 +262,7 @@ fn ground_actions_check_eligibility_before_mutation() {
             let commands = graph.parse_program(None, source).unwrap();
             let accepted = commands.iter().any(|command| match command {
                 Command::Action(action) => graph
-                    .prepare_ground_action(action, &mut GroundActionCache::default())
+                    .prepare_ground_action(action, &mut GroundActionCache::default(), |_| true)
                     .is_some(),
                 _ => false,
             });
@@ -182,7 +298,7 @@ fn insertion_batches_ignore_unrelated_globals_and_containers() {
     assert!(actions.iter().all(|command| {
         match command {
             Command::Action(action) => graph
-                .prepare_ground_action(action, &mut GroundActionCache::default())
+                .prepare_ground_action(action, &mut GroundActionCache::default(), |_| true)
                 .is_some(),
             _ => false,
         }

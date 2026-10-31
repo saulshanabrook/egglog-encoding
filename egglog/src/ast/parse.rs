@@ -332,6 +332,11 @@ impl Parser {
             .transpose()
     }
 
+    pub(crate) fn can_parse_constructor_call(&self, head: &str) -> bool {
+        !(self.exprs.contains_key(head)
+            || self.ensure_no_reserved_symbols && COMMAND_ONLY_KEYWORDS.contains(&head))
+    }
+
     // currently only used for testing, but no reason it couldn't be used elsewhere later
     pub fn get_expr_from_string(
         &mut self,
