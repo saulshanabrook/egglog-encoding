@@ -256,15 +256,43 @@ fn populated_containers_keep_insertion_admission_and_rebuild_after_union() {
 }
 
 #[test]
-fn pending_insertions_commit_before_fail_rollback() {
+fn pending_insertions_commit_before_fail_child_reads() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct ReadSize(Arc<AtomicUsize>);
+    impl Primitive for ReadSize {
+        fn name(&self) -> &str {
+            "read-f-size"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ReadSize {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            let size = state.table_size("F")?;
+            self.0.store(size, Ordering::SeqCst);
+            Some(state.base_values().get(size as i64))
+        }
+    }
+    let observed = Arc::new(AtomicUsize::new(usize::MAX));
     let mut graph = EGraph::default();
+    graph.add_read_primitive(ReadSize(observed.clone()), None);
     graph
-        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (F T)) (function out () i64 :no-merge)",
+        )
         .unwrap();
-    graph
-        .parse_and_run_program(None, r#"(F (A)) (fail (panic "expected"))"#)
-        .unwrap();
+    let error = graph
+        .parse_and_run_program(None, "(F (A)) (fail (set (out) (read-f-size)))")
+        .unwrap_err();
+    assert!(matches!(error, Error::ExpectFail(..)));
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
     assert_eq!(graph.get_size("F"), 1);
+    assert_eq!(graph.get_size("out"), 0);
 }
 
 #[test]
