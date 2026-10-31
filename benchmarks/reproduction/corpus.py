@@ -63,7 +63,7 @@ def workload_name(case: dict[str, Any], order: int, digest: str, existing: set[s
     """Choose a readable initial name while retaining existing identity aliases."""
     family = case["family"]
     if family == "math-growth":
-        name = "math/math-iteration-11.egg"
+        name = f"math/math-iteration-{int(case['id'].removeprefix('math-growth-'))}.egg"
     else:
         stem = case["id"].removeprefix(family + "-")
         stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-.").lower()

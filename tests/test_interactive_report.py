@@ -26,6 +26,36 @@ from benchmarking.reports.store import ReportRecord, ReportStore, serialize_grou
 from .report_fixtures import make_endpoint, make_record, write_report
 
 
+def test_interactive_snapshot_reuses_cross_timeout_rows_and_freezes_memory_bound(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    for treatment in ("off", "proofs"):
+        write_report(
+            path,
+            make_record(0, started_at="2026-10-27T00:00:00Z", treatment=treatment, timeout_sec=600, wall_sec=10),
+            make_record(1, started_at="2026-10-27T00:00:01Z", treatment=treatment, timeout_sec=900, wall_sec=20),
+        )
+    failure = make_record(2, started_at="2026-10-27T00:00:02Z", treatment="proofs", status="failure")
+    failure.update({"error_exit_code": 86, "error_memory_limit_bytes": 8})
+    write_report(path, failure)
+    before = path.read_bytes()
+    store = ReportStore(path).grouped_report()
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    comparison = models.ComparisonSpec(make_endpoint(), make_endpoint(treatment="proofs"), (file,), 2, 300, 8)
+    initial = scope_for_comparison(comparison)
+    runtime = InteractiveRuntime(store, initial)
+    payload = runtime.payload()
+    selectors = cast(dict[str, JsonValue], payload["selectors"])
+    assert selectors["timeouts_sec"] == [120, 300, 600, 900]
+    assert selectors["max_rounds"] == 3
+    assert "failure row selected" in json.dumps(payload)
+    assert runtime.apply({**initial, "memory_limit_bytes": 16}) == payload
+    raised = replace(comparison, memory_limit_bytes=16)
+    assert "failure row selected" not in json.dumps(InteractiveRuntime(store, scope_for_comparison(raised)).payload())
+    assert len(store.data["groups"]) == 2
+    assert len(store.records) == 5
+    assert path.read_bytes() == before
+
+
 def test_runtime_discovers_entire_cache_and_retargets_all_sections(tmp_path: Path) -> None:
     runtime, payload, _store, _comparison = _interactive_case(tmp_path)
     selectors = cast(dict[str, JsonValue], payload["selectors"])
@@ -201,6 +231,7 @@ def test_html_embeds_exact_grouped_snapshot_initial_catalog_runtime_and_safe_dat
     )
     assert cast(str, envelope["pyodide_base_url"]) == interactive.PYODIDE_BASE_URL
     assert set(cast(dict[str, str], envelope["python_modules"])) == {
+        "native_memory.py",
         "benchmarking/__init__.py",
         "benchmarking/engines.py",
         "benchmarking/models.py",

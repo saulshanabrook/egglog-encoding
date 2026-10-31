@@ -813,6 +813,11 @@ wrote rather than a user head, so they compose too: path compression emits
 `@Trans` of the two edge proofs, and the container rebuild emits a `@Congr` onto
 the view row.
 
+A custom-function `set` row also composes the connectors of its constructed
+inputs and output with `@Congr`. Its view stores canonical values, so the row's
+proof must reach the application over those same values before a later rule
+uses it as a premise.
+
 ### Body premises
 
 A rule body's premise proofs are also composed, not recorded, since a body has no

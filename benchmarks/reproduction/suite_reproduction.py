@@ -50,7 +50,7 @@ def generation_identity(family: str, recipe: dict[str, Any]) -> str:
         if path.is_file() and family in path.relative_to(ROOT / "benchmarks/reproduction").as_posix()
     )
     if family == "math-growth":
-        inputs.add(ROOT / recipe["input"])
+        inputs.update(ROOT / row["input"] for row in recipe["inputs"])
     digest = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode())
     for path in sorted(inputs):
         digest.update(str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes())
@@ -201,7 +201,7 @@ def capture_source_file(case: dict[str, Any], recipe: dict[str, Any], directory:
     family = case["family"]
     if family == "math-growth":
         source = ROOT / case["source"]
-        return source, ["original seven Math seeds and 24 rules; simple schedule; iteration-11 equality"]
+        return source, next(row["adaptations"] for row in recipe["inputs"] if row["input"] == case["source"])
     url = f"{recipe['repository'].replace('https://github.com/', 'https://raw.githubusercontent.com/')}/{recipe['revision']}/{case['source']}"
     original = directory / "source.egg"
     if not original.exists():

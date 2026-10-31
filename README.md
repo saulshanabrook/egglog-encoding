@@ -236,6 +236,10 @@ requested endpoint/file already has enough rows. If more rows are required, a
 clean cached git revision can be rebuilt; a label pointing to a dirty checkout
 requires a new `label=SOURCE` request.
 
+Each invocation refreshes its resolved labels in the grouped snapshot, including
+fully cached runs; raw `label=` lookup still follows recorded observations.
+One invocation cannot assign the same label and engine to different binaries.
+
 The baseline and candidate may share a binary, as the default proof-overhead
 comparison does, but their complete cache identities—binary SHA-256 and
 treatment and disequality encoding—must differ.
@@ -344,8 +348,21 @@ details and archive SHA-256. Herbie remains a bounded static proxy in the
 ordinary benchmark suite; reproducing the historical Racket/FPCore
 orchestration remains outside the ordinary runner.
 
+The [paper figures](figures/README.md) use the checked-in
+`benchmarks/corpus/manifest.json` rather than the default workload list.
+Run `./bench.py figures` from this checkout to build the required release engines,
+reuse compatible observations, collect missing runs, and render all five paper
+figures as PDF, SVG, and PNG. Setup requires the Python environment above, the
+pinned Rust toolchain, and Node.js/npm (`npx`); renderer packages are pinned in
+the command. `./bench.py figures --help` lists configured figure names. Outputs
+default to `figures/eval/`; `--output-dir ../extended-egglog-paper/figures/eval`
+places the PDFs at the paper's expected paths. See the figure guide for the flat
+JSON catalog, observation identities, statistical protocol, and provenance receipts.
+Use `./bench.py figures --rounds 3` for a shorter
+run without changing the ten-run production catalog.
+
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads so the selected treatment controls whether
+`(check ...)` or `(extract ...)` in timed workloads so the selected treatment controls whether
 proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
@@ -406,6 +423,12 @@ The remaining collection options are:
 - `--format rich|markdown`: final human report format.
 - `--open`: write the complete cache snapshot to an interactive HTML file and
   open it. For the default cache, the output is `.reports.html`.
+- `-v`, `--verbose`: add preparation timings, resolved counts and redirected
+  collection-attempt start lines.
+
+Preparation announces repository setup, cache loading, input resolution and
+target resolution before each phase starts. These messages and all operational
+output go to stderr, keeping Markdown stdout ready to redirect into a report.
 
 Use `./bench.py --help` for the complete option reference.
 
@@ -461,42 +484,36 @@ sharing it.
 
 ### Nightly
 
-`make nightly` benchmarks each treatment in `TREATMENTS` — `term`, `proofs`,
-and `proof-extraction` — on the current checkout and on the latest `main`,
-writing `nightly/output/index.jsonl` and the interactive page beside it:
+`make nightly` compares the current checkout and `main` with proofs off and
+fully checked proofs (`proof-testing`). It uses an explicit seven-file subset:
+Math-11, Eggcc 2mm, HardBoiled Conv1D-32, Luminal Llama, MISAAL HVX dot-product,
+Churchroad wide multiply and DialEgg NMM-40. The ordinary CLI roster is separate.
 
 ```bash
 make nightly
-uv run --locked python scripts/nightly_bench.py /path/to/output  # alternate output directory
+uv run --locked python scripts/nightly_bench.py /path/to/output --rounds 1 --timeout-sec 120
 ```
 
-Endpoints are labelled by target (`branch` / `main`) and commit hash, so the
-page's dropdown can compare any two of them and it is clear which commit each
-side is; endpoints with identical binaries collapse to one option. The page
-opens on proof overhead of the current checkout. Populating is best effort: an
-endpoint that fails to build or run drops one dropdown option rather than
-failing the run. Edit `TARGETS` and `TREATMENTS` in `scripts/nightly_bench.py`
-to change what is measured.
+The initial request is one observation per endpoint/file, with a 120-second
+workload timeout. Compatible observations are shared by executable identity.
+The default page shows checked/off overhead of the branch; `branch-vs-main.md`
+compares the two checked endpoints from the same snapshot. Identical executables
+share observations rather than appearing as distinct measurements.
 
-Each run replaces both published files, so `index.jsonl` is the cache that run
-measured into and a failed run publishes no page.
+Each job replaces `nightly/output/index.jsonl`, `index-grouped.json` and
+`index.html`. Completed rows survive timeout or fatal setup failure; partial
+reports retain missing/failed outcomes. `status.txt` explains an incomplete job,
+and rendering reads the collected snapshot without building or collecting.
+Ordinary workload failures may leave other workloads running; failed native
+setup or process control halts further collection. Deployment of the branch/main
+workflow requires the native-cap prerequisite on `main`: an older binary
+rejecting the option is reported explicitly and is never run uncapped.
 
-`make nightly-local` is the same run at `--rounds 1`, for trying the whole
-pipeline out without waiting for a full nightly.
-
-The [egraphs-good nightly service](https://nightly.cs.washington.edu) checks out
-this repository, runs `make nightly`, and serves `nightly/output/`, matching the
-`report=` entry in the nightly configuration. Two things that runner does not
-provide, `make nightly` arranges itself: it installs a pinned uv into `.uv/`
-when uv is missing from `PATH` (uv then downloads its own CPython; bump
-`UV_VERSION` in the `Makefile` to move that pin), and it installs rustup when
-the box has none. The runner also leaves rustup's `~/.cargo/bin` off `PATH`,
-which would leave cargo resolving to Ubuntu's — too old for
-`rust-toolchain.toml`'s pin — so `nightly_bench.py` puts those shims first.
-
-Both installers run `curl … | sh`, so on a developer box prefer installing uv
-and rustup yourself: `make nightly` and `make nightly-local` skip each one that
-is already there. Only a bare CI runner needs them.
+The [egraphs-good nightly service](https://nightly.cs.washington.edu) runs
+`make nightly` and serves `nightly/output/`. The Make target installs pinned uv
+and rustup when missing; uv supplies the project's Python environment. The script
+puts rustup's cargo shims first on PATH. Existing installations are reused.
+`make nightly-local` runs the same one-round comparison.
 
 ### CPU profiling
 
@@ -544,21 +561,33 @@ Cache reuse is keyed by:
 - binary SHA-256;
 - file SHA-256;
 - fact-directory SHA-256;
-- treatment;
-- disequality encoding; and
-- timeout.
+- treatment; and
+- disequality encoding.
 
 Target source, path, git revision, dirty state, labels, and display paths are
-provenance rather than cache-key dimensions. The runner selects the newest
-`--rounds` rows for each exact endpoint/file, ordering first by `started_at` and
+provenance rather than cache-key dimensions. Resource bounds do not partition
+successful observations. The runner selects the newest applicable `--rounds`
+rows for each exact endpoint/file, ordering first by `started_at` and
 then by physical JSONL order. Without `--force-run`, it appends only missing
 rows. With `--force-run`, it appends a full fresh set and then selects the
 newest rows.
 
 A failed or timed-out attempt ends the remaining repetitions of that exact
 workload and endpoint; independent conditions continue. A compatible selected
-cached failure also prevents automatic retries. Use `--force-run` to explicitly
+cached ordinary error also prevents automatic retries. A timeout or native
+allocation failure is retried only when its corresponding bound increases;
+successful rows still count toward the requested total. A success remains
+reusable at the same or a higher timeout. After lowering the timeout, its
+recorded deadline or completed wall time must fit. Use `--force-run` to explicitly
 retry failed conditions; earlier observations remain in the append-only cache.
+
+Keep `.reports.jsonl` as the active append-only cache when changing resource
+bounds. New native allocation failures record the configured requested allowance
+in `error_memory_limit_bytes`; this is not RSS or necessarily the effective
+address-space limit under a stricter inherited limit. Older allocation failures
+without a recorded allowance do not block collection. If another observation is
+needed, a new allocation failure records the current allowance and prevents
+repeated retries at that bound.
 
 Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
@@ -592,7 +621,7 @@ incomplete instead of averaging only successful rows.
 This tool writes the cache and grouped data; figures read the grouped data
 directly. The codec rejects old schema versions and requires successful rows
 from timing-summary-capable engines to contain timing data. It trusts the tool's typed writer rather than repeating the
-`TypedDict` as runtime field-by-field validation. A schema change intentionally
+`TypedDict` as runtime field-by-field validation. An incompatible schema change intentionally
 invalidates existing caches: move or remove an incompatible report and
 recompute it.
 

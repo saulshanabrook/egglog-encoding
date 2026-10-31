@@ -47,6 +47,11 @@ nor modifies prepared input bytes. It uses `--proof-testing`, while ordinary
 source validation checks the captured native output contract. Neither command is
 an implicit prerequisite of collection or cache-only rendering.
 
+Memory exhaustion and timeouts record safety deferrals and continue independent
+inputs; failed resource setup or process control halts validation. Semantic proof
+failures veto checked results for the same input, executable and encoding across
+timeouts, until a later strict success clears them.
+
 The recipe tests use pinned fixtures and fake tools; running them does not acquire
 sources or rebuild author toolchains. The legacy single-fixture materializer and
 SPEQ recorder are also located here, independently of the prepared population.
@@ -54,3 +59,24 @@ SPEQ recorder are also located here, independently of the prepared population.
 The relocated legacy fixture tools preserve their original generated provenance
 headers so `--check` continues to match the merged example files byte for byte.
 Use the module paths above for new invocations.
+
+The frozen Math12 paper fixture is additive to the original Math11 source
+recipe. Its seven seeds and 24 rules are identical; its terminal equality is a
+new distribution instance from the integration-by-parts closure. The complete
+fixture hash selects native `--math12`, which fixes both the twelve-round
+schedule and that equality. Math11 remains admitted unchanged. The corpus now
+has 488 saved inputs: 486 application replays and two standalone Math fixtures.
+
+Math12 graph parity is an explicit correctness check, separate from collection:
+
+```sh
+CARGO_BUILD_JOBS=2 make math-parity
+```
+
+The ignored Rust test compares Egg and Egglog with proofs off at exactly twelve
+rounds. It checks the frozen equality, logical constructor and class counts,
+and query non-insertion, dropping the native graph before building the Egglog
+graph. The check runner supplies the shared sixteen-GiB native allocation limit
+and allocator startup policy, then leaves success and failure reporting to the
+normal Rust test runner. This large test remains excluded from ordinary Cargo
+runs; benchmark timings come from the regular CLI collection path.

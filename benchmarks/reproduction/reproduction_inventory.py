@@ -60,7 +60,10 @@ def expected_cases(sources: dict[str, Any] | None = None) -> list[dict[str, Any]
     for family in FAMILIES:
         recipe = sources[family]
         if family == "math-growth":
-            cases.append({"id": "math-growth-011", "family": family, "source": recipe["input"]})
+            cases.extend(
+                {"id": f"math-growth-{row['iterations']:03}", "family": family, "source": row["input"]}
+                for row in recipe["inputs"]
+            )
         elif family == "luminal":
             cases.extend({"id": "luminal-" + Path(p).stem, "family": family, "source": p} for p in recipe["inputs"])
         elif family == "hardboiled":

@@ -48,6 +48,10 @@ It is a name-filtered subset of `cargo test --workspace`, so do not run it after
 a full workspace test unless you want a focused proof rerun. The Make target
 owns the exact Cargo filter.
 
+`make math-parity` explicitly compares the twelve-round Math graphs across Egg
+and Egglog with proofs off, in release mode under the shared native memory cap.
+This large test is excluded from `make check`.
+
 For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
 machine-readable report path so the run does not read or append to the default
 benchmark cache; runner status and build diagnostics stay on stderr.
@@ -109,19 +113,52 @@ or modify the JSONL.
   `proof-extraction` remain explicit choices.
 - The five egglog treatments run `egglog-experimental`. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math
-  workload. `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native
+  workload at registered cutoffs, including the frozen twelve-round witness.
+  Native workload selection derives from the complete input identity.
+  `egg-de`, `egg-ee`, `egg-nee`, and `egg-oee` run the original native
   parameter-analysis drivers on `.in` inputs without proofs. Mixed-engine
   comparisons build each required executable, and every cache row identifies
   the executable that actually ran.
-- Benchmark inputs should not contain executable `(prove ...)` commands. Use
-  `(check ...)` so the selected treatment controls proof extraction, and cover
-  strict proof validity in proof tests.
+- Benchmark inputs should not contain executable `(prove ...)` or
+  `(prove-extract ...)` commands. Use `(check ...)` and `(extract ...)` so the
+  selected treatment controls proof extraction, and cover strict proof validity
+  in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
-- Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory
-  SHA-256, treatment, disequality encoding, and timeout.
+- Cache identity is binary SHA-256, file SHA-256, fact-directory SHA-256,
+  treatment and disequality encoding. Reuse successful observations across
+  resource bounds; a lower timeout requires an observed wall time that fits.
+  Retry cached resource failures only when their own bound increases; ordinary
+  errors remain cached. Keep one append-only report, retaining original limits
+  and optional allocation-failure bounds without rewriting old observations.
 - The baseline and candidate must have different endpoint cache identities
   (binary SHA-256, treatment, and disequality encoding). They may use the same
   binary when treatment or encoding differs.
 - A request must not contain duplicate file/fact-directory hash pairs; those
   selectors would address the same cached workload observations twice.
+
+## Paper figures
+
+- `./bench.py figures` collects and renders the five paper PDFs through the shared
+  benchmark phases. `--config` selects a flat JSON catalog with global `rounds`
+  and `timeout_sec`, and direct per-figure `spec`, `files`, and `treatments`.
+- The production catalog requests ten executions and a 300-second timeout. Use
+  `--rounds 1` and temporary reports for synthetic/CLI checks;
+  ordinary benchmark defaults are unchanged. There is no cached-only mode.
+- Reuse compatible observations automatically, merge repeated runtime/memory
+  requests, and refresh current label bindings even with zero fresh runs.
+  Keep raw observations append-only. Scope plots by label and selected physical
+  input/facts/treatment identities; select the newest N rows including failures.
+- Figure collection never acquires sources, regenerates corpus inputs or runs
+  separate validators. Retain selected published input hashes/aliases, strict
+  failures and source blockers. Source blockers are not saved replay counts.
+- The outputs are `disequality-runtime`, `math-runtime`, `math-memory`,
+  `corpus-runtime-cdf`, and `corpus-memory-cdf`, each as PDF/SVG/PNG under
+  `figures/eval/` by default. `--output-dir` can target the paper's
+  `figures/eval/` directory. Render through temporary bound specs and image files;
+  replace the previous images only after every format succeeds. Observation
+  provenance remains in the raw JSONL and grouped JSON.
+- Run `make figures-test`; inspect all five exported figures at manuscript width
+  and verify PDF font embedding. Tests must cover latest-N selection, N=1 without
+  intervals, independent Fieller intervals, missing/failure denominators, and
+  the shared baseline-runtime corpus cohort (>=0.2 seconds, no upper cutoff).

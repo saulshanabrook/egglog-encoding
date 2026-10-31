@@ -22,6 +22,90 @@ mod tests {
     }
 
     #[test]
+    fn constructor_merge_reads_a_dirty_view() {
+        let source = r#"
+            (datatype Bound (IntB i64) (Join Bound Bound) (Other i64))
+            (function bound (i64) Bound :merge (Join old new))
+            (relation seed (i64))
+            (seed 1)
+            (seed 2)
+            (rule ((seed n))
+                  ((set (bound 0) (IntB n))
+                   (Join (IntB n) (IntB n))
+                   (Other n)))
+            (run 1)
+            (check (= joined (bound 0)) (= joined (Join a b)))
+            (fail (check (= (IntB 1) (IntB 2))))
+            (fail (check (= (bound 0) (IntB 1))))
+            (fail (check (= (bound 0) (IntB 2))))
+        "#;
+        // The rule dirties Join's view while bound's merge needs to intern a Join.
+        // Other keeps enough tables dirty to exercise the dependency-ordered merge path
+        // even without proof recording's additional tables.
+        for threads in [1, 2] {
+            for mut egraph in [
+                EGraph::default(),
+                EGraph::new_with_term_encoding(),
+                EGraph::new_with_proofs(),
+                EGraph::new_with_proofs().with_proof_testing(),
+            ] {
+                egraph.set_num_threads(threads);
+                egraph.parse_and_run_program(None, source).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn custom_set_rows_keep_canonical_input_and_output_proofs() {
+        let inputs = [
+            // The custom fact and constructor fact must bind the same term.
+            "(= (f expr) value) (= expr (K1))",
+            // Fact order cannot change which term a variable denotes.
+            "(= expr (K1)) (= (f expr) value)",
+            // A nested constructor query composes the same input connector.
+            "(= (f (K1)) value)",
+        ];
+        for body in inputs {
+            let source = format!(
+                r#"
+                (datatype K (K1) (K2))
+                (datatype E (Root) (Unrelated))
+                (Unrelated)
+                (function f (K) i64 :merge (min old new))
+                (union (K1) (K2))
+                (set (f (K2)) 1)
+                (rule ({body}) ((Root)))
+                (run 1)
+                (check (Root))
+                (extract (Root))
+                (fail (check (= (Root) (Unrelated))))
+                "#
+            );
+            EGraph::new_with_proofs()
+                .with_proof_testing()
+                .parse_and_run_program(None, &source)
+                .unwrap();
+        }
+        // The output is a child of the custom row's application term too.
+        let source = r#"
+            (datatype E (Root) (A) (B) (Unrelated))
+            (Unrelated)
+            (function f () E :merge old)
+            (union (A) (B))
+            (set (f) (B))
+            (rule ((= (f) expr) (= expr (A))) ((union (Root) expr)))
+            (run 1)
+            (check (Root))
+            (extract (Root))
+            (fail (check (= (Root) (Unrelated))))
+        "#;
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(None, source)
+            .unwrap();
+    }
+
+    #[test]
     fn ordinary_extract_function_root_reads_existing_output() {
         let source = r#"
             (datatype E (A) (B))

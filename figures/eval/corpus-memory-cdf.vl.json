@@ -1,0 +1,1143 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Paper figure. Shared cache selection supplies row IDs; the visible Vega transforms compute statistics. The runner binds selected_inputs, the report URL and scalar invocation parameters.",
+  "data": {
+    "url": "../../.reports-grouped.json",
+    "format": {
+      "type": "json"
+    }
+  },
+  "params": [
+    {"name": "target_label", "value": "figures"},
+    {"name": "timeout_sec", "value": 300},
+    {"name": "rounds", "value": 10},
+    {"name": "t_critical", "value": 2.2621571628540993},
+    {"name": "selected_inputs", "value": []},
+    {"name": "source_blockers", "value": []}
+  ],
+  "config": {
+    "font": "Arial",
+    "view": {
+      "stroke": null
+    },
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 12,
+      "gridColor": "#e8eaed",
+      "titlePadding": 10
+    },
+    "legend": {
+      "labelFontSize": 11,
+      "title": null,
+      "orient": "top"
+    },
+    "title": {
+      "anchor": "start",
+      "fontSize": 16,
+      "subtitleFontSize": 11,
+      "subtitlePadding": 8
+    }
+  },
+  "title": {
+    "text": "Corpus memory overhead",
+    "subtitle": {
+      "expr": "['Six application families · baseline mean wall time ≥0.2 s · no upper runtime cutoff', 'Two aggregate distributions; each replay has equal weight. Missing outcomes stay in the denominator.', length(source_blockers) + ' unavailable source cases retained separately; these are not saved replay files.']"
+    }
+  },
+  "usermeta": {
+    "statistics": "Newest requested N observations per exact identity, including failures. Complete successful samples only. Ratios of arithmetic means. The CDF has no population confidence band.",
+    "coverage": "50%/95% empirical inverse CDF for complete data; measured coverage thresholds otherwise. Source preparation blockers are not saved replays."
+  },
+  "transform": [
+    {"calculate": "[datum.groups, [null]]", "as": "batches"},
+    {"flatten": ["batches"], "as": ["candidates"]},
+    {"flatten": ["candidates"], "as": ["group"]},
+    {"filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.disequality_encoding === 'nee')"},
+    {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.fact_directory_sha256 + '/' + datum.group.key.treatment : ''", "as": "group_id"},
+    {"aggregate": [{"op": "values", "as": "observed"}]},
+    {"calculate": "pluck(datum.observed, 'group_id')", "as": "group_ids"},
+    {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
+    {"calculate": "selected_inputs", "as": "inputs"},
+    {"flatten": ["inputs"], "as": ["input"]},
+    {"calculate": "datum.input.file_sha256 + '/' + datum.input.fact_directory_sha256 + '/' + datum.input.treatment", "as": "input_id"},
+    {"calculate": "indexof(datum.group_ids, datum.input_id)", "as": "group_index"},
+    {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
+    {"calculate": "isValid(datum.group)", "as": "eligible_group"},
+    {"calculate": "datum.eligible_group ? datum.group.samples : []", "as": "observations"},
+    {"calculate": "datum.eligible_group ? datum.input.selected_row_indices : []", "as": "sample_indices"},
+    {"calculate": "length(datum.sample_indices)", "as": "sample_n"},
+    {"calculate": "datum.input.treatment === 'proof-testing' && datum.eligible_group && datum.input.validation_failures ? datum.input.validation_failures[datum.group.key.binary_sha256 + '/nee'] || '' : ''", "as": "validation_issue"},
+    {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
+    {"flatten": ["runs"], "as": ["row_index"]},
+    {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes / 1048576 : null", "as": "value"},
+    {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
+    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "variance", "field": "value", "as": "sample_variance"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}], "groupby": ["input_id"]},
+    {"calculate": "datum.sample_n === rounds && datum.valid_n === rounds && !datum.validation_issue", "as": "complete"},
+    {"calculate": "datum.complete ? datum.sample_mean : null", "as": "mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.sample_variance / rounds : null", "as": "var_mean"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean - t_critical * sqrt(datum.var_mean) : null", "as": "ci_low"},
+    {"calculate": "datum.complete && rounds > 1 ? datum.mean + t_critical * sqrt(datum.var_mean) : null", "as": "ci_high"},
+    {"calculate": "datum.validation_issue || (datum.failed_n ? datum.sample_n + '/' + rounds + ' observations; ' + datum.failed_n + ' failed (' + datum.timeout_n + ' timeout); estimate unavailable' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' observations; measurement unavailable; no estimate' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' observations; estimate unavailable' : rounds === 1 ? 'n=1; CI unavailable' : '')", "as": "issue"},
+    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
+    {"calculate": "datum.input.treatment === 'off' ? 'Off' : datum.input.treatment === 'term' ? 'Congruence' : 'Checked proofs'", "as": "mode"},
+    {"calculate": "datum.input.logical_id", "as": "workload_id"},
+    {"calculate": "datum.input.family || 'Unclassified'", "as": "family"},
+    {"calculate": "datum.input.label", "as": "workload"},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "wall"},
+    {"joinaggregate": [{"op": "valid", "field": "wall", "as": "wall_n"}, {"op": "mean", "field": "wall", "as": "wall_mean"}], "groupby": ["input_id"]},
+    {"filter": "datum.run_number === 1"},
+    {"aggregate": [{"op": "values", "as": "conditions"}], "groupby": ["workload_id", "family", "workload"]},
+    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Off')]", "as": "baseline"},
+    {"calculate": "isValid(datum.baseline) && datum.baseline.sample_n === rounds && datum.baseline.wall_n === rounds", "as": "baseline_complete"},
+    {"calculate": "datum.baseline_complete && datum.baseline.wall_mean >= 0.2 ? 1 : 0", "as": "selected"},
+    {"calculate": "datum.baseline_complete && datum.baseline.wall_mean < 0.2 ? 1 : 0", "as": "too_fast"},
+    {"calculate": "datum.baseline_complete ? 0 : 1", "as": "unresolved"},
+    {"calculate": "['Congruence','Checked proofs']", "as": "modes"},
+    {"flatten": ["modes"], "as": ["mode"]},
+    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),datum.mode)]", "as": "candidate"},
+    {"calculate": "datum.selected && datum.baseline.complete && isValid(datum.candidate) && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null", "as": "ratio"},
+    {"calculate": "isValid(datum.ratio) && isFinite(datum.ratio) && datum.ratio >= 0 ? 1 : 0", "as": "valid"},
+    {"calculate": "datum.selected && isValid(datum.candidate) && (datum.candidate.failed_n > 0 || datum.candidate.validation_issue) ? 1 : 0", "as": "failed_outcome"},
+    {"calculate": "datum.selected && !datum.valid && !datum.failed_outcome ? 1 : 0", "as": "missing_outcome"},
+    {"calculate": "!datum.selected ? '' : !isValid(datum.candidate) || !datum.candidate.sample_n ? 'Missing treatment' : datum.candidate.issue || (!datum.baseline.complete ? 'Baseline metric unavailable' : !datum.valid ? 'Invalid ratio' : '')", "as": "issue"},
+    {"joinaggregate": [{"op": "sum", "field": "selected", "as": "cohort_n"}, {"op": "sum", "field": "valid", "as": "measured_n"}, {"op": "count", "as": "saved_n"}, {"op": "sum", "field": "too_fast", "as": "too_fast_n"}, {"op": "sum", "field": "unresolved", "as": "unresolved_n"}], "groupby": ["mode"]},
+    {"calculate": "datum.valid ? datum.ratio : 1", "as": "extent_ratio"},
+    {"extent": "extent_ratio", "param": "ratio_extent"}
+  ],
+  "vconcat": [
+    {
+      "hconcat": [
+        {
+          "title": "Full measured tail",
+          "width": 310,
+          "height": 220,
+          "layer": [
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#707780",
+                "strokeDash": [
+                  4,
+                  3
+                ]
+              },
+              "encoding": {
+                "x": {
+                  "datum": 1
+                }
+              }
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#aeb4bb",
+                "strokeDash": [
+                  2,
+                  3
+                ]
+              },
+              "encoding": {
+                "y": {
+                  "datum": 0.5
+                }
+              }
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#aeb4bb",
+                "strokeDash": [
+                  2,
+                  3
+                ]
+              },
+              "encoding": {
+                "y": {
+                  "datum": 0.95
+                }
+              }
+            },
+            {
+              "name": "cdf_full",
+              "transform": [
+                {
+                  "filter": "datum.valid"
+                },
+                {
+                  "window": [
+                    {
+                      "op": "rank",
+                      "as": "rank"
+                    },
+                    {
+                      "op": "count",
+                      "as": "ties"
+                    }
+                  ],
+                  "sort": [
+                    {
+                      "field": "ratio",
+                      "order": "ascending"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ],
+                  "frame": [
+                    null,
+                    0
+                  ],
+                  "ignorePeers": false
+                },
+                {
+                  "calculate": "datum.ties / datum.cohort_n",
+                  "as": "cdf"
+                },
+                {
+                  "aggregate": [
+                    {
+                      "op": "values",
+                      "as": "items"
+                    },
+                    {
+                      "op": "max",
+                      "field": "cdf",
+                      "as": "maximum_cdf"
+                    },
+                    {
+                      "op": "max",
+                      "field": "ratio",
+                      "as": "maximum_ratio"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ]
+                },
+                {
+                  "calculate": "[[{ratio:0,cdf:0}], datum.items, datum.maximum_ratio <= max(1.1, ratio_extent[1] * 1.08) ? [{ratio:max(1.1, ratio_extent[1] * 1.08),cdf:datum.maximum_cdf}] : []]",
+                  "as": "curve_batches"
+                },
+                {
+                  "flatten": [
+                    "curve_batches"
+                  ],
+                  "as": [
+                    "curve"
+                  ]
+                },
+                {
+                  "flatten": [
+                    "curve"
+                  ],
+                  "as": [
+                    "point"
+                  ]
+                }
+              ],
+              "mark": {
+                "type": "line",
+                "interpolate": "step-after",
+                "strokeWidth": 2,
+                "clip": true
+              },
+              "encoding": {
+                "x": {
+                  "field": "point.ratio",
+                  "type": "quantitative",
+                  "title": "Peak RSS / baseline",
+                  "scale": {
+                    "domain": {
+                      "expr": "[0, max(1.1, isValid(ratio_extent[1]) ? ratio_extent[1] * 1.08 : 1.1)]"
+                    }
+                  },
+                  "axis": {
+                    "labelExpr": "format(datum.value,'~g') + '×'",
+                    "tickCount": 5
+                  }
+                },
+                "y": {
+                  "field": "point.cdf",
+                  "type": "quantitative",
+                  "title": "Share of selected replays",
+                  "scale": {
+                    "domain": [
+                      0,
+                      1
+                    ]
+                  },
+                  "axis": {
+                    "format": ".0%",
+                    "values": [
+                      0,
+                      0.5,
+                      0.95,
+                      1
+                    ]
+                  }
+                },
+                "color": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      "#2a6f97",
+                      "#b75d19"
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "strokeDash": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      [
+                        1,
+                        0
+                      ],
+                      [
+                        6,
+                        3
+                      ]
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "order": {
+                  "field": "point.ratio"
+                }
+              }
+            },
+            {
+              "name": "cdf_points",
+              "transform": [
+                {
+                  "filter": "datum.valid"
+                },
+                {
+                  "window": [
+                    {
+                      "op": "rank",
+                      "as": "rank"
+                    },
+                    {
+                      "op": "count",
+                      "as": "ties"
+                    }
+                  ],
+                  "sort": [
+                    {
+                      "field": "ratio",
+                      "order": "ascending"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ],
+                  "frame": [
+                    null,
+                    0
+                  ],
+                  "ignorePeers": false
+                },
+                {
+                  "calculate": "datum.ties / datum.cohort_n",
+                  "as": "cdf"
+                }
+              ],
+              "mark": {
+                "type": "point",
+                "filled": true,
+                "size": 22,
+                "clip": true
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio",
+                  "type": "quantitative",
+                  "title": "Peak RSS / baseline",
+                  "scale": {
+                    "domain": {
+                      "expr": "[0, max(1.1, isValid(ratio_extent[1]) ? ratio_extent[1] * 1.08 : 1.1)]"
+                    }
+                  },
+                  "axis": {
+                    "labelExpr": "format(datum.value,'~g') + '×'",
+                    "tickCount": 5
+                  }
+                },
+                "y": {
+                  "field": "cdf",
+                  "type": "quantitative",
+                  "title": "Share of selected replays",
+                  "scale": {
+                    "domain": [
+                      0,
+                      1
+                    ]
+                  },
+                  "axis": {
+                    "format": ".0%",
+                    "values": [
+                      0,
+                      0.5,
+                      0.95,
+                      1
+                    ]
+                  }
+                },
+                "color": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      "#2a6f97",
+                      "#b75d19"
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "tooltip": [
+                  {
+                    "field": "workload"
+                  },
+                  {
+                    "field": "family"
+                  },
+                  {
+                    "field": "mode"
+                  },
+                  {
+                    "field": "ratio",
+                    "format": ".4g"
+                  },
+                  {
+                    "field": "cdf",
+                    "format": ".1%"
+                  },
+                  {
+                    "field": "cohort_n"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Zoom · 0–5×",
+          "width": 310,
+          "height": 220,
+          "layer": [
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#707780",
+                "strokeDash": [
+                  4,
+                  3
+                ]
+              },
+              "encoding": {
+                "x": {
+                  "datum": 1
+                }
+              }
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#aeb4bb",
+                "strokeDash": [
+                  2,
+                  3
+                ]
+              },
+              "encoding": {
+                "y": {
+                  "datum": 0.5
+                }
+              }
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#aeb4bb",
+                "strokeDash": [
+                  2,
+                  3
+                ]
+              },
+              "encoding": {
+                "y": {
+                  "datum": 0.95
+                }
+              }
+            },
+            {
+              "name": "cdf_zoom",
+              "transform": [
+                {
+                  "filter": "datum.valid"
+                },
+                {
+                  "window": [
+                    {
+                      "op": "rank",
+                      "as": "rank"
+                    },
+                    {
+                      "op": "count",
+                      "as": "ties"
+                    }
+                  ],
+                  "sort": [
+                    {
+                      "field": "ratio",
+                      "order": "ascending"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ],
+                  "frame": [
+                    null,
+                    0
+                  ],
+                  "ignorePeers": false
+                },
+                {
+                  "calculate": "datum.ties / datum.cohort_n",
+                  "as": "cdf"
+                },
+                {
+                  "aggregate": [
+                    {
+                      "op": "values",
+                      "as": "items"
+                    },
+                    {
+                      "op": "max",
+                      "field": "cdf",
+                      "as": "maximum_cdf"
+                    },
+                    {
+                      "op": "max",
+                      "field": "ratio",
+                      "as": "maximum_ratio"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ]
+                },
+                {
+                  "calculate": "[[{ratio:0,cdf:0}], datum.items, datum.maximum_ratio <= 5 ? [{ratio:5,cdf:datum.maximum_cdf}] : []]",
+                  "as": "curve_batches"
+                },
+                {
+                  "flatten": [
+                    "curve_batches"
+                  ],
+                  "as": [
+                    "curve"
+                  ]
+                },
+                {
+                  "flatten": [
+                    "curve"
+                  ],
+                  "as": [
+                    "point"
+                  ]
+                }
+              ],
+              "mark": {
+                "type": "line",
+                "interpolate": "step-after",
+                "strokeWidth": 2,
+                "clip": true
+              },
+              "encoding": {
+                "x": {
+                  "field": "point.ratio",
+                  "type": "quantitative",
+                  "title": "Peak RSS / baseline",
+                  "scale": {
+                    "domain": [
+                      0,
+                      5
+                    ]
+                  },
+                  "axis": {
+                    "labelExpr": "format(datum.value,'~g') + '×'",
+                    "tickCount": 5
+                  }
+                },
+                "y": {
+                  "field": "point.cdf",
+                  "type": "quantitative",
+                  "title": "Share of selected replays",
+                  "scale": {
+                    "domain": [
+                      0,
+                      1
+                    ]
+                  },
+                  "axis": {
+                    "format": ".0%",
+                    "values": [
+                      0,
+                      0.5,
+                      0.95,
+                      1
+                    ]
+                  }
+                },
+                "color": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      "#2a6f97",
+                      "#b75d19"
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "strokeDash": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      [
+                        1,
+                        0
+                      ],
+                      [
+                        6,
+                        3
+                      ]
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "order": {
+                  "field": "point.ratio"
+                }
+              }
+            },
+            {
+              "name": "cdf_points_zoom",
+              "transform": [
+                {
+                  "filter": "datum.valid"
+                },
+                {
+                  "window": [
+                    {
+                      "op": "rank",
+                      "as": "rank"
+                    },
+                    {
+                      "op": "count",
+                      "as": "ties"
+                    }
+                  ],
+                  "sort": [
+                    {
+                      "field": "ratio",
+                      "order": "ascending"
+                    }
+                  ],
+                  "groupby": [
+                    "mode"
+                  ],
+                  "frame": [
+                    null,
+                    0
+                  ],
+                  "ignorePeers": false
+                },
+                {
+                  "calculate": "datum.ties / datum.cohort_n",
+                  "as": "cdf"
+                }
+              ],
+              "mark": {
+                "type": "point",
+                "filled": true,
+                "size": 22,
+                "clip": true
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio",
+                  "type": "quantitative",
+                  "title": "Peak RSS / baseline",
+                  "scale": {
+                    "domain": [
+                      0,
+                      5
+                    ]
+                  },
+                  "axis": {
+                    "labelExpr": "format(datum.value,'~g') + '×'",
+                    "tickCount": 5
+                  }
+                },
+                "y": {
+                  "field": "cdf",
+                  "type": "quantitative",
+                  "title": "Share of selected replays",
+                  "scale": {
+                    "domain": [
+                      0,
+                      1
+                    ]
+                  },
+                  "axis": {
+                    "format": ".0%",
+                    "values": [
+                      0,
+                      0.5,
+                      0.95,
+                      1
+                    ]
+                  }
+                },
+                "color": {
+                  "field": "mode",
+                  "type": "nominal",
+                  "scale": {
+                    "domain": [
+                      "Congruence",
+                      "Checked proofs"
+                    ],
+                    "range": [
+                      "#2a6f97",
+                      "#b75d19"
+                    ]
+                  },
+                  "legend": {
+                    "orient": "top"
+                  }
+                },
+                "tooltip": [
+                  {
+                    "field": "workload"
+                  },
+                  {
+                    "field": "family"
+                  },
+                  {
+                    "field": "mode"
+                  },
+                  {
+                    "field": "ratio",
+                    "format": ".4g"
+                  },
+                  {
+                    "field": "cdf",
+                    "format": ".1%"
+                  },
+                  {
+                    "field": "cohort_n"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "spacing": 28
+    },
+    {
+      "name": "cdf_coverage",
+      "transform": [
+        {
+          "aggregate": [
+            {
+              "op": "max",
+              "field": "cohort_n",
+              "as": "cohort_n"
+            },
+            {
+              "op": "max",
+              "field": "measured_n",
+              "as": "measured_n"
+            },
+            {
+              "op": "max",
+              "field": "saved_n",
+              "as": "saved_n"
+            },
+            {
+              "op": "max",
+              "field": "too_fast_n",
+              "as": "too_fast_n"
+            },
+            {
+              "op": "max",
+              "field": "unresolved_n",
+              "as": "unresolved_n"
+            }
+          ],
+          "groupby": [
+            "mode"
+          ]
+        },
+        {
+          "calculate": "datum.mode + ': ' + datum.measured_n + '/' + datum.cohort_n + ' valid; saved ' + datum.saved_n + ', too fast ' + datum.too_fast_n + ', unresolved baseline ' + datum.unresolved_n + (datum.measured_n < ceil(0.5 * datum.cohort_n) ? '; 50% not established' : '') + (datum.measured_n < ceil(0.95 * datum.cohort_n) ? '; 95% not established' : '')",
+          "as": "coverage"
+        }
+      ],
+      "width": 650,
+      "height": {
+        "step": 18
+      },
+      "mark": {
+        "type": "text",
+        "align": "left",
+        "fontSize": 10
+      },
+      "encoding": {
+        "y": {
+          "field": "mode",
+          "axis": null
+        },
+        "text": {
+          "field": "coverage"
+        },
+        "x": {
+          "value": 0
+        }
+      }
+    },
+    {
+      "name": "cdf_thresholds",
+      "transform": [
+        {
+          "aggregate": [
+            {
+              "op": "values",
+              "as": "items"
+            }
+          ],
+          "groupby": [
+            "mode",
+            "cohort_n",
+            "measured_n"
+          ]
+        },
+        {
+          "calculate": "[0.5,0.95]",
+          "as": "percentiles"
+        },
+        {
+          "flatten": [
+            "percentiles"
+          ],
+          "as": [
+            "percentile"
+          ]
+        },
+        {
+          "calculate": "datum.items",
+          "as": "entries"
+        },
+        {
+          "flatten": [
+            "entries"
+          ],
+          "as": [
+            "entry"
+          ]
+        },
+        {
+          "filter": "datum.entry.valid"
+        },
+        {
+          "window": [
+            {
+              "op": "row_number",
+              "as": "rank"
+            }
+          ],
+          "sort": [
+            {
+              "field": "entry.ratio",
+              "order": "ascending"
+            }
+          ],
+          "groupby": [
+            "mode",
+            "percentile"
+          ]
+        },
+        {
+          "filter": "datum.rank === ceil(datum.percentile * datum.cohort_n)"
+        },
+        {
+          "calculate": "datum.mode + ': ' + format(datum.percentile,'.0%') + (datum.measured_n === datum.cohort_n ? ' percentile ≤ ' : ' measured coverage ≤ ') + format(datum.entry.ratio,'.3g') + '×'",
+          "as": "threshold"
+        }
+      ],
+      "width": 650,
+      "height": {
+        "step": 18
+      },
+      "mark": {
+        "type": "text",
+        "align": "left",
+        "fontSize": 10
+      },
+      "encoding": {
+        "y": {
+          "field": "threshold",
+          "axis": null
+        },
+        "text": {
+          "field": "threshold"
+        },
+        "x": {
+          "value": 0
+        }
+      }
+    },
+    {
+      "name": "family_coverage",
+      "transform": [
+        {
+          "aggregate": [
+            {
+              "op": "count",
+              "as": "saved"
+            },
+            {
+              "op": "sum",
+              "field": "selected",
+              "as": "selected"
+            },
+            {
+              "op": "sum",
+              "field": "valid",
+              "as": "valid"
+            },
+            {
+              "op": "sum",
+              "field": "too_fast",
+              "as": "too_fast"
+            },
+            {
+              "op": "sum",
+              "field": "unresolved",
+              "as": "unresolved"
+            },
+            {
+              "op": "sum",
+              "field": "failed_outcome",
+              "as": "failed"
+            },
+            {
+              "op": "sum",
+              "field": "missing_outcome",
+              "as": "missing"
+            }
+          ],
+          "groupby": [
+            "family",
+            "mode"
+          ]
+        },
+        {
+          "aggregate": [
+            {
+              "op": "values",
+              "as": "outcomes"
+            }
+          ],
+          "groupby": [
+            "family"
+          ]
+        },
+        {
+          "calculate": "datum.outcomes[indexof(pluck(datum.outcomes,'mode'),'Congruence')]",
+          "as": "term"
+        },
+        {
+          "calculate": "datum.outcomes[indexof(pluck(datum.outcomes,'mode'),'Checked proofs')]",
+          "as": "proof"
+        },
+        {
+          "calculate": "datum.term.saved + ' / ' + datum.term.selected + ' / ' + datum.term.too_fast + ' / ' + datum.term.unresolved",
+          "as": "population"
+        },
+        {
+          "calculate": "datum.term.valid + ' / ' + datum.term.failed + ' / ' + datum.term.missing",
+          "as": "term_counts"
+        },
+        {
+          "calculate": "datum.proof.valid + ' / ' + datum.proof.failed + ' / ' + datum.proof.missing",
+          "as": "proof_counts"
+        }
+      ],
+      "spacing": 12,
+      "hconcat": [
+        {
+          "title": {
+            "text": "Family",
+            "fontSize": 10,
+            "anchor": "start"
+          },
+          "width": 78,
+          "height": {
+            "step": 18
+          },
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "fontSize": 10
+          },
+          "encoding": {
+            "x": {
+              "value": 0
+            },
+            "y": {
+              "field": "family",
+              "type": "nominal",
+              "axis": null,
+              "sort": "ascending"
+            },
+            "text": {
+              "field": "family"
+            }
+          }
+        },
+        {
+          "title": {
+            "text": "Saved / selected / fast / unresolved",
+            "fontSize": 10,
+            "anchor": "start"
+          },
+          "width": 190,
+          "height": {
+            "step": 18
+          },
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "fontSize": 10
+          },
+          "encoding": {
+            "x": {
+              "value": 0
+            },
+            "y": {
+              "field": "family",
+              "type": "nominal",
+              "axis": null,
+              "sort": "ascending"
+            },
+            "text": {
+              "field": "population"
+            }
+          }
+        },
+        {
+          "title": {
+            "text": "Congruence: valid / failed / missing",
+            "fontSize": 10,
+            "anchor": "start"
+          },
+          "width": 190,
+          "height": {
+            "step": 18
+          },
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "fontSize": 10
+          },
+          "encoding": {
+            "x": {
+              "value": 0
+            },
+            "y": {
+              "field": "family",
+              "type": "nominal",
+              "axis": null,
+              "sort": "ascending"
+            },
+            "text": {
+              "field": "term_counts"
+            }
+          }
+        },
+        {
+          "title": {
+            "text": "Checked: valid / failed / missing",
+            "fontSize": 10,
+            "anchor": "start"
+          },
+          "width": 185,
+          "height": {
+            "step": 18
+          },
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "fontSize": 10
+          },
+          "encoding": {
+            "x": {
+              "value": 0
+            },
+            "y": {
+              "field": "family",
+              "type": "nominal",
+              "axis": null,
+              "sort": "ascending"
+            },
+            "text": {
+              "field": "proof_counts"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "spacing": 16
+}

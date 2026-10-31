@@ -1,4 +1,4 @@
-"""Plan and collect ordinary benchmark observations.
+"""Resolve, merge, and collect benchmark observations for every command.
 
 This module owns cache-aware target resolution and execution plans, subprocess
 progress, same-run timing-summary capture, and construction of persisted
@@ -12,22 +12,27 @@ from __future__ import annotations
 import os
 import tempfile
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from math import ceil, isfinite
 from pathlib import Path
+from time import perf_counter
 
 from rich.console import Console
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
+    ProgressColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Column
 from rich.text import Text
 
-from .engines import TREATMENT_SPECS
+from .engines import MATH_WORKLOAD_ARGUMENTS, TREATMENT_SPECS, Engine, validate_engine_workload
 from .models import (
     BenchmarkEndpoint,
     DisequalityEncoding,
@@ -39,11 +44,14 @@ from .models import (
     TargetRequest,
     TargetRow,
     Treatment,
+    validate_unique_file_identities,
 )
 from .processes import TimingResult, run_command
+from .reports.grouped import grouped_report_path, write_grouped_report
 from .reports.store import (
     REPORT_SCHEMA_VERSION,
     CacheKey,
+    GroupedReport,
     ReportRecord,
     ReportStore,
     TimingSummaryRecord,
@@ -57,6 +65,14 @@ from .targets import (
     workload_command,
 )
 from .workloads import require_workload_unchanged
+
+
+@dataclass(frozen=True)
+class BenchmarkRequest:
+    """One endpoint and exactly the workloads requested from it."""
+
+    endpoint: EndpointRequest
+    files: tuple[FileSpec, ...]
 
 
 @dataclass(frozen=True)
@@ -106,50 +122,162 @@ def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def build_collection_plan(
+def resolve_requests(
+    requests: tuple[BenchmarkRequest, ...],
     store: ReportStore,
-    target: ResolvedTarget,
-    endpoints: tuple[BenchmarkEndpoint, ...],
-    files: tuple[FileSpec, ...],
     rounds: int,
     timeout_sec: int,
     force_run: bool,
-) -> CollectionPlan:
-    """Select cached observations for the exact endpoints using this binary."""
+    invocation_cwd: Path,
+    repo_root: Path,
+    console: Console,
+) -> dict[TargetRequest, ResolvedTarget]:
+    """Validate exact workload scopes, then resolve and build each target once."""
 
-    endpoint_by_identity = {endpoint.cache_identity: endpoint for endpoint in endpoints}
-    if len(endpoint_by_identity) != len(endpoints):
-        raise ValueError("collection endpoints must not contain duplicate cache identities")
-    if any(endpoint.target != target for endpoint in endpoints):
-        raise ValueError("collection endpoints must use the plan target")
-
-    requests = tuple(
-        (
-            file_spec.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),
-            endpoint.treatment,
-            CacheKey.for_endpoint(endpoint, file_spec, timeout_sec),
-        )
-        for file_spec in files
-        for endpoint in endpoints
+    if not requests or rounds < 1 or timeout_sec < 1:
+        raise ValueError("collection requires requests and positive rounds and timeout")
+    endpoints_by_target: dict[TargetRequest, list[EndpointRequest]] = {}
+    files_by_endpoint: dict[EndpointRequest, dict[tuple[str, str], FileSpec]] = {}
+    all_files: dict[tuple[str, str], FileSpec] = {}
+    for request in requests:
+        if not request.files:
+            raise ValueError("benchmark request requires at least one file")
+        validate_unique_file_identities(request.files)
+        engine = TREATMENT_SPECS[request.endpoint.treatment].engine
+        physical_files = tuple(file.for_engine(engine) for file in request.files)
+        validate_unique_file_identities(physical_files)
+        for file in physical_files:
+            validate_engine_workload(file, request.endpoint.treatment)
+        endpoints = endpoints_by_target.setdefault(request.endpoint.target, [])
+        if request.endpoint not in endpoints:
+            endpoints.append(request.endpoint)
+        selected_files = files_by_endpoint.setdefault(request.endpoint, {})
+        for file in request.files:
+            identity = (file.sha256, file.fact_directory_sha256)
+            selected_files.setdefault(identity, file)
+            all_files.setdefault(identity, file)
+    return resolve_targets(
+        tuple((target, tuple(endpoints)) for target, endpoints in endpoints_by_target.items()),
+        store,
+        tuple(all_files.values()),
+        rounds,
+        timeout_sec,
+        force_run,
+        invocation_cwd,
+        repo_root,
+        console,
+        files_by_endpoint={endpoint: tuple(files.values()) for endpoint, files in files_by_endpoint.items()},
     )
-    selected = store.selected_statuses_for_keys(tuple(request[2] for request in requests), rounds)
-    runs: list[BenchmarkRunPlan] = []
-    for file_spec, treatment, cache_key in requests:
-        cached = selected[cache_key]
+
+
+def plan_collection(
+    store: ReportStore,
+    requests: tuple[BenchmarkRequest, ...],
+    resolved_targets: Mapping[TargetRequest, ResolvedTarget],
+    rounds: int,
+    timeout_sec: int,
+    force_run: bool,
+) -> tuple[CollectionPlan, ...]:
+    """Select each exact cache identity once, preserving scope execution order."""
+
+    scopes: dict[tuple[ResolvedTarget, tuple[FileSpec, ...]], list[BenchmarkEndpoint]] = {}
+    for request in requests:
+        target = resolved_targets[request.endpoint.target]
+        endpoint = BenchmarkEndpoint(target, request.endpoint.treatment, request.endpoint.disequality_encoding)
+        endpoints = scopes.setdefault((target, request.files), [])
+        if endpoint not in endpoints:
+            endpoints.append(endpoint)
+
+    cells: dict[CacheKey, tuple[BenchmarkEndpoint, FileSpec]] = {}
+    for (_target, files), endpoints in scopes.items():
+        for file in files:
+            for endpoint in endpoints:
+                physical_file = file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine)
+                key = CacheKey.for_endpoint(endpoint, file)
+                cells.setdefault(key, (endpoint, physical_file))
+    if not cells:
+        return ()
+
+    selected = store.selected_statuses_for_keys(tuple(cells), rounds, timeout_sec)
+    runs_by_target: dict[ResolvedTarget, list[BenchmarkRunPlan]] = {}
+    for key, (endpoint, file) in cells.items():
+        cached = selected[key]
         missing = rounds if force_run else max(0, rounds - len(cached))
         if not force_run and any(status != "success" for status in cached):
             missing = 0
-        runs.append(
+        runs_by_target.setdefault(endpoint.target, []).append(
             BenchmarkRunPlan(
-                file=file_spec,
-                treatment=treatment,
+                file=file,
+                treatment=endpoint.treatment,
                 required_rows=rounds,
                 cached_statuses=cached,
                 missing_observations=missing,
-                disequality_encoding=cache_key.disequality_encoding,
+                disequality_encoding=key.disequality_encoding,
             )
         )
-    return CollectionPlan(target=target, runs=tuple(runs))
+    return tuple(CollectionPlan(target, tuple(runs)) for target, runs in runs_by_target.items())
+
+
+def current_label_bindings(
+    requests: tuple[BenchmarkRequest, ...],
+    resolved_targets: Mapping[TargetRequest, ResolvedTarget],
+) -> dict[tuple[str, Engine], str]:
+    """Bind only requested engines and reject ambiguous aliases before collection."""
+
+    label_bindings: dict[tuple[str, Engine], str] = {}
+    for request in requests:
+        target = resolved_targets[request.endpoint.target]
+        if target.row.label is None:
+            continue
+        identity = (target.row.label, TREATMENT_SPECS[request.endpoint.treatment].engine)
+        binary_sha256 = target.binary_sha256_for(request.endpoint.treatment)
+        if identity in label_bindings and label_bindings[identity] != binary_sha256:
+            raise ValueError(f"label {identity[0]!r} resolves to different {identity[1]} binaries")
+        label_bindings[identity] = binary_sha256
+    return label_bindings
+
+
+def collect(
+    store: ReportStore,
+    plans: tuple[CollectionPlan, ...],
+    requests: tuple[BenchmarkRequest, ...],
+    resolved_targets: Mapping[TargetRequest, ResolvedTarget],
+    timeout_sec: int,
+    console: Console,
+    *,
+    verbose: bool = False,
+) -> GroupedReport:
+    """Preflight all targets, collect once, and refresh their current grouped labels."""
+
+    label_bindings = current_label_bindings(requests, resolved_targets)
+    complete = False
+    try:
+        for plan in plans:
+            emit_collection_plan(console, plan, timeout_sec=timeout_sec)
+        fresh = any(plan.total_missing_observations for plan in plans)
+        if fresh:
+            console.print("Checking executables")
+            started = perf_counter()
+        for plan in plans:
+            preflight_collection(plan, timeout_sec)
+        if fresh and verbose:
+            console.print(f"  checked executables in {perf_counter() - started:.1f}s")
+        collect_rows(store, plans, timeout_sec, console, verbose=verbose)
+        complete = True
+    finally:
+        try:
+            destination = grouped_report_path(store.path)
+            console.print(Text(f"Writing {destination}"), soft_wrap=True)
+            started = perf_counter()
+            grouped = store.grouped_report(label_bindings)
+            write_grouped_report(grouped, destination)
+            if verbose:
+                console.print(f"  wrote {store.row_count} observations in {perf_counter() - started:.1f}s")
+        except Exception as error:
+            if complete:
+                raise
+            console.print(Text.assemble(("error:", "red"), " could not refresh grouped report: ", str(error)))
+    return grouped
 
 
 def resolve_targets(
@@ -162,6 +290,8 @@ def resolve_targets(
     invocation_cwd: Path,
     repo_root: Path,
     console: Console,
+    *,
+    files_by_endpoint: Mapping[EndpointRequest, tuple[FileSpec, ...]] | None = None,
 ) -> dict[TargetRequest, ResolvedTarget]:
     """Resolve every request, then build once per canonical checkout path.
 
@@ -183,6 +313,7 @@ def resolve_targets(
             force_run,
             invocation_cwd,
             repo_root,
+            files_by_endpoint,
         )
         if isinstance(target, ResolvedTarget):
             resolved[request] = target
@@ -255,6 +386,7 @@ def _resolve_or_materialize_target(
     force_run: bool,
     invocation_cwd: Path,
     repo_root: Path,
+    files_by_endpoint: Mapping[EndpointRequest, tuple[FileSpec, ...]] | None = None,
 ) -> ResolvedTarget | _PendingTarget:
     """Reuse one complete cache label or materialize a target for later build."""
 
@@ -290,6 +422,7 @@ def _resolve_or_materialize_target(
                 files,
                 rounds,
                 timeout_sec,
+                files_by_endpoint=files_by_endpoint,
             ):
                 return cached_target
         pointer = store.find_label_pointer(request.label)
@@ -314,6 +447,8 @@ def label_has_enough_rows(
     files: tuple[FileSpec, ...],
     rounds: int,
     timeout_sec: int,
+    *,
+    files_by_endpoint: Mapping[EndpointRequest, tuple[FileSpec, ...]] | None = None,
 ) -> bool:
     """Return whether every exact endpoint/file result has enough cached rows."""
 
@@ -322,15 +457,14 @@ def label_has_enough_rows(
             target.binary_sha256_for(endpoint.treatment),
             file_spec.sha256,
             endpoint.treatment,
-            timeout_sec,
             file_spec.fact_directory_sha256,
             endpoint.disequality_encoding,
         )
-        for logical_file in files
         for endpoint in endpoint_requests
+        for logical_file in (files_by_endpoint[endpoint] if files_by_endpoint is not None else files)
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
-    selected = store.selected_statuses_for_keys(keys, rounds)
+    selected = store.selected_statuses_for_keys(keys, rounds, timeout_sec)
     return all(any(status != "success" for status in selected[key]) or len(selected[key]) >= rounds for key in keys)
 
 
@@ -409,6 +543,13 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
             required_outputs.extend(
                 flag for run in engine_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
             )
+        else:
+            required_outputs.extend(
+                flag
+                for run in engine_runs
+                for flag in MATH_WORKLOAD_ARGUMENTS.get(run.file.sha256, ())
+                if flag.startswith("--")
+            )
         result = run_preflight(
             binary_path,
             Path(target.row.path),
@@ -425,15 +566,13 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
 def collection_label(
     file_spec: FileSpec,
     treatment: Treatment,
-    round_index: int,
-    rounds: int,
     disequality_encoding: DisequalityEncoding = "nee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
     encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
-    return f"{filename} · {treatment}{encoding} · {round_index + 1}/{rounds}"
+    return f"{filename} · {treatment}{encoding}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -461,7 +600,7 @@ def _status_counts_text(status_counts: Counter[Status]) -> str:
     return ", ".join(parts)
 
 
-def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
+def emit_collection_plan(console: Console, plan: CollectionPlan, *, timeout_sec: int | None = None) -> None:
     """Render one compact cache and collection summary to stderr."""
 
     cached_statuses = Counter(status for run in plan.runs for status in run.cached_statuses)
@@ -476,6 +615,12 @@ def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
     if cached_issues:
         cache_text += f" ({_status_counts_text(cached_issues)})"
     action_text = "nothing to collect" if missing == 0 else f"collecting {missing} fresh"
+    if missing:
+        samples = {run.required_rows for run in plan.runs}
+        if len(samples) == 1:
+            action_text += f" · {samples.pop()} samples/condition"
+        if timeout_sec is not None:
+            action_text += f" · timeout {timeout_sec}s"
     console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
 
 
@@ -490,7 +635,7 @@ def flat_report_record(
     """Construct the complete persisted record for one observation."""
 
     result = observation.result
-    return {
+    record: ReportRecord = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "started_at": started_at,
         "status": result.status,
@@ -515,24 +660,100 @@ def flat_report_record(
         "error_message": result.error.message if result.error is not None else None,
         "timing_summary": observation.timing_summary,
     }
+    if result.error is not None and result.error.memory_limit_bytes is not None:
+        record["error_memory_limit_bytes"] = result.error.memory_limit_bytes
+    return record
+
+
+class CollectionETAColumn(ProgressColumn):
+    """Estimate the whole missing plan, refining a rough one-second fallback.
+
+    Current-binary cached/live durations take precedence over historical hints
+    for the same input and mode. Unseen conditions use the remaining plan's
+    known mean. Historical hints never count as reusable results or elapsed work.
+    """
+
+    def __init__(
+        self, store: ReportStore, runs: tuple[tuple[ResolvedTarget, BenchmarkRunPlan], ...], timeout_sec: int
+    ) -> None:
+        super().__init__(table_column=Column(no_wrap=True))
+        self.remaining: dict[CacheKey, int] = {}
+        self.durations: dict[CacheKey, list[float]] = {}
+        self.hints: dict[tuple[str, str, Treatment, DisequalityEncoding], tuple[tuple[datetime, int], float]] = {}
+        self.active: tuple[CacheKey, float] | None = None
+        for row_index, record in enumerate(store.records):
+            wall = record["wall_sec"]
+            if record["status"] != "success" or wall is None or not isfinite(wall) or wall <= 0:
+                continue
+            identity = (
+                record["file_sha256"],
+                record["fact_directory_sha256"],
+                record["treatment"],
+                record["disequality_encoding"],
+            )
+            order = (datetime.fromisoformat(record["started_at"]), row_index)
+            prior = self.hints.get(identity)
+            if prior is None or order > prior[0]:
+                self.hints[identity] = (order, wall)
+        for target, run in runs:
+            key = CacheKey.for_endpoint(BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file)
+            self.remaining[key] = run.missing_observations
+            self.durations[key] = [
+                wall
+                for row in store.latest_records(key, run.required_rows, timeout_sec)
+                if row.record["status"] == "success"
+                and (wall := row.record["wall_sec"]) is not None
+                and isfinite(wall)
+                and wall > 0
+            ]
+
+    def complete(self, key: CacheKey, result: TimingResult) -> None:
+        self.remaining[key] = self.remaining[key] - 1 if result.status == "success" else 0
+        wall = result.timing.wall_sec
+        if result.status == "success" and wall is not None and isfinite(wall) and wall > 0:
+            self.durations[key].append(wall)
+        self.active = None
+
+    def render(self, task: Task) -> Text:
+        means = {
+            key: sum(values) / len(values) for key, values in self.durations.items() if values and self.remaining[key]
+        }
+        for key, count in self.remaining.items():
+            if count and key not in means:
+                hint = self.hints.get(
+                    (key.file_sha256, key.fact_directory_sha256, key.treatment, key.disequality_encoding)
+                )
+                if hint is not None:
+                    means[key] = hint[1]
+        fallback = sum(means.values()) / len(means) if means else 1.0
+        seconds = sum(count * means.get(key, fallback) for key, count in self.remaining.items())
+        active = self.active
+        if active is not None:
+            key, started = active
+            seconds -= min(max(0.0, (task.elapsed or 0.0) - started), means.get(key, fallback))
+        return Text(f"ETA ~{timedelta(seconds=ceil(max(0.0, seconds)))}")
 
 
 def collect_rows(
     store: ReportStore,
-    plan: CollectionPlan,
+    plan: CollectionPlan | tuple[CollectionPlan, ...],
     timeout_sec: int,
     console: Console,
+    *,
+    verbose: bool = False,
 ) -> None:
     """Run and append every missing observation after caller preflight."""
 
-    target = plan.target
-    if plan.total_missing_observations == 0:
+    plans = (plan,) if isinstance(plan, CollectionPlan) else plan
+    runs = tuple((item.target, run) for item in plans for run in item.runs)
+    total_observations = sum(run.missing_observations for _target, run in runs)
+    if total_observations == 0:
         return
-    total_observations = plan.total_missing_observations
-    max_deficit = max(run.missing_observations for run in plan.runs)
+    max_deficit = max(run.missing_observations for _target, run in runs)
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
-    stopped: set[BenchmarkRunPlan] = set()
+    stopped: set[CacheKey] = set()
+    estimate = CollectionETAColumn(store, runs, timeout_sec)
 
     with Progress(
         TextColumn(
@@ -548,6 +769,7 @@ def collect_rows(
         ),
         MofNCompleteColumn(table_column=Column(no_wrap=True)),
         TimeElapsedColumn(table_column=Column(no_wrap=True)),
+        estimate,
         console=console,
         transient=True,
         disable=not console.is_terminal,
@@ -558,17 +780,21 @@ def collect_rows(
             current="starting",
         )
         for round_index in range(max_deficit):
-            for run in plan.runs:
-                if round_index >= run.missing_observations or run in stopped:
+            for target, run in runs:
+                key = CacheKey.for_endpoint(
+                    BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file
+                )
+                if round_index >= run.missing_observations or key in stopped:
                     continue
                 observation_number = completed_observations + 1
                 label = collection_label(
                     run.file,
                     run.treatment,
-                    round_index,
-                    run.missing_observations,
                     run.disequality_encoding,
                 )
+                if len(plans) > 1:
+                    label = f"{target.display_label} · {label}"
+                estimate.active = (key, progress.tasks[0].elapsed or 0.0)
                 progress.update(
                     process_task,
                     current=label,
@@ -579,6 +805,8 @@ def collect_rows(
                     raise ValueError(
                         f"target {target.display_label} needs a fresh {TREATMENT_SPECS[run.treatment].engine} binary"
                     )
+                if verbose and not console.is_terminal:
+                    progress.console.print(Text(f"  [{observation_number}/{total_observations}] {label}: started"))
                 observation = run_process(
                     binary_path,
                     Path(target.row.path),
@@ -605,8 +833,9 @@ def collect_rows(
                 completed_observations += 1
                 result_counts[observation.result.status] += 1
                 if observation.result.status != "success":
-                    stopped.add(run)
+                    stopped.add(key)
                     total_observations -= run.missing_observations - round_index - 1
+                estimate.complete(key, observation.result)
                 progress.update(
                     process_task,
                     advance=1,
@@ -617,12 +846,10 @@ def collect_rows(
                     progress.console.print(
                         Text(
                             f"  [{observation_number}/{total_observations}] {label}: "
-                            f"{format_timing_result(observation.result)}"
+                            f"{format_timing_result(observation.result)} · {estimate.render(progress.tasks[0])}"
                         )
                     )
+    target_label = plans[0].target.display_label if len(plans) == 1 else f"{len(plans)} targets"
     console.print(
-        Text(
-            f"{target.display_label}: collected {completed_observations} fresh runs · "
-            f"{_status_counts_text(result_counts)}"
-        )
+        Text(f"{target_label}: collected {completed_observations} fresh runs · {_status_counts_text(result_counts)}")
     )

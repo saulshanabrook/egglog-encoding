@@ -30,15 +30,15 @@ def test_grouped_snapshot_keeps_all_samples_and_derives_current_engine_labels(tm
     write_report(path, *records)
     report = ReportStore(path).grouped_report()
     by_key = {CacheKey(**group["key"]): group for group in report.data["groups"]}
-    key = CacheKey("sha256:bin", "sha256:file", "off", 120)
+    key = CacheKey("sha256:bin", "sha256:file", "off")
 
-    assert [sample["row_index"] for sample in by_key[key]["samples"]] == [1, 2, 3]
-    assert [sample["status"] for sample in by_key[key]["samples"]] == ["failure", "timed-out", "success"]
+    assert [sample["row_index"] for sample in by_key[key]["samples"]] == [1, 2, 3, 6]
+    assert [sample["status"] for sample in by_key[key]["samples"]] == ["failure", "timed-out", "success", "success"]
     assert by_key[key]["labels"] == ["current", "other"]
-    assert by_key[CacheKey("sha256:bin", "sha256:file", "proofs", 120)]["labels"] == ["current", "other"]
-    assert by_key[CacheKey("sha256:old", "sha256:file", "off", 120)]["labels"] == []
-    assert by_key[CacheKey("sha256:egg", "sha256:file", "egg", 120)]["labels"] == ["current"]
-    assert [row.row_index for row in report.latest_records(key, 2)] == [2, 3]
+    assert by_key[CacheKey("sha256:bin", "sha256:file", "proofs")]["labels"] == ["current", "other"]
+    assert by_key[CacheKey("sha256:old", "sha256:file", "off")]["labels"] == []
+    assert by_key[CacheKey("sha256:egg", "sha256:file", "egg")]["labels"] == ["current"]
+    assert [row.row_index for row in report.latest_records(key, 2, 120)] == [3, 6]
     assert len(report.records) == len(records)
     for group in report.data["groups"]:
         for sample in group["samples"]:
@@ -49,8 +49,38 @@ def test_grouped_snapshot_keeps_all_samples_and_derives_current_engine_labels(tm
     encoded = serialize_grouped_report(report)
     restored = parse_grouped_report(encoded, str(path))
     assert restored.data == report.data
-    assert restored.latest_records(key, 2) == report.latest_records(key, 2)
+    assert restored.latest_records(key, 2, 120) == report.latest_records(key, 2, 120)
     assert serialize_grouped_report(ReportStore(path).grouped_report()) == encoded
+
+
+def test_resolved_labels_refresh_cached_groups_without_rewriting_observations(tmp_path: Path) -> None:
+    path = tmp_path / "reports.jsonl"
+    records = (
+        make_record(0, started_at="2026-09-30T00:00:00Z", binary_sha256="sha256:old", target_label="figures"),
+        make_record(1, started_at="2026-09-30T00:00:01Z", binary_sha256="sha256:new"),
+        make_record(
+            2, started_at="2026-09-30T00:00:02Z", binary_sha256="sha256:egg", treatment="egg", target_label="figures"
+        ),
+    )
+    write_report(path, *records)
+    before = path.read_bytes()
+    store = ReportStore(path)
+
+    refreshed = store.grouped_report({("figures", "egglog"): "sha256:new"})
+    assert {group["key"]["binary_sha256"]: group["labels"] for group in refreshed.data["groups"]} == {
+        "sha256:old": [],
+        "sha256:new": ["figures"],
+        "sha256:egg": ["figures"],
+    }
+    missing = store.grouped_report({("figures", "egglog"): "sha256:unobserved"})
+    assert {group["key"]["binary_sha256"]: group["labels"] for group in missing.data["groups"]} == {
+        "sha256:old": [],
+        "sha256:new": [],
+        "sha256:egg": ["figures"],
+    }
+    assert store.records == records
+    assert path.read_bytes() == before
+    assert all(sample["target_label"] is None for sample in refreshed.data["groups"][1]["samples"])
 
 
 @pytest.mark.parametrize("field", ["grouped_schema_version", "report_schema_version"])

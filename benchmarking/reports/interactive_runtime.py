@@ -81,6 +81,7 @@ class InitialScope(_ScopeRequest):
     """Generated initial selection, including logical-to-physical input bindings."""
 
     files: list[_InitialFile]
+    memory_limit_bytes: int
 
 
 class InteractiveRuntime:
@@ -98,6 +99,9 @@ class InteractiveRuntime:
             self._timeouts,
             self._max_rounds,
         ) = _cache_universe(store.records)
+        self._timeouts = tuple(sorted({*self._timeouts, initial_scope["timeout_sec"]}))
+        self._max_rounds = max(self._max_rounds, initial_scope["rounds"])
+        self._memory_limit_bytes = initial_scope["memory_limit_bytes"]
         # Observations identify physical inputs, which can differ from the selected
         # logical file. Keep its initial selection and bindings outside the grouped data.
         choices = {choice.file_id: choice for choice in self._file_choices}
@@ -208,6 +212,7 @@ class InteractiveRuntime:
             files,
             scope.rounds,
             scope.timeout_sec,
+            self._memory_limit_bytes,
         )
 
     def _parse_scope(self, value: object) -> InteractiveScope:
@@ -301,6 +306,7 @@ def scope_for_comparison(comparison: ComparisonSpec) -> InitialScope:
         "file_ids": [_file_id(file) for file in comparison.files],
         "timeout_sec": comparison.timeout_sec,
         "rounds": comparison.rounds,
+        "memory_limit_bytes": comparison.memory_limit_bytes,
         "files": [
             {
                 "display_path": file.display_path,
@@ -374,7 +380,7 @@ def _cache_universe(
     endpoint_rows: dict[str, tuple[tuple[datetime, int], ReportRecord]] = {}
     file_rows: dict[str, tuple[tuple[datetime, int], ReportRecord]] = {}
     timeouts: set[int] = set()
-    counts: Counter[tuple[str, str, int]] = Counter()
+    counts: Counter[tuple[str, str]] = Counter()
     for row_index, record in enumerate(records):
         order_key = (datetime.fromisoformat(record["started_at"]), row_index)
         endpoint_id = _record_endpoint_id(record)
@@ -385,7 +391,7 @@ def _cache_universe(
             file_rows[file_id] = (order_key, record)
         timeout_sec = record["timeout_sec"]
         timeouts.add(timeout_sec)
-        counts[endpoint_id, file_id, timeout_sec] += 1
+        counts[endpoint_id, file_id] += 1
 
     endpoints = tuple(
         sorted(
@@ -411,7 +417,7 @@ def _cache_universe(
             ),
         )
     )
-    return endpoints, files, tuple(sorted(timeouts)), max(counts.values())
+    return endpoints, files, tuple(sorted(timeouts)), max(counts.values(), default=0)
 
 
 def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:

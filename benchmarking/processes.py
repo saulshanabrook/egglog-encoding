@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from native_memory import NATIVE_SETUP_EXIT, native_memory_command
+from native_memory import NATIVE_ALLOCATION_EXIT, NATIVE_LIMIT_BYTES, NATIVE_SETUP_EXIT, native_memory_command
 
 from .models import Status
 
@@ -41,6 +41,7 @@ class ErrorRow:
     message: str
     exit_code: int | None = None
     signal: int | None = None
+    memory_limit_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,7 @@ def run_command(
     if env_overrides is not None:
         env.update(env_overrides)
     if native_limit:
-        command, env = native_memory_command(command, env)
+        command, env = native_memory_command(command, env, NATIVE_LIMIT_BYTES)
     start = time.perf_counter()
     with (
         tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stdout_file,
@@ -147,7 +148,12 @@ def run_command(
     return TimingResult(
         status="failure",
         timing=timing,
-        error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
+        error=ErrorRow(
+            exit_code=exit_code,
+            signal=signal_number,
+            message=message[-1000:],
+            memory_limit_bytes=NATIVE_LIMIT_BYTES if native_limit and exit_code == NATIVE_ALLOCATION_EXIT else None,
+        ),
         stop_collection=unexpected_kill or (native_limit and exit_code == NATIVE_SETUP_EXIT),
     )
 

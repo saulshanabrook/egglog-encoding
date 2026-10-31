@@ -19,6 +19,15 @@ static ALLOCATOR: benchmark_memory::LimitedAllocator = benchmark_memory::Limited
 const ITERATIONS: usize = 11;
 const CHECK_LEFT: &str = "(+ (cos x) (cos x))";
 const CHECK_RIGHT: &str = "(d x (+ (sin x) (sin x)))";
+const MATH12_CHECK_LEFT: &str = concat!(
+    "(* -1 (+ (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x))) (* (* ",
+    "-1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x)))))"
+);
+const MATH12_CHECK_RIGHT: &str = concat!(
+    "(+ (* -1 (+ (i (* (d x (d x (cos x))) (i (i x x) x)) x) (* (i (i x x) x) (i (cos x) x)))) (* -1",
+    " (* (* -1 (d x (i (i x x) x))) (* -1 (i (* (d x -1) (i (i (* (i (cos x) x) (d x -1)) x) x)) x))",
+    ")))"
+);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 enum ProofMode {
@@ -39,14 +48,22 @@ struct Args {
     proof_mode: ProofMode,
     #[arg(long)]
     timing_summary: Option<PathBuf>,
+    #[arg(long)]
+    math12: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse_from(benchmark_memory::configure(std::env::args_os()));
-    let (timing, _, check_passed) = run_math(args.proof_mode, ITERATIONS)?;
+    let (iterations, check_left, check_right) = if args.math12 {
+        (12, MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT)
+    } else {
+        (ITERATIONS, CHECK_LEFT, CHECK_RIGHT)
+    };
+    let (timing, _, check_passed) = run_math(args.proof_mode, iterations, check_left, check_right)?;
     ensure!(
         check_passed,
-        "terminal equality is not established after iteration 11"
+        "terminal equality is not established after iteration {}",
+        iterations
     );
     if let Some(path) = args.timing_summary {
         write_timing_summary(&path, &timing)?;
@@ -54,14 +71,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// The executable always passes ITERATIONS; the private cutoff also supports
-// the test immediately before the fixed witness becomes established.
 fn run_math(
     proof_mode: ProofMode,
     iterations: usize,
+    check_left: &str,
+    check_right: &str,
 ) -> Result<(TimingSummary, egg::EGraph<Math, ()>, bool)> {
-    let left: RecExpr<Math> = CHECK_LEFT.parse().expect("fixed left check must parse");
-    let right: RecExpr<Math> = CHECK_RIGHT.parse().expect("fixed right check must parse");
+    let left: RecExpr<Math> = check_left.parse().expect("fixed left check must parse");
+    let right: RecExpr<Math> = check_right.parse().expect("fixed right check must parse");
     let rules = math::rules();
     let mut runner = Runner::default()
         .with_scheduler(SimpleScheduler)
@@ -167,6 +184,71 @@ mod tests {
     use std::collections::{BTreeMap, HashSet};
 
     #[test]
+    fn math12_native_and_egglog_checks_use_the_same_witness() {
+        let fixture = include_str!("../../benchmarks/corpus/math/math-iteration-12.egg");
+        let (_, check) = fixture.split_once("(run 12)").unwrap();
+        let native = format!("(check (= {MATH12_CHECK_LEFT} {MATH12_CHECK_RIGHT}))");
+        let translated = native
+            .replace('(', " ( ")
+            .replace(')', " ) ")
+            .split_whitespace()
+            .map(|token| match token {
+                "+" => "Add",
+                "*" => "Mul",
+                "d" => "Diff",
+                "i" => "Integral",
+                "cos" => "Cos",
+                "x" => "(Var \"x\")",
+                "-1" => "(Const (rational -1 1))",
+                token => token,
+            })
+            .collect::<String>();
+        assert_eq!(
+            translated.split_whitespace().collect::<String>(),
+            check.split_whitespace().collect::<String>()
+        );
+    }
+
+    #[test]
+    #[ignore = "bounded paper validation: make math-parity"]
+    fn math12_graph_parity() {
+        let _args = benchmark_memory::configure([
+            "math12-graph-parity".into(),
+            "--memory-limit-bytes".into(),
+            std::env::var_os("MATH12_MEMORY_LIMIT_BYTES").expect("launch via make math-parity"),
+        ]);
+        eprintln!("Math12: Egg, proofs off");
+        let (_, native, established) =
+            run_math(ProofMode::Off, 12, MATH12_CHECK_LEFT, MATH12_CHECK_RIGHT).unwrap();
+        assert!(established);
+        let expected = native_graph_size(&native);
+        assert_eq!(
+            expected.0.values().sum::<usize>(),
+            native.total_number_of_nodes()
+        );
+        drop(native);
+
+        eprintln!("Math12: Egglog, proofs off");
+        let fixture = include_str!("../../benchmarks/corpus/math/math-iteration-12.egg");
+        let (setup, check) = fixture.split_once("(run 12)").unwrap();
+        let mut graph = egglog_experimental::new_experimental_egraph();
+        graph
+            .parse_and_run_program(None, &format!("{setup}(run 12)"))
+            .unwrap();
+        let before = egglog_graph_size(&graph);
+        graph.parse_and_run_program(None, check).unwrap();
+        assert_eq!(
+            before,
+            egglog_graph_size(&graph),
+            "terminal query inserted logical nodes"
+        );
+        assert_eq!(
+            expected, before,
+            "Egg/Egglog constructor or class counts differ"
+        );
+    }
+
+    #[test]
     fn fixed_math_witness_has_iteration_boundary_and_graph_parity() {
         let fixture =
             include_str!("../../egglog-experimental/tests/math-microbenchmark-rational.egg");
@@ -175,7 +257,8 @@ mod tests {
         // native graph before constructing the corresponding Egglog graph.
         for proof_mode in [ProofMode::Off, ProofMode::Check] {
             for iterations in [10, 11] {
-                let (timing, native, check_passed) = run_math(proof_mode, iterations).unwrap();
+                let (timing, native, check_passed) =
+                    run_math(proof_mode, iterations, CHECK_LEFT, CHECK_RIGHT).unwrap();
                 assert_eq!(check_passed, iterations == 11);
                 let expected = native_graph_size(&native);
                 assert_eq!(

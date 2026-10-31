@@ -109,14 +109,17 @@ def test_native_cache_and_plan_use_physical_input_identity(tmp_path: Path) -> No
         engine_inputs=tuple((cast(Engine, method), native) for method in METHODS),
     )
     endpoints = tuple(models.BenchmarkEndpoint(target, method) for method in METHODS)
+    requests = tuple(
+        collection.BenchmarkRequest(models.EndpointRequest(target.request, method), (logical,)) for method in METHODS
+    )
     store = ReportStore(tmp_path / "report.jsonl")
     record = make_record(0, started_at="2026-09-30T00:00:00Z", treatment="egg-ee", file_sha256=native.sha256)
     record["file_path"] = native.display_path
     record["timing_summary"] = None
     store.append(record)
     store = ReportStore(store.path)
-    assert CacheKey.for_endpoint(endpoints[1], logical, 120).file_sha256 == native.sha256
-    plan = collection.build_collection_plan(store, target, endpoints, (logical,), 1, 120, False)
+    assert CacheKey.for_endpoint(endpoints[1], logical).file_sha256 == native.sha256
+    (plan,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, False)
     assert [(run.treatment, run.missing_observations) for run in plan.runs] == [
         ("egg-de", 1),
         ("egg-ee", 0),
@@ -174,22 +177,22 @@ def test_native_preflight_never_launches_help_or_conversion(tmp_path: Path, monk
     binary = tmp_path / "egg-ee"
     target = replace(make_target(), engine_binaries=(models.EngineBinary("egg-ee", "sha256:bin", binary),))
     fixture = models.FileSpec("fixture.in", tmp_path / "fixture.in", "sha256:file")
-    endpoint = models.BenchmarkEndpoint(target, "egg-ee")
+    requests = (collection.BenchmarkRequest(models.EndpointRequest(target.request, "egg-ee"), (fixture,)),)
     store = ReportStore(tmp_path / "report.jsonl")
 
     def unexpected_command(*args: object, **kwargs: object) -> None:
         pytest.fail("native preflight must not launch a process")
 
     monkeypatch.setattr(collection, "run_command", unexpected_command)
-    fresh = collection.build_collection_plan(store, target, (endpoint,), (fixture,), 1, 120, False)
+    (fresh,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, False)
     collection.preflight_collection(fresh, 120)
     record = make_record(0, started_at="2026-09-30T00:00:00Z", treatment="egg-ee")
     record["timing_summary"] = None
     store.append(record)
-    cached = collection.build_collection_plan(store, target, (endpoint,), (fixture,), 1, 120, False)
+    (cached,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, False)
     assert cached.total_missing_observations == 0
     collection.preflight_collection(cached, 120)
-    forced = collection.build_collection_plan(store, target, (endpoint,), (fixture,), 1, 120, True)
+    (forced,) = collection.plan_collection(store, requests, {target.request: target}, 1, 120, True)
     collection.preflight_collection(forced, 120)
 
 

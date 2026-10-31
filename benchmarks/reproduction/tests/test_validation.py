@@ -36,13 +36,15 @@ def test_strict_outcomes_are_separate_and_safety_stops_halt_before_next_workload
     monkeypatch.setattr(validation, "run_bounded_command", run)
     code = validation.main(["--binary", str(binary), "--disequality-encoding", "ee"])
     assert code == (0 if status == "success" else 1)
-    safety = status == "resource-stopped"
-    assert len(commands) == (1 if safety else 2)
+    safety = status in {"resource-stopped", "memory-limit", "timed-out"}
+    assert len(commands) == (1 if status == "resource-stopped" else 2)
     assert all("--proof-testing" in command and "--disequality-encoding" in command for command in commands)
     assert path.read_bytes() == original and path.stat().st_mtime_ns == before
     outcomes = suites.load_manifest(tmp_path).outcomes
     assert len(outcomes) == len(commands)
     assert outcomes[0]["kind"] == ("safety" if safety else "validation")
+    assert outcomes[0]["policy"] == (suites.SAFETY_POLICY if safety else suites.VALIDATION_POLICY)
+    assert outcomes[0]["status"] == ("deferred" if safety else status)
     assert outcomes[0]["disequality_encoding"] == "ee"
     assert not list(tmp_path.rglob("*.jsonl"))
     if status == "success":
