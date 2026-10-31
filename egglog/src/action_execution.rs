@@ -86,6 +86,21 @@ impl EGraph {
         Some(prepared)
     }
 
+    pub(super) fn prepare_resolved_ground_action(
+        &self,
+        actions: &ResolvedActions,
+    ) -> Option<GroundActions> {
+        let action = match actions.0.as_slice() {
+            [ResolvedAction::Expr(_, expr)] => Some(typechecking::ClosedAction::Expr(expr)),
+            [ResolvedAction::Union(_, left, right)] => {
+                Some(typechecking::ClosedAction::Union(left, right))
+            }
+            _ => None,
+        };
+        let mut calls = GroundActionCache::default();
+        self.prepare_ground_action(action, &mut calls, |_| true)
+    }
+
     pub(super) fn eval_ground_actions(
         &mut self,
         prepared: Vec<GroundActions>,

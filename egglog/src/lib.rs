@@ -1679,18 +1679,8 @@ impl EGraph {
             #[cfg(test)]
             ActionBatch::CompiledOracle(actions) => (actions, false),
         };
-        if recognize {
-            let action = match actions.0.as_slice() {
-                [ResolvedAction::Expr(_, expr)] => Some(typechecking::ClosedAction::Expr(expr)),
-                [ResolvedAction::Union(_, left, right)] => {
-                    Some(typechecking::ClosedAction::Union(left, right))
-                }
-                _ => None,
-            };
-            let mut calls = GroundActionCache::default();
-            if let Some(prepared) = self.prepare_ground_action(action, &mut calls, |_| true) {
-                return self.eval_ground_actions(vec![prepared]);
-            }
+        if recognize && let Some(prepared) = self.prepare_resolved_ground_action(actions) {
+            return self.eval_ground_actions(vec![prepared]);
         }
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(

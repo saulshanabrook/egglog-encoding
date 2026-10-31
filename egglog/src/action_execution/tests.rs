@@ -112,6 +112,25 @@ fn ground_actions_match_compiled_execution() {
 }
 
 #[test]
+fn resolved_constructor_actions_prepare_for_direct_execution() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    let command = graph.parse_program(None, "(F (A))").unwrap().pop().unwrap();
+    let commands = graph.resolve_command(command).unwrap().desugared;
+    assert_eq!(commands.len(), 1);
+    let ResolvedNCommand::CoreAction(action) = commands.into_iter().next().unwrap() else {
+        panic!("expected one resolved action");
+    };
+    let actions = ResolvedActions::new(vec![action]);
+    assert!(graph.prepare_resolved_ground_action(&actions).is_some());
+    assert_eq!(graph.get_size("F"), 0);
+    graph.eval_actions(ActionBatch::Resolved(&actions)).unwrap();
+    assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
 fn ground_actions_check_eligibility_before_mutation() {
     for mode in 0..3 {
         let mut graph = match mode {
