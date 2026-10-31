@@ -209,6 +209,65 @@ fn insertion_batches_ignore_unrelated_globals_and_containers() {
 }
 
 #[test]
+fn populated_containers_keep_insertion_admission_and_rebuild_after_union() {
+    for threads in [1, 4] {
+        for direct in [false, true] {
+            let mut graph = EGraph::default();
+            graph.backend.set_num_threads(threads);
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(datatype T (A) (B) (F T))
+                     (sort TVec (Vec T))
+                     (function observed (TVec) i64 :no-merge)
+                     (let $left (vec-of (A)))
+                     (let $right (vec-of (B)))
+                     (set (observed $left) 7)",
+                )
+                .unwrap();
+            let commands = graph
+                .parse_program(None, "(F (A)) (F (B)) (union (A) (B))")
+                .unwrap();
+            let mut calls = GroundActionCache::default();
+            assert!(commands.iter().all(|command| {
+                match command {
+                    Command::Action(action) => graph
+                        .prepare_ground_action(
+                            typechecking::ClosedAction::from_action(action),
+                            &mut calls,
+                            |_| true,
+                        )
+                        .is_some(),
+                    _ => false,
+                }
+            }));
+            assert_eq!(graph.get_size("F"), 0);
+            run_ground_action_oracle(
+                &mut graph,
+                "(F (A)) (F (B)) (union (A) (B))
+                 (check (= $left $right))
+                 (check (= (observed $right) 7))",
+                direct,
+            )
+            .unwrap();
+            assert_eq!(graph.get_size("F"), 1);
+        }
+    }
+}
+
+#[test]
+fn pending_insertions_commit_before_fail_rollback() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    graph
+        .parse_and_run_program(None, r#"(F (A)) (fail (panic "expected"))"#)
+        .unwrap();
+    assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
 fn batches_flush_for_keyed_reads_globals_and_deletes() {
     let source = "(datatype T (A) (B) (F T))
             (function f () i64 :no-merge)
