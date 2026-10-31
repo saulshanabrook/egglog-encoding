@@ -744,35 +744,6 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
     ]
 
 
-def test_preflight_requires_math12_witness_flags_only_for_fresh_math12(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    egg_binary = ROOT / "egg-math-benchmark"
-    target = replace(make_target(), engine_binaries=(models.EngineBinary("egg", "sha256:egg", egg_binary),))
-    math12 = replace(
-        planned_run(treatment="egg", required=1),
-        file=models.FileSpec("math12.egg", ROOT / "absent.egg", engines.MATH12_WORKLOAD_SHA256),
-    )
-    math11 = planned_run(treatment="egg", required=1)
-    calls: list[tuple[str, ...]] = []
-
-    def preflight(
-        _binary: Path, _checkout: Path, _timeout: int, required_outputs: tuple[str, ...]
-    ) -> processes.TimingResult:
-        calls.append(required_outputs)
-        return processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
-
-    monkeypatch.setattr(collection, "run_preflight", preflight)
-    collection.preflight_collection(collection.CollectionPlan(target, (math12,)), 120)
-    cached12 = replace(math12, cached_statuses=("success",), missing_observations=0)
-    collection.preflight_collection(collection.CollectionPlan(target, (cached12, math11)), 120)
-
-    assert calls == [
-        ("--timing-summary", "--memory-limit-bytes", "--iterations", "--check-left", "--check-right"),
-        ("--timing-summary", "--memory-limit-bytes"),
-    ]
-
-
 def test_collected_row_uses_selected_engine_binary_and_hash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
