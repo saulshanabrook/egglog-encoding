@@ -74,7 +74,7 @@ impl EGraph {
                 calls.insert(head.into(), call.clone());
                 call
             },
-            &mut |table, args: SmallVec<[usize; 4]>| {
+            &mut |_, table, args: SmallVec<[usize; 4]>| {
                 let index = prepared.lookups.len();
                 prepared.lookups.push((table, args));
                 Some(index)

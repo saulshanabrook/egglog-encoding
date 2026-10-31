@@ -367,6 +367,41 @@ impl<'a> TypeInfoView<'a> {
         binding: &IndexMap<&str, (Span, ArcSort)>,
         context: Context,
     ) -> Result<ResolvedActions, TypeError> {
+        // Unambiguous closed constructors need no constraint problem. Keep this
+        // inside ordinary typing and return its normal, span-preserving output.
+        // Other contexts, bindings, blocks and source-view signatures retain
+        // inference, including its primitive capability checks and diagnostics.
+        if !self.source_terms
+            && binding.is_empty()
+            && matches!(context, Context::Full)
+            && let [action @ (Action::Expr(span, _) | Action::Union(span, _, _))] =
+                actions.0.as_slice()
+            && let Some(closed) = ClosedAction::from_action(action)
+        {
+            let checked = self.types.check_closed_action(
+                closed,
+                &mut |head| {
+                    let func = self.types.closed_call_type(head)?;
+                    if func.subtype != FunctionSubtype::Constructor
+                        || func.role != FunctionRole::Ordinary
+                        || self.types.indexes.contains_key(&func.name)
+                        || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
+                    {
+                        return None;
+                    }
+                    Some((func.clone(), ResolvedCall::Func(func.clone())))
+                },
+                &mut |expr: &Expr, call, args| Some(ResolvedExpr::Call(expr.span(), call, args)),
+            );
+            if let Some(checked) = checked {
+                return Ok(ResolvedActions::new(vec![match checked {
+                    ClosedAction::Expr(expr) => ResolvedAction::Expr(span.clone(), expr),
+                    ClosedAction::Union(left, right) => {
+                        ResolvedAction::Union(span.clone(), left, right)
+                    }
+                }]));
+            }
+        }
         let mut binding_set: IndexSet<String> =
             binding.keys().copied().map(str::to_string).collect();
         // We lower to core actions with `union_to_set_optimization`
@@ -1709,13 +1744,13 @@ impl TypeInfo {
     /// Check a closed action while selecting its call metadata and output
     /// representation. `resolve` supplies a function admitted by `closed_call_type`
     /// plus caller-specific metadata; it may also reject calls needing general
-    /// execution. `emit` only prepares work, so failure discards all tentative
-    /// output without executing it.
+    /// execution. `emit` receives the original node to preserve its source span;
+    /// it only prepares work, so failure discards tentative output without effects.
     pub(crate) fn check_closed_action<Node: CallView, T, Args, Call, Metadata>(
         &self,
         action: ClosedAction<&Node>,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(&Node, Metadata, Args) -> Option<T>,
     ) -> Option<ClosedAction<T>>
     where
         Args: FromIterator<T>,
@@ -1741,7 +1776,7 @@ impl TypeInfo {
     fn check_declared_expr<Node: CallView, T, Args, Call, Metadata>(
         expr: &Node,
         resolve: &mut impl FnMut(&str) -> Option<(Call, Metadata)>,
-        emit: &mut impl FnMut(Metadata, Args) -> Option<T>,
+        emit: &mut impl FnMut(&Node, Metadata, Args) -> Option<T>,
     ) -> Option<(T, Call)>
     where
         Args: FromIterator<T>,
@@ -1761,7 +1796,7 @@ impl TypeInfo {
                 (Arc::ptr_eq(sort, expected) || sort.name() == expected.name()).then_some(value)
             })
             .collect::<Option<Args>>()?;
-        Some((emit(metadata, checked_args)?, func))
+        Some((emit(expr, metadata, checked_args)?, func))
     }
 
     pub fn get_sort_by_name(&self, sym: &str) -> Option<&ArcSort> {
@@ -1954,7 +1989,56 @@ pub enum TypeError {
 
 #[cfg(test)]
 mod test {
-    use crate::{EGraph, Error, typechecking::TypeError};
+    use super::*;
+
+    #[test]
+    fn closed_action_typing_preserves_resolved_trees_and_spans() {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (Pair T T) (Num i64))")
+            .unwrap();
+        for source in [
+            "(Pair (A) (Pair (B) (A)))",
+            "(union (Pair (A) (B)) (Pair (B) (A)))",
+            "(Num 1)",
+            "(Pair (A) (Num 1))",
+            "(Pair (A))",
+            "(union (A) (+ 1 2))",
+        ] {
+            let mut commands = graph
+                .parse_program(Some("closed-typing.egg".into()), source)
+                .unwrap();
+            let Command::Action(action) = commands.remove(0) else {
+                panic!("expected a singleton action: {source}")
+            };
+            let actions = Actions::singleton(action);
+            let mut full_symbols = graph.parser.symbol_gen.clone();
+            let mut read_symbols = full_symbols.clone();
+            let actual = graph.type_info.typecheck_standalone_actions(
+                &mut full_symbols,
+                &actions,
+                &Default::default(),
+                Context::Full,
+            );
+            // Read-context calls keep ordinary inference. These cases have no
+            // context-sensitive primitives, so it is an independent typing oracle.
+            let expected = graph.type_info.typecheck_standalone_actions(
+                &mut read_symbols,
+                &actions,
+                &Default::default(),
+                Context::Read,
+            );
+            match (actual, expected) {
+                (Ok(actual), Ok(expected)) => assert_eq!(actual, expected, "{source}"),
+                (Err(actual), Err(expected)) => {
+                    assert_eq!(actual.to_string(), expected.to_string(), "{source}");
+                }
+                (actual, expected) => {
+                    panic!("typing differs for {source}: {actual:?}, {expected:?}")
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_arity_mismatch() {

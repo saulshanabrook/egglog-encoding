@@ -10,6 +10,25 @@ struct RecordFunctionInputArity {
 
 struct DefineSort;
 
+#[test]
+fn closed_constructor_typing_preserves_term_and_proof_execution() {
+    for mut graph in [
+        EGraph::default(),
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype T (A) (B) (Pair T T))
+                 (Pair (A) (B))
+                 (union (A) (B))
+                 (check (= (Pair (A) (B)) (Pair (B) (A))))",
+            )
+            .unwrap();
+    }
+}
+
 impl UserDefinedCommand for DefineSort {
     fn update(&self, egraph: &mut EGraph, _args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
         egraph.parse_and_run_program(None, "(sort Leaked)")
