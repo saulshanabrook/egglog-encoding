@@ -20,9 +20,18 @@ fn closed_constructor_typing_preserves_term_and_proof_execution() {
         graph
             .parse_and_run_program(
                 None,
-                "(datatype T (A) (B) (Pair T T))
+                r#"(datatype T (A) (B) (Pair T T))
                  (Pair (A) (B))
-                 (union (A) (B))
+                 (Pair (B) (A))
+                 (fail (union (Pair (A) (B)) (Pair (B) (A))) (panic "stop"))
+                 (fail (check (= (Pair (A) (B)) (Pair (B) (A)))))"#,
+            )
+            .unwrap();
+        assert_eq!(graph.get_size("Pair"), 2);
+        graph
+            .parse_and_run_program(
+                None,
+                "(union (A) (B))
                  (check (= (Pair (A) (B)) (Pair (B) (A))))",
             )
             .unwrap();
