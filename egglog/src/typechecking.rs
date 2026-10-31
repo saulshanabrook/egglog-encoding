@@ -1995,11 +1995,29 @@ mod test {
     fn closed_action_typing_preserves_resolved_trees_and_spans() {
         let mut graph = EGraph::default();
         graph
-            .parse_and_run_program(None, "(datatype T (A) (B) (Pair T T) (Num i64))")
+            .parse_and_run_program(
+                None,
+                "(datatype T (A) (B) (Pair T T) (Num i64))
+                 (function View (T) T :no-merge :internal-role constructor-view)",
+            )
             .unwrap();
+        assert!(graph.functions["View"].is_view());
+        assert_eq!(
+            graph.functions["View"].func_type().role,
+            FunctionRole::ConstructorView,
+        );
+        let unused_binding = IndexMap::from_iter([(
+            "oracle_unused",
+            (
+                Span::Panic,
+                graph.type_info.get_sort_by_name("T").unwrap().clone(),
+            ),
+        )]);
         for source in [
             "(Pair (A) (Pair (B) (A)))",
             "(union (Pair (A) (B)) (Pair (B) (A)))",
+            "(View (A))",
+            "(union (View (A)) (B))",
             "(Num 1)",
             "(Pair (A) (Num 1))",
             "(Pair (A))",
@@ -2012,21 +2030,21 @@ mod test {
                 panic!("expected a singleton action: {source}")
             };
             let actions = Actions::singleton(action);
-            let mut full_symbols = graph.parser.symbol_gen.clone();
-            let mut read_symbols = full_symbols.clone();
+            let mut fast_symbols = graph.parser.symbol_gen.clone();
+            let mut inference_symbols = fast_symbols.clone();
             let actual = graph.type_info.typecheck_standalone_actions(
-                &mut full_symbols,
+                &mut fast_symbols,
                 &actions,
                 &Default::default(),
                 Context::Full,
             );
-            // Read-context calls keep ordinary inference. These cases have no
-            // context-sensitive primitives, so it is an independent typing oracle.
+            // The unused typed local bypasses the empty-binding fast-path guard.
+            // Both sides therefore use Full context, with the same input spans.
             let expected = graph.type_info.typecheck_standalone_actions(
-                &mut read_symbols,
+                &mut inference_symbols,
                 &actions,
-                &Default::default(),
-                Context::Read,
+                &unused_binding,
+                Context::Full,
             );
             match (actual, expected) {
                 (Ok(actual), Ok(expected)) => assert_eq!(actual, expected, "{source}"),

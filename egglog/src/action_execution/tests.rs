@@ -57,6 +57,32 @@ fn assert_action_graphs_equal(left: &EGraph, right: &EGraph) {
 }
 
 #[test]
+fn runtime_view_actions_match_compiled_execution() {
+    for source in ["(View (A))", "(union (View (A)) (A))"] {
+        let mut direct = EGraph::default();
+        let mut compiled = EGraph::default();
+        for graph in [&mut direct, &mut compiled] {
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(datatype T (A) (B))
+                     (function View (T) T :no-merge :internal-role constructor-view)
+                     (set (View (A)) (B))",
+                )
+                .unwrap();
+            let view = &graph.functions["View"];
+            assert!(view.is_view());
+            assert_eq!(view.func_type().role, FunctionRole::ConstructorView);
+        }
+        assert_eq!(
+            run_ground_action_oracle(&mut direct, source, true).unwrap(),
+            run_ground_action_oracle(&mut compiled, source, false).unwrap(),
+        );
+        assert_action_graphs_equal(&direct, &compiled);
+    }
+}
+
+#[test]
 fn ground_actions_match_compiled_execution() {
     for threads in [1, 4] {
         let mut direct = EGraph::default();
