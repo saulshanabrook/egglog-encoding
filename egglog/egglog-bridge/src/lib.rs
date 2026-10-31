@@ -2646,29 +2646,15 @@ impl TableAction {
             Some(default) => {
                 let timestamp =
                     MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
-                let mut merge_vals = SmallVec::<[MergeVal; 3]>::new();
-                // Build just the non-key portion (single value + ts + subsume) of the row.
-                // `lookup_or_insert` is only used for single-value functions/constructors.
-                SchemaMath {
-                    n_keys: 0,
-                    func_cols: 1,
-                    ..self.table_math
-                }
-                .write_table_row(
-                    &mut merge_vals,
-                    RowVals {
-                        timestamp,
-                        subsume: self
-                            .table_math
-                            .subsume
-                            .then_some(MergeVal::Constant(NOT_SUBSUMED)),
-                        ret_val: Some(default),
-                    },
-                );
-                Some(
-                    state.predict_val(self.table, key, merge_vals.iter().copied())
-                        [self.table_math.ret_val_col()],
-                )
+                // Single output, timestamp, and the optional subsumption column.
+                let merge_vals = [default, timestamp, MergeVal::Constant(NOT_SUBSUMED)];
+                let merge_vals = &merge_vals[..2 + usize::from(self.table_math.subsume)];
+                Some(state.predict_col(
+                    self.table,
+                    key,
+                    merge_vals.iter().copied(),
+                    ColumnId::from_usize(self.table_math.ret_val_col()),
+                ))
             }
             None => self.lookup(state, key),
         }
@@ -2706,10 +2692,12 @@ impl TableAction {
                     merge_vals.push(MergeVal::Constant(NOT_SUBSUMED));
                 }
                 // The first value column (the minted output) is at `ret_val_col()`.
-                Some(
-                    state.predict_val(self.table, key, merge_vals.iter().copied())
-                        [self.table_math.ret_val_col()],
-                )
+                Some(state.predict_col(
+                    self.table,
+                    key,
+                    merge_vals.iter().copied(),
+                    ColumnId::from_usize(self.table_math.ret_val_col()),
+                ))
             }
             None => self.lookup(state, key),
         }
