@@ -1673,10 +1673,25 @@ impl EGraph {
     }
 
     fn eval_actions(&mut self, batch: ActionBatch<'_>) -> Result<(), Error> {
-        let actions = match batch {
-            ActionBatch::Resolved(actions) => actions,
+        let (actions, recognize) = match batch {
+            ActionBatch::Resolved(actions) => (actions, true),
             ActionBatch::Ground(prepared) => return self.eval_ground_actions(prepared),
+            #[cfg(test)]
+            ActionBatch::CompiledOracle(actions) => (actions, false),
         };
+        if recognize {
+            let action = match actions.0.as_slice() {
+                [ResolvedAction::Expr(_, expr)] => Some(typechecking::ClosedAction::Expr(expr)),
+                [ResolvedAction::Union(_, left, right)] => {
+                    Some(typechecking::ClosedAction::Union(left, right))
+                }
+                _ => None,
+            };
+            let mut calls = GroundActionCache::default();
+            if let Some(prepared) = self.prepare_ground_action(action, &mut calls, |_| true) {
+                return self.eval_ground_actions(vec![prepared]);
+            }
+        }
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
@@ -2981,7 +2996,8 @@ impl EGraph {
         let mut ground_calls = GroundActionCache::default();
 
         loop {
-            let next = program.next_item(self, &mut ground_calls, run_commands);
+            // This probe retains the ordinary frontend; recognition happens in eval_actions.
+            let next = program.next_item(self, &mut ground_calls, false);
             let item = match next {
                 Ok(Some(item)) => item,
                 Ok(None) => break,

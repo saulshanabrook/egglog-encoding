@@ -14,7 +14,21 @@ fn run_ground_action_oracle(
     let mut outputs = Vec::new();
     for command in graph.parse_program(None, source)? {
         for command in graph.resolve_command(command)?.desugared {
-            outputs.extend(graph.run_command(command)?.iter().map(ToString::to_string));
+            // Keep the compiled reference independent of late recognition.
+            let result = match command {
+                ResolvedNCommand::CoreAction(action) => {
+                    graph.eval_actions(ActionBatch::CompiledOracle(&ResolvedActions::new(
+                        vec![action],
+                    )))?;
+                    Vec::new()
+                }
+                ResolvedNCommand::CoreActions(actions) => {
+                    graph.eval_actions(ActionBatch::CompiledOracle(&actions))?;
+                    Vec::new()
+                }
+                command => graph.run_command(command)?,
+            };
+            outputs.extend(result.iter().map(ToString::to_string));
         }
     }
     Ok(outputs)

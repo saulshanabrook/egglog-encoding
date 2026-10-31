@@ -9,6 +9,8 @@ use std::rc::Rc;
 pub(super) enum ActionBatch<'a> {
     Resolved(&'a ResolvedActions),
     Ground(Vec<GroundActions>),
+    #[cfg(test)]
+    CompiledOracle(&'a ResolvedActions),
 }
 
 // Metadata is valid only until a command can change signatures or table

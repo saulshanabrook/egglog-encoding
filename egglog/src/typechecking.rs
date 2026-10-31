@@ -48,6 +48,15 @@ impl CallView for Expr {
     }
 }
 
+impl CallView for ResolvedExpr {
+    fn as_call(&self) -> Option<(&str, &[Self])> {
+        match self {
+            ResolvedExpr::Call(_, ResolvedCall::Func(func), args) => Some((&func.name, args)),
+            _ => None,
+        }
+    }
+}
+
 impl<S> CallView for Sexp<'_, S> {
     fn as_call(&self) -> Option<(&str, &[Self])> {
         match self {
