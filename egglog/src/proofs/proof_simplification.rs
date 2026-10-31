@@ -343,7 +343,7 @@ impl ProofStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EGraph, TermDag};
+    use crate::{EGraph, TermDag, program_source::ProgramSource};
 
     #[test]
     fn simplify_merge_preserves_its_conclusion() {
@@ -357,7 +357,7 @@ mod tests {
             );
             let parsed = egraph.parse_program(None, &source).unwrap();
             let program = egraph
-                .process_program_internal(parsed, false)
+                .process_program_internal(ProgramSource::Commands(parsed.into_iter()), false)
                 .unwrap()
                 .resolved;
             let mut dag = TermDag::default();
@@ -430,7 +430,7 @@ mod tests {
             )
             .unwrap();
         let program = egraph
-            .process_program_internal(program, false)
+            .process_program_internal(ProgramSource::Commands(program.into_iter()), false)
             .unwrap()
             .resolved;
         let mut dag = TermDag::default();
