@@ -23,7 +23,11 @@ pub(crate) enum ClosedAction<T> {
     Union(T, T),
 }
 
-impl<'a, Head, Leaf> ClosedAction<&'a ast::GenericExpr<Head, Leaf>> {
+impl<'a, Head, Leaf> ClosedAction<&'a ast::GenericExpr<Head, Leaf>>
+where
+    Head: Clone + std::fmt::Display,
+    Leaf: Clone + Eq + std::fmt::Display + Hash,
+{
     pub(crate) fn from_action(action: &'a ast::GenericAction<Head, Leaf>) -> Option<Self> {
         match action {
             ast::GenericAction::Expr(_, expr) => Some(Self::Expr(expr)),
