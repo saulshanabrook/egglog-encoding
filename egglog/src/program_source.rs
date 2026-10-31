@@ -81,7 +81,7 @@ impl<'a> ProgramSource<'a> {
                 let commands = if run_commands && graph.proof_state.original_typechecking.is_none()
                 {
                     let timer = Instant::now();
-                    let form = source.next_sexp();
+                    let form = source.next_sexp(|_, range| range);
                     graph.overall_report.frontend_parse += timer.elapsed();
                     let Some(form) = form? else {
                         return Ok(None);
@@ -105,9 +105,13 @@ impl<'a> ProgramSource<'a> {
                     if let Some(prepared) = prepared {
                         return Ok(Some(ProgramItem::Prepared(prepared)));
                     }
-                    // Reuse the same owned form for parser dispatch and diagnostics.
+                    // Restore spans on this form only; macros and diagnostics keep
+                    // their ordinary representation without a second lexer pass.
                     let timer = Instant::now();
-                    let commands = graph.parser.parse_command(&form).map(Some);
+                    let commands = graph
+                        .parser
+                        .parse_command(&form.with_spans(source))
+                        .map(Some);
                     graph.overall_report.frontend_parse += timer.elapsed();
                     commands
                 } else {

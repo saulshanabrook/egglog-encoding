@@ -48,7 +48,7 @@ impl CallView for Expr {
     }
 }
 
-impl CallView for Sexp<'_> {
+impl<S> CallView for Sexp<'_, S> {
     fn as_call(&self) -> Option<(&str, &[Self])> {
         match self {
             Sexp::List(items, _) => match items.as_slice() {

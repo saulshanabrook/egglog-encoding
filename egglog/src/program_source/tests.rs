@@ -242,3 +242,29 @@ fn raw_source_never_bypasses_builtin_dispatch_for_reserved_constructors() {
         assert_eq!(graph.get_size(head), 0);
     }
 }
+
+#[test]
+fn compact_fallback_parser_errors_keep_owned_source_spans() {
+    let mut streamed = EGraph::default();
+    streamed
+        .parse_and_run_program(None, "(datatype T (A))")
+        .unwrap();
+    let mut eager = streamed.clone();
+    let source = "(A)\n(set (A))".to_owned();
+    let expected = eager
+        .parse_program(Some("fallback-error.egg".into()), &source)
+        .unwrap_err();
+    let actual = streamed
+        .parse_and_run_program(Some("fallback-error.egg".into()), &source)
+        .unwrap_err();
+    assert_eq!(actual.to_string(), expected.to_string());
+    let Error::ParseError(ParseError(span, _)) = actual else {
+        panic!("expected ordinary parser error");
+    };
+    drop((streamed, eager, source));
+    assert_eq!(span.string(), "(set (A))");
+    let Span::Egglog(span) = span else {
+        panic!("expected owned source span");
+    };
+    assert_eq!(span.file.name.as_deref(), Some("fallback-error.egg"));
+}
