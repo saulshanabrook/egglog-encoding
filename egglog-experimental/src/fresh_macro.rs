@@ -26,6 +26,10 @@ struct FreshOptions {
 }
 
 impl CommandMacro for FreshMacro {
+    fn preserves_closed_constructor_action(&self, _expression_head: Option<&str>) -> bool {
+        true
+    }
+
     fn transform(
         &self,
         command: Command,

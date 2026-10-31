@@ -29,10 +29,11 @@ impl EGraph {
     /// calls, with nullary calls at its leaves, optionally joined by `union`.
     /// Literals, variables, primitives, globals, views, indexes and custom sorts
     /// retain the ordinary compiler. Preparation never allocates IDs or writes.
-    pub(super) fn prepare_ground_action(
+    pub(super) fn prepare_ground_action<Node: typechecking::CallView>(
         &self,
-        action: &Action,
+        action: Option<typechecking::ClosedAction<&Node>>,
         calls: &mut GroundActionCache,
+        permit_call: impl Fn(&str) -> bool,
     ) -> Option<GroundActions> {
         if self.proof_state.original_typechecking.is_some() {
             return None;
@@ -42,8 +43,13 @@ impl EGraph {
             union: None,
         };
         let checked = self.type_info.check_closed_action(
-            action,
+            action?,
             &mut |head| {
+                // Parser overrides can change during an empty parser expansion.
+                // Check call admission before cached type/table metadata every time.
+                if !permit_call(head) {
+                    return None;
+                }
                 if let Some(cached) = calls.get(head) {
                     return cached.clone();
                 }
@@ -69,7 +75,7 @@ impl EGraph {
                 calls.insert(head.into(), call.clone());
                 call
             },
-            &mut |_, _, table, args: SmallVec<[usize; 4]>| {
+            &mut |table, args: SmallVec<[usize; 4]>| {
                 let index = prepared.lookups.len();
                 prepared.lookups.push((table, args));
                 Some(index)

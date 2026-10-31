@@ -332,6 +332,46 @@ impl Parser {
             .transpose()
     }
 
+    /// Recognize a literal-free constructor-call tree, optionally joined by union.
+    /// This only checks command/action precedence. Every expression head, arity,
+    /// argument sort and native table capability must still pass shared checking.
+    pub(crate) fn closed_action<'s, 'a>(
+        &self,
+        form: &'s Sexp<'a>,
+    ) -> Option<(Option<&'s str>, typechecking::ClosedAction<&'s Sexp<'a>>)> {
+        let Sexp::List(items, _) = form else {
+            return None;
+        };
+        let [Sexp::Atom(head, _), args @ ..] = items.as_slice() else {
+            return None;
+        };
+        if self.commands.contains_key(head.as_ref())
+            || self.user_defined.contains(head.as_ref())
+            || self.actions.contains_key(head.as_ref())
+        {
+            return None;
+        }
+        if head == "union" {
+            return match args {
+                [left, right] => Some((None, typechecking::ClosedAction::Union(left, right))),
+                _ => None,
+            };
+        }
+        // Builtin dispatch applies even when reserved-name enforcement is off.
+        if RESERVED_KEYWORDS.contains(&head.as_ref())
+            || COMMAND_ONLY_KEYWORDS.contains(&head.as_ref())
+            || head == "index"
+        {
+            return None;
+        }
+        Some((Some(head), typechecking::ClosedAction::Expr(form)))
+    }
+
+    pub(crate) fn can_parse_constructor_call(&self, head: &str) -> bool {
+        !(self.exprs.contains_key(head)
+            || self.ensure_no_reserved_symbols && COMMAND_ONLY_KEYWORDS.contains(&head))
+    }
+
     // currently only used for testing, but no reason it couldn't be used elsewhere later
     pub fn get_expr_from_string(
         &mut self,
@@ -1698,6 +1738,60 @@ mod tests {
                 _ => panic!("unexpected literal/atom classification for {source}"),
             }
         }
+    }
+
+    #[test]
+    fn source_action_admission_keeps_parser_dispatch() {
+        let mut parser = Parser::default();
+        for enforce_reserved in [false, true] {
+            parser.ensure_no_reserved_symbols = enforce_reserved;
+            for source in ["(index)", "(set)", "(input)", "(output)", "(union (A))"] {
+                let form = sexp(&mut SexpParser::new(None, source)).unwrap();
+                assert!(parser.closed_action(&form).is_none(), "{source}");
+                assert!(parser.parse_command(&form).is_err(), "{source}");
+            }
+            assert_eq!(
+                parser.can_parse_constructor_call("input"),
+                !enforce_reserved
+            );
+            assert_eq!(
+                parser.can_parse_constructor_call("output"),
+                !enforce_reserved
+            );
+        }
+
+        parser.add_user_defined("A".into()).unwrap();
+        let form = sexp(&mut SexpParser::new(None, "(A)")).unwrap();
+        assert!(parser.closed_action(&form).is_none());
+        assert!(
+            matches!(parser.parse_command(&form).unwrap().as_slice(), [Command::UserDefined(_, head, _)] if head == "A")
+        );
+        // Command dispatch does not apply to nested expression heads.
+        assert!(parser.can_parse_constructor_call("A"));
+
+        let form = sexp(&mut SexpParser::new(None, "(union (A) (B))")).unwrap();
+        parser.add_expr_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "expression override must not run".into()))
+        })));
+        assert!(parser.closed_action(&form).is_some());
+        assert!(matches!(
+            parser.parse_command(&form).unwrap().as_slice(),
+            [Command::Action(Action::Union(..))]
+        ));
+        parser.add_action_macro(Arc::new(SimpleMacro::new("union", |_, _, _| Ok(vec![]))));
+        assert!(parser.closed_action(&form).is_none());
+        assert!(parser.parse_command(&form).unwrap().is_empty());
+        parser.add_command_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "command override wins".into()))
+        })));
+        assert!(parser.closed_action(&form).is_none());
+        assert!(
+            parser
+                .parse_command(&form)
+                .unwrap_err()
+                .to_string()
+                .contains("command override wins")
+        );
     }
 
     #[test]

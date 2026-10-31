@@ -57,7 +57,7 @@ use indexmap::map::Entry;
 use log::{Level, log_enabled};
 use numeric_id::DenseIdMap;
 use prelude::*;
-use program_source::ProgramSource;
+use program_source::{ProgramItem, ProgramSource};
 #[doc(hidden)]
 pub use proofs::proof_certificate::{CertificateVerdict, check_certificates};
 pub use proofs::proof_encoding_helpers::{
@@ -1375,7 +1375,7 @@ impl EGraph {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
         let resolved = proof_check_eg
-            .process_program_internal(ProgramSource::Commands(prog.into_iter()), false)?;
+            .process_program_internal(ProgramSource::from_commands(prog.into_iter()), false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
         Ok(())
@@ -2966,7 +2966,7 @@ impl EGraph {
         mut program: ProgramSource<'_>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
-        let stream_includes = run_commands && matches!(&program, ProgramSource::Text { .. });
+        let stream_includes = run_commands && program.source.is_some();
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
@@ -2975,49 +2975,17 @@ impl EGraph {
         let mut ground_calls = GroundActionCache::default();
 
         loop {
-            let next =
-                program.next_command(&mut self.parser, &mut self.overall_report.frontend_parse);
-            let before_expanded_command = match next {
-                Ok(Some(command)) => command,
+            let next = program.next_item(self, &mut ground_calls, run_commands);
+            let item = match next {
+                Ok(Some(item)) => item,
                 Ok(None) => break,
-                Err(error) => {
-                    self.flush_ground_actions(&mut pending)?;
-                    return Err(error.into());
-                }
-            };
-            // First do user-provided macro expansion for this command,
-            // which may rely on type information from previous commands.
-            let macro_type_info = self
-                .proof_state
-                .original_typechecking
-                .as_ref()
-                .map(|egraph| &egraph.type_info)
-                .unwrap_or(&self.type_info);
-            let macro_timer = Instant::now();
-            let macro_expanded = self.command_macros.apply(
-                before_expanded_command,
-                &mut self.parser.symbol_gen,
-                macro_type_info,
-            );
-            self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = match macro_expanded {
-                Ok(commands) => commands,
                 Err(error) => {
                     self.flush_ground_actions(&mut pending)?;
                     return Err(error);
                 }
             };
-
-            for command in macro_expanded {
-                let timer = Instant::now();
-                let prepared = match &command {
-                    Command::Action(action) if run_commands => {
-                        self.prepare_ground_action(action, &mut ground_calls)
-                    }
-                    _ => None,
-                };
-                self.overall_report.typecheck += timer.elapsed();
-                if let Some(prepared) = prepared {
+            match item {
+                ProgramItem::Prepared(prepared) => {
                     if prepared.union.is_some() {
                         // Equality changes can reach unnamed tables and container
                         // callbacks. Keep each union's original commit/rebuild.
@@ -3035,7 +3003,8 @@ impl EGraph {
                             pending_lookups = 0;
                         }
                     }
-                } else {
+                }
+                ProgramItem::Command(command) => {
                     // Ordinary functions/globals/primitives, observations, declarations,
                     // scopes and includes see all preceding constructor insertions.
                     self.flush_ground_actions(&mut pending)?;
@@ -3049,12 +3018,9 @@ impl EGraph {
                         self.overall_report.frontend_other += include_timer.elapsed();
                         let s = s?;
                         let included_program = if stream_includes && !self.are_proofs_enabled() {
-                            ProgramSource::Text {
-                                parser: SexpParser::new(Some(file.clone()), &s),
-                                expanded: Vec::new().into_iter(),
-                            }
+                            ProgramSource::from_text(Some(file.clone()), &s)
                         } else {
-                            ProgramSource::Commands(
+                            ProgramSource::from_commands(
                                 self.parse_program_timed(Some(file.clone()), &s)?
                                     .into_iter(),
                             )
@@ -3114,7 +3080,7 @@ impl EGraph {
     /// in extension code unwind normally instead of becoming [`enum@Error`] values.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
         let res =
-            self.process_program_internal(ProgramSource::Commands(program.into_iter()), true)?;
+            self.process_program_internal(ProgramSource::from_commands(program.into_iter()), true)?;
         Ok(res.outputs)
     }
 
@@ -3128,7 +3094,7 @@ impl EGraph {
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parse_program_timed(filename, input)?;
         let res =
-            self.process_program_internal(ProgramSource::Commands(parsed.into_iter()), false)?;
+            self.process_program_internal(ProgramSource::from_commands(parsed.into_iter()), false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
 
@@ -3158,12 +3124,9 @@ impl EGraph {
         input: &str,
     ) -> Result<Vec<CommandOutput>, Error> {
         let source = if self.are_proofs_enabled() {
-            ProgramSource::Commands(self.parse_program_timed(filename, input)?.into_iter())
+            ProgramSource::from_commands(self.parse_program_timed(filename, input)?.into_iter())
         } else {
-            ProgramSource::Text {
-                parser: SexpParser::new(filename, input),
-                expanded: Vec::new().into_iter(),
-            }
+            ProgramSource::from_text(filename, input)
         };
         Ok(self.process_program_internal(source, true)?.outputs)
     }
@@ -4210,7 +4173,7 @@ mod tests {
             }
             let program = graph.parse_program(None, source).unwrap();
             let result = graph
-                .process_program_internal(ProgramSource::Commands(program.into_iter()), true)
+                .process_program_internal(ProgramSource::from_commands(program.into_iter()), true)
                 .unwrap();
             assert!(result.resolved.is_empty());
             assert!(result.resolved_before_proofs.is_empty());
@@ -4224,7 +4187,7 @@ mod tests {
             }
             let program = graph.parse_program(None, source).unwrap();
             let result = graph
-                .process_program_internal(ProgramSource::Commands(program.into_iter()), false)
+                .process_program_internal(ProgramSource::from_commands(program.into_iter()), false)
                 .unwrap();
             assert!(!result.resolved.is_empty());
             assert_eq!(!result.resolved_before_proofs.is_empty(), proofs);

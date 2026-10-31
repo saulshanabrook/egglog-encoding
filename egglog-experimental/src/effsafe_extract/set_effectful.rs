@@ -27,6 +27,10 @@ pub fn effectful_relation_sort(relation: &str) -> Option<&str> {
 pub struct SetEffectful;
 
 impl CommandMacro for SetEffectful {
+    fn preserves_closed_constructor_action(&self, expression_head: Option<&str>) -> bool {
+        expression_head != Some(SET_EFFECTFUL)
+    }
+
     fn transform(
         &self,
         mut command: Command,

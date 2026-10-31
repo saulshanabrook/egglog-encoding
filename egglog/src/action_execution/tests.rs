@@ -146,7 +146,11 @@ fn ground_actions_check_eligibility_before_mutation() {
             let commands = graph.parse_program(None, source).unwrap();
             let accepted = commands.iter().any(|command| match command {
                 Command::Action(action) => graph
-                    .prepare_ground_action(action, &mut GroundActionCache::default())
+                    .prepare_ground_action(
+                        typechecking::ClosedAction::from_action(action),
+                        &mut GroundActionCache::default(),
+                        |_| true,
+                    )
                     .is_some(),
                 _ => false,
             });
@@ -182,7 +186,11 @@ fn insertion_batches_ignore_unrelated_globals_and_containers() {
     assert!(actions.iter().all(|command| {
         match command {
             Command::Action(action) => graph
-                .prepare_ground_action(action, &mut GroundActionCache::default())
+                .prepare_ground_action(
+                    typechecking::ClosedAction::from_action(action),
+                    &mut GroundActionCache::default(),
+                    |_| true,
+                )
                 .is_some(),
             _ => false,
         }
