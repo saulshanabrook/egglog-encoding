@@ -12,33 +12,35 @@ import EgglogSemantics.Source.Domain
 import EgglogSemantics.Source.WellFormed
 import EgglogSemantics.Proofs.OrderFinite
 import EgglogSemantics.Congruence.Correctness
-import EgglogSemantics.Proofs.InterpDeletes
-import EgglogSemantics.Proofs.Deletes
+import EgglogSemantics.Proofs.Subsume
+import EgglogSemantics.Proofs.InterpSubsume
 import EgglogSemantics.Proofs.Provenance.GeneratedSoundness
 import EgglogSemantics.Proofs.Resugar.Soundness
 import Mathlib.Util.AssertNoSorry
 
 /-! The modules whose blueprint nodes the paper displays, and the proof closure the paper
 relies on. The congruence pass theorem is displayed as a statement
-(`Congruence.Correctness`); its proof for the constructor-and-delete encoding is open. -/
+(`Congruence.Correctness`); its proof for the constructor-and-subsume encoding is open. -/
 
--- The term order the compiled rebuilding uses.
+-- The term order the compiled rebuilding uses, and the representatives it picks.
 assert_no_sorry Egglog.Term.blt_admissible
+assert_no_sorry Egglog.Database.reps_subset_terms
 
--- Matching, deletion, rounds, and evaluation agree with their presentations and are
--- deterministic.
+-- Matching, subsumption, rounds, schedules, and evaluation agree with their presentations
+-- and are deterministic.
 assert_no_sorry Egglog.queryHolds_iff_validQuerySubst
-assert_no_sorry Egglog.Database.deleteRows_eq
-assert_no_sorry Egglog.RunErases.eq_empty
+assert_no_sorry Egglog.RunRules.eq_pair
+assert_no_sorry Egglog.RunMarks.eq_empty
 assert_no_sorry Egglog.RunRules.eq_addEqs
 assert_no_sorry Egglog.RunRules.eq_sUnion
 assert_no_sorry Egglog.RunRules.wf
+assert_no_sorry Egglog.Reach.det
 assert_no_sorry Egglog.Eval.det
 assert_no_sorry Egglog.SourceMeaning.completion_closed_of_saturated
 
--- The reference interpreter refines the specification, up to meaning, for delete-free
--- programs and for union-free programs with deletes (the compiler's output), and decides
--- the final check as the specification does.
+-- The reference interpreter refines the specification, up to meaning, for subsume-free
+-- programs and for union-free programs with subsumption (the compiler's output), and
+-- decides the final check as the specification does.
 assert_no_sorry Egglog.patternHolds_iff
 assert_no_sorry Egglog.FDatabase.holds_iff_queryHolds
 assert_no_sorry Egglog.exec_programStep

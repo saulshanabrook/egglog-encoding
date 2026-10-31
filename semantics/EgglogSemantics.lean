@@ -4,10 +4,10 @@ import EgglogSemantics.Spec.Congruence
 import EgglogSemantics.Spec.Database
 import EgglogSemantics.Spec.Divergence
 import EgglogSemantics.Spec.Eval
+import EgglogSemantics.Spec.Facts
 import EgglogSemantics.Spec.Match
 import EgglogSemantics.Spec.Order
 import EgglogSemantics.Spec.Scope
-import EgglogSemantics.Spec.Sequential
 import EgglogSemantics.Spec.Step
 import EgglogSemantics.Spec.Syntax
 import EgglogSemantics.Spec.Term
@@ -60,7 +60,6 @@ import EgglogSemantics.Proofs.Completion
 import EgglogSemantics.Proofs.Congruence
 import EgglogSemantics.Proofs.Congruence.Properties
 import EgglogSemantics.Proofs.Database
-import EgglogSemantics.Proofs.Deletes
 import EgglogSemantics.Proofs.Diagonal
 import EgglogSemantics.Proofs.DiagonalPreservation
 import EgglogSemantics.Proofs.DiagonalRound
@@ -72,8 +71,12 @@ import EgglogSemantics.Proofs.Execution
 import EgglogSemantics.Proofs.Finite
 import EgglogSemantics.Proofs.FiniteSaturation
 import EgglogSemantics.Proofs.Interp
-import EgglogSemantics.Proofs.InterpDeletes
+import EgglogSemantics.Proofs.InterpBase
+import EgglogSemantics.Proofs.InterpLookup
+import EgglogSemantics.Proofs.InterpRound
+import EgglogSemantics.Proofs.InterpSubsume
 import EgglogSemantics.Proofs.LiveTables
+import EgglogSemantics.Proofs.Lookup
 import EgglogSemantics.Proofs.Match
 import EgglogSemantics.Proofs.MatchMonotone
 import EgglogSemantics.Proofs.MatchValues
@@ -92,9 +95,11 @@ import EgglogSemantics.Proofs.Provenance.GeneratedSoundness
 import EgglogSemantics.Proofs.Provenance.Model
 import EgglogSemantics.Proofs.Provenance.Soundness
 import EgglogSemantics.Proofs.Query
+import EgglogSemantics.Proofs.Representatives
 import EgglogSemantics.Proofs.Resugar.Soundness
 import EgglogSemantics.Proofs.Result
 import EgglogSemantics.Proofs.SameMeaning
+import EgglogSemantics.Proofs.Schedule
 import EgglogSemantics.Proofs.Scope
 import EgglogSemantics.Proofs.SemanticCong
 import EgglogSemantics.Proofs.Setup
@@ -118,6 +123,7 @@ import EgglogSemantics.Proofs.SourceProof.Support
 import EgglogSemantics.Proofs.StatePreservation
 import EgglogSemantics.Proofs.Step
 import EgglogSemantics.Proofs.StoredCong
+import EgglogSemantics.Proofs.Subsume
 import EgglogSemantics.Proofs.Syntax
 import EgglogSemantics.Proofs.Term
 import EgglogSemantics.Proofs.Writes
@@ -137,6 +143,4 @@ import EgglogSemantics.Tests.SourceProof
 import EgglogSemantics.Tests.SourceProofCorrectness
 import EgglogSemantics.Tests.SubtermExistence
 
-/-! The whole library. The modules under `Proofs/Congruence/` other than `Properties`
-concern the previous, merge-function encoding and are not built; `Tests/{CongruenceCorrectness,
-LeaderGrowth,LiveCompiler,LiveSemantics}` depend on them. -/
+/-! The whole library. -/

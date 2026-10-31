@@ -19,7 +19,7 @@ theorem Action.write_litsIsolated {σ : Env} {a : Action} {W : Set (Term × Term
       cases Option.some.inj h
       rintro p rfl hp
       exact (hn (by simpa using hp)).elim
-  | delete e =>
+  | subsume e =>
     obtain ⟨t, _, rfl⟩ := Option.map_eq_some_iff.mp h
     simp
 
@@ -42,79 +42,115 @@ theorem RuleResults.wf {db d : Database} (hw : db.WF) {r : Rule}
 
 
 theorem RunRules.wf {R : List Rule} {db : Database} (hw : db.WF) : (RunRules R db).WF := by
-  constructor
-  intro p hp hl
-  rcases hp with hp | hp
-  · exact (hw.deleteRows _).litsIsolated p hp hl
-  · obtain ⟨W, ⟨r, _, σ, _, hW⟩, hp⟩ := hp
-    exact Action.writes_litsIsolated hW p hp hl
+  rw [RunRules.eq_sUnion]
+  exact hw.sUnion (fun _ ⟨_, _, hd⟩ => RuleResults.wf hw hd)
 
 
-theorem runRules_eq_self_iff (R : List Rule) (db : Database) (hdf : ∀ r ∈ R, r.DeleteFree) :
+theorem runRules_eq_self_iff (R : List Rule) (db : Database) (hdf : ∀ r ∈ R, r.SubsumeFree) :
     RunRules R db = db ↔
       ∀ r ∈ R, ∀ d ∈ RuleResults db r,
         Database.Contained d db := by
-  rw [RunRules.eq_sUnion _ _ hdf]
+  rw [RunRules.eq_sUnion _ _]
   constructor
   · intro h r hr d hd
-    have hmem : d ∈ {d | ∃ r ∈ R, d ∈ RuleResults db r} :=
-      ⟨r, hr, hd⟩
-    have he : d.eqs ⊆
-        (db.sUnion {d | ∃ r ∈ R, d ∈ RuleResults db r}).eqs := fun _ hp =>
-      Or.inr (Set.mem_biUnion hmem hp)
-    rw [h] at he
-    exact ⟨he⟩
+    rw [← h]
+    exact Database.Contained.mem_sUnion ⟨r, hr, hd⟩
   · intro h
-    refine Database.ext ?_
-    refine Set.Subset.antisymm ?_ Set.subset_union_left
-    rintro p (hp | hp)
-    · exact hp
-    · obtain ⟨d, ⟨r, hr, hd⟩, hp⟩ := Set.mem_iUnion₂.mp hp
-      exact (h r hr d hd).eqs hp
+    apply Database.ext
+    · refine Set.Subset.antisymm ?_ Set.subset_union_left
+      rintro p (hp | hp)
+      · exact hp
+      · obtain ⟨d, ⟨r, hr, hd⟩, hp⟩ := Set.mem_iUnion₂.mp hp
+        exact (h r hr d hd).eqs hp
+    · refine Set.Subset.antisymm ?_ Set.subset_union_left
+      rintro t (ht | ht)
+      · exact ht
+      · obtain ⟨d, ⟨r, hr, hd⟩, ht⟩ := Set.mem_iUnion₂.mp ht
+        exact (h r hr d hd).subsumed ht
 
-
-
-theorem SaturateReach.wf {R : List Rule} {db d : Database}
-    (h : SaturateReach R db d) (hw : db.WF) : d.WF := by
+/-- Every finite nested schedule preserves well-formedness. -/
+theorem Reach.wf {S : Schedule} {db d : Database}
+    (h : Reach db S d) (hw : db.WF) : d.WF := by
   induction h with
-  | fixpoint => exact RunRules.wf hw
-  | again _ _ ih => exact ih (RunRules.wf hw)
+  | run => exact RunRules.wf hw
+  | seq _ _ ih₁ ih₂ => exact ih₂ (ih₁ hw)
+  | fixpoint _ _ ih => exact ih hw
+  | again _ _ _ ih₁ ih₂ => exact ih₂ (ih₁ hw)
 
-
-theorem SaturateReach.reach {R : List Rule} {db d : Database}
-    (h : SaturateReach R db d) :
-    Relation.ReflTransGen (fun a b => b = RunRules R a) db d := by
+/-- Subsume-free schedules preserve the entire subsumed set. -/
+theorem Reach.subsumed_eq {S : Schedule} {db d : Database}
+    (h : Reach db S d) (hdf : ∀ r ∈ S.rules, r.SubsumeFree) :
+    d.subsumed = db.subsumed := by
   induction h with
-  | fixpoint => exact .single rfl
-  | again _ _ ih => exact ih.head rfl
+  | run => exact RunRules.subsumed_eq hdf
+  | seq _ _ ih₁ ih₂ =>
+      exact (ih₂ (fun r hr => hdf r (List.mem_append_right _ hr))).trans
+        (ih₁ (fun r hr => hdf r (List.mem_append_left _ hr)))
+  | fixpoint _ _ ih => exact ih hdf
+  | again _ _ _ ih₁ ih₂ => exact (ih₂ hdf).trans (ih₁ hdf)
 
-theorem saturateReach_det {R : List Rule} {db d₁ d₂ : Database}
-    (h₁ : SaturateReach R db d₁) (h₂ : SaturateReach R db d₂) : d₁ = d₂ := by
-  induction h₁ with
-  | fixpoint he =>
+/-- A finite saturation is a sequence of passes of its body. -/
+theorem Reach.saturate_reach {S : Schedule} {db d : Database}
+    (h : Reach db (.saturate S) d) :
+    Relation.ReflTransGen (fun a b => Reach a S b) db d := by
+  generalize hs : Schedule.saturate S = T at h
+  induction h with
+  | run => cases hs
+  | seq => cases hs
+  | fixpoint hp _ _ => cases hs; exact .single hp
+  | again hp _ _ _ ih => cases hs; exact (ih rfl).head hp
+
+/-- A schedule has at most one finite result, even with nested saturation and deletion. -/
+theorem Reach.det {S : Schedule} {db d₁ d₂ : Database}
+    (h₁ : Reach db S d₁) (h₂ : Reach db S d₂) : d₁ = d₂ := by
+  induction h₁ generalizing d₂ with
+  | run => cases h₂; rfl
+  | seq _ _ ih₁ ih₂ =>
     cases h₂ with
-    | fixpoint => rfl
-    | again hn _ => exact (hn he).elim
-  | again hn _ ih =>
+    | seq h₁ h₂ => obtain rfl := ih₁ h₁; exact ih₂ h₂
+  | fixpoint _ he ih =>
     cases h₂ with
-    | fixpoint he => exact (hn he).elim
-    | again _ ht => exact ih ht
+    | fixpoint h₂ _ => exact ih h₂
+    | again h₂ hn _ => exact (hn (ih h₂ ▸ he)).elim
+  | again _ hn _ ih₁ ih₂ =>
+    cases h₂ with
+    | fixpoint h₂ he => exact (hn ((ih₁ h₂).symm ▸ he)).elim
+    | again h₂ _ ht => obtain rfl := ih₁ h₂; exact ih₂ ht
 
-theorem cmdStep_saturate_iff {R : List Rule} {db db' : Database} :
-    CmdStep db (.saturate R) db' ↔ SaturateReach R db db' := Iff.rfl
+/-- Saturation determinism, with an arbitrary nested body. -/
+theorem saturateReach_det {S : Schedule} {db d₁ d₂ : Database}
+    (h₁ : Reach db (.saturate S) d₁) (h₂ : Reach db (.saturate S) d₂) : d₁ = d₂ :=
+  h₁.det h₂
 
-theorem CmdStep.wf {db d : Database} {c : Cmd} (h : CmdStep db c d) (hw : db.WF) : d.WF := by
-  cases c with
-  | run R => subst d; exact RunRules.wf hw
-  | saturate R => exact SaturateReach.wf h hw
+/-- Invert saturation into its first body pass and the stopping or repeating case. -/
+theorem cmdStep_saturate_iff {S : Schedule} {db db' : Database} :
+    Reach db (.saturate S) db' ↔ ∃ d, Reach db S d ∧
+      ((db.SameMeaning d ∧ db' = d) ∨ (¬ db.SameMeaning d ∧ Reach d (.saturate S) db')) := by
+  constructor
+  · intro h
+    cases h with
+    | fixpoint hp he => exact ⟨_, hp, Or.inl ⟨he, rfl⟩⟩
+    | again hp hn ht => exact ⟨_, hp, Or.inr ⟨hn, ht⟩⟩
+  · rintro ⟨d, hp, (⟨he, rfl⟩ | ⟨hn, ht⟩)⟩
+    · exact .fixpoint hp he
+    · exact .again hp hn ht
 
+/-- Invert a sequence at its schedule boundary. -/
+theorem Reach.seq_inv {db d' : Database} {S₁ S₂ : Schedule}
+    (h : Reach db (.seq S₁ S₂) d') : ∃ d, Reach db S₁ d ∧ Reach d S₂ d' := by
+  cases h with | seq h₁ h₂ => exact ⟨_, h₁, h₂⟩
+
+/-- The schedule-level form of command-list append. -/
+theorem Reach.append {db d d' : Database} {S₁ S₂ : Schedule}
+    (h₁ : Reach db S₁ d) (h₂ : Reach d S₂ d') : Reach db (.seq S₁ S₂) d' :=
+  .seq h₁ h₂
 
 theorem CongList.of_eqs_eq {d₁ d₂ : Database} (h : d₁.eqs = d₂.eqs) {as bs : List Term}
-    (hc : CongList d₁ as bs) : CongList d₂ as bs := CongList.mono ⟨h.subset⟩ hc
+    (hc : CongList d₁ as bs) : CongList d₂ as bs := (CongList.iff_of_congr (fun _ _ => Cong.iff_of_eqs_eq h)).mp hc
 
 @[inherit_doc CongList.of_eqs_eq]
 theorem Database.mem_terms_of_eqs_eq {d₁ d₂ : Database} (h : d₁.eqs = d₂.eqs) {t : Term}
-    (ht : t ∈ d₁.terms) : t ∈ d₂.terms := Database.Contained.terms ⟨h.subset⟩ ht
+    (ht : t ∈ d₁.terms) : t ∈ d₂.terms := Database.terms_eq_of_eqs_eq h ▸ ht
 
 
 
@@ -178,43 +214,5 @@ theorem avoids_addTerms {f : FnName} {db : Database} {ts : List Term}
   rcases hs with hs | ⟨t, hm, hs⟩
   · exact hav s hs
   · exact fun hmen => ht t hm (Term.mentions_of_subterm hs hmen)
-
-theorem ProgramStep.cons_inv {db d' : Database} {c : Cmd} {cs : List Cmd}
-    (h : ProgramStep db (c :: cs) d') : ∃ d, CmdStep db c d ∧ ProgramStep d cs d' := by
-  cases h with | cons hc hrest => exact ⟨_, hc, hrest⟩
-
-theorem ProgramStep.nil_inv {db d' : Database} (h : ProgramStep db [] d') : db = d' := by
-  cases h with | nil => rfl
-
-/-- Running `p` then `q` is running `p ++ q`. What lets a concrete program be built a
-prefix at a time. -/
-theorem ProgramStep.append {db d d' : Database} {p q : List Cmd} (h₁ : ProgramStep db p d) :
-    ProgramStep d q d' → ProgramStep db (p ++ q) d' := by
-  induction h₁ with
-  | nil => exact id
-  | cons hc _ ih => exact fun h₂ => .cons hc (ih h₂)
-
-
-theorem ProgramStep.wf {db d : Database} {p : List Cmd} (h : ProgramStep db p d)
-    (hw : db.WF) : d.WF := by
-  induction h with
-  | nil => exact hw
-  | cons hc _ ih => exact ih (hc.wf hw)
-
-
-theorem CmdStep.det {db d₁ d₂ : Database} {c : Cmd}
-    (h₁ : CmdStep db c d₁) (h₂ : CmdStep db c d₂) : d₁ = d₂ := by
-  cases c with
-  | run R => exact h₁.trans h₂.symm
-  | saturate R => exact saturateReach_det h₁ h₂
-
-theorem ProgramStep.det {db d₁ d₂ : Database} {p : List Cmd}
-    (h₁ : ProgramStep db p d₁) (h₂ : ProgramStep db p d₂) : d₁ = d₂ := by
-  induction h₁ with
-  | nil => exact h₂.nil_inv
-  | cons hc _ ih =>
-    obtain ⟨mid, hc', ht⟩ := h₂.cons_inv
-    obtain rfl := hc.det hc'
-    exact ih ht
 
 end Egglog

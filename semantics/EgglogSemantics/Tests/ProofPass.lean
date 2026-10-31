@@ -8,12 +8,12 @@ set_option linter.hashCommand false
 def a : Term := .app "A" []
 def b : Term := .app "B" []
 def seed : Rule := ⟨[], [.union a.toExpr b.toExpr]⟩
-def program : Program := ⟨[.run [seed]], [.eq a.toExpr b.toExpr]⟩
+def program : Program := ⟨Schedule.seqAll [.run [seed]], [.eq a.toExpr b.toExpr]⟩
 
 /-- Execute the actual firing-log instrumentation of the congruence compilation. -/
 def run : Option FDatabase := do
   let annotated ← Provenance.encode (Congruence.encode program)
-  Relational.execProgram FDatabase.empty annotated.commands
+  Relational.execSchedule runFuel FDatabase.empty annotated.schedule
 
 def proofs : Option (List SourceProof.Proof) := do
   let d ← run
@@ -41,28 +41,28 @@ private def registered : Database :=
   Database.empty
 def reached : Database := RunRules [seed] registered
 
-theorem source_reached : ProgramStep Database.empty program.commands reached :=
-  .cons rfl .nil
+theorem source_reached : Reach Database.empty program.schedule reached :=
+  .run
 
-private theorem registered_deleteFree : ∀ r ∈ [seed], r.DeleteFree := by
+private theorem registered_subsumeFree : ∀ r ∈ [seed], r.SubsumeFree := by
   intro r hr
   have he : r = seed := List.mem_singleton.mp hr
   subst r
-  simp [Rule.DeleteFree, Actions.DeleteFree, seed, Action.DeleteFree, Action.monotoneB]
+  simp [Rule.SubsumeFree, Actions.SubsumeFree, seed, Action.SubsumeFree, Action.monotoneB]
 
 private theorem equality_asserted : (a, b) ∈ reached.eqs := by
   have hf : registered.addEq a b ∈ RuleResults registered seed :=
     ⟨[], ⟨[], .nil, .nil⟩, rfl⟩
-  have hc := SourceMeaning.firing_contained_round registered_deleteFree
+  have hc := SourceMeaning.firing_contained_round registered_subsumeFree
     (by simp) hf
   exact hc.eqs (Set.mem_insert _ _)
 
-theorem source_saturated (c : Cmd) (hc : c ∈ program.commands) :
-    RunSaturated c.rules reached := by
-  have hc : c = .run [seed] := List.mem_singleton.mp hc
-  subst c
+theorem source_saturated (rs : List Rule) (hc : rs ∈ program.runs) :
+    RunSaturated rs reached := by
+  have hc : rs = [seed] := List.mem_singleton.mp hc
+  subst rs
   have hfixed : RunRules [seed] reached = reached := by
-    apply (runRules_eq_self_iff [seed] reached registered_deleteFree).mpr
+    apply (runRules_eq_self_iff [seed] reached registered_subsumeFree).mpr
     intro r hr out hout
     have he : r = seed := List.mem_singleton.mp hr
     subst r
@@ -70,11 +70,11 @@ theorem source_saturated (c : Cmd) (hc : c ∈ program.commands) :
     have he : evalActions σ reached seed.actions = some (reached.addEq a b) := rfl
     rw [he] at hf
     obtain rfl := Option.some.inj hf
-    constructor
+    refine ⟨?_, Set.Subset.rfl⟩
     rintro p (rfl | hp)
     · exact equality_asserted
     · exact hp
-  rw [RunSaturated, Cmd.rules, hfixed]
+  rw [RunSaturated, hfixed]
   exact Database.SameMeaning.refl _
 
 /-- The actual instrumented run's extracted certificates infer their source claims. -/

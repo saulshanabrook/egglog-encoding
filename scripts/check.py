@@ -232,6 +232,17 @@ class Checks:
             "../paper/semantics.tex",
             lean=True,
         )
+        self._no_overfull(ROOT / "paper" / "build" / "semantics.log")
+
+    @staticmethod
+    def _no_overfull(log: Path) -> None:
+        """Fail on a display wider than the ACM text width the local paper is set to."""
+        overfull = [line for line in log.read_text(errors="replace").splitlines() if line.startswith("Overfull")]
+        if overfull:
+            sys.exit(f"{log}: {len(overfull)} overfull boxes\n" + "\n".join(overfull))
+
+    def paper_sync(self) -> None:
+        self._run(sys.executable, "scripts/paper_sync.py")
 
     def paper_extract(self) -> None:
         self._lake("build", "EgglogPaper", *(f"{module}:blueprint" for module in PAPER_MODULES))

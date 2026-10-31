@@ -6,14 +6,14 @@ Every premise of a firing is an established fact: a row, or a subterm of one. -/
 
 namespace Egglog.Provenance
 
-/-- The facts one action produces: a written row and its subterms. A delete produces none,
-and a union is outside the relational language. -/
+/-- The facts one action produces: a written row and its subterms. A subsume produces none
+that a certificate may cite, and a union is outside the relational language. -/
 def actionFacts (σ : Env) : Action → Option (List Term)
   | .expr e => do
       let t ← e.eval σ
       some t.subtermList
-  | .delete e => do
-      let _ ← e.eval σ
+  | .subsume _ es => do
+      let _ ← Expr.evalList es σ
       some []
   | .union _ _ => none
 

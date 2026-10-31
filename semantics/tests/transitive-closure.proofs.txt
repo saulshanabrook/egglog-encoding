@@ -9,257 +9,20 @@
                 (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
                   (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
                   (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
+                (N2) = (N2)  rule 1 {}
+            (N1) = (N1)  rule 0 {}
+          (N2) = (N2)  rule 1 {}
         (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
           (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
             (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
-      (N1) = (N1)  rule 4 {a := (N1), b := (N2), c := (N3)}
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-          (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-            (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
-    (N3) = (N3)  rule 4 {a := (N1), b := (N2), c := (N3)}
-      (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-          (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-          (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-              (N1) = (N1)  rule 0 {}
-            (N2) = (N2)  rule 0 {}
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (N3) = (N3)  rule 1 {}
+            (N2) = (N2)  rule 1 {}
+          (N3) = (N3)  rule 2 {}
+      (N1) = (N1)  rule 0 {}
+    (N3) = (N3)  rule 2 {}
   (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
     (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 0
       (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
-      (N3) = (N3)  rule 4 {a := (N1), b := (N2), c := (N3)}
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-          (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-            (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
-    (N4) = (N4)  rule 2 {}
-
-(Path (N1) (N4)) = (Path (N1) (N4))  rule 4 {a := (N1), b := (N3), c := (N4)}
-  (Path (N1) (N3)) = (Path (N1) (N3))  congr 1
-    (Path (N1) (N3)) = (Path (N1) (N3))  congr 0
-      (Path (N1) (N3)) = (Path (N1) (N3))  rule 4 {a := (N1), b := (N2), c := (N3)}
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-          (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-            (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
-      (N1) = (N1)  rule 4 {a := (N1), b := (N2), c := (N3)}
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-          (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-            (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
-    (N3) = (N3)  rule 4 {a := (N1), b := (N2), c := (N3)}
-      (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-          (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-          (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-              (N1) = (N1)  rule 0 {}
-            (N2) = (N2)  rule 0 {}
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (N3) = (N3)  rule 1 {}
-  (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
-    (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 0
-      (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
-      (N3) = (N3)  rule 4 {a := (N1), b := (N2), c := (N3)}
-        (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-          (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-            (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-            (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                (N1) = (N1)  rule 0 {}
-              (N2) = (N2)  rule 0 {}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-              (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-                (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-                  (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-                  (N1) = (N1)  rule 0 {}
-                (N2) = (N2)  rule 0 {}
-          (N3) = (N3)  rule 1 {}
+      (N3) = (N3)  rule 2 {}
     (N4) = (N4)  rule 2 {}
 
 (Path (N1) (N3)) = (Path (N1) (N3))  rule 4 {a := (N1), b := (N2), c := (N3)}
@@ -270,61 +33,14 @@
           (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
             (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
             (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-      (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-            (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-    (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-      (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-          (N1) = (N1)  rule 0 {}
-        (N2) = (N2)  rule 0 {}
+          (N2) = (N2)  rule 1 {}
+      (N1) = (N1)  rule 0 {}
+    (N2) = (N2)  rule 1 {}
   (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
     (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
       (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-      (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-            (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-    (N3) = (N3)  rule 1 {}
-
-(Path (N1) (N3)) = (Path (N1) (N3))  rule 4 {a := (N1), b := (N2), c := (N3)}
-  (Path (N1) (N2)) = (Path (N1) (N2))  congr 1
-    (Path (N1) (N2)) = (Path (N1) (N2))  congr 0
-      (Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-            (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-      (N1) = (N1)  rule 3 {a := (N1), b := (N2)}
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-            (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-    (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-      (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-          (N1) = (N1)  rule 0 {}
-        (N2) = (N2)  rule 0 {}
-  (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-    (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-      (N2) = (N2)  rule 3 {a := (N1), b := (N2)}
-        (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-          (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-            (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-            (N1) = (N1)  rule 0 {}
-          (N2) = (N2)  rule 0 {}
-    (N3) = (N3)  rule 1 {}
+      (N2) = (N2)  rule 1 {}
+    (N3) = (N3)  rule 2 {}
 
 (Path (N2) (N4)) = (Path (N2) (N4))  rule 4 {a := (N2), b := (N3), c := (N4)}
   (Path (N2) (N3)) = (Path (N2) (N3))  congr 1
@@ -334,96 +50,28 @@
           (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
             (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
             (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-      (N2) = (N2)  rule 3 {a := (N2), b := (N3)}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-    (N3) = (N3)  rule 3 {a := (N2), b := (N3)}
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-          (N2) = (N2)  rule 1 {}
-        (N3) = (N3)  rule 1 {}
-  (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
-    (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 0
-      (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
-      (N3) = (N3)  rule 3 {a := (N2), b := (N3)}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-    (N4) = (N4)  rule 2 {}
-
-(Path (N2) (N4)) = (Path (N2) (N4))  rule 4 {a := (N2), b := (N3), c := (N4)}
-  (Path (N2) (N3)) = (Path (N2) (N3))  congr 1
-    (Path (N2) (N3)) = (Path (N2) (N3))  congr 0
-      (Path (N2) (N3)) = (Path (N2) (N3))  rule 3 {a := (N2), b := (N3)}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-      (N2) = (N2)  rule 3 {a := (N2), b := (N3)}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-    (N3) = (N3)  rule 3 {a := (N2), b := (N3)}
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-          (N2) = (N2)  rule 1 {}
-        (N3) = (N3)  rule 1 {}
-  (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
-    (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 0
-      (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
-      (N3) = (N3)  rule 3 {a := (N2), b := (N3)}
-        (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-          (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-            (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-            (N2) = (N2)  rule 1 {}
-          (N3) = (N3)  rule 1 {}
-    (N4) = (N4)  rule 2 {}
-
-(Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-  (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-    (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-      (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-      (N1) = (N1)  rule 0 {}
-    (N2) = (N2)  rule 0 {}
-
-(Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
-  (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
-    (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
-      (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-      (N1) = (N1)  rule 0 {}
-    (N2) = (N2)  rule 0 {}
-
-(Path (N2) (N3)) = (Path (N2) (N3))  rule 3 {a := (N2), b := (N3)}
-  (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-    (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
+          (N3) = (N3)  rule 2 {}
       (N2) = (N2)  rule 1 {}
-    (N3) = (N3)  rule 1 {}
-
-(Path (N2) (N3)) = (Path (N2) (N3))  rule 3 {a := (N2), b := (N3)}
-  (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
-    (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
-      (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
-      (N2) = (N2)  rule 1 {}
-    (N3) = (N3)  rule 1 {}
-
-(Path (N3) (N4)) = (Path (N3) (N4))  rule 3 {a := (N3), b := (N4)}
+    (N3) = (N3)  rule 2 {}
   (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
     (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 0
       (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
       (N3) = (N3)  rule 2 {}
     (N4) = (N4)  rule 2 {}
+
+(Path (N1) (N2)) = (Path (N1) (N2))  rule 3 {a := (N1), b := (N2)}
+  (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 1
+    (Edge (N1) (N2)) = (Edge (N1) (N2))  congr 0
+      (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
+      (N1) = (N1)  rule 0 {}
+    (N2) = (N2)  rule 1 {}
+
+(Path (N2) (N3)) = (Path (N2) (N3))  rule 3 {a := (N2), b := (N3)}
+  (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 1
+    (Edge (N2) (N3)) = (Edge (N2) (N3))  congr 0
+      (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
+      (N2) = (N2)  rule 1 {}
+    (N3) = (N3)  rule 2 {}
 
 (Path (N3) (N4)) = (Path (N3) (N4))  rule 3 {a := (N3), b := (N4)}
   (Edge (N3) (N4)) = (Edge (N3) (N4))  congr 1
@@ -434,28 +82,14 @@
 
 (Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
 
-(Edge (N3) (N4)) = (Edge (N3) (N4))  rule 2 {}
-
 (N4) = (N4)  rule 2 {}
-
-(N4) = (N4)  rule 2 {}
-
-(Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
 
 (Edge (N2) (N3)) = (Edge (N2) (N3))  rule 1 {}
 
 (N3) = (N3)  rule 2 {}
 
-(N3) = (N3)  rule 2 {}
-
-(Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
-
 (Edge (N1) (N2)) = (Edge (N1) (N2))  rule 0 {}
 
 (N2) = (N2)  rule 1 {}
-
-(N2) = (N2)  rule 1 {}
-
-(N1) = (N1)  rule 0 {}
 
 (N1) = (N1)  rule 0 {}

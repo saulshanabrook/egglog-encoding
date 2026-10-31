@@ -126,6 +126,8 @@ theorem blt_admissible : AdmissibleOrder (fun s t => blt s t = true) where
   total := blt_total
   subterm := fun _ _ hs hn => hs.blt hn
   literals := by intro m n; simp [blt_lit_lit, Lit.blt]
+  strings := by intro a b; simp [blt_lit_lit, Lit.blt]
+  numbersFirst := by intro n a; simp [blt_lit_lit, Lit.blt]
   finiteLower := fun _ _ hn hl t => finite_predecessors hn hl t
 
 end Egglog.Term

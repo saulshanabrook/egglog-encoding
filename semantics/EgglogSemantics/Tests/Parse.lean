@@ -79,7 +79,7 @@ open Sexp
 
 def expr : Sexp → Except String Expr
   | .atom s => .ok (match s.toInt? with | some n => .lit (.int n) | none => .var s)
-  | .str s => .error s!"unexpected string \"{s}\""
+  | .str s => .ok (.lit (.str s))
   | .list [.atom "min", a, b] => do pure (.min (← expr a) (← expr b))
   | .list (.atom f :: args) => do pure (.app f (← args.mapM expr))
   | .list _ => .error "an application starts with a name"
@@ -91,7 +91,11 @@ def pattern : Sexp → Except String Pattern
 
 def action : Sexp → Except String Action
   | .list [.atom "union", a, b] => do pure (.union (← expr a) (← expr b))
-  | .list [.atom "delete", target] => do pure (.delete (← expr target))
+  | .list [.atom "subsume", target] => do
+      match ← expr target with
+      | .app f es => pure (.subsume f es)
+      | _ => throw "`subsume` names a row by its symbol and arguments"
+  | .list [.atom "delete", _] => .error "`delete` is not modelled; the model subsumes rows"
   | .list (.atom "set" :: _) => .error "`set` writes a merge function, which the model has no longer"
   | s => do pure (.expr (← expr s))
 
@@ -120,20 +124,14 @@ def rule (query actions : Sexp) (opts : List Sexp) : Except String (Rule × Stri
     | none => pure ""
   pure (⟨← qs.mapM pattern, ← as.mapM action⟩, ruleset)
 
-def runTarget : Sexp → Except String String
-  | .atom r => .ok r
-  | .list [.atom "run"] => .ok ""
-  | .list [.atom "run", .atom r] => .ok r
-  | _ => .error "unsupported schedule"
-
 /-- A parsed top-level form. -/
 inductive Form where
   /-- Register a rule in a ruleset. -/
   | rule (r : Rule) (ruleset : String)
   /-- Fire the ruleset's rules once, `n` times over. -/
   | run (ruleset : String) (n : Nat)
-  /-- Fire the ruleset's rules until nothing changes. -/
-  | saturate (ruleset : String)
+  /-- A `run-schedule` body, to resolve against the rulesets registered so far. -/
+  | schedule (s : Sexp)
   | check (q : Query)
   /-- A top-level action, run once. -/
   | action (a : Action)
@@ -157,8 +155,7 @@ def command : Sexp → Except String Form
     match n.toNat? with
     | some n => .ok (.run r n)
     | none => .error "`run` takes a ruleset and a count"
-  | .list [.atom "run-schedule", .list [.atom "saturate", target]] => do
-    pure (.saturate (← runTarget target))
+  | .list (.atom "run-schedule" :: body) => .ok (.schedule (.list (.atom "seq" :: body)))
   | .list (.atom "datatype" :: _) => .error "`datatype` is not supported; use `constructor`"
   | s@(.list (.atom head :: _)) =>
     if head.startsWith ":" then .error s!"unsupported command {head}"
@@ -168,7 +165,7 @@ def command : Sexp → Except String Form
 /-- The rulesets registered so far, the commands, and the final check once seen. -/
 structure State where
   rulesets : List (String × List Rule) := []
-  commands : Array Cmd := #[]
+  commands : Array Schedule := #[]
   check : Option Query := none
 
 /-- The rules registered in `R` so far, in registration order. -/
@@ -182,17 +179,33 @@ def State.register (st : State) (R : String) (r : Rule) : State :=
       else st.rulesets ++ [(R, [r])] }
 
 /-- Add a command. Nothing may follow the check. -/
-def State.push (st : State) (c : Cmd) : Except String State :=
+def State.push (st : State) (c : Schedule) : Except String State :=
   if st.check.isSome then .error "`check` must be the last command" else
     .ok { st with commands := st.commands.push c }
+
+/-- A `run-schedule` body: `(run R)`, `(saturate S…)`, `(seq S…)`, `(repeat n S…)`, or a
+bare ruleset name, over the rules registered so far. -/
+partial def State.schedule (st : State) : Sexp → Except String Schedule
+  | .atom r => .ok (.run (st.rules r))
+  | .list [.atom "run"] => .ok (.run (st.rules ""))
+  | .list [.atom "run", .atom r] => .ok (.run (st.rules r))
+  | .list (.atom "saturate" :: ss) => do pure (.saturate (Schedule.seqAll (← ss.mapM st.schedule)))
+  | .list (.atom "seq" :: ss) => do pure (Schedule.seqAll (← ss.mapM st.schedule))
+  | .list (.atom "repeat" :: .atom n :: ss) =>
+      match n.toNat? with
+      | some n => do
+          let body := Schedule.seqAll (← ss.mapM st.schedule)
+          pure (Schedule.seqAll (List.replicate n body))
+      | none => .error "`repeat` takes a count"
+  | s => .error s!"unsupported schedule {repr s}"
 
 def State.step (st : State) : Form → Except String State
   | .nothing => .ok st
   | .rule r R =>
       if st.check.isSome then .error "`check` must be the last command" else
         .ok (st.register R r)
-  | .run R n => (List.replicate n (Cmd.run (st.rules R))).foldlM State.push st
-  | .saturate R => st.push (.saturate (st.rules R))
+  | .run R n => (List.replicate n (Schedule.run (st.rules R))).foldlM State.push st
+  | .schedule s => do st.push (← st.schedule s)
   | .action a => st.push (.run [⟨[], [a]⟩])
   | .check q =>
       if st.check.isSome then .error "a program has one `check`" else
@@ -201,12 +214,13 @@ def State.step (st : State) : Form → Except String State
 end Parse
 
 /-- Parse a program from egglog source. A run of a ruleset fires the rules registered in
-it so far; a top-level action is a run of an empty-query rule; the check, if any, comes
-last, and a program without one ends in the empty check. -/
+it so far; a top-level action is a run of an empty-query rule; the top-level commands
+become one sequence; the check, if any, comes last, and a program without one ends in the
+empty check. -/
 def Program.ofEgg (src : String) : Except String Program := do
   let forms ← Sexp.parseAll src
   let st ← forms.foldlM (fun st form => do st.step (← Parse.command form)) ({} : Parse.State)
-  pure { commands := st.commands.toList, check := st.check.getD [] }
+  pure { schedule := Schedule.seqAll st.commands.toList, check := st.check.getD [] }
 
 end Egglog
 
@@ -233,13 +247,22 @@ private def roundTrip (src : String) : Bool :=
     (rule () ((A)) :ruleset r0)\n(run r0 1)\n(rule () ((A)) :ruleset r1)\n(run r1 1)\n"
 -- A run fires the rules registered in its ruleset so far; rules never run are dropped.
 #guard ((Program.ofEgg "(rule ((A)) ((B))) (run 1) (rule ((B)) ((C))) (run 1)").map
-    fun p => p.commands.map fun c => c.rules.length).toOption == some [1, 2]
+    fun p => p.runs.map List.length).toOption == some [1, 2]
 #guard ((Program.ofEgg "(rule ((A)) ((B))) (rule ((B)) ((C)) :ruleset R)").map
-    fun p => p.commands.length).toOption == some 0
--- The generated tables: relations, disequality guards, and deletes.
+    fun p => p.rules.isEmpty).toOption == some true
+-- Nested schedules: `seq`, `saturate`, `repeat`, and bare ruleset names.
+#guard roundTrip "(rule ((A)) ((B)) :ruleset R)\n(rule ((B)) ((C)) :ruleset Q)\n\
+  (run-schedule (saturate (seq (run R) (saturate (run Q)))))\n"
+#guard ((Program.ofEgg "(rule ((A)) ((B)) :ruleset R) (run-schedule (repeat 2 R))").map
+    fun p => p.runs.length).toOption == some 2
+#guard ((Program.ofEgg "(run-schedule (saturate (run)))").map
+    fun p => match p.schedule with
+      | .saturate (.run []) => true
+      | _ => false).toOption == some true
+-- The generated tables: relations, disequality guards, and subsumption.
 #guard roundTrip "(sort Math)\n(ruleset r0)\n(relation @UF (Math Math))\n\
-  (rule ((@UF @a @b) (@UF @b @c) (!= @b @c)) ((delete (@UF @a @b)) (@UF @a @c)) \
-  :ruleset r0)\n(run-schedule (saturate r0))\n"
+  (rule ((@UF @a @b) (@UF @b @c) (!= @b @c)) ((subsume (@UF @a @b)) (@UF @a @c)) \
+  :ruleset r0)\n(run-schedule (saturate (run r0)))\n"
 -- The check is last and unique; a program without one ends in the empty check.
 #guard (Program.ofEgg "(check (A)) (A)").isOk == false
 #guard (Program.ofEgg "(check (A)) (check (B))").isOk == false

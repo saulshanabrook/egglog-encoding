@@ -11,23 +11,23 @@ theorem sourceOk_fragment {P : Program} (h : sourceOk P = true) : P.Fragment :=
 
 /-- The fragment computes with no `min`, so neither does any of its rules. -/
 theorem sourceOk_rule {P : Program} (h : sourceOk P = true) {r : Rule}
-    (hr : r ∈ P.rules) : r.OrderingFree := by
-  obtain ⟨c, hc, hr⟩ := List.mem_flatMap.mp hr
-  exact (sourceOk_fragment h).noMin.1 c hc r hr
+    (hr : r ∈ P.rules) : r.OrderingFree :=
+  (sourceOk_fragment h).noMin.1 r hr
 
 /-- A checked head fact follows from a valid source rule firing, up to supported terms. -/
 theorem ruleFacts_supported {P : Program} {db : Database}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (hok : sourceOk P = true) {r : Rule}
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (hok : sourceOk P = true) {r : Rule}
     (hr : r ∈ P.rules) {σ : Env} {premises fs : List Claim}
     (hp : ∀ c ∈ premises, c.Supported db) (hf : ruleFacts r σ premises = some fs) :
     ∀ c ∈ fs, c.Supported db := by
-  obtain ⟨cmd, hcmd, hr⟩ := List.mem_flatMap.mp hr
-  have hdf : ∀ r ∈ cmd.rules, r.DeleteFree := Cmd.deleteFree_of_monotone
-    (List.all_eq_true.mp (Bool.and_eq_true_iff.mp (sourceOk_fragment hok).monotone).1 cmd hcmd)
-  have hmodel : RunRules cmd.rules db.completion = db.completion :=
-    SourceMeaning.completion_closed_of_saturated hw hdf
-      ((sourceOk_fragment hok).noMin.1 cmd hcmd) (hclosed cmd hcmd)
+  obtain ⟨rs, hrs, hr⟩ := Program.mem_rules_iff.mp hr
+  have hmem : ∀ r ∈ rs, r ∈ P.rules := fun r hr => Program.mem_rules_iff.mpr ⟨rs, hrs, hr⟩
+  have hdf : ∀ r ∈ rs, r.SubsumeFree := fun r hr =>
+    Schedule.subsumeFree_of_monotone
+      (Bool.and_eq_true_iff.mp (sourceOk_fragment hok).monotone).1 r (hmem r hr)
+  have hX : db.subsumed = ∅ := hs.subsumed_eq
+    (Schedule.subsumeFree_of_monotone (Bool.and_eq_true_iff.mp (sourceOk_fragment hok).monotone).1)
   unfold ruleFacts at hf
   split at hf
   · rename_i hchecks
@@ -36,14 +36,21 @@ theorem ruleFacts_supported {P : Program} {db : Database}
       fun c hc => (hp c hc).completion hw
     have hval : ∀ b ∈ σ, b.2 ∈ db.completion.terms := fun b hb =>
       supportedValue_sound hw.completion hh (hchecks.1.2 b hb)
-    obtain ⟨τ, hτ, hag⟩ := querySubst_of_matches hchecks.1.1 hval
-      (premisesMatch_sound hh hchecks.2)
+    have hn := (sourceOk_fragment hok).noMin.1 r (hmem r hr)
+    have hsmean := (db.sameMeaning_completion hw).symm
+    obtain ⟨τ, hτ, hrel⟩ := SourceMeaning.querySubst_of_matches_transport
+      hw.completion hw hsmean (Database.hasReps_of_finite hs.finite_from_empty)
+      hchecks.1.1 hval hn.1 (premisesMatch_sound hX hn.1 hh hchecks.2)
     obtain ⟨d, hd, hfacts⟩ := actionsFacts_sound (db := db.completion) hf
-    have hresult : d ∈ RuleResults db.completion r :=
-      ⟨τ, hτ, by rw [evalActions_agree hag]; exact hd⟩
-    have hpost : d.Contained db.completion :=
-      (runRules_eq_self_iff cmd.rules db.completion hdf).mp hmodel r hr d hresult
-    exact fun c hc => Claim.Supported.of_completion hw ((hfacts c hc).mono hpost)
+    obtain ⟨out, hout, hsame⟩ := SourceMeaning.evalLocalActions_transport
+      hw.completion hw hsmean rfl hrel hn.2 (hdf r hr) hd
+    have hpost := SourceMeaning.firing_contained_round hdf hr ⟨τ, hτ, hout⟩
+    intro c hc
+    apply Claim.Supported.of_completion hw
+    apply (Database.cong_completion_iff hw).mpr
+    exact ((hclosed rs hrs).inferred _ _).mpr
+      (InferredFacts.infers_mono hpost
+        ((hsame.inferred _ _).mp (InferredFacts.infers_of_cong (hfacts c hc))))
   · contradiction
 
 end Egglog.SourceProof

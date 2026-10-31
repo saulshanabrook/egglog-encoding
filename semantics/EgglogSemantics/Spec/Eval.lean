@@ -13,10 +13,12 @@ mutual
 @[blueprint "def:evaluation"
   (statement := /--
   \[
+  \begin{gathered}
   \sigma:\mathit{Var}\rightharpoonup\mathit{Term}\qquad
   \eval x=\sigma(x)\qquad
-  \eval{f(e_1,\ldots,e_n)}=f(\eval{e_1},\ldots,\eval{e_n})\qquad
+  \eval{f(e_1,\ldots,e_n)}=f(\eval{e_1},\ldots,\eval{e_n})\\
   \eval{\min(e_1,e_2)}=\min_{\prec}(\eval{e_1},\eval{e_2})
+  \end{gathered}
   \]
   -/)
   (latexEnv := "paperfragment")]
@@ -33,50 +35,41 @@ def Expr.evalList : List Expr → Env → Option (List Term)
 
 end
 
-/-- The equations an action asserts. Actions read only the bindings, never the store, so
-an action sequence denotes a set of equations to add and a set of rows to remove. A
-delete asserts no equation, but its term must evaluate.
+/-- `G ⊕_σ h`: the e-graph after one action under a substitution. Actions read only the
+bindings, never the store, and every action adds, so the actions of a head commute. A
+subsume asserts the row it marks, as egglog inserts a missing row it subsumes.
 
 A `union` on a literal is stuck. egglog rejects it in its type checker — `union` wants an
 eq-sort and `i64` is not one (`TypeError::NonEqsortUnion`) — and this untyped model cannot
 see it until the operands are values. Asserting it instead would cost
 `Database.LitsIsolated`. -/
-def Action.write (σ : Env) : Action → Option (Set (Term × Term))
-  | .expr e => (e.eval σ).map fun t => {(t, t)}
-  | .union e₁ e₂ =>
-      (e₁.eval σ).bind fun t₁ =>
-        (e₂.eval σ).bind fun t₂ =>
-          if t₁.isLit || t₂.isLit then none else some {(t₁, t₂)}
-  | .delete e => (e.eval σ).map fun _ => ∅
-
-/-- The rows an action removes: the term of a delete, and nothing for the others. -/
-def Action.erase (σ : Env) : Action → Option (Set Term)
-  | .delete e => (e.eval σ).map fun t => {t}
-  | a => (a.write σ).map fun _ => ∅
-
-/-- The equations asserted by an action sequence, defined when every action's is. -/
 @[blueprint "def:actions"
   (statement := /--
-\[
+  \[
   \begin{gathered}
-  \writes e=\{(\eval e,\eval e)\}\qquad
-  \writes{\kw{union}(e_1,e_2)}=\{(\eval{e_1},\eval{e_2})\}\qquad
-  \writes{\kw{delete}(e)}=\emptyset\\
-  \erases{\kw{delete}(e)}=\{\eval e\}\qquad
-  \erases{e}=\erases{\kw{union}(e_1,e_2)}=\emptyset\\
-  \writes{h_1;\ldots;h_n}=\bigcup_{i=1}^n\writes{h_i}\qquad
-  \erases{h_1;\ldots;h_n}=\bigcup_{i=1}^n\erases{h_i}
+  \begin{aligned}
+  (E,X)\oplus_\sigma\kw{union}(e_1,e_2)&=(E\cup\{(\eval{e_1},\eval{e_2})\},\ X)\\
+  (E,X)\oplus_\sigma\kw{subsume}(f(e_1,\ldots,e_n))&=(E\cup\{(t,t)\},\ X\cup\{t\})
+    \quad\text{where }t=\eval{f(e_1,\ldots,e_n)}\\
+  G\oplus_\sigma\{h_1,\ldots,h_n\}&=G\oplus_\sigma h_1\oplus_\sigma\cdots\oplus_\sigma h_n
+  \end{aligned}
   \end{gathered}
   \]
   -/)
   (latexEnv := "paperfragment")]
-def Action.writes (σ : Env) : List Action → Option (Set (Term × Term))
-  | [] => some ∅
-  | a :: as => (a.write σ).bind fun W => (Action.writes σ as).map (W ∪ ·)
+def evalAction (σ : Env) (db : Database) : Action → Option Database
+  | .expr e => (e.eval σ).map fun t => db.addTerm t
+  | .union e₁ e₂ =>
+      (e₁.eval σ).bind fun t₁ =>
+        (e₂.eval σ).bind fun t₂ =>
+          if t₁.isLit || t₂.isLit then none else some (db.addEq t₁ t₂)
+  | .subsume f es =>
+      (Expr.evalList es σ).map fun ts => (db.addTerm (.app f ts)).addSubsumed {.app f ts}
 
-/-- The rows removed by an action sequence, defined exactly when its writes are. -/
-def Action.erases (σ : Env) : List Action → Option (Set Term)
-  | [] => some ∅
-  | a :: as => (a.erase σ).bind fun X => (Action.erases σ as).map (X ∪ ·)
+/-- `G ⊕_σ H`: the actions of a head in turn, and `none` if one is stuck. The order does not
+matter, since every action only adds. -/
+def evalActions (σ : Env) (db : Database) : List Action → Option Database
+  | [] => some db
+  | a :: as => (evalAction σ db a).bind fun db' => evalActions σ db' as
 
 end Egglog

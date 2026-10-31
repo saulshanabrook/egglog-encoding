@@ -4,7 +4,7 @@ CHECK_TARGETS := \
 	lean-check lean-difftest lean-compiled-difftest lean-congruence-test lean-provenance-test \
 	lean-resugar-test \
 	lean-certificate-test lean-update-fixtures lean-egg-test lean-update-egg-snapshots \
-	paper paper-check paper-extract update-snapshots format \
+	paper paper-check paper-extract paper-sync update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-doc-links rust-test
 .PHONY: $(CHECK_TARGETS) slotted-eval benchmark-smoke nightly nightly-local nightly-uv nightly-rustup

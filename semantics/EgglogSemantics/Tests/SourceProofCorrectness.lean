@@ -11,7 +11,7 @@ def conclusion : Term := .app "B" []
 def derive : Rule :=
   ⟨[.expr (.app "A" [])], [.expr (.app "B" [])]⟩
 def initial : Rule := ⟨[], [.expr premise.toExpr]⟩
-def program : Program := ⟨[.run [initial], .run [derive]], [.expr conclusion.toExpr]⟩
+def program : Program := ⟨Schedule.seqAll [.run [initial], .run [derive]], [.expr conclusion.toExpr]⟩
 def certificate : Proof :=
   .rule ⟨conclusion, conclusion⟩ 1 [] [.rule ⟨premise, premise⟩ 0 [] []]
 
@@ -19,8 +19,8 @@ private def seeded : Database := Database.empty
 private def registered : Database := RunRules [initial] seeded
 def reached : Database := RunRules [derive] registered
 
-theorem source_reached : ProgramStep Database.empty program.commands reached :=
-  .cons rfl (.cons rfl .nil)
+theorem source_reached : Reach Database.empty program.schedule reached :=
+  .seq .run .run
 
 theorem source_fragment : program.Fragment := by
   refine ⟨by decide, by decide, ?_, by decide, by decide, by decide, by decide⟩
@@ -33,26 +33,27 @@ theorem certificate_accepted :
   simp only [check, hok, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
   decide
 
-private theorem initial_deleteFree : ∀ r ∈ [initial], r.DeleteFree := by
-  simp [Rule.DeleteFree, Actions.DeleteFree, initial, Action.DeleteFree, Action.monotoneB]
+private theorem initial_subsumeFree : ∀ r ∈ [initial], r.SubsumeFree := by
+  simp [Rule.SubsumeFree, Actions.SubsumeFree, initial, Action.SubsumeFree, Action.monotoneB]
 
-private theorem derive_deleteFree : ∀ r ∈ [derive], r.DeleteFree := by
-  simp [Rule.DeleteFree, Actions.DeleteFree, derive, Action.DeleteFree, Action.monotoneB]
+private theorem derive_subsumeFree : ∀ r ∈ [derive], r.SubsumeFree := by
+  simp [Rule.SubsumeFree, Actions.SubsumeFree, derive, Action.SubsumeFree, Action.monotoneB]
 
 private theorem premise_asserted : (premise, premise) ∈ registered.eqs := by
   have hf : seeded.addTerm premise ∈ RuleResults seeded initial :=
     ⟨[], ⟨[], .nil, .nil⟩, rfl⟩
-  have hc := SourceMeaning.firing_contained_round initial_deleteFree
+  have hc := SourceMeaning.firing_contained_round initial_subsumeFree
     (by simp) hf
   exact hc.eqs (Set.mem_insert _ _)
 
 private theorem initial_match : ValidQuerySubst registered derive.query [] := by
   refine ⟨[[]], .cons ⟨⟨List.Perm.refl [], by simp⟩, ?_⟩ .nil, .single []⟩
-  exact .atom rfl (.direct premise_asserted)
+  exact .atom (Lookup.of_eval
+    (RunRules.subsumed_eq initial_subsumeFree) (by decide) rfl (.direct premise_asserted)).2
 
 private theorem premise_retained : (premise, premise) ∈ reached.eqs := by
   change (premise, premise) ∈ (RunRules [derive] registered).eqs
-  rw [RunRules.eq_addEqs derive_deleteFree]
+  rw [RunRules.eq_addEqs derive_subsumeFree]
   exact Or.inl premise_asserted
 
 theorem premise_exists : premise ∈ reached.terms :=
@@ -61,7 +62,7 @@ theorem premise_exists : premise ∈ reached.terms :=
 private theorem conclusion_asserted : (conclusion, conclusion) ∈ reached.eqs := by
   have hf : registered.addTerm conclusion ∈ RuleResults registered derive :=
     ⟨[], initial_match, rfl⟩
-  have hc := SourceMeaning.firing_contained_round derive_deleteFree
+  have hc := SourceMeaning.firing_contained_round derive_subsumeFree
     (by simp) hf
   exact hc.eqs (Set.mem_insert _ _)
 
@@ -82,18 +83,20 @@ theorem missing_premise_rejected :
 
 private theorem reached_wf : reached.WF := source_reached.wf Database.WF.empty
 
-theorem source_saturated (c : Cmd) (hc : c ∈ program.commands) :
-    RunSaturated c.rules reached := by
-  have hdf : ∀ r ∈ c.rules, r.DeleteFree := by
-    simp only [program, List.mem_cons, List.not_mem_nil, or_false] at hc
+theorem source_saturated (rs : List Rule) (hc : rs ∈ program.runs) :
+    RunSaturated rs reached := by
+  have hdf : ∀ r ∈ rs, r.SubsumeFree := by
+    simp only [program, Program.runs, Schedule.seqAll, Schedule.runs, List.mem_append,
+      List.mem_cons, List.not_mem_nil, or_false] at hc
     rcases hc with rfl | rfl
-    · exact initial_deleteFree
-    · exact derive_deleteFree
-  have hfixed : RunRules c.rules reached = reached := by
-    apply (runRules_eq_self_iff c.rules reached hdf).mpr
+    · exact initial_subsumeFree
+    · exact derive_subsumeFree
+  have hfixed : RunRules rs reached = reached := by
+    apply (runRules_eq_self_iff rs reached hdf).mpr
     intro r hr out hout
     have hr' : r = derive ∨ r = initial := by
-      simp only [program, List.mem_cons, List.not_mem_nil, or_false] at hc
+      simp only [program, Program.runs, Schedule.seqAll, Schedule.runs, List.mem_append,
+      List.mem_cons, List.not_mem_nil, or_false] at hc
       rcases hc with rfl | rfl
       · exact Or.inr (List.mem_singleton.mp hr)
       · exact Or.inl (List.mem_singleton.mp hr)
@@ -103,7 +106,7 @@ theorem source_saturated (c : Cmd) (hc : c ∈ program.commands) :
           some (reached.addTerm conclusion) := rfl
       rw [he] at hf
       obtain rfl := Option.some.inj hf
-      constructor
+      refine ⟨?_, Set.Subset.rfl⟩
       rintro p (rfl | hp)
       · exact conclusion_asserted
       · exact hp
@@ -112,7 +115,7 @@ theorem source_saturated (c : Cmd) (hc : c ∈ program.commands) :
           some (reached.addTerm premise) := rfl
       rw [he] at hf
       obtain rfl := Option.some.inj hf
-      constructor
+      refine ⟨?_, Set.Subset.rfl⟩
       rintro p (rfl | hp)
       · exact premise_retained
       · exact hp

@@ -33,11 +33,11 @@ def Pattern.Scoped : Pattern → Prop
   | .ne _ _ => True
 
 /-- An action scopes when each expression it evaluates does, plus the application
-restriction on a bare `expr` and on a delete. -/
+restriction on a bare `expr`; a subsume names an application by construction. -/
 def Action.Scoped : Action → Scope → Prop
   | .expr e, Γ => e.IsApp ∧ e.Scoped Γ
   | .union e₁ e₂, Γ => e₁.Scoped Γ ∧ e₂.Scoped Γ
-  | .delete e, Γ => e.IsApp ∧ e.Scoped Γ
+  | .subsume f es, Γ => (Expr.app f es).Scoped Γ
 
 /-- The scope a query's patterns bind. -/
 def Query.bind (q : Query) (Γ : Scope) : Scope := Γ ∪ Query.vars q
@@ -51,12 +51,12 @@ def Query.bind (q : Query) (Γ : Scope) : Scope := Γ ∪ Query.vars q
 @[simp] def Rule.Scoped (r : Rule) (Γ : Scope) : Prop :=
   (∀ p ∈ r.query, p.Scoped) ∧ Actions.Scoped r.actions (Query.bind r.query Γ)
 
-/-- Every rule the command fires. -/
-@[simp] def Cmd.Scoped (c : Cmd) (Γ : Scope) : Prop := ∀ r ∈ c.rules, r.Scoped Γ
+/-- Every rule the schedule fires. -/
+@[simp] def Schedule.Scoped (S : Schedule) (Γ : Scope) : Prop := ∀ r ∈ S.rules, r.Scoped Γ
 
-/-- Every command in the same initial scope, and the final check's facts. -/
+/-- The schedule in the initial scope, and the final check's facts. -/
 @[simp] def Program.Scoped (P : Program) (Γ : Scope) : Prop :=
-  (∀ c ∈ P.commands, c.Scoped Γ) ∧ ∀ p ∈ P.check, p.Scoped
+  P.schedule.Scoped Γ ∧ ∀ p ∈ P.check, p.Scoped
 
 /-- A program with no free variables: `Program.Scoped` from the empty scope. -/
 def WellScoped (P : Program) : Prop := Program.Scoped P []
@@ -64,7 +64,7 @@ def WellScoped (P : Program) : Prop := Program.Scoped P []
 /-! ### `union` legality
 
 egglog rejects a `union` on a sort that is not an eq sort statically, where
-`Spec/Eval.lean`'s `Action.write` only gets stuck on it. This is its syntactic half: an
+`Spec/Eval.lean`'s `evalAction` only gets stuck on it. This is its syntactic half: an
 operand is not a literal *expression*. -/
 
 /-- Neither operand of a `union` is a literal. -/
@@ -76,9 +76,10 @@ def Action.UnionLegal : Action → Prop
   | [] => True
   | a :: as => a.UnionLegal ∧ Actions.UnionLegal as
 
-@[simp] def Cmd.UnionLegal (c : Cmd) : Prop := ∀ r ∈ c.rules, Actions.UnionLegal r.actions
+@[simp] def Schedule.UnionLegal (S : Schedule) : Prop :=
+  ∀ r ∈ S.rules, Actions.UnionLegal r.actions
 
-@[simp] def Program.UnionLegal (P : Program) : Prop := ∀ c ∈ P.commands, c.UnionLegal
+@[simp] def Program.UnionLegal (P : Program) : Prop := P.schedule.UnionLegal
 
 /-! ### Union-freedom
 
@@ -98,9 +99,9 @@ def Action.UnionFree : Action → Prop
 
 @[simp] def Rule.UnionFree (r : Rule) : Prop := Actions.UnionFree r.actions
 
-@[simp] def Cmd.UnionFree (c : Cmd) : Prop := ∀ r ∈ c.rules, r.UnionFree
+@[simp] def Schedule.UnionFree (S : Schedule) : Prop := ∀ r ∈ S.rules, r.UnionFree
 
-@[simp] def Program.UnionFree (P : Program) : Prop := ∀ c ∈ P.commands, c.UnionFree
+@[simp] def Program.UnionFree (P : Program) : Prop := P.schedule.UnionFree
 
 /-! ### Ordering-freedom
 
@@ -138,7 +139,7 @@ def Pattern.OrderingFree : Pattern → Prop
 def Action.OrderingFree : Action → Prop
   | .expr e => e.OrderingFree
   | .union e₁ e₂ => e₁.OrderingFree ∧ e₂.OrderingFree
-  | .delete e => e.OrderingFree
+  | .subsume f es => (Expr.app f es).OrderingFree
 
 @[simp] def Actions.OrderingFree : List Action → Prop
   | [] => True
@@ -149,11 +150,11 @@ the substitution. -/
 @[simp] def Rule.OrderingFree (r : Rule) : Prop :=
   (∀ p ∈ r.query, p.OrderingFree) ∧ Actions.OrderingFree r.actions
 
-@[simp] def Cmd.OrderingFree (c : Cmd) : Prop := ∀ r ∈ c.rules, r.OrderingFree
+@[simp] def Schedule.OrderingFree (S : Schedule) : Prop := ∀ r ∈ S.rules, r.OrderingFree
 
 /-- Every rule, and the final check. -/
 @[simp] def Program.OrderingFree (P : Program) : Prop :=
-  (∀ c ∈ P.commands, c.OrderingFree) ∧ ∀ p ∈ P.check, p.OrderingFree
+  P.schedule.OrderingFree ∧ ∀ p ∈ P.check, p.OrderingFree
 
 instance (e : Expr) : Decidable e.OrderingFree := inferInstanceAs (Decidable (_ = false))
 instance (es : List Expr) : Decidable (Expr.OrderingFreeList es) :=
@@ -165,16 +166,16 @@ instance : ∀ p : Pattern, Decidable p.OrderingFree
 instance : ∀ a : Action, Decidable a.OrderingFree
   | .expr e => inferInstanceAs (Decidable e.OrderingFree)
   | .union a b => inferInstanceAs (Decidable (a.OrderingFree ∧ b.OrderingFree))
-  | .delete e => inferInstanceAs (Decidable e.OrderingFree)
+  | .subsume f es => inferInstanceAs (Decidable (Expr.app f es).OrderingFree)
 instance instDecidableActionsOrderingFree : ∀ as : List Action, Decidable (Actions.OrderingFree as)
   | [] => inferInstanceAs (Decidable True)
   | a :: as => @instDecidableAnd _ _ inferInstance (instDecidableActionsOrderingFree as)
 instance (r : Rule) : Decidable r.OrderingFree :=
   inferInstanceAs (Decidable ((∀ p ∈ r.query, p.OrderingFree) ∧ Actions.OrderingFree r.actions))
-instance (c : Cmd) : Decidable c.OrderingFree :=
-  inferInstanceAs (Decidable (∀ r ∈ c.rules, r.OrderingFree))
+instance (S : Schedule) : Decidable S.OrderingFree :=
+  inferInstanceAs (Decidable (∀ r ∈ S.rules, r.OrderingFree))
 instance (P : Program) : Decidable (Program.OrderingFree P) :=
-  inferInstanceAs (Decidable ((∀ c ∈ P.commands, c.OrderingFree) ∧ ∀ p ∈ P.check, p.OrderingFree))
+  inferInstanceAs (Decidable (P.schedule.OrderingFree ∧ ∀ p ∈ P.check, p.OrderingFree))
 
 /-! ### Keyed variables -/
 

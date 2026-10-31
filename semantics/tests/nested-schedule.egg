@@ -1,0 +1,15 @@
+; Nested schedules: the outer saturation repeats a run of `lower` followed by a
+; saturation of `upper`; every pass rebuilds, so the union `upper` makes is visible to
+; `lower` in the next pass, which then builds (G (B)) as well.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(ruleset lower)
+(ruleset upper)
+(F (A))
+(rule ((F x)) ((G x)) :ruleset lower)
+(rule ((G (A))) ((union (A) (B))) :ruleset upper)
+(run-schedule (saturate (seq (run lower) (saturate (run upper)))))
+(check (= (A) (B)) (G (B)))

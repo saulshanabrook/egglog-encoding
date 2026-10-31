@@ -1,14 +1,7 @@
-(A) = (B)  trans
-  (A) = (B)  symm
-    (B) = (A)  rule 1 {}
-  (B) = (B)  rule 1 {}
-
 (B) = (A)  rule 1 {}
 
-(F (A)) = (F (A))  rule 0 {}
+(B) = (B)  rule 1 {}
 
 (F (A)) = (F (A))  rule 0 {}
-
-(A) = (A)  rule 1 {}
 
 (A) = (A)  rule 1 {}

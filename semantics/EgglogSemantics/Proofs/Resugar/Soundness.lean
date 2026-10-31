@@ -79,8 +79,8 @@ theorem certificates_checked {exec : Program → Option FDatabase} {P : Program}
 theorem lift_supported {P : Program} {db : Database}
     {input : Provenance.Proof} {output : SourceProof.Proof}
     {fact : Term} {claim : SourceProof.Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db)
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db)
     (hf : Provenance.check (Congruence.encode P) input = some fact)
     (hc : factClaim P fact = some claim) (h : lift P input = some output) :
     claim.Supported db :=
@@ -89,8 +89,8 @@ theorem lift_supported {P : Program} {db : Database}
 theorem lift_sound {P : Program} {db : Database}
     {input : Provenance.Proof} {output : SourceProof.Proof}
     {fact : Term} {claim : SourceProof.Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db)
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db)
     (hf : Provenance.check (Congruence.encode P) input = some fact)
     (hc : factClaim P fact = some claim) (h : lift P input = some output)
     (hl : claim.lhs ∈ db.terms) (hr : claim.rhs ∈ db.terms) :
@@ -101,8 +101,8 @@ theorem lift_sound {P : Program} {db : Database}
 theorem lift_infers {P : Program} {db : Database}
     {input : Provenance.Proof} {output : SourceProof.Proof}
     {fact : Term} {claim : SourceProof.Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db)
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db)
     (hf : Provenance.check (Congruence.encode P) input = some fact)
     (hc : factClaim P fact = some claim) (h : lift P input = some output) :
     db.Infers claim.lhs claim.rhs :=
@@ -111,16 +111,16 @@ theorem lift_infers {P : Program} {db : Database}
 /-- Every extracted source proof infers its claim in the reached, saturated source model. -/
 theorem extractAll_infers {P : Program} {db : Database} {terms : List Term}
     {outputs : List SourceProof.Proof}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (h : extractAll P terms = some outputs) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (h : extractAll P terms = some outputs) :
     ∀ output ∈ outputs, db.Infers output.claim.lhs output.claim.rhs :=
   fun output ho => SourceProof.check_infers hs hw hclosed (extractAll_checked h output ho)
 
 /-- Running the public certificate pipeline has the same source inference guarantee. -/
 theorem certificates_infers {exec : Program → Option FDatabase} {P : Program} {db : Database}
     {outputs : List SourceProof.Proof}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (h : certificates exec P = some outputs) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (h : certificates exec P = some outputs) :
     ∀ output ∈ outputs, db.Infers output.claim.lhs output.claim.rhs :=
   fun output ho => SourceProof.check_infers hs hw hclosed (certificates_checked h output ho)
 

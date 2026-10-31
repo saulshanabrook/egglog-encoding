@@ -1,5 +1,5 @@
 import EgglogSemantics.Spec.Match
-import EgglogSemantics.Proofs.Eval
+import EgglogSemantics.Proofs.Lookup
 import EgglogSemantics.Proofs.SameMeaning
 import EgglogSemantics.Proofs.SemanticCong
 
@@ -16,49 +16,98 @@ theorem List.Forall₂.exists_left {α β : Type*} {R : α → β → Prop} {as 
 
 namespace Egglog
 
+@[simp] theorem Database.mem_reps_iff {db : Database} {t : Term} :
+    t ∈ db.reps ↔ t ∈ db.terms ∧
+      ∀ s ∈ db.terms, Cong db s t → ¬ Term.blt s t := Iff.rfl
+
+theorem Database.reps_subset_terms (db : Database) : db.reps ⊆ db.terms :=
+  fun _ ht => ht.1
+
+theorem Database.SameMeaning.reps_eq {d e : Database} (h : d.SameMeaning e)
+    (ht : d.terms = e.terms) : d.reps = e.reps := by
+  ext t
+  simp only [Database.mem_reps_iff, ht, h.congr]
+
 namespace Matches
 
-/-- Stored witnesses recover the equivalent matching presentation used in compiler proofs. -/
+/-- Stored witnesses recover source matching when no rows are subsumed and no
+order-sensitive operand can discard an absent intermediate result. -/
 theorem expr {db : Database} {e : Expr} {σ : Env} {w t : Term}
+    (hX : db.subsumed = ∅) (ho : e.OrderingFree)
     (hw : w ∈ db.terms) (he : e.eval σ = some t)
     (hc : StoredCongOn db [t] w t) : Matches db (.expr e) σ := by
-  apply Matches.atom he
+  apply Matches.atom
+  apply (Lookup.of_eval hX ho he ?_).2
   apply InferredFacts.congr_iff_infers.mpr
   have hc' : StoredCongOn db [t, t] w t := by
     simpa [StoredCongOn, Database.withOperands, Database.addTerms, Database.addTerm] using hc
   exact ⟨w, hw, hc', hc'.symm.trans hc'⟩
 
 theorem eq {db : Database} {e₁ e₂ : Expr} {σ : Env} {w t₁ t₂ : Term}
+    (hX : db.subsumed = ∅) (ho₁ : e₁.OrderingFree) (ho₂ : e₂.OrderingFree)
     (hw : w ∈ db.terms) (h₁ : e₁.eval σ = some t₁)
     (h₂ : e₂.eval σ = some t₂)
     (hc : StoredCongOn db [t₁, t₂] w t₁)
-    (he : StoredCongOn db [t₁, t₂] t₁ t₂) : Matches db (.eq e₁ e₂) σ :=
-  .equal h₁ h₂ (InferredFacts.congr_iff_infers.mpr ⟨w, hw, hc, he⟩)
+    (he : StoredCongOn db [t₁, t₂] t₁ t₂) : Matches db (.eq e₁ e₂) σ := by
+  have h := InferredFacts.congr_iff_infers.mpr ⟨w, hw, hc, he⟩
+  exact .equal (Lookup.of_eval hX ho₁ h₁ (h.trans h.symm)).2
+    (Lookup.of_eval hX ho₂ h₂ (h.symm.trans h)).2 h₁ h₂ h
 
+/-- Inversion retains evaluation and expression matching, together with stored witnesses. -/
 @[elab_as_elim]
 theorem storedCases {db : Database}
     {motive : (p : Pattern) → (σ : Env) → Matches db p σ → Prop}
     {p : Pattern} {σ : Env} (h : Matches db p σ)
-    (expr : ∀ {e : Expr} {σ : Env} {w t : Term},
-      (hw : w ∈ db.terms) → (he : e.eval σ = some t) →
-      (hc : StoredCongOn db [t] w t) → motive (.expr e) σ (Matches.expr hw he hc))
-    (eq : ∀ {e₁ e₂ : Expr} {σ : Env} {w t₁ t₂ : Term}, (hw : w ∈ db.terms) →
-      (h₁ : e₁.eval σ = some t₁) → (h₂ : e₂.eval σ = some t₂) →
-      (hc : StoredCongOn db [t₁, t₂] w t₁) → (he : StoredCongOn db [t₁, t₂] t₁ t₂) →
-      motive (.eq e₁ e₂) σ (Matches.eq hw h₁ h₂ hc he))
-    (unequal : ∀ {e₁ e₂ : Expr} {σ : Env} {t₁ t₂ : Term},
-      (h₁ : e₁.eval σ = some t₁) → (h₂ : e₂.eval σ = some t₂) →
-      (hc₁ : Cong db t₁ t₁) → (hc₂ : Cong db t₂ t₂) → (hne : ¬ Cong db t₁ t₂) →
-      motive (.ne e₁ e₂) σ (.unequal h₁ h₂ hc₁ hc₂ hne)) : motive p σ h := by
+    (hσ : ∀ v t, Env.lookup v σ = some t → Cong db t t)
+    (expr : ∀ {e : Expr} {t : Term}, (hl : e.eval σ = some t ∧ Expr.Matches db σ e) →
+      ∀ {w : Term}, w ∈ db.terms → StoredCongOn db [t] w t →
+      motive (.expr e) σ (.atom hl.2))
+    (eq : ∀ {e₁ e₂ : Expr} {t₁ t₂ : Term},
+      (h₁ : e₁.eval σ = some t₁ ∧ Expr.Matches db σ e₁) →
+      (h₂ : e₂.eval σ = some t₂ ∧ Expr.Matches db σ e₂) →
+      (hc : Cong db t₁ t₂) → ∀ {w : Term}, w ∈ db.terms →
+      StoredCongOn db [t₁, t₂] w t₁ → StoredCongOn db [t₁, t₂] t₁ t₂ →
+      motive (.eq e₁ e₂) σ (.equal h₁.2 h₂.2 h₁.1 h₂.1 hc))
+    (unequal : ∀ {e₁ e₂ : Expr} {t₁ t₂ : Term},
+      (h₁ : e₁.eval σ = some t₁ ∧ Expr.Matches db σ e₁) →
+      (h₂ : e₂.eval σ = some t₂ ∧ Expr.Matches db σ e₂) →
+      (hne : ¬ Cong db t₁ t₂) → Cong db t₁ t₁ → Cong db t₂ t₂ →
+      motive (.ne e₁ e₂) σ (.unequal h₁.2 h₂.2 h₁.1 h₂.1 hne)) :
+    motive p σ h := by
   cases h with
-  | atom he hc =>
-    obtain ⟨w, hw, hwt, _⟩ := InferredFacts.congr_iff_infers.mp hc
-    exact expr hw he (by
+  | atom hl =>
+    obtain ⟨t, he⟩ := hl.eval_exists
+    obtain ⟨w, hw, hwt, _⟩ := InferredFacts.congr_iff_infers.mp
+      (Lookup.exists_cong hσ ⟨he, hl⟩)
+    exact expr ⟨he, hl⟩ hw (by
       simpa [StoredCongOn, Database.withOperands, Database.addTerms, Database.addTerm] using hwt)
-  | equal h₁ h₂ hc =>
+  | equal hl₁ hl₂ h₁ h₂ hc =>
     obtain ⟨w, hw, hwt, he⟩ := InferredFacts.congr_iff_infers.mp hc
-    exact eq hw h₁ h₂ hwt he
-  | unequal h₁ h₂ hc₁ hc₂ hne => exact unequal h₁ h₂ hc₁ hc₂ hne
+    exact eq ⟨h₁, hl₁⟩ ⟨h₂, hl₂⟩ hc hw hwt he
+  | unequal hl₁ hl₂ h₁ h₂ hne =>
+    exact unequal ⟨h₁, hl₁⟩ ⟨h₂, hl₂⟩ hne
+      (Lookup.exists_cong hσ ⟨h₁, hl₁⟩) (Lookup.exists_cong hσ ⟨h₂, hl₂⟩)
+
+/-- Evaluation and matching only inspect the pattern's variables. -/
+theorem of_agreeOn {db : Database} {p : Pattern} {σ σ' : Env} (h : Matches db p σ)
+    (hag : ∀ v ∈ p.vars, Env.lookup v σ = Env.lookup v σ') :
+    Matches db p σ' := by
+  cases h with
+  | atom hl =>
+    obtain ⟨t, he⟩ := hl.eval_exists
+    exact .atom (Lookup.of_agreeOn ⟨he, hl⟩ hag).2
+  | equal hl₁ hl₂ h₁ h₂ hc =>
+    obtain ⟨he₁, hr₁⟩ := Lookup.of_agreeOn ⟨h₁, hl₁⟩
+      (fun v hv => hag v (by simp [Pattern.vars, hv]))
+    obtain ⟨he₂, hr₂⟩ := Lookup.of_agreeOn ⟨h₂, hl₂⟩
+      (fun v hv => hag v (by simp [Pattern.vars, hv]))
+    exact .equal hr₁ hr₂ he₁ he₂ hc
+  | unequal hl₁ hl₂ h₁ h₂ hc =>
+    obtain ⟨he₁, hr₁⟩ := Lookup.of_agreeOn ⟨h₁, hl₁⟩
+      (fun v hv => hag v (by simp [Pattern.vars, hv]))
+    obtain ⟨he₂, hr₂⟩ := Lookup.of_agreeOn ⟨h₂, hl₂⟩
+      (fun v hv => hag v (by simp [Pattern.vars, hv]))
+    exact .unequal hr₁ hr₂ he₁ he₂ hc
 
 end Matches
 
@@ -339,7 +388,10 @@ theorem List.forall₂_map_self {α β : Type*} {R : α → β → Prop} {f : α
 namespace ValidEnv
 variable {vars : List Var} {db : Database} {σ : Env}
 
-theorem mem_terms (h : ValidEnv vars db σ) : ∀ b ∈ σ, b.2 ∈ db.terms := h.2
+theorem mem_reps (h : ValidEnv vars db σ) : ∀ b ∈ σ, b.2 ∈ db.reps := h.2
+
+theorem mem_terms (h : ValidEnv vars db σ) : ∀ b ∈ σ, b.2 ∈ db.terms :=
+  fun b hb => db.reps_subset_terms (h.mem_reps b hb)
 
 theorem mem_dom_iff (h : ValidEnv vars db σ) {v : Var} : v ∈ Env.dom σ ↔ v ∈ vars :=
   h.1.mem_iff
@@ -371,6 +423,9 @@ variable {db : Database} {p : Pattern} {σ : Env}
 which is why requiring it costs nothing. Since the hoist it is the left conjunct. -/
 theorem validEnv (h : ValidSubst db p σ) : ValidEnv (p.freeVars []) db σ := h.1
 
+theorem mem_reps (h : ValidSubst db p σ) : ∀ b ∈ σ, b.2 ∈ db.reps :=
+  h.validEnv.mem_reps
+
 theorem mem_terms (h : ValidSubst db p σ) : ∀ b ∈ σ, b.2 ∈ db.terms :=
   h.validEnv.mem_terms
 
@@ -388,59 +443,24 @@ an executable enumerator has to canonicalize rather than emit any agreeing repre
 theorem ValidSubst.of_agree {db : Database} {p : Pattern} {σ σ' : Env}
     (h : ValidSubst db p σ) (hag : Env.Agree σ σ')
     (hdom : Env.dom σ' = p.freeVars []) : ValidSubst db p σ' := by
-  have hterms : ∀ b ∈ σ', b.2 ∈ db.terms := by
+  have hterms : ∀ b ∈ σ', b.2 ∈ db.reps := by
     intro b hb
     have hnd : (Env.dom σ').Nodup := hdom ▸ p.freeVars_nodup []
     have hlk : Env.lookup b.1 σ' = some b.2 := (Env.lookup_eq_some_iff_mem hnd).mpr hb
     rw [← hag b.1] at hlk
-    exact h.mem_terms _ (Env.mem_of_lookup hlk)
+    exact h.mem_reps _ (Env.mem_of_lookup hlk)
   have hperm : (Env.dom σ').Perm (p.freeVars []) := hdom ▸ List.Perm.refl _
-  have hev : ∀ e : Expr, e.eval σ' = e.eval σ :=
-    fun e => Expr.eval_agree hag.symm e
-  have heva : ∀ e : Expr, e.eval σ' = e.eval σ :=
-    fun e => Expr.eval_agree hag.symm e
-  refine ⟨⟨hperm, hterms⟩, ?_⟩
-  cases h.2 using Matches.storedCases with
-  | expr hwm he hc => exact .expr hwm (by rw [heva]; exact he) hc
-  | eq hwm he₁ he₂ hc₁ hc₂ =>
-    exact .eq hwm (by rw [hev]; exact he₁) (by rw [hev]; exact he₂) hc₁ hc₂
-  | unequal he₁ he₂ hc₁ hc₂ hne =>
-    exact .unequal (by rw [hev]; exact he₁) (by rw [hev]; exact he₂) hc₁ hc₂ hne
-
-/-- **Matching transfers along agreement on the pattern's own variables.** `Matches` reads
-the environment only through the `Expr.eval` of the pattern's expressions, so `Expr.vars` is
-the whole of what it can see.
-
-Unlike `ValidSubst.of_agree` there is no domain condition, because `Matches` alone says
-nothing about a domain: the `ValidEnv` half of `ValidSubst` is what pins it, and this is
-stated without it precisely so that a substitution *larger* than the pattern's free variables
-— a whole query's union — can be substituted for one atom's own. -/
-theorem Matches.of_agreeOn {db : Database} {p : Pattern} {σ σ' : Env} (h : Matches db p σ)
-    (hag : ∀ v ∈ p.vars, Env.lookup v σ = Env.lookup v σ') :
-    Matches db p σ' := by
-  cases h using Matches.storedCases with
-  | @expr e _ w t hwm he hc =>
-    exact .expr hwm (by rw [Expr.eval_agreeOn e fun v hv => (hag v hv).symm]; exact he) hc
-  | @eq e₁ e₂ _ w t₁ t₂ hwm he₁ he₂ hc₁ hc₂ =>
-    refine .eq hwm ?_ ?_ hc₁ hc₂
-    · rw [Expr.eval_agreeOn e₁ fun v hv =>
-        (hag v (List.mem_union_iff.mpr (Or.inl hv))).symm]
-      exact he₁
-    · rw [Expr.eval_agreeOn e₂ fun v hv =>
-        (hag v (List.mem_union_iff.mpr (Or.inr hv))).symm]
-      exact he₂
-  | @unequal e₁ e₂ _ t₁ t₂ he₁ he₂ hc₁ hc₂ hne =>
-    refine .unequal ?_ ?_ hc₁ hc₂ hne
-    · rw [Expr.eval_agreeOn e₁ fun v hv =>
-        (hag v (List.mem_union_iff.mpr (Or.inl hv))).symm]
-      exact he₁
-    · rw [Expr.eval_agreeOn e₂ fun v hv =>
-        (hag v (List.mem_union_iff.mpr (Or.inr hv))).symm]
-      exact he₂
+  exact ⟨⟨hperm, hterms⟩, h.2.of_agreeOn (fun v _ => hag v)⟩
 
 
 namespace ValidQuerySubst
 variable {db : Database} {q : Query} {σ : Env}
+
+theorem mem_reps (h : ValidQuerySubst db q σ) : ∀ b ∈ σ, b.2 ∈ db.reps := by
+  obtain ⟨σs, hall, hu⟩ := h
+  refine hu.forall_mem fun σ' hσ' b hb => ?_
+  obtain ⟨p, _, hv⟩ := hall.exists_left hσ'
+  exact hv.mem_reps b hb
 
 /-- Every value a query substitution binds is a term the database holds — `ValidEnv` per
 pattern, unioned. -/

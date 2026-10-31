@@ -2,10 +2,11 @@ import Mathlib.Data.Set.Lattice
 import EgglogSemantics.Spec.Term
 
 /-!
-# The database
+# The e-graph
 
-One assertion set stores equations and reflexive facts. A row of a relation is a held
-application; deleting it removes its reflexive assertion and keeps its columns.
+One assertion set stores equations and reflexive facts, and a second set names the rows
+that have been subsumed. A row of a relation is a held application; subsuming it keeps it
+and its columns and stops every query from matching it.
 -/
 
 namespace Egglog
@@ -26,17 +27,22 @@ def Agree (σ₁ σ₂ : Env) : Prop := ∀ v, lookup v σ₁ = lookup v σ₂
 
 end Env
 
-/-- Egglog's global state: equations and reflexive facts, not closed under congruence. -/
+/-- Egglog's global state, the e-graph `G = (E, X)`: equations and reflexive facts `E`, not
+closed under congruence, and the subsumed rows `X`. -/
 @[ext, blueprint "def:state"
-  (statement := /-- \(E\subseteq\{(s,t)\mid s,t\in\mathit{Term}\}\) -/)
+  (statement := /--
+  \(G=(E,X)\qquad E\subseteq\mathit{Term}\times\mathit{Term}\qquad X\subseteq\mathit{Term}\)
+  -/)
   (latexEnv := "paperfragment")]
 structure Database where
   eqs : Set (Term × Term)
+  subsumed : Set Term
 
 namespace Database
 /-- The initial database. -/
 def empty : Database where
   eqs := ∅
+  subsumed := ∅
 
 /-- Assert that `t` exists; congruence supplies subterm existence. -/
 def addTerm (t : Term) (db : Database) : Database :=
@@ -53,13 +59,22 @@ def addEq (a b : Term) (db : Database) : Database :=
 def addEqs (ps : Set (Term × Term)) (db : Database) : Database :=
   { db with eqs := db.eqs ∪ ps }
 
+/-- Mark a set of rows subsumed. -/
+def addSubsumed (X : Set Term) (db : Database) : Database :=
+  { db with subsumed := db.subsumed ∪ X }
+
+/-- The e-graph with subsumption forgotten, `(E, ∅)`: what a check sees. -/
+def forgetSubsumed (db : Database) : Database :=
+  { db with subsumed := ∅ }
+
 /-- Union in a whole family of databases at once. -/
 def sUnion (db : Database) (S : Set Database) : Database :=
-  { eqs := db.eqs ∪ ⋃ d ∈ S, d.eqs }
+  { eqs := db.eqs ∪ ⋃ d ∈ S, d.eqs, subsumed := db.subsumed ∪ ⋃ d ∈ S, d.subsumed }
 
-/-- `d₁`'s equalities are among `d₂`'s. -/
+/-- `d₁`'s equalities and subsumed rows are among `d₂`'s. -/
 structure Contained (d₁ d₂ : Database) : Prop where
   eqs : d₁.eqs ⊆ d₂.eqs
+  subsumed : d₁.subsumed ⊆ d₂.subsumed
 
 end Database
 end Egglog

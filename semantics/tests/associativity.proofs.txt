@@ -1,84 +1,30 @@
-(Add (One) (Add (Two) (Three))) = (Add (Add (One) (Two)) (Three))  trans
-  (Add (One) (Add (Two) (Three))) = (Add (Add (One) (Two)) (Three))  symm
-    (Add (Add (One) (Two)) (Three)) = (Add (One) (Add (Two) (Three)))  rule 1 {a := (One), b := (Two), c := (Three)}
-      (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
-        (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
-          (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-          (Add (One) (Two)) = (Add (One) (Two))  congr 1
-            (Add (One) (Two)) = (Add (One) (Two))  congr 0
-              (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-              (One) = (One)  rule 0 {}
-            (Two) = (Two)  rule 0 {}
-        (Three) = (Three)  rule 0 {}
-  (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-
 (Add (Add (One) (Two)) (Three)) = (Add (One) (Add (Two) (Three)))  rule 1 {a := (One), b := (Two), c := (Three)}
   (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
     (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
       (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-      (Add (One) (Two)) = (Add (One) (Two))  congr 1
-        (Add (One) (Two)) = (Add (One) (Two))  congr 0
-          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-          (One) = (One)  rule 0 {}
-        (Two) = (Two)  rule 0 {}
+      (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
     (Three) = (Three)  rule 0 {}
 
 (Add (One) (Add (Two) (Three))) = (Add (One) (Add (Two) (Three)))  rule 1 {a := (One), b := (Two), c := (Three)}
   (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
     (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
       (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-      (Add (One) (Two)) = (Add (One) (Two))  congr 1
-        (Add (One) (Two)) = (Add (One) (Two))  congr 0
-          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-          (One) = (One)  rule 0 {}
-        (Two) = (Two)  rule 0 {}
-    (Three) = (Three)  rule 0 {}
-
-(Add (One) (Add (Two) (Three))) = (Add (One) (Add (Two) (Three)))  rule 1 {a := (One), b := (Two), c := (Three)}
-  (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
-    (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
-      (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-      (Add (One) (Two)) = (Add (One) (Two))  congr 1
-        (Add (One) (Two)) = (Add (One) (Two))  congr 0
-          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-          (One) = (One)  rule 0 {}
-        (Two) = (Two)  rule 0 {}
+      (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
     (Three) = (Three)  rule 0 {}
 
 (Add (Two) (Three)) = (Add (Two) (Three))  rule 1 {a := (One), b := (Two), c := (Three)}
   (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
     (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
       (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-      (Add (One) (Two)) = (Add (One) (Two))  congr 1
-        (Add (One) (Two)) = (Add (One) (Two))  congr 0
-          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-          (One) = (One)  rule 0 {}
-        (Two) = (Two)  rule 0 {}
+      (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
     (Three) = (Three)  rule 0 {}
 
-(Add (Two) (Three)) = (Add (Two) (Three))  rule 1 {a := (One), b := (Two), c := (Three)}
-  (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 1
-    (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  congr 0
-      (Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
-      (Add (One) (Two)) = (Add (One) (Two))  congr 1
-        (Add (One) (Two)) = (Add (One) (Two))  congr 0
-          (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-          (One) = (One)  rule 0 {}
-        (Two) = (Two)  rule 0 {}
-    (Three) = (Three)  rule 0 {}
-
-(Three) = (Three)  rule 0 {}
+(Add (Add (One) (Two)) (Three)) = (Add (Add (One) (Two)) (Three))  rule 0 {}
 
 (Three) = (Three)  rule 0 {}
 
 (Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
 
-(Add (One) (Two)) = (Add (One) (Two))  rule 0 {}
-
 (Two) = (Two)  rule 0 {}
-
-(Two) = (Two)  rule 0 {}
-
-(One) = (One)  rule 0 {}
 
 (One) = (One)  rule 0 {}

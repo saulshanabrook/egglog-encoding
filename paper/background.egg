@@ -1,0 +1,28 @@
+; The paper's background example (extended-egglog-paper/background.tex), in the form the
+; model parses: declarations are inferred, string binders are nullary symbols, and the
+; final check decides the outcome. `make paper-sync` compiles it with the congruence pass
+; and writes the result to the paper's generated/congruence_example.tex.
+(ruleset init)
+(ruleset notfree)
+(ruleset main)
+
+; Insert 5 * sum_i sum_j i*j.
+(rule ()
+      ((Mul (Num 5) (Sum0-10 "i" (Sum0-10 "j" (Mul (Var "i") (Var "j"))))))
+      :ruleset init)
+
+; Numbers have no free variables.
+(rule ((Sum0-10 v body) (Num n))
+      ((NotFree v (Num n)))
+      :ruleset notfree)
+
+; Move a factor independent of the binder inside the sum.
+(rule ((Mul x (Sum0-10 v body)) (NotFree v x))
+      ((union (Mul x (Sum0-10 v body)) (Sum0-10 v (Mul x body))))
+      :ruleset main)
+
+(run init 1)
+(run-schedule (saturate (run notfree)))
+(run-schedule (saturate (run main)))
+(check (= (Mul (Num 5) (Sum0-10 "i" (Sum0-10 "j" (Mul (Var "i") (Var "j")))))
+          (Sum0-10 "i" (Sum0-10 "j" (Mul (Num 5) (Mul (Var "i") (Var "j")))))))

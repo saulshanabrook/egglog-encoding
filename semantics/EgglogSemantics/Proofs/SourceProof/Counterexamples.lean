@@ -31,7 +31,7 @@ private theorem same_isC {s t : Term} (h : Cong snapshot s t) : isC s = isC t :=
   | direct hp =>
       simp only [snapshot, Set.mem_insert_iff, Set.mem_singleton_iff] at hp
       rcases hp with hp | hp | hp <;> cases hp <;> rfl
-  | subterm => rfl
+  | child => rfl
   | symm _ ih => exact ih.symm
   | trans _ _ ih₁ ih₂ => exact ih₁.trans ih₂
   | congr => rfl

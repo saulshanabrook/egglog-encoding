@@ -1,21 +1,21 @@
 (F (B)) = (F (A))  trans
-  (F (B)) = (F (A))  congr 0
-    (F (B)) = (F (B))  rule 1 {}
-    (B) = (A)  rule 2 {}
-  (F (A)) = (F (A))  symm
-    (F (A)) = (F (A))  rule 0 {}
-
-(A) = (B)  trans
-  (A) = (B)  symm
-    (B) = (A)  rule 2 {}
-  (B) = (B)  rule 2 {}
+  (F (B)) = (F (A))  trans
+    (F (B)) = (F (B))  symm
+      (F (B)) = (F (B))  rule 1 {}
+    (F (B)) = (F (A))  congr 0
+      (F (B)) = (F (B))  rule 1 {}
+      (B) = (A)  trans
+        (B) = (A)  rule 2 {}
+        (A) = (A)  symm
+          (A) = (A)  rule 2 {}
+  (F (A)) = (F (A))  rule 0 {}
 
 (B) = (A)  rule 2 {}
 
-(F (A)) = (F (A))  rule 0 {}
+(F (B)) = (F (B))  rule 1 {}
+
+(B) = (B)  rule 2 {}
 
 (F (A)) = (F (A))  rule 0 {}
-
-(A) = (A)  rule 2 {}
 
 (A) = (A)  rule 2 {}

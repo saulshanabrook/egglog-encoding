@@ -5,7 +5,7 @@ import EgglogSemantics.Spec.Match
 # A finite reference interpreter
 
 `FDatabase` is `Database` with lists: the held terms, closed under subterms and indexed by
-head, and the asserted equations. `exec` runs a program's commands from the empty state.
+head, and the asserted equations. `exec` runs a program's schedule from the empty state.
 The matcher is proved equal to its obvious definition at every optimization: one congruence
 closure per round, pruning as soon as a pattern is decided, and candidates read off the
 index of applications. Rounds apply every firing's deletions before every firing's writes,
@@ -209,9 +209,12 @@ end Term
 not multiplicity or order, is what it denotes. -/
 structure FDatabase where
   terms : List Term
-  /-- The index: one row per held application. -/
+  /-- The index: one row per held application, subsumed or not. -/
   rows : List Row
   eqs : List (Term × Term)
+  /-- The subsumed rows, as written; a spelling with congruent children counts as subsumed
+  too (`FDatabase.isSubsumed`). -/
+  subsumed : List Term
 
 namespace FDatabase
 /-- Project into the mathematical assertion store. Under implicit subterm existence and
@@ -220,12 +223,14 @@ under subterms; the lemmas relating the two belong with the proofs. -/
 def toDatabase (d : FDatabase) : Database where
   eqs := {p | p.1 = p.2 ∧ p.1 ∈ d.terms} ∪
     {p | p ∈ d.eqs ∧ p.1 ∈ d.terms ∧ p.2 ∈ d.terms}
+  subsumed := {t | t ∈ d.subsumed}
 
 /-- The initial database. -/
 def empty : FDatabase where
   terms := []
   rows := []
   eqs := []
+  subsumed := []
 
 /-- Insert `t` and all of its subterms, and index the applications among them.
 
@@ -300,11 +305,16 @@ def addTerms (ts : List Term) (d : FDatabase) : FDatabase :=
 def addEq (a b : Term) (d : FDatabase) : FDatabase :=
   { (d.addTerm a).addTerm b with eqs := ((a, b) :: d.eqs).dedup }
 
+/-- Subsume the row `t`, inserting it. Each subsumed row is listed once. -/
+def subsume (t : Term) (d : FDatabase) : FDatabase :=
+  let d' := d.addTerm t
+  { d' with subsumed := if d'.subsumed.contains t then d'.subsumed else t :: d'.subsumed }
+
 /-- Union two databases. `Database.sUnion`, computed, at the two-operand shape
 `execRunRules` folds with. -/
 def union (d₁ d₂ : FDatabase) : FDatabase :=
   { d₁ with terms := (d₁.terms ++ d₂.terms).dedup, rows := (d₁.rows ++ d₂.rows).dedup,
-            eqs := (d₁.eqs ++ d₂.eqs).dedup }
+            eqs := (d₁.eqs ++ d₂.eqs).dedup, subsumed := (d₁.subsumed ++ d₂.subsumed).dedup }
 
 /-- The list invariant: every equation names terms the list holds, and the list is closed
 under subterms. The first is what makes `toDatabase`'s restriction invisible; the second is
@@ -367,10 +377,30 @@ def congrTuple (cl : Finset (Term × Term)) (as bs : List Term) : Bool :=
 def holdsAll (d : FDatabase) (ts : List Term) : Bool :=
   ts.all fun t => t.subtermList.all fun s => decide (s ∈ d.terms)
 
+/-- `Database.reps` under the closure `cl`: the held terms with no held, congruent, smaller
+term. These are the values a query variable can take, one per class. -/
+def repsWith (cl : Finset (Term × Term)) (d : FDatabase) : List Term :=
+  d.terms.filter fun t => !(d.terms.any fun s => decide ((s, t) ∈ cl) && Term.blt s t)
+
+/-- `Database.reps`, computed. -/
+def reps (d : FDatabase) : List Term := d.repsWith d.closureF
+
+theorem mem_repsWith_terms {cl : Finset (Term × Term)} {d : FDatabase} {t : Term}
+    (h : t ∈ d.repsWith cl) : t ∈ d.terms := (List.mem_filter.mp h).1
+
 /-- Whether a held application of `f` has children congruent to `ts` under `cl`. -/
 def hasCtorRow (cl : Finset (Term × Term)) (d : FDatabase) (f : FnName) (ts : List Term) :
     Bool :=
   d.rows.any fun r => decide (r.fn = f) && FDatabase.congrTuple cl ts r.args
+
+/-- `Database.SameRow`, computed under `cl`: the same head over congruent children. -/
+def sameRow (cl : Finset (Term × Term)) : Term → Term → Bool
+  | .app f as, .app g bs => f == g && FDatabase.congrTuple cl as bs
+  | _, _ => false
+
+/-- Whether the row `t` is subsumed: some subsumed row has its head and congruent children. -/
+def isSubsumed (cl : Finset (Term × Term)) (d : FDatabase) (t : Term) : Bool :=
+  d.subsumed.any fun u => FDatabase.sameRow cl t u
 
 end FDatabase
 
@@ -395,57 +425,12 @@ def Expr.ctorAtom : Expr → Option (FnName × List Expr)
   | .app f args => some (f, args)
   | _ => none
 
-/-- `Matches`'s side conditions for one pattern, computed: the pattern's instance is
-congruent — in the database extended with it — to a witness the database already holds.
-The instance is added because a pattern operand may denote a term the program never built.
+/-! #### One closure per query
 
-An application over held children is congruent to a held term exactly when a held
-application of its constructor has congruent children, which the index answers without a
-closure of the extended store. It compares with `closureF`, which computes exactly the
-specification's `Cong`. -/
-def patternHolds (d : FDatabase) (p : Pattern) (σ : Env) : Bool :=
-  match p with
-  | .expr e =>
-    match e.eval σ with
-    | none => false
-    | some t =>
-      match t with
-      | .app f ts =>
-        if d.holdsAll ts then d.hasCtorRow d.closureF f ts
-        else
-          let cl := (d.addTerm t).closureF
-          decide (∃ w ∈ d.terms, (w, t) ∈ cl)
-      | .lit _ =>
-        let cl := (d.addTerm t).closureF
-        decide (∃ w ∈ d.terms, (w, t) ∈ cl)
-  | .eq e₁ e₂ =>
-    match e₁.eval σ, e₂.eval σ with
-    | some t₁, some t₂ =>
-      let cl := ((d.addTerm t₁).addTerm t₂).closureF
-      decide ((t₁, t₂) ∈ cl) && decide (∃ w ∈ d.terms, (w, t₁) ∈ cl)
-    | _, _ => false
-  -- Both sides held, and not congruent even once both instances are present.
-  | .ne e₁ e₂ =>
-    match e₁.eval σ, e₂.eval σ with
-    | some t₁, some t₂ =>
-      let cl := ((d.addTerm t₁).addTerm t₂).closureF
-      decide (∃ w ∈ d.terms, (w, t₁) ∈ cl) && decide (∃ w ∈ d.terms, (w, t₂) ∈ cl)
-        && !decide ((t₁, t₂) ∈ cl)
-    | _, _ => false
-
-/-- The substitutions satisfying a whole query. -/
-def matchQuery (d : FDatabase) (q : Query) : List Env :=
-  (assignments d.terms (Query.freeVars q [])).filter fun σ =>
-    q.all fun p => patternHolds d p (Env.canon (p.freeVars []) σ)
-
-/-! ### Hoisting the closure out of the candidate loop
-
-`patternHolds` computes `(d.addTerms ts).closureF` where `ts` is the pattern *instance*, so
-the closure is nominally per-substitution. It is nominal: `addTerms` only ever *adds* to
-`terms` and never touches `eqs`, and `closureF` reads nothing else, so a candidate whose
-instance the database already holds gets `d`'s own closure back. So the closure is
-computed **once per query** and reused wherever the instance adds nothing. `csimp` is what
-redirects the executable; `matchQuery`'s definition is untouched. -/
+The checks below take the closure `cl` of the store as a parameter, so that a query computes
+it once. A pattern operand may denote a term the program never built; where an instance
+adds terms the store lacks, the closure of the store extended with that instance is computed
+for it alone (`closureWith`). -/
 
 /-- `(d.addTerms ts).closureF`, given `d`'s own closure `cl` to reuse where `ts` adds
 nothing. `closureWith_eq` is the equation; nothing else should call this with a `cl` that is
@@ -453,6 +438,79 @@ not `d.closureF`. -/
 def FDatabase.closureWith (cl : Finset (Term × Term)) (d : FDatabase) (ts : List Term) :
     Finset (Term × Term) :=
   if d.holdsAll ts then cl else (d.addTerms ts).closureF
+
+/-- `Database.live`, computed under `cl`: the instance is congruent — in the store extended
+with it — to a held term, and no subsumed row has its head and congruent children. An
+application over held children is congruent to a held term exactly when a held application
+of its constructor has congruent children, which the index answers without a closure of the
+extended store. -/
+def FDatabase.liveWith (cl : Finset (Term × Term)) (d : FDatabase) (t : Term) : Bool :=
+  match t with
+  | .app f ts =>
+    if d.holdsAll ts then d.hasCtorRow cl f ts && !d.isSubsumed cl t
+    else
+      let cl' := d.closureWith cl [t]
+      decide (∃ w ∈ d.terms, (w, t) ∈ cl') && !d.isSubsumed cl' t
+  | .lit _ =>
+    let cl' := d.closureWith cl [t]
+    decide (∃ w ∈ d.terms, (w, t) ∈ cl')
+
+mutual
+
+/-- `Expr.Matches`, computed under `cl`: the expression evaluates and every application it
+reads is live. -/
+def exprHoldsWith (cl : Finset (Term × Term)) (d : FDatabase) (σ : Env) : Expr → Bool
+  | .lit l => d.liveWith cl (.lit l)
+  | .var v => (Env.lookup v σ).isSome
+  | .app f args =>
+      exprsHoldWith cl d σ args &&
+        match Expr.evalList args σ with
+        | some ts => d.liveWith cl (.app f ts)
+        | none => false
+  | .min a b => exprHoldsWith cl d σ a && exprHoldsWith cl d σ b
+
+/-- `exprHoldsWith` over an argument list. -/
+def exprsHoldWith (cl : Finset (Term × Term)) (d : FDatabase) (σ : Env) : List Expr → Bool
+  | [] => true
+  | e :: es => exprHoldsWith cl d σ e && exprsHoldWith cl d σ es
+
+end
+
+/-- `Matches`, computed under `cl`: a pattern that is an expression holds as that
+expression; an equality or disequality needs both sides to hold and compares them through
+the closure of the store extended with the instances. -/
+def patternHoldsWith (cl : Finset (Term × Term)) (d : FDatabase) (p : Pattern) (σ : Env) :
+    Bool :=
+  match p with
+  | .expr e => exprHoldsWith cl d σ e
+  | .eq e₁ e₂ =>
+    exprHoldsWith cl d σ e₁ && exprHoldsWith cl d σ e₂ &&
+      match e₁.eval σ, e₂.eval σ with
+      | some t₁, some t₂ => decide ((t₁, t₂) ∈ d.closureWith cl [t₁, t₂])
+      | _, _ => false
+  | .ne e₁ e₂ =>
+    exprHoldsWith cl d σ e₁ && exprHoldsWith cl d σ e₂ &&
+      match e₁.eval σ, e₂.eval σ with
+      | some t₁, some t₂ => !decide ((t₁, t₂) ∈ d.closureWith cl [t₁, t₂])
+      | _, _ => false
+
+/-- `patternHoldsWith` at the store's own closure, which computes exactly the
+specification's `Cong`. -/
+def patternHolds (d : FDatabase) (p : Pattern) (σ : Env) : Bool :=
+  patternHoldsWith d.closureF d p σ
+
+/-- The substitutions satisfying a whole query: every variable bound to a representative. -/
+def matchQuery (d : FDatabase) (q : Query) : List Env :=
+  (assignments d.reps (Query.freeVars q [])).filter fun σ =>
+    q.all fun p => patternHolds d p (Env.canon (p.freeVars []) σ)
+
+/-! ### The closure is computed once per query
+
+`closureWith` reads `(d.addTerms ts).closureF`, so the closure is nominally per instance.
+It is nominal: `addTerms` only ever *adds* to `terms` and never touches `eqs`, and
+`closureF` reads nothing else, so an instance the store already holds gets `d`'s own closure
+back, which `matchQueryWith` computes **once per query**. `csimp` is what redirects the
+executable; `matchQuery`'s definition is untouched. -/
 
 /-- `addTerm` only grows `terms`. -/
 theorem FDatabase.mem_terms_addTerm {d : FDatabase} {t s : Term} (h : s ∈ d.terms) :
@@ -500,68 +558,13 @@ theorem FDatabase.closureWith_eq (d : FDatabase) (ts : List Term) :
     exact (FDatabase.closureF_addTerms_of_mem h).symm
   · rfl
 
-/-- `patternHolds` with the closure taken as a parameter. -/
-def patternHoldsWith (cl : Finset (Term × Term)) (d : FDatabase) (p : Pattern) (σ : Env) :
-    Bool :=
-  match p with
-  | .expr e =>
-    match e.eval σ with
-    | none => false
-    | some t =>
-      match t with
-      | .app f ts =>
-        if d.holdsAll ts then d.hasCtorRow cl f ts
-        else
-          let cl' := d.closureWith cl [t]
-          decide (∃ w ∈ d.terms, (w, t) ∈ cl')
-      | .lit _ =>
-        let cl' := d.closureWith cl [t]
-        decide (∃ w ∈ d.terms, (w, t) ∈ cl')
-  | .eq e₁ e₂ =>
-    match e₁.eval σ, e₂.eval σ with
-    | some t₁, some t₂ =>
-      let cl' := d.closureWith cl [t₁, t₂]
-      decide ((t₁, t₂) ∈ cl') && decide (∃ w ∈ d.terms, (w, t₁) ∈ cl')
-    | _, _ => false
-  | .ne e₁ e₂ =>
-    match e₁.eval σ, e₂.eval σ with
-    | some t₁, some t₂ =>
-      let cl' := d.closureWith cl [t₁, t₂]
-      decide (∃ w ∈ d.terms, (w, t₁) ∈ cl') && decide (∃ w ∈ d.terms, (w, t₂) ∈ cl')
-        && !decide ((t₁, t₂) ∈ cl')
-    | _, _ => false
-
-/-- At `d`'s own closure it is `patternHolds`, on the nose. -/
+/-- At `d`'s own closure it is `patternHolds`, by definition. -/
 theorem patternHoldsWith_eq (d : FDatabase) (p : Pattern) (σ : Env) :
-    patternHoldsWith d.closureF d p σ = patternHolds d p σ := by
-  have h1 : ∀ t : Term, d.closureWith d.closureF [t] = (d.addTerm t).closureF := fun t =>
-    FDatabase.closureWith_eq d [t]
-  have h3 : ∀ t₁ t₂ : Term,
-      d.closureWith d.closureF [t₁, t₂] = ((d.addTerm t₁).addTerm t₂).closureF := fun t₁ t₂ =>
-    FDatabase.closureWith_eq d [t₁, t₂]
-  cases p with
-  | expr e =>
-    cases hv : e.eval σ with
-    | none => simp only [patternHoldsWith, patternHolds, hv]
-    | some t => cases t <;> simp only [patternHoldsWith, patternHolds, hv, h1]
-  | eq e₁ e₂ =>
-    cases he₁ : e₁.eval σ with
-    | none => simp only [patternHoldsWith, patternHolds, he₁]
-    | some t₁ =>
-      cases he₂ : e₂.eval σ with
-      | none => simp only [patternHoldsWith, patternHolds, he₁, he₂]
-      | some t₂ => simp only [patternHoldsWith, patternHolds, he₁, he₂, h3]
-  | ne e₁ e₂ =>
-    cases he₁ : e₁.eval σ with
-    | none => simp only [patternHoldsWith, patternHolds, he₁]
-    | some t₁ =>
-      cases he₂ : e₂.eval σ with
-      | none => simp only [patternHoldsWith, patternHolds, he₁, he₂]
-      | some t₂ => simp only [patternHoldsWith, patternHolds, he₁, he₂, h3]
+    patternHoldsWith d.closureF d p σ = patternHolds d p σ := rfl
 
 /-- `matchQuery` with the closure computed once, as a parameter. -/
 def matchQueryWith (cl : Finset (Term × Term)) (d : FDatabase) (q : Query) : List Env :=
-  (assignments d.terms (Query.freeVars q [])).filter fun σ =>
+  (assignments (d.repsWith cl) (Query.freeVars q [])).filter fun σ =>
     q.all fun p => patternHoldsWith cl d p (Env.canon (p.freeVars []) σ)
 
 def matchQueryFast (d : FDatabase) (q : Query) : List Env :=
@@ -570,7 +573,7 @@ def matchQueryFast (d : FDatabase) (q : Query) : List Env :=
 /-- At `d`'s own closure, `matchQueryWith` is `matchQuery`. -/
 theorem matchQueryWith_eq (d : FDatabase) (q : Query) :
     matchQueryWith d.closureF d q = matchQuery d q := by
-  simp only [matchQueryWith, matchQuery, patternHoldsWith_eq]
+  simp only [matchQueryWith, matchQuery, FDatabase.reps, patternHoldsWith_eq]
 
 /-- **The fast path is the slow path**, on the nose. -/
 theorem matchQueryFast_eq (d : FDatabase) (q : Query) : matchQueryFast d q = matchQuery d q :=
@@ -679,7 +682,7 @@ theorem matchPrune_eq (cl : Finset (Term × Term)) (d : FDatabase) (q : Query)
 
 /-- `matchQueryWith`, pruned. -/
 def matchQueryPruned (cl : Finset (Term × Term)) (d : FDatabase) (q : Query) : List Env :=
-  matchPrune cl d q d.terms [] (Query.freeVars q [])
+  matchPrune cl d q (d.repsWith cl) [] (Query.freeVars q [])
 
 theorem matchQueryPruned_eq (cl : Finset (Term × Term)) (d : FDatabase) (q : Query) :
     matchQueryPruned cl d q = matchQueryWith cl d q := by
@@ -751,7 +754,8 @@ def joinPlan (cl : Finset (Term × Term)) (d : FDatabase) (pre : Env) (v : Var) 
         let ka := joinKnown ρ as
         if d.holdsAll (ka.filterMap id) then
           some ⟨vars, as,
-            d.rows.filter fun r => (r.fn == f) && joinConsistent cl ka r.args⟩
+            d.rows.filter fun r =>
+              (r.fn == f) && !d.subsumed.contains (.app r.fn r.args) && joinConsistent cl ka r.args⟩
         else none
       else none
   | _ => none
@@ -1027,7 +1031,7 @@ private theorem joinPlan_ctor {cl : Finset (Term × Term)} {d : FDatabase} {pre 
     (h : joinPlan cl d pre v (.expr e) = some a) :
     joinDrivable as = true ∧ a.vars = (Pattern.expr e).freeVars [] ∧ a.keys = as ∧
       d.holdsAll ((joinKnown (Env.canon a.vars pre) as).filterMap id) = true ∧
-      ∀ r ∈ d.rows, r.fn = f →
+      ∀ r ∈ d.rows, r.fn = f → d.subsumed.contains (.app r.fn r.args) = false →
         joinConsistent cl (joinKnown (Env.canon a.vars pre) as) r.args = true →
         r ∈ a.rows := by
   simp only [joinPlan, hc] at h
@@ -1039,36 +1043,48 @@ private theorem joinPlan_ctor {cl : Finset (Term × Term)} {d : FDatabase} {pre 
       subst h
       simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
       refine ⟨hg.1, rfl, rfl, hh, ?_⟩
-      intro r hr hf h1
-      exact List.mem_filter.mpr ⟨hr, by simp [hf, h1]⟩
+      intro r hr hf hs h1
+      have hbf : (r.fn == f) = true := by simp [hf]
+      have hs' : Term.app r.fn r.args ∉ d.subsumed := by simpa using hs
+      exact List.mem_filter.mpr ⟨hr, by simp [hbf, hs, hs', h1]⟩
     · simp at h
   · simp at h
 
-/-- What `patternHoldsWith` promises at an application atom: once its operands are all
-held, a held application of the head with congruent children. -/
+/-- What `patternHoldsWith` promises at an application atom: its operands evaluate, and
+once their values are all held, a held application of the head with congruent children
+that is not a subsumed row as written. -/
 private theorem patternHoldsWith_ctor {cl : Finset (Term × Term)} {d : FDatabase}
     {e : Expr} {as : List Expr} {f : FnName} {σ : Env}
     (hc : e.ctorAtom = some (f, as))
     (h : patternHoldsWith cl d (.expr e) σ = true) :
     ∃ ks, Expr.evalList as σ = some ks ∧
       (d.holdsAll ks = true → ∃ r ∈ d.rows, r.fn = f ∧
-        FDatabase.congrTuple cl ks r.args = true) := by
+        FDatabase.congrTuple cl ks r.args = true ∧
+        d.subsumed.contains (.app r.fn r.args) = false) := by
   cases e with
   | app g args =>
     simp only [Expr.ctorAtom, Option.some.injEq, Prod.mk.injEq] at hc
     obtain ⟨rfl, rfl⟩ := hc
-    simp only [patternHoldsWith, Expr.eval] at h
+    simp only [patternHoldsWith, exprHoldsWith, Bool.and_eq_true] at h
     cases hev : Expr.evalList args σ with
     | none => rw [hev] at h; simp at h
     | some ks =>
       rw [hev] at h
-      simp only [Option.map_some] at h
       refine ⟨ks, rfl, fun hks => ?_⟩
-      rw [if_pos hks] at h
+      have hl := h.2
+      simp only [FDatabase.liveWith, if_pos hks, Bool.and_eq_true, Bool.not_eq_true'] at hl
+      obtain ⟨hrow, hsub⟩ := hl
       simp only [FDatabase.hasCtorRow, List.any_eq_true, Bool.and_eq_true,
-        decide_eq_true_eq] at h
-      obtain ⟨r, hr, hf, hcm⟩ := h
-      exact ⟨r, hr, hf, hcm⟩
+        decide_eq_true_eq] at hrow
+      obtain ⟨r, hr, hf, hcm⟩ := hrow
+      refine ⟨r, hr, hf, hcm, ?_⟩
+      by_contra hmem
+      simp only [Bool.not_eq_false, List.contains_iff_mem] at hmem
+      have : d.isSubsumed cl (.app g ks) = true := by
+        simp only [FDatabase.isSubsumed, List.any_eq_true]
+        exact ⟨_, hmem, by simp [FDatabase.sameRow, hf, hcm]⟩
+      rw [this] at hsub
+      exact Bool.noConfusion hsub
   | lit _ => simp [Expr.ctorAtom] at hc
   | var _ => simp [Expr.ctorAtom] at hc
   | min _ _ => simp [Expr.ctorAtom] at hc
@@ -1130,10 +1146,10 @@ theorem joinCands_mem {cl : Finset (Term × Term)} {d : FDatabase} {q : Query} {
         have hks : ∀ x ∈ ks, d.holdsAll [x] = true := by
           rw [hav] at hka
           exact joinKnown_holds mono₀ hnew hda hek hka
-        obtain ⟨r, hr, hrf, hcm⟩ := hrows (holdsAll_of_forall hks)
+        obtain ⟨r, hr, hrf, hcm, hns⟩ := hrows (holdsAll_of_forall hks)
         -- the row survives the prefix, so it is one of the atom's, and it admits `t`
         have hin : r ∈ a.rows := by
-          refine hrow r hr hrf ?_
+          refine hrow r hr hrf hns ?_
           rw [hav]
           exact joinConsistent_of_congrTuple mono₀ hda hek hcm
         refine List.any_eq_true.mpr ⟨r, hin, ?_⟩
@@ -1187,15 +1203,16 @@ theorem matchJoin_eq (cl : Finset (Term × Term)) (d : FDatabase) (q : Query)
       · rfl
     · rfl
 
-/-- `matchQueryWith`, joined. `d.holdsAll d.terms` is computed **once** here rather than
-at every node, which is the reason `matchJoin` takes it as a parameter. -/
+/-- `matchQueryWith`, joined. The candidates are the representatives, and whether they are
+all held is computed **once** here rather than at every node, which is the reason
+`matchJoin` takes it as a parameter. -/
 def matchQueryJoin (cl : Finset (Term × Term)) (d : FDatabase) (q : Query) : List Env :=
-  matchJoin cl d q d.terms (d.holdsAll d.terms) [] (Query.freeVars q [])
+  matchJoin cl d q (d.repsWith cl) (d.holdsAll (d.repsWith cl)) [] (Query.freeVars q [])
 
 theorem matchQueryJoin_eq (cl : Finset (Term × Term)) (d : FDatabase) (q : Query) :
     matchQueryJoin cl d q = matchQueryWith cl d q := by
-  rw [matchQueryJoin,
-    matchJoin_eq cl d q d.terms (d.holdsAll d.terms) (fun h u hu => holdsAll_of_mem h hu)]
+  rw [matchQueryJoin, matchJoin_eq cl d q (d.repsWith cl) (d.holdsAll (d.repsWith cl))
+    (fun h u hu => holdsAll_of_mem h hu)]
   exact matchQueryPruned_eq cl d q
 
 /-- **The join is `matchQuery`**: at `d`'s own closure it produces the same substitutions,
@@ -1210,38 +1227,28 @@ after the `csimp` below is every caller of `matchQuery` too. -/
   funext cl d q
   exact (matchQueryJoin_eq cl d q).symm
 
-/-- What points compiled code at the fast path. -/
-@[csimp] theorem matchQuery_eq_matchQueryFast : @matchQuery = @matchQueryFast := by
+/-- The join at `d`'s own closure. -/
+def matchQueryJoinAt (d : FDatabase) (q : Query) : List Env := matchQueryJoin d.closureF d q
+
+theorem matchQuery_eq_matchQueryFast : @matchQuery = @matchQueryFast := by
   funext d q
   exact (matchQueryFast_eq d q).symm
 
-/-! ### Deleting rows -/
-/-- Whether two terms spell one row under `cl`: the same head over congruent columns. -/
-def FDatabase.sameRow (cl : Finset (Term × Term)) : Term → Term → Bool
-  | .app f as, .app g bs => f == g && FDatabase.congrTuple cl as bs
-  | _, _ => false
-
-/-- Remove every spelling of the rows `X`: the row terms and their index rows. A row that
-another held term contains, or that an asserted equation names, stays: `Cong.subterm` and
-the equation keep it in the specification, which removes reflexive assertions only. Column
-values stay recorded because the list is closed under subterms. -/
-def FDatabase.deleteAtoms (cl : Finset (Term × Term)) (X : List Term) (d : FDatabase) :
-    FDatabase :=
-  if X.isEmpty then d else
-    let gone : Term → Bool := fun s => X.any (FDatabase.sameRow cl s) &&
-      !(d.terms.any fun u => u != s && decide (s ∈ u.subtermList)) &&
-      !(d.eqs.any fun p => p.1 != p.2 && (p.1 == s || p.2 == s))
-    { d with terms := d.terms.filter fun s => !gone s,
-             rows := d.rows.filter fun r => !gone (.app r.fn r.args) }
+/-- **What points compiled code at the join.** `csimp` rewrites call sites compiled after
+the lemma, not the bodies compiled before it: `matchQueryFast`'s body still enumerates, so
+`matchQuery` is sent to the join directly rather than through it. -/
+@[csimp] theorem matchQuery_eq_join : @matchQuery = @matchQueryJoinAt := by
+  funext d q
+  exact (matchQueryJoin_eq_matchQuery d q).symm
 
 /-! ### Running -/
-/-- `evalAction`, computed. A delete removes the row's spellings in the current state. -/
+/-- `evalAction`, computed. Every action only adds: a subsume inserts its row and marks it. -/
 def execAction (σ : Env) (d : FDatabase) : Action → Option FDatabase
   | .expr e => (e.eval σ).map fun t => d.addTerm t
   | .union e₁ e₂ =>
       (e₁.eval σ).bind fun t₁ => (e₂.eval σ).bind fun t₂ =>
         if t₁.isLit || t₂.isLit then none else some (d.addEq t₁ t₂)
-  | .delete e => (e.eval σ).map fun t => d.deleteAtoms d.closureF [t]
+  | .subsume f es => (Expr.evalList es σ).map fun ts => d.subsume (.app f ts)
 
 /-- `evalActions`, computed. -/
 def execActions (σ : Env) (d : FDatabase) : List Action → Option FDatabase
@@ -1250,51 +1257,23 @@ def execActions (σ : Env) (d : FDatabase) : List Action → Option FDatabase
 
 /-! #### Rounds
 
-`RunRules` deletes every row some firing deletes and then adds every firing's writes, all
-read off the pre-state. A head's deletes and writes are therefore separated: `actionsDeletes`
-collects the rows, `execWrite` applies the writes while only evaluating a delete, and a
-head stuck at any action contributes neither. One congruence closure, computed once per
-round, serves matching and the deletions' congruent spellings. -/
-/-- The rows one action deletes, or `none` where the action is stuck. -/
-def actionDeletes (σ : Env) : Action → Option (List Term)
-  | .delete e => (e.eval σ).map fun t => [t]
-  | .expr e => (e.eval σ).map fun _ => []
-  | .union e₁ e₂ =>
-      (e₁.eval σ).bind fun t₁ => (e₂.eval σ).bind fun t₂ =>
-        if t₁.isLit || t₂.isLit then none else some []
-
-/-- `actionDeletes` over a head. -/
-def actionsDeletes (σ : Env) : List Action → Option (List Term)
-  | [] => some []
-  | a :: as => (actionDeletes σ a).bind fun X => (actionsDeletes σ as).map (X ++ ·)
-
-/-- One action's writes; a delete is evaluated and otherwise left to the round. -/
-def execWrite (σ : Env) (d : FDatabase) : Action → Option FDatabase
-  | .delete e => (e.eval σ).map fun _ => d
-  | a => execAction σ d a
-
-/-- `execWrite` over a head. -/
-def execWrites (σ : Env) (d : FDatabase) : List Action → Option FDatabase
-  | [] => some d
-  | a :: as => (execWrite σ d a).bind fun d' => execWrites σ d' as
-
-/-- One firing's writes, applied on top of `acc`: the pre-state less the round's deletions,
-plus the writes so far. Nothing if the head is stuck, which for a well-scoped rule it is
-not. Writes read no state, so applying them in sequence is their union. -/
-def fireWritesInto (r : Rule) (acc : FDatabase) (σ : Env) : FDatabase :=
-  match execWrites σ acc r.actions with
+`RunRules` adds every firing's writes and subsumed rows, all read off the pre-state. Actions
+read no state, so applying the firings in sequence is their union, and a head stuck at any
+action contributes nothing. One congruence closure, computed once per round, serves every
+rule's matching. -/
+/-- One firing, applied on top of `acc`. Nothing if the head is stuck, which for a
+well-scoped rule it is not. -/
+def fireInto (r : Rule) (acc : FDatabase) (σ : Env) : FDatabase :=
+  match execActions σ acc r.actions with
   | some d' => d'
   | none => acc
 
 /-- One round of `rs` under the pre-state's closure `cl`: match every rule against the
-pre-state, delete every row a firing deletes, then add every firing's writes. -/
+pre-state, then apply every firing. -/
 def execRunRulesWith (cl : Finset (Term × Term)) (rs : List Rule) (d : FDatabase) :
     FDatabase :=
   let firings := rs.map fun r => (r, matchQueryWith cl d r.query)
-  let deleted := firings.flatMap fun rs => rs.2.flatMap fun σ =>
-    (actionsDeletes σ rs.1.actions).getD []
-  let base := d.deleteAtoms cl deleted
-  firings.foldl (fun acc rs => rs.2.foldl (fireWritesInto rs.1) acc) base
+  firings.foldl (fun acc rs => rs.2.foldl (fireInto rs.1) acc) d
 
 /-- One round of the rules `rs`, with one congruence closure for the whole round. -/
 def execRunRules (rs : List Rule) (d : FDatabase) : FDatabase :=
@@ -1302,7 +1281,7 @@ def execRunRules (rs : List Rule) (d : FDatabase) : FDatabase :=
 
 /-- Whether two states agree on every field. -/
 def FDatabase.sameData (d e : FDatabase) : Bool :=
-  e.terms == d.terms && e.rows == d.rows && e.eqs == d.eqs
+  e.terms == d.terms && e.rows == d.rows && e.eqs == d.eqs && e.subsumed == d.subsumed
 
 /-- Rounds of `rs` until nothing changes, bounded by fuel that **fails** rather than
 returning a prefix: rules that really do diverge make the run `none`, which the difftest
@@ -1332,27 +1311,41 @@ theorem FDatabase.runSaturateFast_eq (rs : List Rule) (n : Nat) (d : FDatabase) 
   funext rs n d
   exact (FDatabase.runSaturateFast_eq rs n d).symm
 
-/-- Rounds a saturation allows before declaring its rules divergent. This bounds no
-structural quantity: rounds add terms rather than shrink a class, so terminating rules can
+mutual
+
+/-- `Reach`, computed, with `fuel` passes allowed per saturation. -/
+def execSchedule (fuel : Nat) (d : FDatabase) : Schedule → Option FDatabase
+  | .run rs => some (execRunRules rs d)
+  | .seq S₁ S₂ => (execSchedule fuel d S₁).bind fun e => execSchedule fuel e S₂
+  | .saturate S => execSaturate fuel fuel d S
+termination_by S => (sizeOf S, 0)
+
+/-- Passes of `S` until one leaves the state unchanged, bounded by fuel that **fails**
+rather than returning a prefix: a saturation that really does diverge makes the run `none`,
+which the difftest reports as a mismatch, rather than presenting a half-run state. -/
+def execSaturate (fuel : Nat) : Nat → FDatabase → Schedule → Option FDatabase
+  | 0, d, S => (execSchedule fuel d S).bind fun e => if d.sameData e then some e else none
+  | n + 1, d, S => (execSchedule fuel d S).bind fun e =>
+      if d.sameData e then some e else execSaturate fuel n e S
+termination_by n _ S => (sizeOf S, n + 1)
+
+end
+
+/-- Passes a saturation allows before declaring it divergent. This bounds no structural
+quantity: rounds add terms rather than shrink a class, so a terminating saturation can
 need arbitrarily many. -/
 def runFuel : Nat := 64
 
-/-- `CmdStep`, computed. -/
-def execCmd (d : FDatabase) : Cmd → Option FDatabase
-  | .run rs => some (execRunRules rs d)
-  | .saturate rs => d.runSaturateF rs runFuel
+/-- The state with subsumption forgotten: what a check sees. -/
+def FDatabase.forgetSubsumed (d : FDatabase) : FDatabase := { d with subsumed := [] }
 
-/-- `ProgramStep`, computed. -/
-def execProgram (d : FDatabase) : List Cmd → Option FDatabase
-  | [] => some d
-  | c :: cs => (execCmd d c).bind fun d' => execProgram d' cs
+/-- The final check, computed: `QueryHolds` on the state with subsumption forgotten. -/
+def FDatabase.holds (d : FDatabase) (q : Query) : Bool :=
+  !(matchQuery d.forgetSubsumed q).isEmpty
 
-/-- `QueryHolds`, computed. -/
-def FDatabase.holds (d : FDatabase) (q : Query) : Bool := !(matchQuery d q).isEmpty
-
-/-- Run a program's commands from the initial database. The final check is read off the
+/-- Run a program's schedule from the initial database. The final check is read off the
 result with `FDatabase.holds`; `observe` combines the two. -/
-def exec (P : Program) : Option FDatabase := execProgram FDatabase.empty P.commands
+def exec (P : Program) : Option FDatabase := execSchedule runFuel FDatabase.empty P.schedule
 
 /-! ### Row counts
 

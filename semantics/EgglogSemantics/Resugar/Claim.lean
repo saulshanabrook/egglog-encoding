@@ -5,19 +5,13 @@ namespace Egglog.Resugar
 
 open SourceProof (Claim)
 
-/-- A view relates its id to its constructor application; UF records an equality; a source
-value is itself. -/
-def factClaim (P : Program) (t : Term) : Option Claim := do
+/-- A union-find row records an equality; everything else, a source value or an
+application the target matched, is its own reflexive claim. -/
+def factClaim (_ : Program) (t : Term) : Option Claim := do
   let .app f cols := t | some ⟨t, t⟩
-  match Congruence.tableRole P f with
-  | some .unionFind =>
+  if f = ufName then
     let [a, b] := cols | none
     some ⟨a, b⟩
-  | some (.view ctor) => do
-    let fk ← P.ctors.find? fun fk => fk.1 == ctor
-    if cols.length != fk.2 + 1 then none else do
-      let id ← cols[fk.2]?
-      some ⟨id, .app ctor (cols.take fk.2)⟩
-  | none => some ⟨t, t⟩
+  else some ⟨t, t⟩
 
 end Egglog.Resugar

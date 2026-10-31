@@ -25,8 +25,7 @@ theorem t0_cong : (t0,t0) ∈ (dEx.addTerm t0).closureF :=
 /-- The pattern `0` matches under a substitution binding `x`, which the pattern does not
 mention: `patternHolds` reads `σ` only through `d.env ++ σ`. -/
 theorem holds_lit : patternHolds dEx (.expr (.lit (.int 0))) [("x", t0)] = true := by
-  simp only [patternHolds, Expr.eval, decide_eq_true_eq]
-  exact ⟨t0, t0_mem, t0_cong⟩
+  decide +kernel
 
 /-- **`FDatabase.patternHolds_validSubst` is false without `ValidEnv`.**
 `ValidSubst` carries `ValidEnv (p.freeVars db.env) db σ`, which pins `Env.dom σ` to
@@ -44,9 +43,7 @@ theorem patternHolds_validSubst_false :
 def qEx : Query := [Pattern.expr (.var "x"), Pattern.expr (.var "x")]
 
 theorem holds_var : patternHolds dEx (.expr (.var "x")) [("x", t0)] = true := by
-  change decide (∃ w ∈ dEx.terms, (w, t0) ∈ (dEx.addTerm t0).closureF) = true
-  rw [decide_eq_true_eq]
-  exact ⟨t0, t0_mem, t0_cong⟩
+  rfl
 
 theorem mem_matchQuery_ex : [("x", t0)] ∈ matchQuery dEx qEx := by
   rw [matchQuery, List.mem_filter]
@@ -55,7 +52,7 @@ theorem mem_matchQuery_ex : [("x", t0)] ∈ matchQuery dEx qEx := by
     intro b hb
     rw [List.mem_singleton] at hb
     subst hb
-    exact t0_mem
+    decide +kernel
   · change (patternHolds dEx (.expr (.var "x")) (Env.canon ["x"] [("x", t0)]) &&
       (patternHolds dEx (.expr (.var "x")) (Env.canon ["x"] [("x", t0)]) && true)) = true
     rw [show Env.canon ["x"] [("x", t0)] = [("x", t0)] from rfl, holds_var]
@@ -104,19 +101,25 @@ theorem not_cong_of_no_eqs {db : Database} (h : db.eqs = ∅) {a b : Term} : ¬ 
   intro hc
   induction hc using Cong.rec (motive_2 := fun _ _ _ => True) with
   | direct hp => rw [h] at hp; exact hp
-  | subterm _ _ ih => exact ih
+  | child _ _ ih => exact ih
   | symm _ ih => exact ih
   | trans _ _ ih _ => exact ih
   | congr _ _ ih _ => exact ih
   | nil => trivial
   | cons => trivial
 
-theorem not_matches_empty {p : Pattern} {σ : Env} : ¬ Matches Database.empty p σ := by
+/-- Empty stores cannot match at an environment whose values exist. -/
+theorem not_matches_empty {p : Pattern} {σ : Env}
+    (hσ : ∀ v t, Env.lookup v σ = some t → Cong Database.empty t t) :
+    ¬ Matches Database.empty p σ := by
   intro h
   cases h with
-  | atom _ hc => exact not_cong_of_no_eqs rfl hc
-  | equal _ _ hc => exact not_cong_of_no_eqs rfl hc
-  | unequal _ _ hc _ _ => exact not_cong_of_no_eqs rfl hc
+  | atom hl =>
+    obtain ⟨t, he⟩ := hl.eval_exists
+    exact not_cong_of_no_eqs rfl (Lookup.exists_cong hσ ⟨he, hl⟩)
+  | equal _ _ _ _ hc => exact not_cong_of_no_eqs rfl hc
+  | unequal hl _ he _ _ =>
+    exact not_cong_of_no_eqs rfl (Lookup.exists_cong hσ ⟨he, hl⟩)
 
 theorem recorded_empty {d : Database} (h : d.Recorded Database.empty) : d.eqs = ∅ :=
   Set.eq_empty_of_forall_notMem fun p hp =>
@@ -124,8 +127,56 @@ theorem recorded_empty {d : Database} (h : d.Recorded Database.empty) : d.eqs = 
 
 namespace Choice
 
-theorem recorded_iff_subset {d e : Database} (h : e.Diag) : d.Recorded e ↔ d.eqs ⊆ e.eqs :=
-  ⟨fun hr => (hr.contained_of_diag h).eqs, fun hs => Database.Recorded.of_contained ⟨hs⟩⟩
+theorem recorded_iff_subset {d e : Database} (h : e.Diag) : d.Recorded e ↔ d.eqs ⊆ e.eqs := by
+  constructor
+  · intro hr p hp
+    obtain ⟨q, hq, h1, h2⟩ := hr.eqs p hp
+    have heq : p = q := Prod.ext (h1.eq_of_diag (h.addTerms _)) (h2.eq_of_diag (h.addTerms _))
+    exact heq.symm ▸ hq
+  · intro hs
+    exact ⟨fun p hp => ⟨p, hs hp, mem_congOn_self (by simp), mem_congOn_self (by simp)⟩⟩
 
 end Choice
+
+namespace InfiniteRepresentatives
+
+private def boxed (n : Int) : Term := .app "box" [.lit (.int n)]
+
+/-- An infinite class of applications over unbounded integer arguments. Literal
+classes remain isolated, so this is a well-formed mathematical store. -/
+def db : Database := ⟨{p | ∃ n m : Int, p = (boxed n, boxed m)}, ∅⟩
+
+theorem wf : db.WF := by
+  constructor
+  rintro p ⟨n, m, rfl⟩ hl
+  simp [boxed, Term.isLit] at hl
+
+private theorem held (n : Int) : boxed n ∈ db.terms := by
+  have hc : StoredCong db (boxed n) (boxed n) := .direct ⟨n, n, rfl⟩
+  exact hc.mem_left
+
+private theorem mem_terms {t : Term} (ht : t ∈ db.terms) :
+    (∃ n, t = boxed n) ∨ ∃ n, t = .lit (.int n) := by
+  obtain ⟨p, ⟨n, m, rfl⟩, ht⟩ := ht
+  have side {n : Int} (h : t ∈ (boxed n).subterms) :
+      (∃ n, t = boxed n) ∨ ∃ n, t = .lit (.int n) := by
+    have hh : t = boxed n ∨ t = .lit (.int n) := by
+      simpa [boxed, Term.subterms_app, Term.subterms_lit] using h
+    exact hh.elim (fun h => Or.inl ⟨n, h⟩) (fun h => Or.inr ⟨n, h⟩)
+  exact ht.elim side side
+
+/-- Totality alone does not give representatives for infinite well-formed stores. -/
+theorem no_representative : ¬ db.HasReps := by
+  intro hr
+  obtain ⟨t, ht, hc⟩ := hr (boxed 0) (Database.toCong (held 0))
+  rcases mem_terms ht.1 with ⟨n, rfl⟩ | ⟨n, rfl⟩
+  · apply ht.2 (boxed (n - 1)) (held _) (.direct ⟨n - 1, n, rfl⟩)
+    simp [boxed, Term.blt, Term.nodeSize, Term.nodeSizeList, Term.structuralBlt,
+      Term.structuralBltList, Lit.blt]
+    omega
+  · have hh := InferredFacts.infers_eq_of_isLit wf
+      (InferredFacts.congr_iff_infers.mp hc) (Or.inr rfl)
+    cases hh
+
+end InfiniteRepresentatives
 end Egglog.Falsity

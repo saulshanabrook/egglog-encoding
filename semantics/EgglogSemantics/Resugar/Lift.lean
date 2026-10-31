@@ -9,25 +9,36 @@ open SourceProof (Claim Proof)
 def sourceSubst (vars : List Var) (σ : Env) : Option Env :=
   vars.mapM fun v => (Env.lookup v σ).map (v, ·)
 
-/-- A maintenance firing's written row, justified from its first two premises, the rows.
-Path compression chains two edges; a UF collision chains the two parents through their
-key; moving an output chains the edge into the view; moving a child is congruence at that
-position; a view collision chains the two outputs through their application. -/
+/-- A maintenance firing's written row, justified from its premises in query order. Path
+compression chains two edges; a UF collision chains the two parents through their key; a
+congruence firing turns the second application into the first by congruence on each child,
+and chains the two roots through them. -/
 def rebuild (P : Program) (kind : Congruence.RebuildOrigin)
     (ps : List Proof) : Option Proof := do
-  let p :: q :: _ := ps | none
   match kind with
-  | .compress => trans P p q
-  | .collide => do
+  | .compress =>
+    let p :: q :: _ := ps | none
+    trans P p q
+  | .collide =>
+    let p :: q :: _ := ps | none
     let rev ← symm P q
     trans P rev p
-  | .eclass _ => do
-    let rev ← symm P q
-    trans P rev p
-  | .child _ k => congr P p k q
-  | .viewCollide _ => do
-    let rev ← symm P p
-    trans P q rev
+  | .congruence _ =>
+    let pa :: pb :: rest := ps | none
+    let .app _ as := pa.claim.rhs | none
+    let k := as.length
+    let edges := rest.take (2 * k)
+    let py :: pz :: _ := rest.drop (2 * k) | none
+    if edges.length != 2 * k then none else
+    let children ← (List.range k).mapM fun i => do
+      let ea ← edges[2 * i]?
+      let eb ← edges[2 * i + 1]?
+      let rev ← symm P ea
+      trans P eb rev
+    let node ← replaceChildren P children pb
+    let rev ← symm P pz
+    let left ← trans P rev node
+    trans P left py
 
 /-- The proof `k` builds must establish the source claim of the relational fact. -/
 def expect (P : Program) (fact : Term) (k : Claim → Option Proof) : Option Proof := do

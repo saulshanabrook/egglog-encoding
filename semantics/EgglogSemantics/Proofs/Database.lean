@@ -331,14 +331,61 @@ theorem mem_addTerms {db : Database} {ts : List Term} {t : Term} (h : t ∈ ts) 
   addTerms_terms ▸ Or.inr ⟨t, h, t.self_mem_subterms⟩
 
 
+@[simp] theorem addSubsumed_empty (db : Database) : db.addSubsumed ∅ = db := by
+  apply Database.ext <;> simp [addSubsumed]
+
+@[simp] theorem addSubsumed_eqs (db : Database) (X : Set Term) :
+    (db.addSubsumed X).eqs = db.eqs := rfl
+
+@[simp] theorem addSubsumed_subsumed (db : Database) (X : Set Term) :
+    (db.addSubsumed X).subsumed = db.subsumed ∪ X := rfl
+
+@[simp] theorem addSubsumed_terms (db : Database) (X : Set Term) :
+    (db.addSubsumed X).terms = db.terms := rfl
+
+@[simp] theorem addTerm_subsumed (db : Database) (t : Term) :
+    (db.addTerm t).subsumed = db.subsumed := rfl
+
+@[simp] theorem addEq_subsumed (db : Database) (a b : Term) :
+    (db.addEq a b).subsumed = db.subsumed := rfl
+
+@[simp] theorem addTerms_subsumed (db : Database) (ts : List Term) :
+    (db.addTerms ts).subsumed = db.subsumed := by
+  induction ts generalizing db with
+  | nil => rfl
+  | cons t ts ih => exact ih (db.addTerm t)
+
+@[simp] theorem forgetSubsumed_eqs (db : Database) :
+    db.forgetSubsumed.eqs = db.eqs := rfl
+
+@[simp] theorem forgetSubsumed_subsumed (db : Database) :
+    db.forgetSubsumed.subsumed = ∅ := rfl
+
+@[simp] theorem forgetSubsumed_eq_self {db : Database} (h : db.subsumed = ∅) :
+    db.forgetSubsumed = db := by
+  apply Database.ext <;> simp [forgetSubsumed, h]
+
+theorem live_of_subsumed_empty {db : Database} (h : db.subsumed = ∅) :
+    db.live = {t | Cong db t t} := by
+  ext t
+  simp [Database.live, h]
+
 namespace Contained
-theorem refl (db : Database) : Contained db db := ⟨subset_rfl⟩
+
+theorem addSubsumed (db : Database) (X : Set Term) :
+    db.Contained (db.addSubsumed X) := ⟨subset_rfl, Set.subset_union_left⟩
+
+theorem addSubsumed_mono {d₁ d₂ : Database} (h : d₁.Contained d₂) (X : Set Term) :
+    (d₁.addSubsumed X).Contained (d₂.addSubsumed X) :=
+  ⟨h.eqs, Set.union_subset_union_left X h.subsumed⟩
+
+theorem refl (db : Database) : Contained db db := ⟨subset_rfl, subset_rfl⟩
 
 theorem trans {d₁ d₂ d₃ : Database} (h₁ : Contained d₁ d₂) (h₂ : Contained d₂ d₃) :
-    Contained d₁ d₃ := ⟨h₁.eqs.trans h₂.eqs⟩
+    Contained d₁ d₃ := ⟨h₁.eqs.trans h₂.eqs, h₁.subsumed.trans h₂.subsumed⟩
 
 theorem addTerm (t : Term) (db : Database) : Contained db (db.addTerm t) :=
-  ⟨Set.subset_insert _ _⟩
+  ⟨Set.subset_insert _ _, subset_rfl⟩
 
 theorem addTerms (ts : List Term) (db : Database) : Contained db (db.addTerms ts) := by
   induction ts generalizing db with
@@ -346,14 +393,14 @@ theorem addTerms (ts : List Term) (db : Database) : Contained db (db.addTerms ts
   | cons t ts ih => exact (addTerm t db).trans (ih (db := db.addTerm t))
 
 theorem addEq (a b : Term) (db : Database) : Contained db (db.addEq a b) :=
-  ⟨Set.subset_insert _ _⟩
+  ⟨Set.subset_insert _ _, subset_rfl⟩
 
 /-! The same operation applied to both sides. This is what makes an action, and hence a
 whole action block, transportable along `Contained`. -/
 /-- `Contained` is preserved by adding the same term to both sides. -/
 theorem addTerm_mono {d₁ d₂ : Database} (h : d₁.Contained d₂) (t : Term) :
     (d₁.addTerm t).Contained (d₂.addTerm t) :=
-  ⟨Set.insert_subset_insert h.eqs⟩
+  ⟨Set.insert_subset_insert h.eqs, h.subsumed⟩
 
 /-- `addTerm_mono` folded. -/
 theorem addTerms_mono {d₁ d₂ : Database} (h : d₁.Contained d₂) (ts : List Term) :
@@ -366,17 +413,24 @@ theorem addTerms_mono {d₁ d₂ : Database} (h : d₁.Contained d₂) (ts : Lis
 `eqs` component. -/
 theorem addEq_mono {d₁ d₂ : Database} (h : d₁.Contained d₂) (a b : Term) :
     (d₁.addEq a b).Contained (d₂.addEq a b) :=
-  ⟨Set.insert_subset_insert h.eqs⟩
+  ⟨Set.insert_subset_insert h.eqs, h.subsumed⟩
 
 theorem sUnion (db : Database) (S : Set Database) : Contained db (db.sUnion S) :=
-  ⟨Set.subset_union_left⟩
+  ⟨Set.subset_union_left, Set.subset_union_left⟩
 
 theorem mem_sUnion {db d : Database} {S : Set Database} (h : d ∈ S) :
     Contained d (db.sUnion S) :=
-  ⟨fun _ ht => Or.inr (Set.mem_biUnion h ht)⟩
+  ⟨fun _ ht => Or.inr (Set.mem_biUnion h ht),
+    fun _ ht => Or.inr (Set.mem_biUnion h ht)⟩
 
 end Contained
 namespace WF
+
+theorem addSubsumed {db : Database} (h : WF db) (X : Set Term) :
+    WF (db.addSubsumed X) := ⟨h.litsIsolated⟩
+
+theorem forgetSubsumed {db : Database} (h : WF db) : WF db.forgetSubsumed := ⟨h.litsIsolated⟩
+
 theorem empty : WF Database.empty where
   litsIsolated := by simp [Database.empty, LitsIsolated]
 

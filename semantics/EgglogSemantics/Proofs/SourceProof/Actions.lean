@@ -14,21 +14,21 @@ theorem reflClaims_sound {db : Database} {t : Term} {c : Claim}
   exact StoredCong.subterm (Database.toStored (Database.mem_addTerm t db))
     ((Term.mem_subtermList t).mp hs)
 
-/-- The source evaluator rejects deletes, so successful fact production is additive. -/
-theorem actionFacts_deleteFree {σ : Env} {a : Action} {fs : List Claim}
-    (h : actionFacts σ a = some fs) : a.DeleteFree := by
+/-- The source evaluator rejects subsumes, so successful fact production is additive. -/
+theorem actionFacts_subsumeFree {σ : Env} {a : Action} {fs : List Claim}
+    (h : actionFacts σ a = some fs) : a.SubsumeFree := by
   cases a with
   | expr _ | union _ _ => rfl
-  | delete _ => simp [actionFacts] at h
+  | subsume _ => simp [actionFacts] at h
 
-theorem actionsFacts_deleteFree {σ : Env} {as : List Action} {fs : List Claim}
-    (h : actionsFacts σ as = some fs) : Actions.DeleteFree as := by
+theorem actionsFacts_subsumeFree {σ : Env} {as : List Action} {fs : List Claim}
+    (h : actionsFacts σ as = some fs) : Actions.SubsumeFree as := by
   induction as generalizing fs with
   | nil => simp
   | cons a as ih =>
       obtain ⟨first, hf, h⟩ := Option.bind_eq_some_iff.mp h
       obtain ⟨rest, hr, _⟩ := Option.bind_eq_some_iff.mp h
-      exact Actions.deleteFree_cons.mpr ⟨actionFacts_deleteFree hf, ih hr⟩
+      exact Actions.subsumeFree_cons.mpr ⟨actionFacts_subsumeFree hf, ih hr⟩
 
 theorem actionFacts_sound {db : Database} {σ : Env} {a : Action} {fs : List Claim}
     (h : actionFacts σ a = some fs) :
@@ -57,7 +57,7 @@ theorem actionFacts_sound {db : Database} {σ : Env} {a : Action} {fs : List Cla
           exact StoredCong.subterm (hxy.trans hxy.symm) ((Term.mem_subtermList x).mp hs)
         · obtain ⟨s, hs, rfl⟩ := List.mem_map.mp hc
           exact StoredCong.subterm (hxy.symm.trans hxy) ((Term.mem_subtermList y).mp hs)
-  | delete _ => simp [actionFacts] at h
+  | subsume _ => simp [actionFacts] at h
 
 theorem actionsFacts_sound {db : Database} {σ : Env} {as : List Action} {fs : List Claim}
     (h : actionsFacts σ as = some fs) :
@@ -75,7 +75,7 @@ theorem actionsFacts_sound {db : Database} {σ : Env} {as : List Action} {fs : L
       refine ⟨d₂, by simp [evalActions, hd₁, hd₂], ?_⟩
       intro c hc
       rcases List.mem_append.mp hc with hc | hc
-      · exact (hf₁ c hc).mono (evalActions_contained (actionsFacts_deleteFree h₂) hd₂)
+      · exact (hf₁ c hc).mono (evalActions_contained (actionsFacts_subsumeFree h₂) hd₂)
       · exact hf₂ c hc
 
 end Egglog.SourceProof

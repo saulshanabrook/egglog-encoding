@@ -1,0 +1,2368 @@
+(F (G (B))) = (F (A))  trans
+  (F (G (B))) = (F (A))  trans
+    (F (G (B))) = (F (G (B)))  symm
+      (F (G (B))) = (F (G (B)))  rule 2 {}
+        (F (A)) = (F (B))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (B)  trans
+            (A) = (A)  rule 0 {}
+            (A) = (B)  trans
+              (A) = (B)  symm
+                (B) = (A)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+              (B) = (B)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+    (F (G (B))) = (F (A))  congr 0
+      (F (G (B))) = (F (G (B)))  rule 2 {}
+        (F (A)) = (F (B))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (B)  trans
+            (A) = (A)  rule 0 {}
+            (A) = (B)  trans
+              (A) = (B)  symm
+                (B) = (A)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+              (B) = (B)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+      (G (B)) = (A)  trans
+        (G (B)) = (A)  trans
+          (G (B)) = (B)  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (A))  trans
+                (G (B)) = (G (B))  symm
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                (G (B)) = (G (A))  congr 0
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (B) = (A)  trans
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  symm
+                      (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+            (G (A)) = (B)  rule 3 {x := (G (A))}
+              (G (G (A))) = (G (G (A)))  congr 0
+                (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                  (F (G (B))) = (F (G (A)))  congr 0
+                    (F (G (B))) = (F (G (B)))  rule 2 {}
+                      (F (A)) = (F (B))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (A)  rule 0 {}
+                          (A) = (B)  trans
+                            (A) = (B)  symm
+                              (B) = (A)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                            (B) = (B)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (A))  trans
+                        (G (B)) = (G (B))  symm
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                        (G (B)) = (G (A))  congr 0
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                          (B) = (A)  trans
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  symm
+                              (A) = (A)  rule 0 {}
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+        (A) = (A)  symm
+          (A) = (A)  rule 0 {}
+  (F (A)) = (F (A))  rule 0 {}
+
+(G (G (A))) = (A)  trans
+  (G (G (A))) = (G (A))  trans
+    (G (G (A))) = (G (G (A)))  symm
+      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+        (F (G (B))) = (F (G (A)))  congr 0
+          (F (G (B))) = (F (G (B)))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (B))  symm
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+              (G (B)) = (G (A))  congr 0
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                (B) = (A)  trans
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+    (G (G (A))) = (G (A))  congr 0
+      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+        (F (G (B))) = (F (G (A)))  congr 0
+          (F (G (B))) = (F (G (B)))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (B))  symm
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+              (G (B)) = (G (A))  congr 0
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                (B) = (A)  trans
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+      (G (A)) = (A)  trans
+        (G (A)) = (A)  trans
+          (G (A)) = (B)  rule 3 {x := (G (A))}
+            (G (G (A))) = (G (G (A)))  congr 0
+              (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                (F (G (B))) = (F (G (A)))  congr 0
+                  (F (G (B))) = (F (G (B)))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (G (B)) = (G (A))  trans
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (B))  symm
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                      (G (B)) = (G (A))  congr 0
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                        (B) = (A)  trans
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  symm
+                            (A) = (A)  rule 0 {}
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+        (A) = (A)  symm
+          (A) = (A)  rule 0 {}
+  (G (A)) = (A)  trans
+    (G (A)) = (B)  rule 3 {x := (G (A))}
+      (G (G (A))) = (G (G (A)))  congr 0
+        (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+          (F (G (B))) = (F (G (A)))  congr 0
+            (F (G (B))) = (F (G (B)))  rule 2 {}
+              (F (A)) = (F (B))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (A)  rule 0 {}
+                  (A) = (B)  trans
+                    (A) = (B)  symm
+                      (B) = (A)  rule 3 {x := (A)}
+                        (G (A)) = (G (A))  congr 0
+                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                            (F (A)) = (F (A))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                    (B) = (B)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (A))  trans
+                (G (B)) = (G (B))  symm
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                (G (B)) = (G (A))  congr 0
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (B) = (A)  trans
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  symm
+                      (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+        (G (A)) = (G (A))  rule 1 {x := (A)}
+          (F (A)) = (F (A))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (A)  rule 0 {}
+    (B) = (A)  rule 3 {x := (A)}
+      (G (A)) = (G (A))  congr 0
+        (G (A)) = (G (A))  rule 1 {x := (A)}
+          (F (A)) = (F (A))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (A)  rule 0 {}
+        (A) = (A)  rule 0 {}
+
+(G (G (A))) = (B)  trans
+  (G (G (A))) = (G (B))  trans
+    (G (G (A))) = (G (G (A)))  symm
+      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+        (F (G (B))) = (F (G (A)))  congr 0
+          (F (G (B))) = (F (G (B)))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (B))  symm
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+              (G (B)) = (G (A))  congr 0
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                (B) = (A)  trans
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+    (G (G (A))) = (G (B))  congr 0
+      (G (G (A))) = (G (G (A)))  trans
+        (G (G (A))) = (A)  trans
+          (G (G (A))) = (G (A))  trans
+            (G (G (A))) = (G (G (A)))  symm
+              (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                (F (G (B))) = (F (G (A)))  congr 0
+                  (F (G (B))) = (F (G (B)))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (G (B)) = (G (A))  trans
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (B))  symm
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                      (G (B)) = (G (A))  congr 0
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                        (B) = (A)  trans
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  symm
+                            (A) = (A)  rule 0 {}
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+            (G (G (A))) = (G (A))  congr 0
+              (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                (F (G (B))) = (F (G (A)))  congr 0
+                  (F (G (B))) = (F (G (B)))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (G (B)) = (G (A))  trans
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (B))  symm
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                      (G (B)) = (G (A))  congr 0
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                        (B) = (A)  trans
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  symm
+                            (A) = (A)  rule 0 {}
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+              (G (A)) = (A)  trans
+                (G (A)) = (A)  trans
+                  (G (A)) = (B)  rule 3 {x := (G (A))}
+                    (G (G (A))) = (G (G (A)))  congr 0
+                      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                        (F (G (B))) = (F (G (A)))  congr 0
+                          (F (G (B))) = (F (G (B)))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                          (G (B)) = (G (A))  trans
+                            (G (B)) = (G (A))  trans
+                              (G (B)) = (G (B))  symm
+                                (G (B)) = (G (B))  rule 2 {}
+                                  (F (A)) = (F (B))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (B)  trans
+                                      (A) = (A)  rule 0 {}
+                                      (A) = (B)  trans
+                                        (A) = (B)  symm
+                                          (B) = (A)  rule 3 {x := (A)}
+                                            (G (A)) = (G (A))  congr 0
+                                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                (F (A)) = (F (A))  congr 0
+                                                  (F (A)) = (F (A))  rule 0 {}
+                                                  (A) = (A)  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                        (B) = (B)  rule 3 {x := (A)}
+                                          (G (A)) = (G (A))  congr 0
+                                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                                              (F (A)) = (F (A))  congr 0
+                                                (F (A)) = (F (A))  rule 0 {}
+                                                (A) = (A)  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                              (G (B)) = (G (A))  congr 0
+                                (G (B)) = (G (B))  rule 2 {}
+                                  (F (A)) = (F (B))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (B)  trans
+                                      (A) = (A)  rule 0 {}
+                                      (A) = (B)  trans
+                                        (A) = (B)  symm
+                                          (B) = (A)  rule 3 {x := (A)}
+                                            (G (A)) = (G (A))  congr 0
+                                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                (F (A)) = (F (A))  congr 0
+                                                  (F (A)) = (F (A))  rule 0 {}
+                                                  (A) = (A)  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                        (B) = (B)  rule 3 {x := (A)}
+                                          (G (A)) = (G (A))  congr 0
+                                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                                              (F (A)) = (F (A))  congr 0
+                                                (F (A)) = (F (A))  rule 0 {}
+                                                (A) = (A)  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                (B) = (A)  trans
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  symm
+                                    (A) = (A)  rule 0 {}
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                (A) = (A)  symm
+                  (A) = (A)  rule 0 {}
+          (G (A)) = (A)  trans
+            (G (A)) = (B)  rule 3 {x := (G (A))}
+              (G (G (A))) = (G (G (A)))  congr 0
+                (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                  (F (G (B))) = (F (G (A)))  congr 0
+                    (F (G (B))) = (F (G (B)))  rule 2 {}
+                      (F (A)) = (F (B))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (A)  rule 0 {}
+                          (A) = (B)  trans
+                            (A) = (B)  symm
+                              (B) = (A)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                            (B) = (B)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (A))  trans
+                        (G (B)) = (G (B))  symm
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                        (G (B)) = (G (A))  congr 0
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                          (B) = (A)  trans
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  symm
+                              (A) = (A)  rule 0 {}
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+            (B) = (A)  rule 3 {x := (A)}
+              (G (A)) = (G (A))  congr 0
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  rule 0 {}
+        (A) = (G (G (A)))  symm
+          (G (G (A))) = (A)  trans
+            (G (G (A))) = (G (A))  trans
+              (G (G (A))) = (G (G (A)))  symm
+                (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                  (F (G (B))) = (F (G (A)))  congr 0
+                    (F (G (B))) = (F (G (B)))  rule 2 {}
+                      (F (A)) = (F (B))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (A)  rule 0 {}
+                          (A) = (B)  trans
+                            (A) = (B)  symm
+                              (B) = (A)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                            (B) = (B)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (A))  trans
+                        (G (B)) = (G (B))  symm
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                        (G (B)) = (G (A))  congr 0
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                          (B) = (A)  trans
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  symm
+                              (A) = (A)  rule 0 {}
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+              (G (G (A))) = (G (A))  congr 0
+                (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                  (F (G (B))) = (F (G (A)))  congr 0
+                    (F (G (B))) = (F (G (B)))  rule 2 {}
+                      (F (A)) = (F (B))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (A)  rule 0 {}
+                          (A) = (B)  trans
+                            (A) = (B)  symm
+                              (B) = (A)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                            (B) = (B)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (A))  trans
+                        (G (B)) = (G (B))  symm
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                        (G (B)) = (G (A))  congr 0
+                          (G (B)) = (G (B))  rule 2 {}
+                            (F (A)) = (F (B))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (A)  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (B)  symm
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                  (B) = (B)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                          (B) = (A)  trans
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  symm
+                              (A) = (A)  rule 0 {}
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                (G (A)) = (A)  trans
+                  (G (A)) = (A)  trans
+                    (G (A)) = (B)  rule 3 {x := (G (A))}
+                      (G (G (A))) = (G (G (A)))  congr 0
+                        (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                          (F (G (B))) = (F (G (A)))  congr 0
+                            (F (G (B))) = (F (G (B)))  rule 2 {}
+                              (F (A)) = (F (B))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (A)  rule 0 {}
+                                  (A) = (B)  trans
+                                    (A) = (B)  symm
+                                      (B) = (A)  rule 3 {x := (A)}
+                                        (G (A)) = (G (A))  congr 0
+                                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                                            (F (A)) = (F (A))  congr 0
+                                              (F (A)) = (F (A))  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                    (B) = (B)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                            (G (B)) = (G (A))  trans
+                              (G (B)) = (G (A))  trans
+                                (G (B)) = (G (B))  symm
+                                  (G (B)) = (G (B))  rule 2 {}
+                                    (F (A)) = (F (B))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (B)  trans
+                                        (A) = (A)  rule 0 {}
+                                        (A) = (B)  trans
+                                          (A) = (B)  symm
+                                            (B) = (A)  rule 3 {x := (A)}
+                                              (G (A)) = (G (A))  congr 0
+                                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                  (F (A)) = (F (A))  congr 0
+                                                    (F (A)) = (F (A))  rule 0 {}
+                                                    (A) = (A)  rule 0 {}
+                                                (A) = (A)  rule 0 {}
+                                          (B) = (B)  rule 3 {x := (A)}
+                                            (G (A)) = (G (A))  congr 0
+                                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                (F (A)) = (F (A))  congr 0
+                                                  (F (A)) = (F (A))  rule 0 {}
+                                                  (A) = (A)  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                (G (B)) = (G (A))  congr 0
+                                  (G (B)) = (G (B))  rule 2 {}
+                                    (F (A)) = (F (B))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (B)  trans
+                                        (A) = (A)  rule 0 {}
+                                        (A) = (B)  trans
+                                          (A) = (B)  symm
+                                            (B) = (A)  rule 3 {x := (A)}
+                                              (G (A)) = (G (A))  congr 0
+                                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                  (F (A)) = (F (A))  congr 0
+                                                    (F (A)) = (F (A))  rule 0 {}
+                                                    (A) = (A)  rule 0 {}
+                                                (A) = (A)  rule 0 {}
+                                          (B) = (B)  rule 3 {x := (A)}
+                                            (G (A)) = (G (A))  congr 0
+                                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                                (F (A)) = (F (A))  congr 0
+                                                  (F (A)) = (F (A))  rule 0 {}
+                                                  (A) = (A)  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                  (B) = (A)  trans
+                                    (B) = (A)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  symm
+                                      (A) = (A)  rule 0 {}
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (A)  trans
+              (G (A)) = (B)  rule 3 {x := (G (A))}
+                (G (G (A))) = (G (G (A)))  congr 0
+                  (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                    (F (G (B))) = (F (G (A)))  congr 0
+                      (F (G (B))) = (F (G (B)))  rule 2 {}
+                        (F (A)) = (F (B))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (B)  trans
+                            (A) = (A)  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (B)  symm
+                                (B) = (A)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                              (B) = (B)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                      (G (B)) = (G (A))  trans
+                        (G (B)) = (G (A))  trans
+                          (G (B)) = (G (B))  symm
+                            (G (B)) = (G (B))  rule 2 {}
+                              (F (A)) = (F (B))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (A)  rule 0 {}
+                                  (A) = (B)  trans
+                                    (A) = (B)  symm
+                                      (B) = (A)  rule 3 {x := (A)}
+                                        (G (A)) = (G (A))  congr 0
+                                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                                            (F (A)) = (F (A))  congr 0
+                                              (F (A)) = (F (A))  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                    (B) = (B)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                          (G (B)) = (G (A))  congr 0
+                            (G (B)) = (G (B))  rule 2 {}
+                              (F (A)) = (F (B))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (B)  trans
+                                  (A) = (A)  rule 0 {}
+                                  (A) = (B)  trans
+                                    (A) = (B)  symm
+                                      (B) = (A)  rule 3 {x := (A)}
+                                        (G (A)) = (G (A))  congr 0
+                                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                                            (F (A)) = (F (A))  congr 0
+                                              (F (A)) = (F (A))  rule 0 {}
+                                              (A) = (A)  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                    (B) = (B)  rule 3 {x := (A)}
+                                      (G (A)) = (G (A))  congr 0
+                                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                                          (F (A)) = (F (A))  congr 0
+                                            (F (A)) = (F (A))  rule 0 {}
+                                            (A) = (A)  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                            (B) = (A)  trans
+                              (B) = (A)  rule 3 {x := (A)}
+                                (G (A)) = (G (A))  congr 0
+                                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                                    (F (A)) = (F (A))  congr 0
+                                      (F (A)) = (F (A))  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  symm
+                                (A) = (A)  rule 0 {}
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+              (B) = (A)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+      (G (A)) = (B)  trans
+        (G (A)) = (A)  trans
+          (G (A)) = (B)  rule 3 {x := (G (A))}
+            (G (G (A))) = (G (G (A)))  congr 0
+              (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+                (F (G (B))) = (F (G (A)))  congr 0
+                  (F (G (B))) = (F (G (B)))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (G (B)) = (G (A))  trans
+                    (G (B)) = (G (A))  trans
+                      (G (B)) = (G (B))  symm
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                      (G (B)) = (G (A))  congr 0
+                        (G (B)) = (G (B))  rule 2 {}
+                          (F (A)) = (F (B))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (B)  trans
+                              (A) = (A)  rule 0 {}
+                              (A) = (B)  trans
+                                (A) = (B)  symm
+                                  (B) = (A)  rule 3 {x := (A)}
+                                    (G (A)) = (G (A))  congr 0
+                                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                                        (F (A)) = (F (A))  congr 0
+                                          (F (A)) = (F (A))  rule 0 {}
+                                          (A) = (A)  rule 0 {}
+                                      (A) = (A)  rule 0 {}
+                                (B) = (B)  rule 3 {x := (A)}
+                                  (G (A)) = (G (A))  congr 0
+                                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                                      (F (A)) = (F (A))  congr 0
+                                        (F (A)) = (F (A))  rule 0 {}
+                                        (A) = (A)  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                        (B) = (A)  trans
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  symm
+                            (A) = (A)  rule 0 {}
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+        (A) = (B)  symm
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+  (G (B)) = (B)  trans
+    (G (B)) = (G (A))  trans
+      (G (B)) = (G (A))  trans
+        (G (B)) = (G (B))  symm
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+        (G (B)) = (G (A))  congr 0
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (B) = (A)  trans
+            (B) = (A)  rule 3 {x := (A)}
+              (G (A)) = (G (A))  congr 0
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  symm
+              (A) = (A)  rule 0 {}
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+    (G (A)) = (B)  rule 3 {x := (G (A))}
+      (G (G (A))) = (G (G (A)))  congr 0
+        (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+          (F (G (B))) = (F (G (A)))  congr 0
+            (F (G (B))) = (F (G (B)))  rule 2 {}
+              (F (A)) = (F (B))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (A)  rule 0 {}
+                  (A) = (B)  trans
+                    (A) = (B)  symm
+                      (B) = (A)  rule 3 {x := (A)}
+                        (G (A)) = (G (A))  congr 0
+                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                            (F (A)) = (F (A))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                    (B) = (B)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (A))  trans
+                (G (B)) = (G (B))  symm
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                (G (B)) = (G (A))  congr 0
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (B) = (A)  trans
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  symm
+                      (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+        (G (A)) = (G (A))  rule 1 {x := (A)}
+          (F (A)) = (F (A))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (A)  rule 0 {}
+
+(G (B)) = (A)  trans
+  (G (B)) = (B)  trans
+    (G (B)) = (G (A))  trans
+      (G (B)) = (G (A))  trans
+        (G (B)) = (G (B))  symm
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+        (G (B)) = (G (A))  congr 0
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (B) = (A)  trans
+            (B) = (A)  rule 3 {x := (A)}
+              (G (A)) = (G (A))  congr 0
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  symm
+              (A) = (A)  rule 0 {}
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+    (G (A)) = (B)  rule 3 {x := (G (A))}
+      (G (G (A))) = (G (G (A)))  congr 0
+        (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+          (F (G (B))) = (F (G (A)))  congr 0
+            (F (G (B))) = (F (G (B)))  rule 2 {}
+              (F (A)) = (F (B))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (A)  rule 0 {}
+                  (A) = (B)  trans
+                    (A) = (B)  symm
+                      (B) = (A)  rule 3 {x := (A)}
+                        (G (A)) = (G (A))  congr 0
+                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                            (F (A)) = (F (A))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                    (B) = (B)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (A))  trans
+                (G (B)) = (G (B))  symm
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                (G (B)) = (G (A))  congr 0
+                  (G (B)) = (G (B))  rule 2 {}
+                    (F (A)) = (F (B))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (A)  rule 0 {}
+                        (A) = (B)  trans
+                          (A) = (B)  symm
+                            (B) = (A)  rule 3 {x := (A)}
+                              (G (A)) = (G (A))  congr 0
+                                (G (A)) = (G (A))  rule 1 {x := (A)}
+                                  (F (A)) = (F (A))  congr 0
+                                    (F (A)) = (F (A))  rule 0 {}
+                                    (A) = (A)  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                          (B) = (B)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                  (B) = (A)  trans
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  symm
+                      (A) = (A)  rule 0 {}
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+        (G (A)) = (G (A))  rule 1 {x := (A)}
+          (F (A)) = (F (A))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (A)  rule 0 {}
+  (B) = (A)  rule 3 {x := (A)}
+    (G (A)) = (G (A))  congr 0
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+      (A) = (A)  rule 0 {}
+
+(G (A)) = (A)  trans
+  (G (A)) = (B)  rule 3 {x := (G (A))}
+    (G (G (A))) = (G (G (A)))  congr 0
+      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+        (F (G (B))) = (F (G (A)))  congr 0
+          (F (G (B))) = (F (G (B)))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (B))  symm
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+              (G (B)) = (G (A))  congr 0
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                (B) = (A)  trans
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+  (B) = (A)  rule 3 {x := (A)}
+    (G (A)) = (G (A))  congr 0
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+      (A) = (A)  rule 0 {}
+
+(G (B)) = (B)  trans
+  (G (B)) = (G (A))  trans
+    (G (B)) = (G (A))  trans
+      (G (B)) = (G (B))  symm
+        (G (B)) = (G (B))  rule 2 {}
+          (F (A)) = (F (B))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (B)  trans
+              (A) = (A)  rule 0 {}
+              (A) = (B)  trans
+                (A) = (B)  symm
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                (B) = (B)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+      (G (B)) = (G (A))  congr 0
+        (G (B)) = (G (B))  rule 2 {}
+          (F (A)) = (F (B))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (B)  trans
+              (A) = (A)  rule 0 {}
+              (A) = (B)  trans
+                (A) = (B)  symm
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                (B) = (B)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+        (B) = (A)  trans
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+          (A) = (A)  symm
+            (A) = (A)  rule 0 {}
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+  (G (A)) = (B)  rule 3 {x := (G (A))}
+    (G (G (A))) = (G (G (A)))  congr 0
+      (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+        (F (G (B))) = (F (G (A)))  congr 0
+          (F (G (B))) = (F (G (B)))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (A))  trans
+              (G (B)) = (G (B))  symm
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+              (G (B)) = (G (A))  congr 0
+                (G (B)) = (G (B))  rule 2 {}
+                  (F (A)) = (F (B))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (A)  rule 0 {}
+                      (A) = (B)  trans
+                        (A) = (B)  symm
+                          (B) = (A)  rule 3 {x := (A)}
+                            (G (A)) = (G (A))  congr 0
+                              (G (A)) = (G (A))  rule 1 {x := (A)}
+                                (F (A)) = (F (A))  congr 0
+                                  (F (A)) = (F (A))  rule 0 {}
+                                  (A) = (A)  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                        (B) = (B)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                (B) = (A)  trans
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  symm
+                    (A) = (A)  rule 0 {}
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+
+(G (A)) = (B)  rule 3 {x := (G (A))}
+  (G (G (A))) = (G (G (A)))  congr 0
+    (G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+      (F (G (B))) = (F (G (A)))  congr 0
+        (F (G (B))) = (F (G (B)))  rule 2 {}
+          (F (A)) = (F (B))  congr 0
+            (F (A)) = (F (A))  rule 0 {}
+            (A) = (B)  trans
+              (A) = (A)  rule 0 {}
+              (A) = (B)  trans
+                (A) = (B)  symm
+                  (B) = (A)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                (B) = (B)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+        (G (B)) = (G (A))  trans
+          (G (B)) = (G (A))  trans
+            (G (B)) = (G (B))  symm
+              (G (B)) = (G (B))  rule 2 {}
+                (F (A)) = (F (B))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (B)  trans
+                    (A) = (A)  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (B)  symm
+                        (B) = (A)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                      (B) = (B)  rule 3 {x := (A)}
+                        (G (A)) = (G (A))  congr 0
+                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                            (F (A)) = (F (A))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  rule 0 {}
+            (G (B)) = (G (A))  congr 0
+              (G (B)) = (G (B))  rule 2 {}
+                (F (A)) = (F (B))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (B)  trans
+                    (A) = (A)  rule 0 {}
+                    (A) = (B)  trans
+                      (A) = (B)  symm
+                        (B) = (A)  rule 3 {x := (A)}
+                          (G (A)) = (G (A))  congr 0
+                            (G (A)) = (G (A))  rule 1 {x := (A)}
+                              (F (A)) = (F (A))  congr 0
+                                (F (A)) = (F (A))  rule 0 {}
+                                (A) = (A)  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                      (B) = (B)  rule 3 {x := (A)}
+                        (G (A)) = (G (A))  congr 0
+                          (G (A)) = (G (A))  rule 1 {x := (A)}
+                            (F (A)) = (F (A))  congr 0
+                              (F (A)) = (F (A))  rule 0 {}
+                              (A) = (A)  rule 0 {}
+                          (A) = (A)  rule 0 {}
+              (B) = (A)  trans
+                (B) = (A)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  symm
+                  (A) = (A)  rule 0 {}
+          (G (A)) = (G (A))  rule 1 {x := (A)}
+            (F (A)) = (F (A))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (A)  rule 0 {}
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+
+(G (G (A))) = (G (G (A)))  rule 1 {x := (G (A))}
+  (F (G (B))) = (F (G (A)))  congr 0
+    (F (G (B))) = (F (G (B)))  rule 2 {}
+      (F (A)) = (F (B))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (B)  trans
+          (A) = (A)  rule 0 {}
+          (A) = (B)  trans
+            (A) = (B)  symm
+              (B) = (A)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+            (B) = (B)  rule 3 {x := (A)}
+              (G (A)) = (G (A))  congr 0
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  rule 0 {}
+    (G (B)) = (G (A))  trans
+      (G (B)) = (G (A))  trans
+        (G (B)) = (G (B))  symm
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+        (G (B)) = (G (A))  congr 0
+          (G (B)) = (G (B))  rule 2 {}
+            (F (A)) = (F (B))  congr 0
+              (F (A)) = (F (A))  rule 0 {}
+              (A) = (B)  trans
+                (A) = (A)  rule 0 {}
+                (A) = (B)  trans
+                  (A) = (B)  symm
+                    (B) = (A)  rule 3 {x := (A)}
+                      (G (A)) = (G (A))  congr 0
+                        (G (A)) = (G (A))  rule 1 {x := (A)}
+                          (F (A)) = (F (A))  congr 0
+                            (F (A)) = (F (A))  rule 0 {}
+                            (A) = (A)  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                  (B) = (B)  rule 3 {x := (A)}
+                    (G (A)) = (G (A))  congr 0
+                      (G (A)) = (G (A))  rule 1 {x := (A)}
+                        (F (A)) = (F (A))  congr 0
+                          (F (A)) = (F (A))  rule 0 {}
+                          (A) = (A)  rule 0 {}
+                      (A) = (A)  rule 0 {}
+          (B) = (A)  trans
+            (B) = (A)  rule 3 {x := (A)}
+              (G (A)) = (G (A))  congr 0
+                (G (A)) = (G (A))  rule 1 {x := (A)}
+                  (F (A)) = (F (A))  congr 0
+                    (F (A)) = (F (A))  rule 0 {}
+                    (A) = (A)  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  symm
+              (A) = (A)  rule 0 {}
+      (G (A)) = (G (A))  rule 1 {x := (A)}
+        (F (A)) = (F (A))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (A)  rule 0 {}
+
+(G (B)) = (G (A))  trans
+  (G (B)) = (G (A))  trans
+    (G (B)) = (G (B))  symm
+      (G (B)) = (G (B))  rule 2 {}
+        (F (A)) = (F (B))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (B)  trans
+            (A) = (A)  rule 0 {}
+            (A) = (B)  trans
+              (A) = (B)  symm
+                (B) = (A)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+              (B) = (B)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+    (G (B)) = (G (A))  congr 0
+      (G (B)) = (G (B))  rule 2 {}
+        (F (A)) = (F (B))  congr 0
+          (F (A)) = (F (A))  rule 0 {}
+          (A) = (B)  trans
+            (A) = (A)  rule 0 {}
+            (A) = (B)  trans
+              (A) = (B)  symm
+                (B) = (A)  rule 3 {x := (A)}
+                  (G (A)) = (G (A))  congr 0
+                    (G (A)) = (G (A))  rule 1 {x := (A)}
+                      (F (A)) = (F (A))  congr 0
+                        (F (A)) = (F (A))  rule 0 {}
+                        (A) = (A)  rule 0 {}
+                    (A) = (A)  rule 0 {}
+              (B) = (B)  rule 3 {x := (A)}
+                (G (A)) = (G (A))  congr 0
+                  (G (A)) = (G (A))  rule 1 {x := (A)}
+                    (F (A)) = (F (A))  congr 0
+                      (F (A)) = (F (A))  rule 0 {}
+                      (A) = (A)  rule 0 {}
+                  (A) = (A)  rule 0 {}
+      (B) = (A)  trans
+        (B) = (A)  rule 3 {x := (A)}
+          (G (A)) = (G (A))  congr 0
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  rule 0 {}
+        (A) = (A)  symm
+          (A) = (A)  rule 0 {}
+  (G (A)) = (G (A))  rule 1 {x := (A)}
+    (F (A)) = (F (A))  congr 0
+      (F (A)) = (F (A))  rule 0 {}
+      (A) = (A)  rule 0 {}
+
+(F (G (B))) = (F (G (B)))  rule 2 {}
+  (F (A)) = (F (B))  congr 0
+    (F (A)) = (F (A))  rule 0 {}
+    (A) = (B)  trans
+      (A) = (A)  rule 0 {}
+      (A) = (B)  trans
+        (A) = (B)  symm
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+        (B) = (B)  rule 3 {x := (A)}
+          (G (A)) = (G (A))  congr 0
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  rule 0 {}
+
+(G (B)) = (G (B))  rule 2 {}
+  (F (A)) = (F (B))  congr 0
+    (F (A)) = (F (A))  rule 0 {}
+    (A) = (B)  trans
+      (A) = (A)  rule 0 {}
+      (A) = (B)  trans
+        (A) = (B)  symm
+          (B) = (A)  rule 3 {x := (A)}
+            (G (A)) = (G (A))  congr 0
+              (G (A)) = (G (A))  rule 1 {x := (A)}
+                (F (A)) = (F (A))  congr 0
+                  (F (A)) = (F (A))  rule 0 {}
+                  (A) = (A)  rule 0 {}
+              (A) = (A)  rule 0 {}
+        (B) = (B)  rule 3 {x := (A)}
+          (G (A)) = (G (A))  congr 0
+            (G (A)) = (G (A))  rule 1 {x := (A)}
+              (F (A)) = (F (A))  congr 0
+                (F (A)) = (F (A))  rule 0 {}
+                (A) = (A)  rule 0 {}
+            (A) = (A)  rule 0 {}
+
+(B) = (A)  rule 3 {x := (A)}
+  (G (A)) = (G (A))  congr 0
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(B) = (B)  rule 3 {x := (A)}
+  (G (A)) = (G (A))  congr 0
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(G (A)) = (G (A))  rule 1 {x := (A)}
+  (F (A)) = (F (A))  congr 0
+    (F (A)) = (F (A))  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(A) = (A)  rule 0 {}

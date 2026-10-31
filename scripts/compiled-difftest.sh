@@ -4,12 +4,13 @@
 #
 # `difftest <dir> compiled` writes one `.egg` and one `.expected` per in-domain corpus case:
 # the compiled program with `min` on ids spelled `ordering-min`, and the per-table row
-# counts `execM` predicts for it. egglog's `(print-size)` is reduced to the same lines.
-# Only the view relations are compared. Their row counts are the numbers of canonical
-# e-nodes and so independent of which representative either engine picks; `@UF` and the
-# id constructors count id spellings, and egglog's `ordering-min` (earliest id) and the
-# model's structural order pick different representatives, so a source rule head can
-# build a different spelling of the same class on the two sides.
+# counts the interpreter predicts for it. egglog's `(print-size)` is reduced to the same
+# lines. Only the census (`<constructor>:live`, one row per canonical e-node: a held
+# application joined with the live union-find edges of its children) is compared. Those
+# counts are independent of which representative either engine picks; the raw tables hold
+# every spelling a run built plus the subsumed stale edges, and egglog's `ordering-min`
+# (earliest id) and the model's structural order pick different representatives, so a
+# source rule head can build a different spelling of the same class on the two sides.
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,9 +42,9 @@ for egg in "$out"/*.egg; do
     fail=$((fail + 1))
     continue
   fi
-  tr -d '()' <"$out/$name.raw" | awk 'NF==2 && $1 ~ /^at_.*View$/ {print $1, $2}' |
+  tr -d '()' <"$out/$name.raw" | awk 'NF==2 && $1 ~ /:live$/ {print $1, $2}' |
     sort >"$out/$name.actual"
-  awk '$1 ~ /^at_.*View$/' <"$out/$name.expected" | sort >"$out/$name.want"
+  awk '$1 ~ /:live$/' <"$out/$name.expected" | sort >"$out/$name.want"
   if diff -q "$out/$name.want" "$out/$name.actual" >/dev/null; then
     pass=$((pass + 1))
   else

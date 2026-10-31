@@ -11,15 +11,15 @@ set_option linter.hashCommand false
 
 private def atom (f : FnName) : Expr := .app f []
 private def term (f : FnName) : Term := .app f []
-private def global (as : List Action) : Cmd := .run [⟨[], as⟩]
-private def prog (cs : List Cmd) : Program := ⟨cs, []⟩
+private def global (as : List Action) : Schedule := .run [⟨[], as⟩]
+private def prog (cs : List Schedule) : Program := ⟨Schedule.seqAll cs, []⟩
 
 /-- The instrumented run holds the original's terms plus the log, and every data row has
 a proof. -/
 def validates (P : Program) : Bool := (do
   let encoded ← encode P
-  let original ← Relational.execProgram FDatabase.empty P.commands
-  let annotated ← Relational.execProgram FDatabase.empty encoded.commands
+  let original ← Relational.execSchedule runFuel FDatabase.empty P.schedule
+  let annotated ← Relational.execSchedule runFuel FDatabase.empty encoded.schedule
   let proofs ← extract P annotated.terms
   some (unionFree encoded &&
     decide ((eraseLog annotated.terms).toFinset = original.terms.toFinset) &&
@@ -33,26 +33,26 @@ private def nestedUnion : Program :=
 
 private def equalityRule : Program :=
   prog [global [.expr (.app "F" [atom "A"])],
-    .saturate [⟨[.eq (.app "F" [.var "x"]) (.app "F" [.var "x"])],
-      [.expr (.app "G" [.var "x"])]⟩]]
+    .saturate (.run [⟨[.eq (.app "F" [.var "x"]) (.app "F" [.var "x"])],
+      [.expr (.app "G" [.var "x"])]⟩])]
 
 #guard validates (Congruence.encode equalityRule)
 
-private def emptyQuery : Program := prog [.saturate [⟨[], [.expr (atom "A")]⟩]]
+private def emptyQuery : Program := prog [.saturate (.run [⟨[], [.expr (atom "A")]⟩])]
 
 #guard validates (Congruence.encode emptyQuery)
 
 private def missingPremise : Program :=
-  prog [.saturate [⟨[.expr (atom "Missing")], [.expr (atom "A")]⟩]]
+  prog [.saturate (.run [⟨[.expr (atom "Missing")], [.expr (atom "A")]⟩])]
 
 #guard validates (Congruence.encode missingPremise)
 
-/-- A rule that rewrites a row of its own relation: the replaced row is gone from the
-state, and the replacement's proof cites the firing that replaced it. -/
+/-- A rule that rewrites a row of its own relation: the replaced row stays, subsumed, and
+the replacement's proof cites the firing that replaced it. -/
 private def rewriting : Program :=
   prog [global [.expr (.app "T" [.lit (.int 3)]), .expr (.app "Goal" [.lit (.int 2)])],
-    .saturate [⟨[.expr (.app "T" [.var "x"]), .expr (.app "Goal" [.var "y"]),
-      .ne (.var "x") (.var "y")], [.delete (.app "T" [.var "x"]), .expr (.app "T" [.var "y"])]⟩]]
+    .saturate (.run [⟨[.expr (.app "T" [.var "x"]), .expr (.app "Goal" [.var "y"]),
+      .ne (.var "x") (.var "y")], [.subsume "T" [.var "x"], .expr (.app "T" [.var "y"])]⟩])]
 
 #guard validates rewriting
 
@@ -76,11 +76,12 @@ private def rewritten : Proof :=
 
 -- The log is what the extraction reads: without it no row has a proof.
 private def uninstrumented : Option FDatabase :=
-  Relational.execProgram FDatabase.empty rewriting.commands
+  Relational.execSchedule runFuel FDatabase.empty rewriting.schedule
 #guard uninstrumented.map (fun d => (extractEach rewriting d.terms).all (·.2.isNone)) == some true
 #guard uninstrumented.map (fun d =>
   let rows := dataRows rewriting d.terms
-  rows.length == 2 && rows.contains (table 2) && rows.contains goalRow) == some true
+  rows.length == 3 && rows.contains (table 2) && rows.contains goalRow &&
+    rows.contains (table 3) && d.subsumed == [table 3]) == some true
 
 -- Instrumentation keeps every rule and adds one log write per rule, numbered by position.
 #guard (encode rewriting).map (·.rules.length) == some rewriting.rules.length

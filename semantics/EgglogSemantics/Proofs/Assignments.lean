@@ -6,11 +6,11 @@ import EgglogSemantics.Proofs.Entries
 namespace Egglog
 
 /-- **`matchQuery` completeness, in general form.** A substitution the enumerator will offer is
-`Env.canon`-shaped at `Query.freeVars`' own order and drawn from `FDatabase.terms`; the
+`Env.canon`-shaped at `Query.freeVars`' own order and drawn from `FDatabase.reps`; the
 per-atom check then reads it restricted to that atom, and the two restrictions compose. -/
 theorem mem_matchQuery_of_lookup {d : FDatabase} {q : Query} {τ : Env}
     (hdef : ∀ v ∈ Query.freeVars q [], (Env.lookup v τ).isSome = true)
-    (hval : ∀ v ∈ Query.freeVars q [], ∀ t, Env.lookup v τ = some t → t ∈ d.terms)
+    (hval : ∀ v ∈ Query.freeVars q [], ∀ t, Env.lookup v τ = some t → t ∈ d.reps)
     (hp : ∀ p ∈ q, patternHolds d p (Env.canon (p.freeVars []) τ) = true) :
     Env.canon (Query.freeVars q []) τ ∈ matchQuery d q := by
   rw [matchQuery, List.mem_filter]
@@ -24,24 +24,28 @@ theorem mem_matchQuery_of_lookup {d : FDatabase} {q : Query} {τ : Env}
 
 /-- A constructor atom answered by an indexed row with held arguments. -/
 def EntryRead (d : FDatabase) (τ : Env) (p : Pattern) : Prop :=
-  ∃ f as ts, p = .expr (.app f as) ∧ Expr.evalList as τ = some ts ∧
-    (⟨f, ts⟩ : Row) ∈ d.rows ∧ ∀ t ∈ ts, t ∈ d.terms
+  ∃ f as ts, p = .expr (.app f as) ∧
+    (Expr.evalList as τ = some ts ∧ Expr.MatchesList d.toDatabase τ as) ∧
+    (⟨f, ts⟩ : Row) ∈ d.rows ∧ (∀ t ∈ ts, t ∈ d.terms) ∧
+    d.isSubsumed d.closureF (.app f ts) = false
 
 theorem EntryRead.bound {d : FDatabase} {τ : Env} {p : Pattern} (h : EntryRead d τ p)
     {v : Var} (hv : v ∈ p.freeVars []) : (Env.lookup v τ).isSome := by
   obtain ⟨f, as, ts, rfl, he, _, _⟩ := h
-  exact Expr.evalList_bound he ((Pattern.mem_freeVars _).mp hv).1
+  exact Expr.evalList_bound he.1 ((Pattern.mem_freeVars _).mp hv).1
 
-theorem EntryRead.holds {d : FDatabase} (hc : d.SubtermClosed) {τ : Env} {p : Pattern}
+theorem EntryRead.holds {d : FDatabase} (hc : d.Closed) (hi : d.IndexOk)
+    (hj : d.IndexCurrent) {τ : Env} {p : Pattern}
     (h : EntryRead d τ p) : patternHolds d p (Env.canon (p.freeVars []) τ) = true := by
-  obtain ⟨f, as, ts, rfl, he, hr, ht⟩ := h
-  apply patternHolds_entry_of_mem_rows hc ?_ hr ht
-  rw [Expr.evalList_agreeOn as (fun v hv => Env.lookup_canon
-    (Pattern.freeVars_nodup _ []) ((Pattern.mem_freeVars (.expr (.app f as))).mpr ⟨hv, by simp⟩))]
-  exact he
+  obtain ⟨f, as, ts, rfl, he, hr, ht, hx⟩ := h
+  apply patternHolds_entry_of_mem_rows hc hi hj ?_ hr ht hx
+  exact LookupList.of_agreeOn he (fun v hv => (Env.lookup_canon
+    (Pattern.freeVars_nodup _ [])
+    ((Pattern.mem_freeVars (.expr (.app f as))).mpr ⟨hv, by simp⟩)).symm)
 
-theorem mem_matchQuery_of_entryReads {d : FDatabase} (hc : d.SubtermClosed)
-    {τ : Env} {q : Query} (hv : ∀ b ∈ τ, b.2 ∈ d.terms) (h : ∀ p ∈ q, EntryRead d τ p) :
+theorem mem_matchQuery_of_entryReads {d : FDatabase} (hc : d.Closed)
+    (hi : d.IndexOk) (hj : d.IndexCurrent)
+    {τ : Env} {q : Query} (hv : ∀ b ∈ τ, b.2 ∈ d.reps) (h : ∀ p ∈ q, EntryRead d τ p) :
     Env.canon (Query.freeVars q []) τ ∈ matchQuery d q := by
   apply mem_matchQuery_of_lookup
   · intro v hm
@@ -49,7 +53,7 @@ theorem mem_matchQuery_of_entryReads {d : FDatabase} (hc : d.SubtermClosed)
     exact (h p hp).bound hpm
   · intro v _ t ht
     exact hv (v, t) (Env.mem_of_lookup ht)
-  · exact fun p hp => (h p hp).holds hc
+  · exact fun p hp => (h p hp).holds hc hi hj
 
 theorem Query.freeVars_of_atom {q : Query} {f : FnName} {cols : List Expr} {v : Var}
     (hp : Pattern.expr (.app f cols) ∈ q) (hv : v ∈ Expr.varsList cols) :

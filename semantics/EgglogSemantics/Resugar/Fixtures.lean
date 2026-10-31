@@ -8,8 +8,8 @@ namespace Egglog.Resugar.Fixtures
 
 private def atom (f : FnName) : Expr := .app f []
 private def term (f : FnName) : Term := .app f []
-private def global (as : List Action) : Cmd := .run [⟨[], as⟩]
-private def prog (cs : List Cmd) (q : Query := []) : Program := ⟨cs, q⟩
+private def global (as : List Action) : Schedule := .run [⟨[], as⟩]
+private def prog (cs : List Schedule) (q : Query := []) : Program := ⟨Schedule.seqAll cs, q⟩
 
 def nestedUnion : Program :=
   prog [global [.expr (.app "F" [atom "A"]), .expr (.app "F" [atom "B"]),
@@ -18,23 +18,23 @@ def nestedUnion : Program :=
 def nestedQuery : Program :=
   prog [global [.expr (.app "F" [.app "G" [atom "B"], .app "G" [atom "B"]]),
           .union (atom "A") (atom "B")],
-        .saturate [⟨[.expr (.app "F" [.app "G" [.var "x"], .app "G" [.var "x"]])],
-          [.expr (.app "H" [.var "x"])]⟩]]
+        .saturate (.run [⟨[.expr (.app "F" [.app "G" [.var "x"], .app "G" [.var "x"]])],
+          [.expr (.app "H" [.var "x"])]⟩])]
 
 def equalityQuery : Program :=
   prog [global [.expr (.app "F" [atom "A"]), .expr (.app "G" [atom "B"]),
           .union (.app "F" [atom "A"]) (.app "G" [atom "B"])],
-        .saturate [⟨[.eq (.app "F" [.var "x"]) (.app "G" [.var "y"])],
-          [.union (.var "x") (.var "y")]⟩]]
+        .saturate (.run [⟨[.eq (.app "F" [.var "x"]) (.app "G" [.var "y"])],
+          [.union (.var "x") (.var "y")]⟩])]
 
 /-- The seed and the rule saturate together: rule 0 builds `(F (A))`, rule 1 derives. -/
 def ruleChain : Program :=
-  prog [.saturate [⟨[], [.expr (.app "F" [atom "A"])]⟩,
-    ⟨[.expr (.app "F" [.var "x"])], [.expr (.app "G" [.var "x"])]⟩]]
+  prog [.saturate (.run [⟨[], [.expr (.app "F" [atom "A"])]⟩,
+    ⟨[.expr (.app "F" [.var "x"])], [.expr (.app "G" [.var "x"])]⟩])]
 
 def missingPremise : Program :=
   prog [global [.expr (atom "A"), .expr (atom "B")],
-        .saturate [⟨[.expr (atom "Missing")], [.union (atom "A") (atom "B")]⟩]]
+        .saturate (.run [⟨[.expr (atom "Missing")], [.union (atom "A") (atom "B")]⟩])]
 
 def supportCase : Program :=
   prog [global [.expr (.app "F" [atom "A"])],
@@ -62,12 +62,12 @@ private def fact (t : Term) : SourceProof.Proof := .rule ⟨t, t⟩ 0 [] []
 /-- Rule 1 of the seed unions `(A)` and `(B)`. -/
 private def unionFact (x y : Term) : SourceProof.Proof := .rule ⟨x, y⟩ 1 [] []
 
-private def seed : List Cmd :=
+private def seed : List Schedule :=
   [.run [⟨[], [.expr fa.toExpr]⟩, ⟨[], [.union a.toExpr b.toExpr]⟩]]
 
 /-- Rule 2 builds `(G x)` from `(F x)`. -/
 private def create : Program := prog (seed ++
-  [.saturate [⟨[.expr (.app "F" [.var "x"])], [.expr (.app "G" [.var "x"])]⟩]])
+  [.saturate (.run [⟨[.expr (.app "F" [.var "x"])], [.expr (.app "G" [.var "x"])]⟩])])
 
 /-- Rule 2 reads `(F x)` and then `(= x (B))`. -/
 private def ordered : Program := prog (seed ++
@@ -111,7 +111,7 @@ def rejected : List Fixture :=
 function, so that running the fixture programs is not part of program start-up. -/
 def all (_ : Unit) : Option (List Fixture) := do
   let liftedFixtures ← lifted.mapM fun np => do
-    let cs ← certificates (fun P => Relational.execProgram FDatabase.empty P.commands) np.2
+    let cs ← certificates (fun P => Relational.execSchedule runFuel FDatabase.empty P.schedule) np.2
     pure (⟨np.1, np.2, cs⟩ : Fixture)
   pure (liftedFixtures ++ accepted ++ rejected)
 

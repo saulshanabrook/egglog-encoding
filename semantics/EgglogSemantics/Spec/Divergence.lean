@@ -1,30 +1,24 @@
 import EgglogSemantics.Spec.Step
 
 /-! Divergence, used by the Lean statement of compiler correctness. The paper states
-nontermination in prose instead. Rule firing remains an atomic `RunRules` step. -/
+nontermination in prose instead. A round is an atomic `RunRules` step. -/
 
 namespace Egglog
 
-def InfiniteTrace (rel : Database → Database → Prop) (d : Database) : Prop :=
-  ∃ trace : Nat → Database, trace 0 = d ∧ ∀ n, rel (trace n) (trace (n + 1))
+/-- Passes of `S` that each change the meaning of the state, forever. -/
+def InfinitePasses (S : Schedule) (d : Database) : Prop :=
+  ∃ trace : Nat → Database, trace 0 = d ∧
+    ∀ n, Reach (trace n) S (trace (n + 1)) ∧ ¬ (trace n).SameMeaning (trace (n + 1))
 
-/-- A run that changes congruence, so saturation continues past it. -/
-def ChangingRun (rs : List Rule) (d e : Database) : Prop :=
-  e = RunRules rs d ∧ Cong d ≠ Cong e
-
-/-- Saturation diverges when every round changes congruence. -/
-def SaturateDiverges (rs : List Rule) (d : Database) : Prop :=
-  InfiniteTrace (ChangingRun rs) d
-
-/-- Only saturations can diverge. -/
-inductive CmdDiverges (d : Database) : Cmd → Prop where
-  | saturate {rs : List Rule} : SaturateDiverges rs d → CmdDiverges d (.saturate rs)
-
-/-- A command list diverges at a command after a successful finite prefix. -/
-inductive ProgramDiverges : Database → List Cmd → Prop where
-  | head {d : Database} {c : Cmd} {cs : List Cmd} :
-      CmdDiverges d c → ProgramDiverges d (c :: cs)
-  | tail {d mid : Database} {c : Cmd} {cs : List Cmd} :
-      CmdStep d c mid → ProgramDiverges mid cs → ProgramDiverges d (c :: cs)
+/-- A schedule diverges when a saturation inside it never settles: its body diverges in
+some pass, or every pass changes the meaning of the state. A run never diverges. -/
+inductive Diverges : Database → Schedule → Prop where
+  | seqLeft {d : Database} {S₁ S₂ : Schedule} : Diverges d S₁ → Diverges d (.seq S₁ S₂)
+  | seqRight {d d' : Database} {S₁ S₂ : Schedule} :
+      Reach d S₁ d' → Diverges d' S₂ → Diverges d (.seq S₁ S₂)
+  | body {d : Database} {S : Schedule} : Diverges d S → Diverges d (.saturate S)
+  | later {d d₁ : Database} {S : Schedule} :
+      Reach d S d₁ → ¬ d.SameMeaning d₁ → Diverges d₁ (.saturate S) → Diverges d (.saturate S)
+  | forever {d : Database} {S : Schedule} : InfinitePasses S d → Diverges d (.saturate S)
 
 end Egglog

@@ -1,33 +1,20 @@
-import EgglogSemantics.Spec.Sequential
+import EgglogSemantics.Spec.Facts
 import EgglogSemantics.Source.Domain
 import EgglogSemantics.Proofs.SemanticCong
 
 namespace Egglog
 
 /-- An action that removes no rows. -/
-abbrev Action.DeleteFree (a : Action) : Prop := a.monotoneB = true
+abbrev Action.SubsumeFree (a : Action) : Prop := a.monotoneB = true
 
-def Actions.DeleteFree (as : List Action) : Prop := ∀ a ∈ as, a.DeleteFree
-@[simp] theorem Actions.deleteFree_nil : Actions.DeleteFree [] := by simp [Actions.DeleteFree]
-@[simp] theorem Actions.deleteFree_cons {a : Action} {as : List Action} :
-    Actions.DeleteFree (a :: as) ↔ a.DeleteFree ∧ Actions.DeleteFree as := by
-  simp [Actions.DeleteFree]
-theorem Actions.deleteFree_of_all {as : List Action} (h : as.all Action.monotoneB = true) :
-    Actions.DeleteFree as := List.all_eq_true.mp h
-def Rule.DeleteFree (r : Rule) : Prop := Actions.DeleteFree r.actions
-
-@[simp] theorem Database.deleteRows_empty (db : Database) : db.deleteRows ∅ = db := by
-  apply Database.ext <;> try rfl
-  ext p
-  simp [Database.deleteRows, Database.deletedRows]
-
-theorem Database.WF.deleteRows {db : Database} (h : db.WF) (X : Set Term) :
-    (db.deleteRows X).WF := by
-  constructor
-  rintro p (hp | ⟨t, _, c, _, rfl⟩) hl
-  · exact h.litsIsolated p hp.1 hl
-  · rfl
-
+def Actions.SubsumeFree (as : List Action) : Prop := ∀ a ∈ as, a.SubsumeFree
+@[simp] theorem Actions.subsumeFree_nil : Actions.SubsumeFree [] := by simp [Actions.SubsumeFree]
+@[simp] theorem Actions.subsumeFree_cons {a : Action} {as : List Action} :
+    Actions.SubsumeFree (a :: as) ↔ a.SubsumeFree ∧ Actions.SubsumeFree as := by
+  simp [Actions.SubsumeFree]
+theorem Actions.subsumeFree_of_all {as : List Action} (h : as.all Action.monotoneB = true) :
+    Actions.SubsumeFree as := List.all_eq_true.mp h
+def Rule.SubsumeFree (r : Rule) : Prop := Actions.SubsumeFree r.actions
 
 theorem Database.WF.congr {d₁ d₂ : Database} (hw : d₁.WF) (heqs : d₁.eqs = d₂.eqs) :
     d₂.WF := ⟨by simpa [Database.LitsIsolated, ← heqs] using hw.litsIsolated⟩
@@ -248,7 +235,8 @@ theorem evalAction_eq_some {σ : Env} {db db' : Database} {a : Action}
     (∃ e t, a = .expr e ∧ e.eval σ = some t ∧ db' = db.addTerm t) ∨
     (∃ e₁ e₂ t₁ t₂, a = .union e₁ e₂ ∧ e₁.eval σ = some t₁ ∧
       e₂.eval σ = some t₂ ∧ ¬ (t₁.isLit ∨ t₂.isLit) ∧ db' = db.addEq t₁ t₂) ∨
-    (∃ e t, a = .delete e ∧ e.eval σ = some t ∧ db' = db.deleteRows {t}) := by
+    (∃ f es ts, a = .subsume f es ∧ Expr.evalList es σ = some ts ∧
+      db' = (db.addTerm (.app f ts)).addSubsumed {.app f ts}) := by
   cases a with
   | expr e =>
     obtain ⟨t, ht, rfl⟩ := Option.map_eq_some_iff.mp h
@@ -261,35 +249,35 @@ theorem evalAction_eq_some {σ : Env} {db db' : Database} {a : Action}
     · next hl =>
       cases Option.some.inj h
       exact .inr (.inl ⟨e₁, e₂, t₁, t₂, rfl, h₁, h₂, by simpa using hl, rfl⟩)
-  | delete e =>
-    obtain ⟨t, ht, rfl⟩ := Option.map_eq_some_iff.mp h
-    exact .inr (.inr ⟨e, t, rfl, ht, rfl⟩)
+  | subsume f es =>
+    obtain ⟨ts, hts, rfl⟩ := Option.map_eq_some_iff.mp h
+    exact .inr (.inr ⟨f, es, ts, rfl, hts, rfl⟩)
 
 theorem evalAction_contained {σ : Env} {db db' : Database} {a : Action}
-    (hdf : a.DeleteFree) (h : evalAction σ db a = some db') : db.Contained db' := by
+    (hdf : a.SubsumeFree) (h : evalAction σ db a = some db') : db.Contained db' := by
   rcases evalAction_eq_some h with ⟨_, t, rfl, _, rfl⟩ |
-    ⟨_, _, t₁, t₂, rfl, _, _, _, rfl⟩ | ⟨e, _, rfl, _, _⟩
+    ⟨_, _, t₁, t₂, rfl, _, _, _, rfl⟩ | ⟨_, _, _, rfl, _, _⟩
   · exact .addTerm t db
   · exact .addEq t₁ t₂ db
-  · simp [Action.DeleteFree, Action.monotoneB] at hdf
+  · simp [Action.SubsumeFree, Action.monotoneB] at hdf
 
 
 theorem evalAction_wf {σ : Env} {db db' : Database} (hw : db.WF) {a : Action}
     (h : evalAction σ db a = some db') : db'.WF := by
   rcases evalAction_eq_some h with ⟨_, t, _, _, rfl⟩ |
-    ⟨_, _, t₁, t₂, _, _, _, hlit, rfl⟩ | ⟨_, t, _, _, rfl⟩
+    ⟨_, _, t₁, t₂, _, _, _, hlit, rfl⟩ | ⟨f, _, ts, _, _, rfl⟩
   · exact hw.addTerm t
   · exact hw.addEq t₁ t₂ fun hl => absurd hl hlit
-  · exact hw.deleteRows {t}
+  · exact (hw.addTerm (.app f ts)).addSubsumed {.app f ts}
 
 theorem evalActions_contained {σ : Env} {db db' : Database} {as : List Action}
-    (hdf : Actions.DeleteFree as) (h : evalActions σ db as = some db') : db.Contained db' := by
+    (hdf : Actions.SubsumeFree as) (h : evalActions σ db as = some db') : db.Contained db' := by
   induction as generalizing db with
   | nil => cases Option.some.inj h; exact .refl _
   | cons a as ih =>
     obtain ⟨d, ha, has⟩ := Option.bind_eq_some_iff.mp h
-    exact (evalAction_contained (Actions.deleteFree_cons.mp hdf).1 ha).trans
-      (ih (Actions.deleteFree_cons.mp hdf).2 has)
+    exact (evalAction_contained (Actions.subsumeFree_cons.mp hdf).1 ha).trans
+      (ih (Actions.subsumeFree_cons.mp hdf).2 has)
 
 
 theorem evalActions_wf {σ : Env} {db db' : Database} (hw : db.WF) {as : List Action}
@@ -302,12 +290,30 @@ theorem evalActions_wf {σ : Env} {db db' : Database} (hw : db.WF) {as : List Ac
 
 theorem evalAction_agree {σ τ : Env} (h : Env.Agree σ τ) (db : Database) (a : Action) :
     evalAction σ db a = evalAction τ db a := by
-  cases a <;> simp only [evalAction, Expr.eval_agree h]
+  cases a <;> simp only [evalAction, Expr.eval_agree h, Expr.evalList_agree h]
 
 theorem evalActions_agree {σ τ : Env} (h : Env.Agree σ τ) (db : Database) (as : List Action) :
     evalActions σ db as = evalActions τ db as := by
   induction as generalizing db with
   | nil => rfl
   | cons a as ih => simp only [evalActions, evalAction_agree h, ih]
+
+theorem evalAction_subsumed {σ : Env} {d e : Database} {a : Action}
+    (hdf : a.SubsumeFree) (h : evalAction σ d a = some e) : e.subsumed = d.subsumed := by
+  rcases evalAction_eq_some h with ⟨_, _, rfl, _, rfl⟩ |
+    ⟨_, _, _, _, rfl, _, _, _, rfl⟩ | ⟨_, _, _, rfl, _, rfl⟩
+  · rfl
+  · rfl
+  · simp [Action.SubsumeFree, Action.monotoneB] at hdf
+
+theorem evalActions_subsumed {σ : Env} {d e : Database} {as : List Action}
+    (hdf : Actions.SubsumeFree as) (h : evalActions σ d as = some e) :
+    e.subsumed = d.subsumed := by
+  induction as generalizing d with
+  | nil => cases h; rfl
+  | cons a as ih =>
+    obtain ⟨mid, ha, hs⟩ := Option.bind_eq_some_iff.mp h
+    exact (ih (Actions.subsumeFree_cons.mp hdf).2 hs).trans
+      (evalAction_subsumed (Actions.subsumeFree_cons.mp hdf).1 ha)
 
 end Egglog

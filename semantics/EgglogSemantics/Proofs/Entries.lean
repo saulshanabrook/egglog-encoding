@@ -138,29 +138,39 @@ theorem execAction_atom_of_eval {σ : Env} {d : FDatabase} {f : FnName} {cols : 
     execAction σ d (.expr (.app f cols)) = some (d.addTerm (.app f ts)) := by
   simp [execAction, Expr.eval, hev]
 
-/-- A row and its held columns make its atom match. -/
-theorem patternHolds_entry_of_mem_rows {d : FDatabase} (hc : d.SubtermClosed)
+/-- Live looked-up columns and a non-subsumed indexed row make an atom match. -/
+theorem patternHolds_entry_of_mem_rows {d : FDatabase} (hc : d.Closed)
+    (hi : d.IndexOk) (hj : d.IndexCurrent)
     {as : List Expr} {f : FnName} {σ : Env} {ts : List Term}
-    (he : Expr.evalList as σ = some ts) (hr : (⟨f, ts⟩ : Row) ∈ d.rows)
-    (ht : ∀ t ∈ ts, t ∈ d.terms) : patternHolds d (.expr (.app f as)) σ = true := by
+    (he : Expr.evalList as σ = some ts ∧ Expr.MatchesList d.toDatabase σ as)
+    (hr : (⟨f, ts⟩ : Row) ∈ d.rows)
+    (ht : ∀ t ∈ ts, t ∈ d.terms)
+    (hx : d.isSubsumed d.closureF (.app f ts) = false) :
+    patternHolds d (.expr (.app f as)) σ = true := by
   have hh : d.holdsAll ts = true := by
     simp only [FDatabase.holdsAll, List.all_eq_true, decide_eq_true_eq]
-    exact fun t ht' s hs => hc t (ht t ht') s hs
-  simp only [patternHolds, Expr.eval, he, Option.map_some, hh, if_true,
-    FDatabase.hasCtorRow, List.any_eq_true]
-  refine ⟨⟨f, ts⟩, hr, ?_⟩
-  simp only [beq_self_eq_true, Bool.true_and]
-  exact congrKeys_self (fun t h => (FDatabase.mem_closureF_iff hc (ht t h) (ht t h)).mpr
-    (Database.toCong ((FDatabase.mem_toDatabase_terms hc).mpr (ht t h))))
+    exact fun t ht' s hs => hc.subterms t (ht t ht') s hs
+  have hl : d.liveWith d.closureF (.app f ts) = true := by
+    simp only [FDatabase.liveWith, hh, if_true, hx, Bool.not_false, Bool.and_true,
+      FDatabase.hasCtorRow, List.any_eq_true]
+    refine ⟨⟨f, ts⟩, hr, ?_⟩
+    simp only [beq_self_eq_true, Bool.true_and]
+    exact congrKeys_self (fun t h => (FDatabase.mem_closureF_iff hc.subterms (ht t h) (ht t h)).mpr
+      (Database.toCong ((FDatabase.mem_toDatabase_terms hc.subterms).mpr (ht t h))))
+  simp [patternHolds, patternHoldsWith, exprHoldsWith, he.1, hl,
+    (LookupList.lookupListWith hc hi hj he).2]
 
-/-- Diagonality is unnecessary once index soundness is stated explicitly. -/
+/-- Diagonality is unnecessary once index and environment soundness are explicit. -/
 theorem matches_of_patternHolds {d : FDatabase} (he : d.Closed) (_hr : d.EqsRefl)
-    (hi : d.IndexOk) {p : Pattern} {σ : Env} (h : patternHolds d p σ = true) :
-    Matches d.toDatabase p σ := patternHolds_matches he hi h
+    (hi : d.IndexOk) (hj : d.IndexCurrent) {p : Pattern} {σ : Env}
+    (hσ : ∀ v t, Env.lookup v σ = some t → Cong d.toDatabase t t)
+    (h : patternHolds d p σ = true) : Matches d.toDatabase p σ :=
+  patternHolds_matches he hi hj hσ h
 
 theorem validQuerySubst_of_mem_matchQuery_diag {d : FDatabase} (he : d.Closed)
-    (_hr : d.EqsRefl) (hi : d.IndexOk) {q : Query} {σ : Env} (h : σ ∈ matchQuery d q) :
+    (_hr : d.EqsRefl) (hi : d.IndexOk) (hj : d.IndexCurrent)
+    {q : Query} {σ : Env} (h : σ ∈ matchQuery d q) :
     ∃ τ, ValidQuerySubst d.toDatabase q τ ∧ Env.Agree τ σ :=
-  validQuerySubst_of_mem_matchQuery he hi h
+  validQuerySubst_of_mem_matchQuery he hi hj h
 
 end Egglog

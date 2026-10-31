@@ -1,62 +1,27 @@
-(F (A)) = (G (A))  congr 0
-  (F (A)) = (G (B))  trans
-    (F (A)) = (G (B))  symm
-      (G (B)) = (F (A))  rule 2 {}
-    (G (B)) = (G (B))  rule 2 {}
-  (B) = (A)  rule 3 {x := (A), y := (B)}
-    (F (A)) = (G (B))  trans
-      (F (A)) = (F (A))  trans
-        (F (A)) = (F (A))  symm
-          (F (A)) = (F (A))  congr 0
-            (F (A)) = (F (A))  rule 2 {}
-            (A) = (A)  rule 2 {}
-        (F (A)) = (F (A))  rule 2 {}
-      (F (A)) = (G (B))  congr 0
-        (F (A)) = (G (B))  trans
-          (F (A)) = (G (B))  symm
-            (G (B)) = (F (A))  rule 2 {}
-          (G (B)) = (G (B))  rule 2 {}
-        (B) = (B)  rule 2 {}
-
-(A) = (B)  trans
-  (A) = (B)  symm
-    (B) = (A)  rule 3 {x := (A), y := (B)}
-      (F (A)) = (G (B))  trans
-        (F (A)) = (F (A))  trans
-          (F (A)) = (F (A))  symm
-            (F (A)) = (F (A))  congr 0
-              (F (A)) = (F (A))  rule 2 {}
-              (A) = (A)  rule 2 {}
-          (F (A)) = (F (A))  rule 2 {}
-        (F (A)) = (G (B))  congr 0
-          (F (A)) = (G (B))  trans
-            (F (A)) = (G (B))  symm
-              (G (B)) = (F (A))  rule 2 {}
-            (G (B)) = (G (B))  rule 2 {}
-          (B) = (B)  rule 2 {}
-  (B) = (B)  rule 2 {}
-
 (B) = (A)  rule 3 {x := (A), y := (B)}
   (F (A)) = (G (B))  trans
     (F (A)) = (F (A))  trans
       (F (A)) = (F (A))  symm
-        (F (A)) = (F (A))  congr 0
-          (F (A)) = (F (A))  rule 2 {}
-          (A) = (A)  rule 2 {}
+        (F (A)) = (F (A))  trans
+          (F (A)) = (F (A))  symm
+            (F (A)) = (F (A))  rule 2 {}
+          (F (A)) = (F (A))  congr 0
+            (F (A)) = (F (A))  rule 2 {}
+            (A) = (A)  rule 2 {}
       (F (A)) = (F (A))  rule 2 {}
-    (F (A)) = (G (B))  congr 0
-      (F (A)) = (G (B))  trans
-        (F (A)) = (G (B))  symm
-          (G (B)) = (F (A))  rule 2 {}
+    (F (A)) = (G (B))  trans
+      (F (A)) = (G (B))  symm
+        (G (B)) = (F (A))  rule 2 {}
+      (G (B)) = (G (B))  congr 0
         (G (B)) = (G (B))  rule 2 {}
-      (B) = (B)  rule 2 {}
+        (B) = (B)  rule 2 {}
 
 (G (B)) = (F (A))  rule 2 {}
 
-(F (A)) = (F (A))  rule 2 {}
+(G (B)) = (G (B))  rule 2 {}
+
+(B) = (B)  rule 2 {}
 
 (F (A)) = (F (A))  rule 2 {}
-
-(A) = (A)  rule 2 {}
 
 (A) = (A)  rule 2 {}

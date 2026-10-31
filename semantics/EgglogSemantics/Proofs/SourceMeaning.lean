@@ -1,6 +1,7 @@
 import EgglogSemantics.Proofs.SameMeaning
 import EgglogSemantics.Proofs.EnvTransform
 import EgglogSemantics.Proofs.Query
+import EgglogSemantics.Proofs.Representatives
 
 /-! Ordering-free source evaluation and matching respect inferred constructor facts. -/
 
@@ -94,52 +95,40 @@ theorem matches_transport {d e : Database} (hd : d.WF) (he : e.WF)
     (h : d.SameMeaning e) {σ τ : Env}
     (hσ : EnvRelated e σ τ) {p : Pattern} (hn : p.OrderingFree)
     (hm : Matches d p σ) : Matches e p τ := by
-  cases hm using Matches.storedCases with
-  | @expr exp _ w t hw hval hcong =>
-      have ht : d.Infers t t :=
-        infers_right hd (infers_of_congOn hd (infers_of_held hw) hcong)
-      obtain ⟨u, hu, hi⟩ := eval_interpret (hσ.interpret he) exp hn hval
-      obtain ⟨w', hw', hti, _⟩ := (infers_iff_interpret he).mp ((h.inferred _ _).mp ht)
-      exact .expr hw' hu
-        (congOn_of_interpret he u hw' (hi.symm.trans hti)).symm
-  | @eq a b _ w ta tb hw hva hvb hwa hab =>
-      obtain ⟨ua, hua, hia⟩ := eval_interpret (hσ.interpret he) a hn.1 hva
-      obtain ⟨ub, hub, hib⟩ := eval_interpret (hσ.interpret he) b hn.2 hvb
-      have hti := (h.inferred ta tb).mp ⟨w, hw, hwa, hab⟩
-      obtain ⟨w', hw', hai, hbi⟩ := (infers_iff_interpret he).mp hti
-      obtain ⟨v, hv, hva', hvb'⟩ := (infers_iff_interpret he).mpr
-        ⟨w', hw', hia.symm.trans hai, hib.symm.trans hbi⟩
-      exact .eq hv hua hub hva' hvb'
-  | @unequal a b _ ta tb hva hvb hta htb hne =>
-      obtain ⟨ua, hua, hia⟩ := eval_interpret (hσ.interpret he) a hn.1 hva
-      obtain ⟨ub, hub, hib⟩ := eval_interpret (hσ.interpret he) b hn.2 hvb
-      have transport : ∀ t u, interpret e t = interpret e u → Cong d t t → Cong e u u := by
-        intro t u hi ht
-        obtain ⟨w, hw, hti, _⟩ := (infers_iff_interpret he).mp
-          ((h.inferred t t).mp (InferredFacts.congr_iff_infers.mp ht))
-        exact InferredFacts.congr_iff_infers.mpr
-          ((infers_iff_interpret he).mpr ⟨w, hw, hi.symm.trans hti, hi.symm.trans hti⟩)
-      refine .unequal hua hub (transport _ _ hia hta) (transport _ _ hib htb) ?_
-      intro hc
-      obtain ⟨w, hw, hai, hbi⟩ := (infers_iff_interpret he).mp
-        (InferredFacts.congr_iff_infers.mp hc)
-      apply hne
-      exact InferredFacts.congr_iff_infers.mpr ((h.inferred ta tb).mpr
-        ((infers_iff_interpret he).mpr ⟨w, hw, hia.trans hai, hib.trans hbi⟩))
+  have hv : ∀ v t, Env.lookup v σ = some t →
+      ∃ u, Env.lookup v τ = some u ∧ Cong e t u := by
+    intro v t ht
+    obtain ⟨u, hu, hc⟩ := hσ v t ht
+    exact ⟨u, hu, congr_iff_infers.mpr hc⟩
+  cases hm with
+  | atom hl =>
+      obtain ⟨t, he⟩ := hl.eval_exists
+      obtain ⟨u, hu, _⟩ := Lookup.transport h hv hn ⟨he, hl⟩
+      exact .atom hu.2
+  | equal hl₁ hl₂ h₁ h₂ hc =>
+      obtain ⟨u, hu, htu⟩ := Lookup.transport h hv hn.1 ⟨h₁, hl₁⟩
+      obtain ⟨v, hv, htv⟩ := Lookup.transport h hv hn.2 ⟨h₂, hl₂⟩
+      exact .equal hu.2 hv.2 hu.1 hv.1
+        (htu.symm.trans (((h.congr _ _).mp hc).trans htv))
+  | unequal hl₁ hl₂ h₁ h₂ hne =>
+      obtain ⟨u, hu, htu⟩ := Lookup.transport h hv hn.1 ⟨h₁, hl₁⟩
+      obtain ⟨v, hv, htv⟩ := Lookup.transport h hv hn.2 ⟨h₂, hl₂⟩
+      exact .unequal hu.2 hv.2 hu.1 hv.1
+        (fun hc => hne ((h.congr _ _).mpr (htu.trans (hc.trans htv.symm))))
 
 
 open Classical in
-/-- Choose one recorded representative for each inferred class. -/
-noncomputable def representative (d : Database) (hw : d.WF) (t : Term) : Term :=
-  if h : d.Infers t t then ((infers_iff_interpret hw).mp h).choose else t
+/-- Choose the least held spelling when the represented class has one. -/
+noncomputable def representative (d : Database) (_hw : d.WF) (t : Term) : Term :=
+  if h : ∃ r ∈ d.reps, d.Infers t r then h.choose else t
 
-theorem representative_spec {d : Database} (hw : d.WF) {t : Term}
+theorem representative_spec {d : Database} (hw : d.WF) (hr : d.HasReps) {t : Term}
     (ht : d.Infers t t) :
-    representative d hw t ∈ d.terms ∧ d.Infers t (representative d hw t) := by
-  simp only [representative, dif_pos ht]
-  have hr := ((infers_iff_interpret hw).mp ht).choose_spec
-  exact ⟨hr.1, (infers_iff_interpret hw).mpr
-    ⟨_, hr.1, hr.2.1, interpret_of_held hw _ hr.1⟩⟩
+    representative d hw t ∈ d.reps ∧ d.Infers t (representative d hw t) := by
+  have hex : ∃ r ∈ d.reps, d.Infers t r := by
+    obtain ⟨r, hr, hc⟩ := hr t (congr_iff_infers.mpr ht)
+    exact ⟨r, hr, congr_iff_infers.mp hc⟩
+  simpa only [representative, dif_pos hex] using hex.choose_spec
 
 theorem envRelated_map {d e : Database} {σ : Env} {w : Term → Term}
     (hs : ∀ b ∈ σ, b.2 ∈ d.terms)
@@ -151,15 +140,15 @@ theorem envRelated_map {d e : Database} {σ : Env} {w : Term → Term}
 
 theorem validSubst_map {d e : Database} (hd : d.WF) (he : e.WF)
     (h : d.SameMeaning e) {w : Term → Term}
-    (hw : ∀ t ∈ d.terms, w t ∈ e.terms ∧ e.Infers t (w t))
+    (hw : ∀ t ∈ d.terms, w t ∈ e.reps ∧ e.Infers t (w t))
     {p : Pattern} {σ : Env} (hn : p.OrderingFree) (hs : ValidSubst d p σ) :
     ValidSubst e p (Env.mapVals w σ) := by
   refine ⟨⟨?_, ?_⟩, matches_transport hd he h
-    (envRelated_map hs.1.2 (fun t ht => (hw t ht).2)) hn hs.2⟩
+    (envRelated_map hs.mem_terms (fun t ht => (hw t ht).2)) hn hs.2⟩
   · simpa [dom_mapVals] using hs.1.1
   · intro b hb
     obtain ⟨a, ha, rfl⟩ := mem_mapVals hb
-    exact (hw _ (hs.1.2 a ha)).1
+    exact (hw _ (hs.mem_terms a ha)).1
 
 theorem union2_map (w : Term → Term) {σ τ ρ : Env} (h : Env.Union2 σ τ ρ) :
     Env.Union2 (Env.mapVals w σ) (Env.mapVals w τ) (Env.mapVals w ρ) := by
@@ -180,7 +169,7 @@ theorem unionAll_map (w : Term → Term) {σs : List Env} {σ : Env}
 
 theorem validQuerySubst_map {d e : Database} (hd : d.WF) (he : e.WF)
     (h : d.SameMeaning e) {w : Term → Term}
-    (hw : ∀ t ∈ d.terms, w t ∈ e.terms ∧ e.Infers t (w t))
+    (hw : ∀ t ∈ d.terms, w t ∈ e.reps ∧ e.Infers t (w t))
     {q : Query} {σ : Env} (hn : ∀ p ∈ q, p.OrderingFree)
     (hs : ValidQuerySubst d q σ) : ValidQuerySubst e q (Env.mapVals w σ) := by
   obtain ⟨σs, hps, hu⟩ := hs
@@ -195,34 +184,58 @@ theorem validQuerySubst_map {d e : Database} (hd : d.WF) (he : e.WF)
 /-- A source match can be re-expressed using only recorded representatives of a
 state with the same inferred facts. The returned relation supports head transport. -/
 theorem validQuerySubst_transport {d e : Database} (hd : d.WF) (he : e.WF)
-    (h : d.SameMeaning e)
+    (h : d.SameMeaning e) (hr : e.HasReps)
     {q : Query} {σ : Env} (hn : ∀ p ∈ q, p.OrderingFree)
     (hs : ValidQuerySubst d q σ) :
     ∃ τ, ValidQuerySubst e q τ ∧ EnvRelated e σ τ := by
   let w := representative e he
-  have hw : ∀ t ∈ d.terms, w t ∈ e.terms ∧ e.Infers t (w t) := by
+  have hw : ∀ t ∈ d.terms, w t ∈ e.reps ∧ e.Infers t (w t) := by
     intro t ht
-    exact representative_spec he ((h.inferred t t).mp (infers_of_held ht))
+    exact representative_spec he hr ((h.inferred t t).mp (infers_of_held ht))
   exact ⟨Env.mapVals w σ, validQuerySubst_map hd he h hw hn hs,
     envRelated_map hs.mem_terms (fun t ht => (hw t ht).2)⟩
 
-/-- Ordering-free constructor queries observe only the inferred state. -/
+/-- Rebind an arbitrary held substitution to the target's representatives. This
+also applies to certificate bindings, which need not themselves be representatives. -/
+theorem querySubst_of_matches_transport {d e : Database} (hd : d.WF) (he : e.WF)
+    (h : d.SameMeaning e) (hr : e.HasReps) {q : Query} {σ : Env}
+    (hdom : (Env.dom σ).Perm q.vars) (hval : ∀ b ∈ σ, b.2 ∈ d.terms)
+    (hn : ∀ p ∈ q, p.OrderingFree) (hm : ∀ p ∈ q, Matches d p σ) :
+    ∃ τ, ValidQuerySubst e q τ ∧ EnvRelated e σ τ := by
+  let w := representative e he
+  have hw : ∀ t ∈ d.terms, w t ∈ e.reps ∧ e.Infers t (w t) := by
+    intro t ht
+    exact representative_spec he hr ((h.inferred t t).mp (infers_of_held ht))
+  have hrel := envRelated_map hval (fun t ht => (hw t ht).2)
+  have hmatch : QueryMatches e q (Env.mapVals w σ) := by
+    refine ⟨⟨by simpa [dom_mapVals] using hdom, ?_⟩, ?_⟩
+    · intro b hb
+      obtain ⟨a, ha, rfl⟩ := mem_mapVals hb
+      exact (hw a.2 (hval a ha)).1
+    · exact fun p hp => matches_transport hd he h hrel (hn p hp) (hm p hp)
+  obtain ⟨τ, hτ, hag⟩ := hmatch.exists_validQuerySubst
+  refine ⟨τ, hτ, fun v t ht => ?_⟩
+  obtain ⟨u, hu, hc⟩ := hrel v t ht
+  exact ⟨u, (hag v).trans hu, hc⟩
+
+/-- Ordering-free constructor queries observe only the inferred state, provided
+each represented class has a representative on both sides. -/
 theorem queryHolds_iff {d e : Database} (hd : d.WF) (he : e.WF)
-    (h : d.SameMeaning e)
+    (h : d.SameMeaning e) (hrd : d.HasReps) (hre : e.HasReps)
     {q : Query} (hn : ∀ p ∈ q, p.OrderingFree) : QueryHolds d q ↔ QueryHolds e q := by
   simp only [queryHolds_iff_validQuerySubst]
   constructor
   · rintro ⟨σ, hσ⟩
-    obtain ⟨τ, hτ, _⟩ := validQuerySubst_transport hd he h hn hσ
+    obtain ⟨τ, hτ, _⟩ := validQuerySubst_transport hd he h hre hn hσ
     exact ⟨τ, hτ⟩
   · rintro ⟨τ, hτ⟩
-    obtain ⟨σ, hσ, _⟩ := validQuerySubst_transport he hd h.symm hn hτ
+    obtain ⟨σ, hσ, _⟩ := validQuerySubst_transport he hd h.symm hrd hn hτ
     exact ⟨σ, hσ⟩
 
 private theorem evalAction_transport {d e d' : Database} (hd : d.WF) (he : e.WF)
-    (h : d.SameMeaning e)
+    (h : d.SameMeaning e) (hX : d.subsumed = e.subsumed)
     {σ τ : Env} (hσ : EnvRelated e σ τ) {a : Action} (hn : a.OrderingFree)
-    (hdf : a.DeleteFree)
+    (hdf : a.SubsumeFree)
     (hs : evalAction σ d a = some d') :
     ∃ e', evalAction τ e a = some e' ∧
       d'.SameMeaning e' := by
@@ -233,7 +246,7 @@ private theorem evalAction_transport {d e d' : Database} (hd : d.WF) (he : e.WF)
       obtain ⟨u, hu, htu⟩ := eval_congOn he hσ hn ht
       refine ⟨e.addTerm u, ?_, ?_⟩
       · simp [evalAction, hu]
-      · exact (h.addTerm hd he t).trans
+      · exact (h.addTerm hd he t hX).trans
           (sameMeaning_addTerm_congr he
             htu)
   | union a b =>
@@ -263,17 +276,17 @@ private theorem evalAction_transport {d e d' : Database} (hd : d.WF) (he : e.WF)
         have hlit' : ua.isLit ∨ ub.isLit → ua = ub := by simp [hnoa, hnob]
         refine ⟨e.addEq ua ub, ?_, ?_⟩
         · simp [evalAction, hua, hub, hnoa, hnob]
-        · exact (h.addEq hd he ta tb hlit).trans
+        · exact (h.addEq hd he ta tb hlit hX).trans
             (sameMeaning_addEq_congr he
               hca
               hcb
               hlit hlit')
-  | delete _ => simp [Action.DeleteFree, Action.monotoneB] at hdf
+  | subsume _ => simp [Action.SubsumeFree, Action.monotoneB] at hdf
 
 private theorem evalActions_transport {d e d' : Database} (hd : d.WF) (he : e.WF)
-    (h : d.SameMeaning e)
+    (h : d.SameMeaning e) (hX : d.subsumed = e.subsumed)
     {σ τ : Env} (hσ : EnvRelated e σ τ) {as : List Action} (hn : Actions.OrderingFree as)
-    (hdf : Actions.DeleteFree as)
+    (hdf : Actions.SubsumeFree as)
     (hs : evalActions σ d as = some d') :
     ∃ e', evalActions τ e as = some e' ∧
       d'.SameMeaning e' := by
@@ -283,20 +296,21 @@ private theorem evalActions_transport {d e d' : Database} (hd : d.WF) (he : e.WF
       exact ⟨e, rfl, h⟩
   | cons a as ih =>
       obtain ⟨mid, hm, hrest⟩ := Option.bind_eq_some_iff.mp hs
-      obtain ⟨mid', hm', hh⟩ := evalAction_transport hd he h hσ hn.1 (hdf _ (by simp)) hm
+      obtain ⟨mid', hm', hh⟩ := evalAction_transport hd he h hX hσ hn.1 (hdf _ (by simp)) hm
       have hrel : EnvRelated mid' σ τ :=
         hσ.mono (evalAction_contained (hdf _ (by simp)) hm')
       obtain ⟨e', he', hh'⟩ := ih (evalAction_wf hd hm)
         (evalAction_wf he hm')
-        hh hrel hn.2 (fun a ha => hdf a (List.mem_cons_of_mem _ ha)) hrest
+        hh ((evalAction_subsumed (hdf _ (by simp)) hm).trans
+          (hX.trans (evalAction_subsumed (hdf _ (by simp)) hm').symm)) hrel hn.2 (fun a ha => hdf a (List.mem_cons_of_mem _ ha)) hrest
       exact ⟨e', by simp [evalActions, hm', he'], hh'⟩
 
-/-- Delete-free, ordering-free heads transport along semantic equivalence. -/
+/-- Subsume-free, ordering-free heads transport along semantic equivalence. -/
 theorem evalLocalActions_transport {d e d' : Database} (hd : d.WF) (he : e.WF)
-    (h : d.SameMeaning e) {σ τ : Env} (hσ : EnvRelated e σ τ)
-    {as : List Action} (hn : Actions.OrderingFree as) (hdf : Actions.DeleteFree as)
+    (h : d.SameMeaning e) (hX : d.subsumed = e.subsumed) {σ τ : Env} (hσ : EnvRelated e σ τ)
+    {as : List Action} (hn : Actions.OrderingFree as) (hdf : Actions.SubsumeFree as)
     (hr : evalActions σ d as = some d') :
     ∃ e', evalActions τ e as = some e' ∧ d'.SameMeaning e' :=
-  evalActions_transport hd he h hσ hn hdf hr
+  evalActions_transport hd he h hX hσ hn hdf hr
 
 end Egglog.SourceMeaning

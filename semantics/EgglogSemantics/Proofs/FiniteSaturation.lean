@@ -1,6 +1,6 @@
 import Mathlib.Data.Set.Card
 import Mathlib.Data.Set.Finite.Lemmas
-import EgglogSemantics.Spec.Sequential
+import EgglogSemantics.Spec.Facts
 import EgglogSemantics.Proofs.Writes
 
 /-! Existence of finite normalization and saturation requires actual progress.
@@ -56,26 +56,26 @@ theorem exists_reachable_normal_of_wellFounded {α : Type*}
 theorem saturateReach_exists_of_wellFounded (R : List Rule) (d : Database)
     (lt : Database → Database → Prop) (hwf : WellFounded lt)
     (hprogress : ∀ e, Relation.ReflTransGen (fun a b => b = RunRules R a) d e →
-      Cong e ≠ Cong (RunRules R e) → lt (RunRules R e) e) :
-    ∃ e, SaturateReach R d e := by
+      ¬ e.SameMeaning (RunRules R e) → lt (RunRules R e) e) :
+    ∃ e, Reach d (.saturate (.run R)) e := by
   classical
   have aux : ∀ e, Relation.ReflTransGen (fun a b => b = RunRules R a) d e →
-      ∃ e', SaturateReach R e e' := by
+      ∃ e', Reach e (.saturate (.run R)) e' := by
     intro e
     induction e using hwf.induction with
     | h e ih =>
       intro he
-      by_cases hm : Cong e = Cong (RunRules R e)
-      · exact ⟨_, .fixpoint hm⟩
+      by_cases hm : e.SameMeaning (RunRules R e)
+      · exact ⟨_, .fixpoint .run hm⟩
       · obtain ⟨last, hlast⟩ := ih _ (hprogress e he hm) (he.tail rfl)
-        exact ⟨last, .again hm hlast⟩
+        exact ⟨last, .again .run hm hlast⟩
   exact aux d .refl
 
 theorem saturateReach_exists_of_measure (R : List Rule) (d : Database)
     (rank : Database → Nat)
     (hprogress : ∀ e, Relation.ReflTransGen (fun a b => b = RunRules R a) d e →
-      Cong e ≠ Cong (RunRules R e) → rank (RunRules R e) < rank e) :
-    ∃ e, SaturateReach R d e :=
+      ¬ e.SameMeaning (RunRules R e) → rank (RunRules R e) < rank e) :
+    ∃ e, Reach d (.saturate (.run R)) e :=
   saturateReach_exists_of_wellFounded R d (fun e' e => rank e' < rank e)
     (measure rank).wf hprogress
 

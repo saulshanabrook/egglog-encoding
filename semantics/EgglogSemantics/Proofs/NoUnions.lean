@@ -1,7 +1,7 @@
 import EgglogSemantics.Proofs.Interp
 import EgglogSemantics.Proofs.DiagonalPreservation
 
-/-! Union-free executable runs have diagonal congruence, including runs with deletes. -/
+/-! Union-free executable runs have diagonal congruence, including runs with subsumption. -/
 
 namespace Egglog
 
@@ -41,10 +41,8 @@ theorem FDatabase.NoUnions.union {d₁ d₂ : FDatabase} (h₁ : d₁.NoUnions)
     (h₂ : d₂.eqs = []) : (d₁.union d₂).NoUnions :=
   ⟨by simp [FDatabase.union, h₁.eqs, h₂]⟩
 
-theorem FDatabase.NoUnions.deleteAtoms {d : FDatabase} (hn : d.NoUnions)
-    (cl : Finset (Term × Term)) (X : List Term) : (d.deleteAtoms cl X).NoUnions := by
-  unfold FDatabase.deleteAtoms
-  split <;> exact ⟨hn.eqs⟩
+theorem FDatabase.NoUnions.subsume {d : FDatabase} (hn : d.NoUnions) (t : Term) :
+    (d.subsume t).NoUnions := ⟨by simpa using hn.eqs⟩
 
 theorem execAction_noUnions {σ : Env} {d d' : FDatabase} {a : Action}
     (hu : a.UnionFree) (hn : d.NoUnions) (h : execAction σ d a = some d') : d'.NoUnions := by
@@ -53,9 +51,9 @@ theorem execAction_noUnions {σ : Env} {d d' : FDatabase} {a : Action}
     obtain ⟨t, _, rfl⟩ := Option.map_eq_some_iff.mp h
     exact ⟨hn.eqs⟩
   | union _ _ => exact hu.elim
-  | delete e =>
+  | subsume e =>
     obtain ⟨t, _, rfl⟩ := Option.map_eq_some_iff.mp h
-    exact hn.deleteAtoms _ _
+    exact hn.subsume _
 
 theorem execActions_noUnions {σ : Env} {d d' : FDatabase} {as : List Action}
     (hu : Actions.UnionFree as) (hn : d.NoUnions) (h : execActions σ d as = some d') :
@@ -66,35 +64,19 @@ theorem execActions_noUnions {σ : Env} {d d' : FDatabase} {as : List Action}
     obtain ⟨e, he, ht⟩ := Option.bind_eq_some_iff.mp h
     exact ih hu.2 (execAction_noUnions hu.1 hn he) ht
 
-theorem execWrite_noUnions {σ : Env} {d d' : FDatabase} {a : Action}
-    (hu : a.UnionFree) (hn : d.NoUnions) (h : execWrite σ d a = some d') : d'.NoUnions := by
-  cases a with
-  | expr e => exact execAction_noUnions hu hn h
-  | union _ _ => exact hu.elim
-  | delete e => obtain ⟨t, _, rfl⟩ := Option.map_eq_some_iff.mp h; exact hn
-
-theorem execWrites_noUnions {σ : Env} {d d' : FDatabase} {as : List Action}
-    (hu : Actions.UnionFree as) (hn : d.NoUnions) (h : execWrites σ d as = some d') :
-    d'.NoUnions := by
-  induction as generalizing d with
-  | nil => cases Option.some.inj h; exact hn
-  | cons a as ih =>
-    obtain ⟨e, he, ht⟩ := Option.bind_eq_some_iff.mp h
-    exact ih hu.2 (execWrite_noUnions hu.1 hn he) ht
-
-theorem fireWritesInto_noUnions {r : Rule} {d : FDatabase} {σ : Env}
+theorem fireInto_noUnions {r : Rule} {d : FDatabase} {σ : Env}
     (hu : Actions.UnionFree r.actions) (hn : d.NoUnions) :
-    (fireWritesInto r d σ).NoUnions := by
-  unfold fireWritesInto
-  cases h : execWrites σ d r.actions with
+    (fireInto r d σ).NoUnions := by
+  unfold fireInto
+  cases h : execActions σ d r.actions with
   | none => exact hn
-  | some e => exact execWrites_noUnions hu hn h
+  | some e => exact execActions_noUnions hu hn h
 
 theorem execRunRules_noUnions {R : List Rule} {d : FDatabase}
     (hn : d.NoUnions) (hu : ∀ r ∈ R, r.UnionFree) :
     (execRunRules R d).NoUnions :=
-  execRunRules_induction_ruleset (fun X => hn.deleteAtoms _ X)
-    (fun r hr _ _ _ ha => fireWritesInto_noUnions (hu r hr) ha)
+  execRunRules_induction_ruleset hn
+    (fun r hr _ _ _ ha => fireInto_noUnions (hu r hr) ha)
 
 theorem runSaturateF_noUnions {R : List Rule} (hu : ∀ r ∈ R, r.UnionFree) :
     ∀ (n : Nat) {d d' : FDatabase},
@@ -114,20 +96,14 @@ theorem runSaturateF_noUnions {R : List Rule} (hu : ∀ r ∈ R, r.UnionFree) :
     · cases Option.some.inj h; exact hn
     · exact ih (execRunRules_noUnions hn hu) h
 
-theorem execCmd_noUnions {d d' : FDatabase} {c : Cmd} (hu : c.UnionFree)
-    (hn : d.NoUnions) (h : execCmd d c = some d') : d'.NoUnions := by
-  cases c with
-  | run R => cases Option.some.inj h; exact execRunRules_noUnions hn hu
-  | saturate R => exact runSaturateF_noUnions hu _ hn h
+theorem execCmd_noUnions {d d' : FDatabase} {c : Schedule} {fuel : Nat}
+    (hu : c.UnionFree) (hn : d.NoUnions) (h : execSchedule fuel d c = some d') :
+    d'.NoUnions :=
+  execSchedule_preserves (fun _ _ hg h => execRunRules_noUnions h hg) hu hn h
 
-theorem execProgram_noUnions {p : List Cmd} {d d' : FDatabase}
-    (hu : ∀ c ∈ p, c.UnionFree) (hn : d.NoUnions) (h : execProgram d p = some d') :
-    d'.NoUnions := by
-  induction p generalizing d with
-  | nil => cases Option.some.inj h; exact hn
-  | cons c cs ih =>
-    obtain ⟨e, hc, ht⟩ := Option.bind_eq_some_iff.mp h
-    exact ih (fun c hc => hu c (by simp [hc])) (execCmd_noUnions (hu c (by simp)) hn hc) ht
+theorem execProgram_noUnions {p : Schedule} {fuel : Nat} {d d' : FDatabase}
+    (hu : p.UnionFree) (hn : d.NoUnions) (h : execSchedule fuel d p = some d') :
+    d'.NoUnions := execCmd_noUnions hu hn h
 
 theorem FDatabase.NoUnions.empty : FDatabase.empty.NoUnions := ⟨rfl⟩
 
