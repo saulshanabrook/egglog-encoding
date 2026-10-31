@@ -14,12 +14,7 @@ fn run_ground_action_oracle(
     let mut outputs = Vec::new();
     for command in graph.parse_program(None, source)? {
         for command in graph.resolve_command(command)?.desugared {
-            outputs.extend(
-                graph
-                    .run_command(ExecutableCommand::Resolved(command))?
-                    .iter()
-                    .map(ToString::to_string),
-            );
+            outputs.extend(graph.run_command(command)?.iter().map(ToString::to_string));
         }
     }
     Ok(outputs)

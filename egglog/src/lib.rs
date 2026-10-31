@@ -25,7 +25,7 @@ pub use command_macro::{CommandMacro, CommandMacroRegistry};
 // This is used to allow the `add_primitive` macro to work in
 // both this crate and other crates by referring to `::egglog`.
 extern crate self as egglog;
-use action_execution::{ExecutableCommand, GroundActionCache};
+use action_execution::{ActionBatch, GroundActionCache};
 pub use ast::{ResolvedExpr, ResolvedFact, ResolvedVar};
 #[cfg(feature = "bin")]
 pub use cli::*;
@@ -676,6 +676,13 @@ struct ResolvedNCommandsWithOutput {
     resolved: Vec<ResolvedNCommand>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     resolved_before_proofs: Vec<ResolvedNCommand>,
+}
+
+enum CommandPhase {
+    Install,
+    Actions,
+    Check,
+    Other,
 }
 
 #[derive(Debug, Error)]
@@ -1665,7 +1672,11 @@ impl EGraph {
         Ok(rule.name)
     }
 
-    fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
+    fn eval_actions(&mut self, batch: ActionBatch<'_>) -> Result<(), Error> {
+        let actions = match batch {
+            ActionBatch::Resolved(actions) => actions,
+            ActionBatch::Ground(prepared) => return self.eval_ground_actions(prepared),
+        };
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
@@ -2212,39 +2223,32 @@ impl EGraph {
         }
     }
 
-    fn run_command(&mut self, command: ExecutableCommand) -> Result<Vec<CommandOutput>, Error> {
-        enum CommandPhase {
-            Install,
-            Actions,
-            Check,
-            Other,
-        }
-
+    fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
         let phase = match &command {
-            ExecutableCommand::PreparedActions(_) => CommandPhase::Actions,
-            ExecutableCommand::Resolved(command) => match command {
-                ResolvedNCommand::Sort { .. }
-                | ResolvedNCommand::Function(_)
-                | ResolvedNCommand::Index { .. }
-                | ResolvedNCommand::AddRuleset(..)
-                | ResolvedNCommand::UnstableCombinedRuleset(..)
-                | ResolvedNCommand::NormRule { .. } => CommandPhase::Install,
-                ResolvedNCommand::CoreAction(_)
-                | ResolvedNCommand::CoreActions(_)
-                | ResolvedNCommand::Input { .. } => CommandPhase::Actions,
-                ResolvedNCommand::Check(..) => CommandPhase::Check,
-                _ => CommandPhase::Other,
-            },
+            ResolvedNCommand::Sort { .. }
+            | ResolvedNCommand::Function(_)
+            | ResolvedNCommand::Index { .. }
+            | ResolvedNCommand::AddRuleset(..)
+            | ResolvedNCommand::UnstableCombinedRuleset(..)
+            | ResolvedNCommand::NormRule { .. } => CommandPhase::Install,
+            ResolvedNCommand::CoreAction(_)
+            | ResolvedNCommand::CoreActions(_)
+            | ResolvedNCommand::Input { .. } => CommandPhase::Actions,
+            ResolvedNCommand::Check(..) => CommandPhase::Check,
+            _ => CommandPhase::Other,
         };
+        self.run_timed_command(phase, |graph| graph.run_command_inner(command))
+    }
+
+    fn run_timed_command<T>(
+        &mut self,
+        phase: CommandPhase,
+        run: impl FnOnce(&mut Self) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let command_timer = Instant::now();
         let process_before = self.overall_report.process_time();
         let iteration_before = self.overall_report.run.iterations.len();
-        let result = match command {
-            ExecutableCommand::Resolved(command) => self.run_command_inner(command),
-            ExecutableCommand::PreparedActions(actions) => {
-                self.eval_ground_actions(actions).map(|()| Vec::new())
-            }
-        };
+        let result = run(self);
         let nested_process = self
             .overall_report
             .process_time()
@@ -2357,12 +2361,14 @@ impl EGraph {
                     panic!("Globals should have been desugared away: {name} = {contents}")
                 }
                 _ => {
-                    self.eval_actions(&ResolvedActions::new(vec![action.clone()]))?;
+                    self.eval_actions(ActionBatch::Resolved(&ResolvedActions::new(vec![
+                        action.clone(),
+                    ])))?;
                 }
             },
             // One `eval_actions` call, so the block's `let`s stay local.
             ResolvedNCommand::CoreActions(actions) => {
-                self.eval_actions(&actions)?;
+                self.eval_actions(ActionBatch::Resolved(&actions))?;
             }
             ResolvedNCommand::LetBegin(..) => {
                 unreachable!("LetBegin is removed by remove_globals")
@@ -2450,7 +2456,7 @@ impl EGraph {
                 // the overwhelmingly common negative-assertion form.
                 if matches!(cmds.as_slice(), [ResolvedNCommand::Check(..)]) {
                     let check = cmds.into_iter().next().unwrap();
-                    return match self.run_command(ExecutableCommand::Resolved(check)) {
+                    return match self.run_command(check) {
                         Err(error) => {
                             log::info!("Command failed as expected: {error}");
                             Ok(vec![])
@@ -2460,9 +2466,9 @@ impl EGraph {
                 }
 
                 self.push();
-                let failure = cmds.into_iter().find_map(|command| {
-                    self.run_command(ExecutableCommand::Resolved(command)).err()
-                });
+                let failure = cmds
+                    .into_iter()
+                    .find_map(|command| self.run_command(command).err());
                 self.pop()
                     .expect("the snapshot pushed for `fail` must still be present");
                 return match failure {
@@ -2991,7 +2997,9 @@ impl EGraph {
                         // callbacks. Keep each union's original commit/rebuild.
                         self.flush_ground_actions(&mut pending)?;
                         pending_lookups = 0;
-                        self.run_command(ExecutableCommand::PreparedActions(vec![prepared]))?;
+                        self.run_timed_command(CommandPhase::Actions, |graph| {
+                            graph.eval_actions(ActionBatch::Ground(vec![prepared]))
+                        })?;
                     } else {
                         pending_lookups += prepared.lookups.len();
                         pending.push(prepared);
@@ -3053,8 +3061,7 @@ impl EGraph {
                                     ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
                                 )
                             {
-                                let result =
-                                    self.run_command(ExecutableCommand::Resolved(processed))?;
+                                let result = self.run_command(processed)?;
                                 outputs.extend(result);
                             }
                         }
@@ -3338,11 +3345,11 @@ impl EGraph {
         name: &str,
         args: &[Expr],
     ) -> Result<Vec<CommandOutput>, Error> {
-        self.run_command(ExecutableCommand::Resolved(ResolvedNCommand::UserDefined(
+        self.run_command(ResolvedNCommand::UserDefined(
             span!(),
             name.to_string(),
             args.to_vec(),
-        )))
+        ))
     }
 
     /// Set the report verbosity level for rule execution output.

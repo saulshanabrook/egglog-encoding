@@ -6,12 +6,9 @@ use crate::*;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-// Consumed directly by command dispatch, never retained in a collection. Keep
-// resolved commands inline instead of allocating for each ordinary command.
-#[allow(clippy::large_enum_variant)]
-pub(super) enum ExecutableCommand {
-    Resolved(ResolvedNCommand),
-    PreparedActions(Vec<GroundActions>),
+pub(super) enum ActionBatch<'a> {
+    Resolved(&'a ResolvedActions),
+    Ground(Vec<GroundActions>),
 }
 
 // Metadata is valid only until a command can change signatures or table
@@ -129,7 +126,10 @@ impl EGraph {
         pending: &mut Vec<GroundActions>,
     ) -> Result<(), Error> {
         if !pending.is_empty() {
-            self.run_command(ExecutableCommand::PreparedActions(std::mem::take(pending)))?;
+            let prepared = std::mem::take(pending);
+            self.run_timed_command(CommandPhase::Actions, |graph| {
+                graph.eval_actions(ActionBatch::Ground(prepared))
+            })?;
         }
         Ok(())
     }
