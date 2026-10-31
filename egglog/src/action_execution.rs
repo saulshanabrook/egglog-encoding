@@ -150,13 +150,23 @@ impl EGraph {
         prepared: Vec<GroundActions>,
     ) -> Result<(), Error> {
         #[cfg(test)]
-        let batch_event = (
-            prepared.len(),
-            prepared
-                .first()
-                .and_then(|action| action.lookups.first())
-                .map(|(table, _)| table.clone()),
-        );
+        let batch_event = tests::BATCH_EVENTS.with(|slot| {
+            slot.borrow().as_ref().map(|_| {
+                (
+                    prepared.len(),
+                    prepared
+                        .first()
+                        .map(|action| {
+                            action
+                                .lookups
+                                .iter()
+                                .map(|(table, _)| table.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                )
+            })
+        });
         let union = egglog_bridge::UnionAction::new(&self.backend);
         let result = self
             .backend
@@ -189,7 +199,13 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()));
         #[cfg(test)]
         if result.is_ok() {
-            tests::BATCH_EVENTS.with(|events| events.borrow_mut().push(batch_event));
+            if let Some(batch_event) = batch_event {
+                tests::BATCH_EVENTS.with(|slot| {
+                    if let Some(events) = slot.borrow_mut().as_mut() {
+                        events.push(batch_event);
+                    }
+                });
+            }
             tests::ORDER_LOG.with(|slot| {
                 if let Some(log) = slot.borrow().as_ref() {
                     log.lock().unwrap().push("commit");

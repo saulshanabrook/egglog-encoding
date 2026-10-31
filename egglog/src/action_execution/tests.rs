@@ -1,10 +1,10 @@
 use super::*;
 
-type BatchEvent = (usize, Option<Rc<egglog_bridge::TableAction>>);
+type BatchEvent = (usize, Vec<Rc<egglog_bridge::TableAction>>);
 type OrderLog = Arc<std::sync::Mutex<Vec<&'static str>>>;
 
 std::thread_local! {
-    pub(super) static BATCH_EVENTS: std::cell::RefCell<Vec<BatchEvent>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub(super) static BATCH_EVENTS: std::cell::RefCell<Option<Vec<BatchEvent>>> = const { std::cell::RefCell::new(None) };
     pub(super) static ORDER_LOG: std::cell::RefCell<Option<OrderLog>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -179,23 +179,27 @@ fn resolved_batches_coalesce_and_keep_metadata_across_flushes_and_unions() {
         graph
             .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
             .unwrap();
-        BATCH_EVENTS.with(|events| events.borrow_mut().clear());
+        BATCH_EVENTS.with(|events| *events.borrow_mut() = Some(Vec::new()));
         let mut source = "(F (A))\n".repeat(257);
-        source.push_str("(union (A) (B))\n(F (A))");
-        graph.parse_and_run_program(None, &source).unwrap();
-        let events = BATCH_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+        source.push_str("(union (A) (B))\n(F (B))");
+        let result = graph.parse_and_run_program(None, &source);
+        let events = BATCH_EVENTS.with(|events| events.borrow_mut().take().unwrap());
+        result.unwrap();
+        assert_eq!(graph.get_size("F"), 1);
         assert_eq!(
             events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
             [256, 1, 1, 1]
         );
-        let first = events[0].1.as_ref().unwrap();
-        assert!(
-            events
-                .iter()
-                .all(|(_, table)| Rc::ptr_eq(first, table.as_ref().unwrap())),
-            "the A handle must stay interned across bounded flushes and the union"
-        );
-        assert_eq!(graph.get_size("F"), 1);
+        assert!(events.iter().all(|(_, tables)| tables.len() == 2));
+        // First-action lookups are [A,F], [A,F], [A,B], then [B,F].
+        assert!(Rc::ptr_eq(&events[0].1[0], &events[1].1[0]));
+        assert!(Rc::ptr_eq(&events[0].1[0], &events[2].1[0]));
+        assert!(Rc::ptr_eq(&events[2].1[1], &events[3].1[0]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[1].1[1]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[3].1[1]));
+        graph
+            .parse_and_run_program(None, "(check (= (F (A)) (F (B))))")
+            .unwrap();
     }
 }
 
