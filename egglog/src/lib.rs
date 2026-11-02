@@ -958,7 +958,7 @@ impl EGraph {
     ) -> Result<egglog_bridge::MergeFn, Error> {
         match expr {
             GenericExpr::Lit(_, literal) => {
-                let val = literal_to_value(&self.backend, literal);
+                let val = literal_to_value(self.backend.base_values(), literal);
                 Ok(egglog_bridge::MergeFn::Const(val))
             }
             GenericExpr::Var(span, resolved_var) => {
@@ -1374,7 +1374,7 @@ impl EGraph {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
         let resolved = proof_check_eg
-            .process_program_internal(ProgramSource::Commands(prog.into_iter()), false)?;
+            .process_program_internal(ProgramSource::from_commands(prog.into_iter()), false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
         Ok(())
@@ -2930,7 +2930,7 @@ impl EGraph {
     /// in extension code unwind normally instead of becoming [`enum@Error`] values.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
         let res =
-            self.process_program_internal(ProgramSource::Commands(program.into_iter()), true)?;
+            self.process_program_internal(ProgramSource::from_commands(program.into_iter()), true)?;
         Ok(res.outputs)
     }
 
@@ -2944,7 +2944,7 @@ impl EGraph {
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parse_program_timed(filename, input)?;
         let res =
-            self.process_program_internal(ProgramSource::Commands(parsed.into_iter()), false)?;
+            self.process_program_internal(ProgramSource::from_commands(parsed.into_iter()), false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
     }
 
@@ -2974,12 +2974,9 @@ impl EGraph {
         input: &str,
     ) -> Result<Vec<CommandOutput>, Error> {
         let source = if self.are_proofs_enabled() {
-            ProgramSource::Commands(self.parse_program_timed(filename, input)?.into_iter())
+            ProgramSource::from_commands(self.parse_program_timed(filename, input)?.into_iter())
         } else {
-            ProgramSource::Text {
-                parser: SexpParser::new(filename, input),
-                expanded: Vec::new().into_iter(),
-            }
+            ProgramSource::from_text(filename, input)
         };
         Ok(self.process_program_internal(source, true)?.outputs)
     }
@@ -3895,13 +3892,13 @@ fn literal_to_entry(egraph: &egglog_bridge::EGraph, l: &Literal) -> QueryEntry {
     }
 }
 
-fn literal_to_value(egraph: &egglog_bridge::EGraph, l: &Literal) -> Value {
+fn literal_to_value(base_values: &core_relations::BaseValues, l: &Literal) -> Value {
     match l {
-        Literal::Int(x) => egraph.base_values().get::<i64>(*x),
-        Literal::Float(x) => egraph.base_values().get::<sort::F>(x.into()),
-        Literal::String(x) => egraph.base_values().get::<sort::S>(sort::S::new(x.clone())),
-        Literal::Bool(x) => egraph.base_values().get::<bool>(*x),
-        Literal::Unit => egraph.base_values().get::<()>(()),
+        Literal::Int(x) => base_values.get::<i64>(*x),
+        Literal::Float(x) => base_values.get::<sort::F>(x.into()),
+        Literal::String(x) => base_values.get::<sort::S>(sort::S::new(x.clone())),
+        Literal::Bool(x) => base_values.get::<bool>(*x),
+        Literal::Unit => base_values.get::<()>(()),
     }
 }
 
@@ -4026,7 +4023,7 @@ mod tests {
             }
             let program = graph.parse_program(None, source).unwrap();
             let result = graph
-                .process_program_internal(ProgramSource::Commands(program.into_iter()), true)
+                .process_program_internal(ProgramSource::from_commands(program.into_iter()), true)
                 .unwrap();
             assert!(result.resolved.is_empty());
             assert!(result.resolved_before_proofs.is_empty());
@@ -4040,7 +4037,7 @@ mod tests {
             }
             let program = graph.parse_program(None, source).unwrap();
             let result = graph
-                .process_program_internal(ProgramSource::Commands(program.into_iter()), false)
+                .process_program_internal(ProgramSource::from_commands(program.into_iter()), false)
                 .unwrap();
             assert!(!result.resolved.is_empty());
             assert_eq!(!result.resolved_before_proofs.is_empty(), proofs);

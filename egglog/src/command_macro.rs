@@ -11,6 +11,22 @@ use std::sync::Arc;
 
 /// A command macro that can transform commands during desugaring
 pub trait CommandMacro: Send + Sync {
+    /// Return `true` if this macro leaves a closed constructor action unchanged.
+    /// Its expressions contain constructor calls and primitive literal leaves,
+    /// with a constructor call at each expression root. Primitive calls and
+    /// variables are outside this promise.
+    /// The argument is `None` for a union and `Some(head)` for an expression
+    /// action whose outermost call has that name. The promise applies to actions
+    /// whose calls pass ordinary parser precedence and declared-constructor type
+    /// checks. This capability query must have no side effects and may be called
+    /// before those checks complete.
+    ///
+    /// Opting in promises a singleton unchanged command, no error, and no side
+    /// effects, so execution may skip `transform` for this action.
+    fn preserves_closed_constructor_action(&self, _expression_head: Option<&str>) -> bool {
+        false
+    }
+
     /// Transform the command, potentially using type information.
     /// Returns the transformed commands. If the macro doesn't apply,
     /// it should return vec![command] unchanged.
@@ -39,20 +55,13 @@ impl CommandMacroRegistry {
         self.macros.push(macro_impl);
     }
 
-    /// Delay the preceding commit only when command macros and general
-    /// constraint inference cannot invoke extension callbacks.
-    pub(crate) fn can_typecheck_without_callbacks(
+    pub(crate) fn preserves_closed_constructor_action(
         &self,
-        command: &Command,
-        types: &TypeInfo,
+        expression_head: Option<&str>,
     ) -> bool {
-        if !self.macros.is_empty() {
-            return false;
-        }
-        match command {
-            Command::Action(action) => types.typecheck_closed_constructor_action(action).is_some(),
-            _ => false,
-        }
+        self.macros
+            .iter()
+            .all(|mac| mac.preserves_closed_constructor_action(expression_head))
     }
 
     /// Apply all registered macros to a command in sequence

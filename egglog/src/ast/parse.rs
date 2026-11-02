@@ -323,6 +323,7 @@ impl Parser {
 
     /// Parse one source form and expand its parser macros. An empty expansion is
     /// `Some(vec![])`; only the end of the source returns `None`.
+    #[cfg(test)]
     pub(crate) fn parse_next_command(
         &mut self,
         ctx: &mut SexpParser<'_>,
@@ -330,6 +331,22 @@ impl Parser {
         ctx.next_sexp()?
             .map(|form| self.parse_command(&form))
             .transpose()
+    }
+
+    /// Conservatively detect parser callbacks before ordinary parsing. Builtin
+    /// parsing only visits descendants of this form; callbacks can register new
+    /// macros or parse generated forms, so commit the prefix before any may run.
+    /// All registries are checked regardless of syntactic position: false
+    /// positives require an extra commit but do not duplicate parser dispatch.
+    pub(crate) fn may_invoke_macro(&self, form: &Sexp<'_>) -> bool {
+        let Sexp::List(items, _) = form else {
+            return false;
+        };
+        matches!(items.first(), Some(Sexp::Atom(head, _))
+            if self.commands.contains_key(head.as_ref())
+                || self.actions.contains_key(head.as_ref())
+                || self.exprs.contains_key(head.as_ref()))
+            || items.iter().any(|item| self.may_invoke_macro(item))
     }
 
     // currently only used for testing, but no reason it couldn't be used elsewhere later
@@ -1698,6 +1715,82 @@ mod tests {
                 _ => panic!("unexpected literal/atom classification for {source}"),
             }
         }
+    }
+
+    #[test]
+    fn macro_query_checks_nested_heads_in_all_registries() {
+        for kind in ["command", "action", "expression"] {
+            let mut parser = Parser::default();
+            match kind {
+                "command" => parser
+                    .add_command_macro(Arc::new(SimpleMacro::new("Alias", |_, _, _| {
+                        unreachable!("query must not invoke command macros")
+                    }))),
+                "action" => parser
+                    .add_action_macro(Arc::new(SimpleMacro::new("Alias", |_, _, _| {
+                        unreachable!("query must not invoke action macros")
+                    }))),
+                _ => parser.add_expr_macro(Arc::new(SimpleMacro::new("Alias", |_, _, _| {
+                    unreachable!("query must not invoke expression macros")
+                }))),
+            }
+            for (source, expected) in [
+                ("(F (A) 1 true \"Alias\" ())", false),
+                ("(F Alias)", false),
+                ("(Alias)", true),
+                ("(F (Alias))", true),
+                ("(begin (set (F (Alias)) (A)))", true),
+                ("(((Alias)))", true),
+            ] {
+                let form = sexp(&mut SexpParser::new(None, source)).unwrap();
+                assert_eq!(parser.may_invoke_macro(&form), expected, "{kind}: {source}");
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_dispatch_and_parser_overrides_keep_precedence() {
+        let mut parser = Parser::default();
+        for enforce_reserved in [false, true] {
+            parser.ensure_no_reserved_symbols = enforce_reserved;
+            for source in ["(index)", "(set)", "(input)", "(output)", "(union (A))"] {
+                let form = sexp(&mut SexpParser::new(None, source)).unwrap();
+                assert!(!parser.may_invoke_macro(&form), "{source}");
+                assert!(parser.parse_command(&form).is_err(), "{source}");
+            }
+        }
+
+        parser.add_user_defined("A".into()).unwrap();
+        let form = sexp(&mut SexpParser::new(None, "(A)")).unwrap();
+        assert!(!parser.may_invoke_macro(&form));
+        assert!(
+            matches!(parser.parse_command(&form).unwrap().as_slice(), [Command::UserDefined(_, head, _)] if head == "A")
+        );
+        let form = sexp(&mut SexpParser::new(None, "(union (A) (B))")).unwrap();
+        parser.add_expr_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "expression override must not run".into()))
+        })));
+        // The conservative query may request a commit even when this syntactic
+        // position uses builtin action dispatch instead of the registered macro.
+        assert!(parser.may_invoke_macro(&form));
+        assert!(matches!(
+            parser.parse_command(&form).unwrap().as_slice(),
+            [Command::Action(Action::Union(..))]
+        ));
+        parser.add_action_macro(Arc::new(SimpleMacro::new("union", |_, _, _| Ok(vec![]))));
+        assert!(parser.may_invoke_macro(&form));
+        assert!(parser.parse_command(&form).unwrap().is_empty());
+        parser.add_command_macro(Arc::new(SimpleMacro::new("union", |_, span, _| {
+            Err(ParseError(span, "command override wins".into()))
+        })));
+        assert!(parser.may_invoke_macro(&form));
+        assert!(
+            parser
+                .parse_command(&form)
+                .unwrap_err()
+                .to_string()
+                .contains("command override wins")
+        );
     }
 
     #[test]

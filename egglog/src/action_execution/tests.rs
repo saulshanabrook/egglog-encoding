@@ -1,30 +1,5 @@
 use super::*;
 
-#[test]
-fn execution_scope_commits_pending_prefix_on_success_and_error() {
-    for fails in [false, true] {
-        let mut graph = EGraph::default();
-        graph
-            .parse_and_run_program(None, "(datatype T (A) (F T))")
-            .unwrap();
-        let command = graph.parse_program(None, "(F (A))").unwrap().remove(0);
-        let commands = graph.resolve_command(command).unwrap().desugared;
-        let result = ActionExecutor::run(&mut graph, |execution| {
-            for command in commands {
-                execution.command(command)?;
-            }
-            assert_eq!(execution.graph.get_size("F"), 0);
-            if fails {
-                Err(Error::BackendError("expected scope error".into()))
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(result.is_err(), fails);
-        assert_eq!(graph.get_size("F"), 1);
-    }
-}
-
 type BatchEvent = (usize, Vec<Rc<egglog_bridge::TableAction>>);
 type OrderLog = Arc<std::sync::Mutex<Vec<&'static str>>>;
 
@@ -75,6 +50,69 @@ fn resolved_dispatch_uses_native_actions_and_falls_back_for_primitives() {
 }
 
 #[test]
+fn constructor_literal_leaves_use_native_actions_and_match_the_compiler() {
+    for entrypoint in ["source", "ast", "resolved"] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype T (Num i64) (Flag bool) (Text String) (Real f64)
+                             (Token Unit) (Pair T T))",
+            )
+            .unwrap();
+        let mut compiled = graph.clone();
+        for source in [
+            "(Num -9223372036854775808)",
+            "(Num 9223372036854775807)",
+            "(Flag true)",
+            "(Flag false)",
+            r#"(Text "a \"quoted\" string")"#,
+            "(Real 1.5)",
+            "(Real NaN)",
+            "(Real inf)",
+            "(Real -inf)",
+            "(Token ())",
+            "(Pair (Num 7) (Pair (Flag true) (Text \"same\")))",
+            "(Pair (Num 7) (Pair (Flag true) (Text \"same\")))",
+            "(union (Num 7) (Token ()))",
+            "(Pair (Num 7) (Token ()))",
+        ] {
+            let before = GROUND_ACTIONS_EXECUTED.get();
+            let actual = match entrypoint {
+                "source" => graph.parse_and_run_program(None, source),
+                "ast" => {
+                    let commands = graph.parse_program(None, source).unwrap();
+                    graph.run_program(commands)
+                }
+                "resolved" => {
+                    let mut outputs = Vec::new();
+                    for command in graph.parse_program(None, source).unwrap() {
+                        for command in graph.resolve_command(command).unwrap().desugared {
+                            outputs.extend(graph.run_command(command).unwrap());
+                        }
+                    }
+                    Ok(outputs)
+                }
+                _ => unreachable!(),
+            }
+            .unwrap();
+            assert_eq!(
+                GROUND_ACTIONS_EXECUTED.get() - before,
+                1,
+                "{entrypoint}: {source}",
+            );
+            let expected = run_ground_action_oracle(&mut compiled, source, false).unwrap();
+            assert_eq!(
+                actual.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                expected,
+                "{entrypoint}: {source}",
+            );
+            assert_action_graphs_equal(&graph, &compiled);
+        }
+    }
+}
+
+#[test]
 fn resolved_dispatch_preserves_proof_and_term_execution() {
     for (mut graph, proofs) in [
         (EGraph::new_with_term_encoding(), false),
@@ -86,8 +124,8 @@ fn resolved_dispatch_preserves_proof_and_term_execution() {
         graph
             .parse_and_run_program(
                 None,
-                "(datatype T (A) (B) (F T))
-                 (F (A)) (union (A) (B))
+                "(datatype T (A) (B) (F T) (Num i64))
+                 (F (A)) (Num 1) (union (A) (B))
                  (check (= (F (A)) (F (B))))",
             )
             .unwrap();
@@ -245,7 +283,8 @@ fn ground_actions_check_eligibility_before_mutation() {
             ("(Pair (N1) (missing))", false),
             ("(union (N1) (+ 1 2))", false),
             ("(union (A) (Pair (A) (A)))", true),
-            ("(Num 1)", false),
+            ("(Num 1)", true),
+            ("(Num \"wrong sort\")", false),
             ("(+ 1 2)", false),
             ("(custom (A))", false),
             ("(Pair $global (A))", false),
@@ -261,12 +300,20 @@ fn ground_actions_check_eligibility_before_mutation() {
             let accepted = commands.into_iter().any(|command| {
                 graph.resolve_command(command).is_ok_and(|commands| {
                     commands.desugared.iter().any(|command| match command {
-                        ResolvedNCommand::CoreAction(action) => graph
-                            .prepare_resolved_ground_action(
-                                action,
-                                &mut GroundActionCache::default(),
-                            )
-                            .is_some(),
+                        ResolvedNCommand::CoreAction(action) => {
+                            let action = match action {
+                                ResolvedAction::Expr(_, expr) => {
+                                    typechecking::ClosedAction::Expr(expr)
+                                }
+                                ResolvedAction::Union(_, left, right) => {
+                                    typechecking::ClosedAction::Union(left, right)
+                                }
+                                _ => return false,
+                            };
+                            graph
+                                .prepare_ground_action(action, &mut GroundActionCache::default())
+                                .is_some()
+                        }
                         _ => false,
                     })
                 })
@@ -658,6 +705,107 @@ fn cached_calls_preserve_parser_macro_registration() {
 }
 
 #[test]
+fn source_parser_callbacks_commit_prefixes_and_keep_builtin_batches() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    let order: OrderLog = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let callback_order = order.clone();
+    graph.parser.add_command_macro(Arc::new(SimpleMacro::new(
+        "install-alias",
+        move |_, _, parser| {
+            callback_order.lock().unwrap().push("install");
+            let callback_order = callback_order.clone();
+            parser.add_expr_macro(Arc::new(SimpleMacro::new("Alias", move |_, span, _| {
+                callback_order.lock().unwrap().push("alias");
+                Ok(Expr::Call(span, "B".into(), vec![]))
+            })));
+            Ok(vec![])
+        },
+    )));
+    BATCH_EVENTS.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+    ORDER_LOG.with(|slot| *slot.borrow_mut() = Some(order.clone()));
+    let result = graph.parse_and_run_program(
+        None,
+        "(F (A)) (F (A)) (install-alias)
+         (F (A)) (F (A)) (F (Alias)) (F (A)) (F (A))",
+    );
+    ORDER_LOG.with(|slot| slot.borrow_mut().take());
+    let events = BATCH_EVENTS.with(|slot| slot.borrow_mut().take().unwrap());
+    result.unwrap();
+    assert_eq!(
+        *order.lock().unwrap(),
+        ["commit", "install", "commit", "alias", "commit"]
+    );
+    assert_eq!(
+        events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
+        [2, 2, 3]
+    );
+    // Parser callbacks cannot replace signatures or tables. Both ordinary
+    // constructor metadata and the F handle survive their commit boundaries.
+    assert!(Rc::ptr_eq(&events[0].1[0], &events[1].1[0]));
+    assert!(Rc::ptr_eq(&events[0].1[1], &events[1].1[1]));
+    assert!(Rc::ptr_eq(&events[0].1[1], &events[2].1[1]));
+    assert_eq!(graph.get_size("A"), 1);
+    assert_eq!(graph.get_size("B"), 1);
+    assert_eq!(graph.get_size("F"), 2);
+}
+
+#[test]
+fn parser_errors_commit_the_prefix_without_replaying_callbacks() {
+    for kind in ["command", "action", "expression"] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+            .unwrap();
+        let order: OrderLog = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let callback_order = order.clone();
+        match kind {
+            "command" => graph.parser.add_command_macro(Arc::new(SimpleMacro::new(
+                "reject",
+                move |_, span, _| {
+                    callback_order.lock().unwrap().push("parse");
+                    Err(ParseError(span, "expected parser error".into()))
+                },
+            ))),
+            "action" => graph.parser.add_action_macro(Arc::new(SimpleMacro::new(
+                "reject",
+                move |_, span, _| {
+                    callback_order.lock().unwrap().push("parse");
+                    Err(ParseError(span, "expected parser error".into()))
+                },
+            ))),
+            _ => graph.parser.add_expr_macro(Arc::new(SimpleMacro::new(
+                "reject",
+                move |_, span, _| {
+                    callback_order.lock().unwrap().push("parse");
+                    Err(ParseError(span, "expected parser error".into()))
+                },
+            ))),
+        }
+        BATCH_EVENTS.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+        ORDER_LOG.with(|slot| *slot.borrow_mut() = Some(order.clone()));
+        let result = graph.parse_and_run_program(None, "(F (A)) (F (A)) (reject) (F (B))");
+        ORDER_LOG.with(|slot| slot.borrow_mut().take());
+        let events = BATCH_EVENTS.with(|slot| slot.borrow_mut().take().unwrap());
+        assert!(
+            matches!(result, Err(Error::ParseError(ParseError(_, ref message)))
+                if message == "expected parser error"),
+            "{kind}: {result:?}"
+        );
+        assert_eq!(*order.lock().unwrap(), ["commit", "parse"], "{kind}");
+        assert_eq!(
+            events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
+            [2],
+            "{kind}"
+        );
+        assert_eq!(graph.get_size("F"), 1, "{kind}");
+        assert_eq!(graph.get_size("B"), 0, "{kind}");
+    }
+}
+
+#[test]
 fn argument_buffers_reset_between_wide_and_narrow_calls() {
     let mut graph = EGraph::default();
     graph
@@ -675,33 +823,179 @@ fn argument_buffers_reset_between_wide_and_narrow_calls() {
 #[test]
 fn insertion_batches_keep_metadata_across_flushes_and_unions() {
     for threads in [1, 4] {
+        for streamed in [false, true] {
+            let mut graph = EGraph::default();
+            graph.backend.set_num_threads(threads);
+            graph
+                .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+                .unwrap();
+            BATCH_EVENTS.with(|events| *events.borrow_mut() = Some(Vec::new()));
+            let mut source = "(F (A))\n".repeat(257);
+            source.push_str("(union (A) (B))\n(F (B))");
+            let result = if streamed {
+                graph.parse_and_run_program(None, &source)
+            } else {
+                let program = graph.parse_program(None, &source).unwrap();
+                graph.run_program(program)
+            };
+            let events = BATCH_EVENTS.with(|events| events.borrow_mut().take().unwrap());
+            result.unwrap();
+            assert_eq!(graph.get_size("F"), 1);
+            assert_eq!(
+                events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
+                [256, 1, 1, 1]
+            );
+            assert!(events.iter().all(|(_, tables)| tables.len() == 2));
+            // First-action lookups are [A,F], [A,F], [A,B], then [B,F].
+            assert!(Rc::ptr_eq(&events[0].1[0], &events[1].1[0]));
+            assert!(Rc::ptr_eq(&events[0].1[0], &events[2].1[0]));
+            assert!(Rc::ptr_eq(&events[2].1[1], &events[3].1[0]));
+            assert!(Rc::ptr_eq(&events[0].1[1], &events[1].1[1]));
+            assert!(Rc::ptr_eq(&events[0].1[1], &events[3].1[1]));
+            graph
+                .parse_and_run_program(None, "(check (= (F (A)) (F (B))))")
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn expanded_constructor_actions_keep_batches_and_metadata_across_callbacks() {
+    struct Emit(Vec<Command>);
+    impl CommandMacro for Emit {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, _)))
+                if head == "emit")
+            {
+                Ok(self.0.clone())
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    for materialized in [false, true] {
         let mut graph = EGraph::default();
-        graph.backend.set_num_threads(threads);
         graph
             .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
             .unwrap();
+        let emitted = graph
+            .parse_program(None, "(F (A)) (F (A)) (union (A) (B)) (F (B)) (F (B))")
+            .unwrap();
+        graph.command_macros.register(Arc::new(Emit(emitted)));
         BATCH_EVENTS.with(|events| *events.borrow_mut() = Some(Vec::new()));
-        let mut source = "(F (A))\n".repeat(257);
-        source.push_str("(union (A) (B))\n(F (B))");
-        let program = graph.parse_program(None, &source).unwrap();
-        let result = graph.run_program(program);
+        let result = if materialized {
+            let commands = graph.parse_program(None, "(emit) (emit)").unwrap();
+            graph.run_program(commands)
+        } else {
+            graph.parse_and_run_program(None, "(emit) (emit)")
+        };
         let events = BATCH_EVENTS.with(|events| events.borrow_mut().take().unwrap());
         result.unwrap();
-        assert_eq!(graph.get_size("F"), 1);
         assert_eq!(
             events.iter().map(|(count, _)| *count).collect::<Vec<_>>(),
-            [256, 1, 1, 1]
+            [2, 1, 2, 2, 1, 2]
         );
-        assert!(events.iter().all(|(_, tables)| tables.len() == 2));
-        // First-action lookups are [A,F], [A,F], [A,B], then [B,F].
+        // First-action lookups repeat [A,F], [A,B], [B,F] across callbacks.
         assert!(Rc::ptr_eq(&events[0].1[0], &events[1].1[0]));
-        assert!(Rc::ptr_eq(&events[0].1[0], &events[2].1[0]));
-        assert!(Rc::ptr_eq(&events[2].1[1], &events[3].1[0]));
-        assert!(Rc::ptr_eq(&events[0].1[1], &events[1].1[1]));
-        assert!(Rc::ptr_eq(&events[0].1[1], &events[3].1[1]));
+        assert!(Rc::ptr_eq(&events[0].1[0], &events[3].1[0]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[2].1[1]));
+        assert!(Rc::ptr_eq(&events[0].1[1], &events[5].1[1]));
+        assert!(Rc::ptr_eq(&events[1].1[1], &events[2].1[0]));
+        assert!(Rc::ptr_eq(&events[1].1[1], &events[4].1[1]));
+        assert_eq!(graph.get_size("F"), 1);
+    }
+}
+
+#[test]
+fn one_macro_expansion_preserves_scope_changes_and_literals() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Emit {
+        commands: Vec<Command>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl CommandMacro for Emit {
+        fn transform(
+            &self,
+            _: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            assert_eq!(self.calls.fetch_add(1, Ordering::SeqCst), 0);
+            Ok(self.commands.clone())
+        }
+    }
+    let expansion = "
+        (F (A))
+        (print-size F)
+        (push)
+        (constructor Reused () T)
+        (constructor Changing () T)
+        (F (Reused)) (F (Changing))
+        (print-size F)
+        (Num 7)
+        (print-size Num)
+        (F (Reused)) (F (Changing))
+        (pop)
+        (print-size F)
+        (print-size Num)
+        (constructor Padding () T)
+        (constructor Reused () T)
+        (constructor Changing (T) T)
+        (F (Reused)) (F (Changing (B)))
+        (Num 8)
+        (print-size F)
+        (print-size Num)
+        (F (B))
+        (print-size F)
+        (print-size Padding)
+    ";
+    for materialized in [false, true] {
+        let mut graph = EGraph::default();
         graph
-            .parse_and_run_program(None, "(check (= (F (A)) (F (B))))")
+            .parse_and_run_program(None, "(datatype T (A) (B) (F T) (Num i64))")
             .unwrap();
+        let mut compiled = graph.clone();
+        let expected = run_ground_action_oracle(&mut compiled, expansion, false).unwrap();
+        let commands = graph.parse_program(None, expansion).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        graph.command_macros.register(Arc::new(Emit {
+            commands,
+            calls: calls.clone(),
+        }));
+        let outputs = if materialized {
+            let commands = graph.parse_program(None, "(emit)").unwrap();
+            graph.run_program(commands)
+        } else {
+            graph.parse_and_run_program(None, "(emit)")
+        }
+        .unwrap();
+        let actual = outputs.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual,
+            [
+                "1\n", "3\n", "1\n", "1\n", "0\n", "3\n", "1\n", "4\n", "0\n"
+            ]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            graph
+                .type_info
+                .get_func_type("Changing")
+                .unwrap()
+                .input
+                .len(),
+            1
+        );
+        assert_eq!(graph.get_size("Reused"), 1);
+        assert_eq!(graph.get_size("Changing"), 1);
+        assert_eq!(graph.get_size("Padding"), 0);
+        assert_action_graphs_equal(&graph, &compiled);
     }
 }
 
@@ -761,4 +1055,108 @@ fn opaque_constraint_and_read_observe_the_committed_prefix() {
         .unwrap();
     let read = order.iter().position(|event| *event == "read").unwrap();
     assert!(commit < constraints && constraints < read, "{order:?}");
+}
+
+#[test]
+fn resolved_constructor_cache_preserves_later_primitive_ambiguity() {
+    #[derive(Clone)]
+    struct AlsoA;
+    impl Primitive for AlsoA {
+        fn name(&self) -> &str {
+            "A"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl PurePrim for AlsoA {
+        fn apply(&self, state: PureState<'_, '_>, _: &[Value]) -> Option<Value> {
+            Some(state.base_values().get(7_i64))
+        }
+    }
+    for materialized in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T))")
+            .unwrap();
+        graph.add_pure_primitive(AlsoA, None);
+        let source = "(F (A)) (A)";
+        let result = if materialized {
+            let program = graph.parse_program(None, source).unwrap();
+            graph.run_program(program)
+        } else {
+            graph.parse_and_run_program(None, source)
+        };
+        assert!(
+            result.is_err(),
+            "the final bare A must retain overload ambiguity"
+        );
+        assert_eq!(graph.get_size("F"), 1);
+        assert_eq!(graph.get_size("A"), 1);
+    }
+}
+
+#[test]
+fn execution_scope_commits_pending_prefix_on_success_and_error() {
+    for fails in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T))")
+            .unwrap();
+        let command = graph.parse_program(None, "(F (A))").unwrap().remove(0);
+        let commands = graph.resolve_command(command).unwrap().desugared;
+        let result = ActionExecutor::run(&mut graph, |execution| {
+            for command in commands {
+                execution.command(command)?;
+            }
+            assert_eq!(execution.graph.get_size("F"), 0);
+            if fails {
+                Err(Error::BackendError("expected scope error".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result.is_err(), fails);
+        assert_eq!(graph.get_size("F"), 1);
+    }
+}
+
+#[test]
+fn source_and_ast_readers_defer_callbacks_typing_and_preparation() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    for source in ["(F (A))", "(union (A) (B))", "(F (missing))"] {
+        let program = graph.parse_program(None, source).unwrap();
+        for mut reader in [
+            ProgramSource::from_text(None, source),
+            ProgramSource::from_commands(program.into_iter()),
+        ] {
+            let mut graph = graph.clone();
+            graph
+                .parser
+                .add_expr_macro(Arc::new(SimpleMacro::new("A", |_, _, _| {
+                    unreachable!("reading must not invoke parser callbacks")
+                })));
+            let item = ActionExecutor::run(&mut graph, |execution| {
+                let item = execution.next_item(&mut reader)?;
+                assert!(execution.pending.calls.is_empty());
+                Ok(item)
+            })
+            .unwrap();
+            assert!(matches!(
+                item,
+                Some(
+                    program_source::ProgramItem::Source(..)
+                        | program_source::ProgramItem::Command(..)
+                )
+            ));
+            assert_eq!(graph.get_size("A"), 0);
+            assert_eq!(graph.get_size("B"), 0);
+            assert_eq!(graph.get_size("F"), 0);
+            assert!(!graph.backend.flush_updates());
+        }
+    }
 }
