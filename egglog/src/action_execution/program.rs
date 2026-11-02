@@ -35,8 +35,7 @@ impl ActionExecutor<'_> {
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
         while let Some(item) = self.next_item(&mut program)? {
-            let can_prepare =
-                run_commands && self.graph.proof_state.original_typechecking.is_none();
+            let can_prepare = false;
             let (command, expanded) = match item {
                 ProgramItem::Source(form) => {
                     // A source form enters ordinary parser/macro dispatch only
