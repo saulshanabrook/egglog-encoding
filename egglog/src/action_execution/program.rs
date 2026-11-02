@@ -41,7 +41,7 @@ impl ActionExecutor<'_> {
                 ProgramItem::Source(form) => {
                     // A source form enters ordinary parser/macro dispatch only
                     // if preparation declines it. Successful actions build no Expr tree.
-                    if can_prepare
+                    if false
                         && let Some((head, action)) = self.graph.parser.closed_action(&form)
                         && self
                             .graph
