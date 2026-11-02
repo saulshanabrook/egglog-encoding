@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/gussmith23/churchroad",
+  "revision": "9f82ca23b273a5a500cc6a1ca60b30d3c33c5721",
+  "yosys_revision": "f8d4d7128cf72456cc03b0738a8651ac5dbe52e1",
+  "license": "MIT; LICENSE-Churchroad-MIT",
+  "sources": {
+    "half_adder.egg": {
+      "upstream": "tests/egglog_tests/half_adder.egg",
+      "sha256": "f019b1fa4f4598153f5bbdc46b2412dc514ec6cff968611f1e12bc3dec6c89ef"
+    },
+    "2bit-rca.sv": {
+      "upstream": "yosys-plugin/tests/2bit-rca.sv",
+      "sha256": "c6830c625aa694f3f8df3e422260a9c711fc8d4e228a750029593b8cb3f0121d"
+    },
+    "wide_mul.v": {
+      "upstream": "tests/integration_tests/wide_mul.v",
+      "sha256": "793eaa9b8af1b7432e60af4739819373d2f7bc84b670816f9f23b7d5ec942de5"
+    }
+  },
+  "generated": {
+    "ripple-adder.egg": {
+      "source": "2bit-rca.sv",
+      "top": "top",
+      "sha256": "97e24188266380413d6d6fe27c480afa8eb763f5dc9f01121de897be92b11ea5",
+      "adaptation": "Removed comments and normalized s-expression whitespace from native write_churchroad output."
+    },
+    "wide-mul.egg": {
+      "source": "wide_mul.v",
+      "top": "mul",
+      "sha256": "0f4b3f5b1748c5c86891c5d50c191c24565f7dee94b2a1841bac8b4e8a81f545",
+      "adaptation": "Removed comments and normalized s-expression whitespace from native write_churchroad output."
+    }
+  }
+}

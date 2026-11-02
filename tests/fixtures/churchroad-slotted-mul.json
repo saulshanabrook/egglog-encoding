@@ -1,0 +1,276 @@
+{
+  "nodes": {
+    "E/n0": {
+      "op": "var",
+      "children": [],
+      "eclass": "E-Value(520)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n1": {
+      "op": "(Bind 1)",
+      "children": [
+        "E/n7"
+      ],
+      "eclass": "E-Value(536)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n2": {
+      "op": "(Bind 0)",
+      "children": [
+        "E/n1"
+      ],
+      "eclass": "E-Value(537)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n3": {
+      "op": "V",
+      "children": [
+        "E/n0"
+      ],
+      "eclass": "E-Value(529)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n4": {
+      "op": "Mul",
+      "children": [
+        "E/n6",
+        "E/n6"
+      ],
+      "eclass": "E-Value(534)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n5": {
+      "op": "(Root \"out\")",
+      "children": [
+        "E/n2"
+      ],
+      "eclass": "E-Value(538)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n6": {
+      "op": "(W 8)",
+      "children": [
+        "E/n3"
+      ],
+      "eclass": "E-Value(530)",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "E/n7": {
+      "op": "(W 8)",
+      "children": [
+        "E/n4"
+      ],
+      "eclass": "E-Value(535)",
+      "cost": 1.0,
+      "subsumed": false
+    }
+  },
+  "slotted": {
+    "classes": {
+      "E-Value(520)": {
+        "slots": [
+          "0"
+        ],
+        "group": [
+          [
+            0
+          ]
+        ]
+      },
+      "E-Value(529)": {
+        "slots": [
+          "-9223372036854775808"
+        ],
+        "group": [
+          [
+            0
+          ]
+        ]
+      },
+      "E-Value(530)": {
+        "slots": [
+          "-9223372036854775808"
+        ],
+        "group": [
+          [
+            0
+          ]
+        ]
+      },
+      "E-Value(534)": {
+        "slots": [
+          "-9223372036854775808",
+          "-9223372036854775807"
+        ],
+        "group": [
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      "E-Value(535)": {
+        "slots": [
+          "-9223372036854775808",
+          "-9223372036854775807"
+        ],
+        "group": [
+          [
+            0,
+            1
+          ]
+        ]
+      },
+      "E-Value(536)": {
+        "slots": [
+          "-9223372036854775808"
+        ],
+        "group": [
+          [
+            0
+          ]
+        ]
+      },
+      "E-Value(537)": {
+        "slots": [],
+        "group": [
+          []
+        ]
+      },
+      "E-Value(538)": {
+        "slots": [],
+        "group": [
+          []
+        ]
+      }
+    },
+    "nodes": {
+      "E/n0": {
+        "arguments": [
+          {
+            "kind": "slot",
+            "slot": "0"
+          }
+        ]
+      },
+      "E/n1": {
+        "arguments": [
+          {
+            "kind": "slot",
+            "slot": "private:-9223372036854775807"
+          },
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "-9223372036854775808"
+              ],
+              [
+                "-9223372036854775807",
+                "private:-9223372036854775807"
+              ]
+            ]
+          }
+        ]
+      },
+      "E/n2": {
+        "arguments": [
+          {
+            "kind": "slot",
+            "slot": "private:-9223372036854775808"
+          },
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "private:-9223372036854775808"
+              ]
+            ]
+          }
+        ]
+      },
+      "E/n3": {
+        "arguments": [
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "0",
+                "-9223372036854775808"
+              ]
+            ]
+          }
+        ]
+      },
+      "E/n4": {
+        "arguments": [
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "-9223372036854775808"
+              ]
+            ]
+          },
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "-9223372036854775807"
+              ]
+            ]
+          }
+        ]
+      },
+      "E/n5": {
+        "arguments": [
+          {
+            "kind": "child",
+            "renaming": []
+          }
+        ]
+      },
+      "E/n6": {
+        "arguments": [
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "-9223372036854775808"
+              ]
+            ]
+          }
+        ]
+      },
+      "E/n7": {
+        "arguments": [
+          {
+            "kind": "child",
+            "renaming": [
+              [
+                "-9223372036854775808",
+                "-9223372036854775808"
+              ],
+              [
+                "-9223372036854775807",
+                "-9223372036854775807"
+              ]
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

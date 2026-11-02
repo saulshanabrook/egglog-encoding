@@ -1,0 +1,33 @@
+; Churchroad combinational modules, with explicit typed interfaces.
+(datatype E
+  (BV i64 i64)
+  (And i64 E E) (Or i64 E E) (Xor i64 E E)
+  (Add i64 E E) (Sub i64 E E) (Mul i64 E E)
+  (Eq i64 E E) (Ne i64 E E) (Shl i64 E E) (Shr i64 E E)
+  (Not i64 E) (ReduceOr i64 E) (ReduceAnd i64 E) (ReduceXor i64 E)
+  (LogicNot i64 E) (LogicAnd i64 E E) (LogicOr i64 E E)
+  (Mux i64 E E E) (Concat i64 E E)
+  (Extract i64 i64 i64 E) (ZeroExtend i64 E) (SignExtend i64 E)
+  (OutputCons i64 E E) (NoOutputs)
+  (BindInput i64 E E :binder 0) (Apply E E)
+  (HalfAdder i64 E E)
+  (SlicePair i64 i64 i64 i64 i64 i64 E))
+
+(rewrite (Apply (BindInput width $x body) arg)
+         (subst body $x arg) :name "churchroad-apply")
+
+; Both roots must belong to this particular output bundle. A free-standing
+; And/Xor template elsewhere in the graph is not an occurrence in this circuit.
+(rewrite (OutputCons 1 sum (OutputCons 1 carry (NoOutputs)))
+         (HalfAdder 0 a b)
+         :when ((= sum (Xor 1 a b)) (= carry (And 1 a b)))
+         :name "churchroad-half-adder")
+(rewrite (OutputCons 1 carry (OutputCons 1 sum (NoOutputs)))
+         (HalfAdder 1 a b)
+         :when ((= sum (Xor 1 a b)) (= carry (And 1 a b)))
+         :name "churchroad-half-adder-carry-first")
+(rewrite (OutputCons w0 lo (OutputCons w1 hi (NoOutputs)))
+         (SlicePair w0 w1 h0 l0 h1 l1 value)
+         :when ((= lo (Extract w0 h0 l0 value))
+                (= hi (Extract w1 h1 l1 value)))
+         :name "churchroad-slice-pair")

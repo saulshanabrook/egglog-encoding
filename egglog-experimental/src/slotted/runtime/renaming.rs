@@ -49,6 +49,14 @@ pub(super) fn shape(edges: &[Renaming]) -> NodeShape {
 /// permute the corresponding child's slots are ignored.
 pub(super) fn node_shape(edges: &[Renaming], groups: &[Vec<Renaming>]) -> NodeShape {
     let own = shape(edges);
+    // Ordered terms without equations have only identity symmetries. Avoid
+    // allocating and re-canonicalizing their sole Cartesian-product reading.
+    if groups
+        .iter()
+        .all(|group| group.iter().all(|map| map.iter().all(|(a, b)| a == b)))
+    {
+        return own;
+    }
     let mut best: Option<NodeShape> = None;
     let mut symmetries: Vec<Renaming> = Vec::new();
     for variant in readings(edges, groups) {
@@ -150,7 +158,7 @@ pub(super) fn find_mapping_total(maps: &[Renaming]) -> Option<Renaming> {
 #[cfg(test)]
 mod shape_tests {
     use super::Renaming;
-    use super::shape;
+    use super::{node_shape, shape};
 
     fn m(pairs: &[(i64, i64)]) -> Renaming {
         pairs.iter().copied().collect()
@@ -183,5 +191,21 @@ mod shape_tests {
         let shared_xy = shape(&[m(&[(0, 0)]), m(&[(0, 0), (1, 1)])]);
         let shared_yx = shape(&[m(&[(0, 0)]), m(&[(0, 1), (1, 0)])]);
         assert_ne!(shared_xy.edges, shared_yx.edges);
+    }
+
+    #[test]
+    fn identity_fast_path_preserves_aliases_and_nonidentity_readings() {
+        let edges = [m(&[(0, 7)]), m(&[(0, 9), (1, 7)])];
+        let identity = vec![vec![m(&[(0, 0)])], vec![m(&[(0, 0), (1, 1)])]];
+        let plain = shape(&edges);
+        let fast = node_shape(&edges, &identity);
+        assert_eq!(plain.edges, fast.edges);
+        assert_eq!(plain.back, fast.back);
+        assert!(fast.symmetries.is_empty());
+        let mut symmetric = identity;
+        symmetric[1].push(m(&[(0, 1), (1, 0)]));
+        let with_swap = node_shape(&edges, &symmetric);
+        assert_ne!(fast.edges, with_swap.edges);
+        assert_eq!(with_swap.edges[1], m(&[(0, 0), (1, 1)]));
     }
 }

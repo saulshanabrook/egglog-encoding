@@ -65,6 +65,26 @@ including the benchmarks' shared generators. The
 [source language guide](egglog-experimental/src/slotted/LANGUAGE.md) is also
 included in the Rust documentation for `egglog_experimental::slotted`.
 
+The [Churchroad prototype](slotted/churchroad/README.md) imports hardware circuits,
+enumerates bounded cuts in Python, uses `BindInput` and multipatterns to represent
+and recognize reusable modules in a slotted e-graph, and exports Verilog:
+
+```bash
+python3 -m slotted.churchroad --case ripple-adder --output-dir /tmp/churchroad-ripple
+```
+
+Saved inputs need only the release `egglog-experimental` executable. Optional
+Yosys/plugin arguments regenerate the native frontend input and independently
+check the mapped circuit against the original Verilog.
+
+The independent [Churchroad DSP evaluation](slotted/churchroad/EVALUATION.md)
+compares native, current named, typed named, and slotted mapping, then measures
+Lakeroad and solver-query time with explicit parity and RTL-validation results:
+
+```bash
+./churchroad-eval.py --output-dir /tmp/churchroad-eval --samples 3
+```
+
 The reusable Rust checker accepts `egraph-serialize` JSON from either engine,
 with optional annotations for slotted graphs:
 

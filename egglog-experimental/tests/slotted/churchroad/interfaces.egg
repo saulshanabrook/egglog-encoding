@@ -1,0 +1,30 @@
+; Module bodies share alpha-equivalence; instances retain their concrete wiring.
+(include "egglog-experimental/tests/slotted/languages/churchroad.egg")
+(let a $a)
+(let b $b)
+(let c $c)
+(let d $d)
+(let sum_ab (Xor 1 a b))
+(let sum_cd (Xor 1 c d))
+(check (renaming-= sum_ab sum_cd))
+(fail (check (= sum_ab sum_cd)))
+
+(let module_ab (BindInput 1 $a (BindInput 1 $b
+  (OutputCons 1 (Xor 1 $a $b) (OutputCons 1 (And 1 $a $b) (NoOutputs))))))
+(let module_cd (BindInput 1 $c (BindInput 1 $d
+  (OutputCons 1 (Xor 1 $c $d) (OutputCons 1 (And 1 $c $d) (NoOutputs))))))
+(check (= module_ab module_cd))
+(let repeated (BindInput 1 $a
+  (OutputCons 1 (Xor 1 $a $a) (OutputCons 1 (And 1 $a $a) (NoOutputs)))))
+(fail (check (= repeated module_ab)))
+
+; The second binder must not capture the free b in the first actual argument.
+(let partial (Apply module_ab b))
+(let instantiated (Apply partial (And 1 a c)))
+(let expected (OutputCons 1 (Xor 1 b (And 1 a c))
+                (OutputCons 1 (And 1 b (And 1 a c)) (NoOutputs))))
+(run 4)
+(check (= partial (BindInput 1 $fresh (HalfAdder 0 b $fresh)))
+       (not-free $fresh b))
+(check (= instantiated expected))
+(fail (check (= sum_ab sum_cd)))

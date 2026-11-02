@@ -86,6 +86,7 @@ class Checks:
 
     def slotted_test(self) -> None:
         self._run("cargo", "build", "-p", "egglog-experimental", "-p", "egraph-isomorphism", "--bins")
+        self._run("cargo", "build", "-p", "egglog-experimental", "--example", "churchroad_discovery")
         self._run("cargo", "build", "--manifest-path", "slotted/xmulti/Cargo.toml")
         self._run("cargo", "test", "--manifest-path", "slotted/xmulti/Cargo.toml", "--", *self._rust_args)
         self._python("python", "slotted/checks/check-slotted.py")

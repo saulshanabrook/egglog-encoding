@@ -86,6 +86,13 @@ def starts_ok(out):
 
 # Check name, Python script/arguments, output validator, fuzzing flag, reference flag.
 CHECKS = [
+    (
+        "churchroad-module-discovery",
+        ("slotted/checks/check-churchroad-discovery.py",),
+        ratio(r"OK: (\d+)/(\d+) live discovery searches", 72),
+        False,
+        False,
+    ),
     ("evaluation-correctness", ("slotted/checks/check-eval.py",), starts_ok, False, True),
     ("nested-compatibility", ("slotted/checks/check-nested.py",), starts_ok, False, True),
     (
