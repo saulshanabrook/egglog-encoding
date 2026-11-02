@@ -120,3 +120,203 @@ fn includes_share_prefix_and_proof_parsing_boundaries() {
     assert_eq!(materialized.get_size("B"), 0);
     assert_eq!(proof.get_size("B"), 0);
 }
+
+#[test]
+fn source_admission_preserves_parser_overrides() {
+    let mut initial = EGraph::default();
+    initial
+        .parse_and_run_program(None, "(datatype T (A) (B) (F T))")
+        .unwrap();
+    for kind in ["expression", "action", "command"] {
+        let mut graph = initial.clone();
+        match kind {
+            "expression" => graph
+                .parser
+                .add_expr_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                    Ok(Expr::Call(span, "B".into(), vec![]))
+                }))),
+            "action" => {
+                graph
+                    .parser
+                    .add_action_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                        Ok(vec![Action::Expr(
+                            span.clone(),
+                            Expr::Call(span, "B".into(), vec![]),
+                        )])
+                    })))
+            }
+            _ => graph
+                .parser
+                .add_command_macro(Arc::new(SimpleMacro::new("A", |_, span, _| {
+                    Ok(vec![Command::Action(Action::Expr(
+                        span.clone(),
+                        Expr::Call(span, "B".into(), vec![]),
+                    ))])
+                }))),
+        }
+        let mut ast = graph.clone();
+        let source = "(A) (F (A))";
+        let commands = ast.parse_program(None, source).unwrap();
+        graph.parse_and_run_program(None, source).unwrap();
+        ast.run_program(commands).unwrap();
+        for name in ["A", "B", "F"] {
+            assert_eq!(graph.get_size(name), ast.get_size(name), "{kind}: {name}");
+        }
+        assert_eq!(graph.get_size("B"), 1);
+        assert_eq!(graph.get_size("A"), usize::from(kind != "expression"));
+    }
+}
+
+#[test]
+fn default_deny_macro_capability_preserves_effects_and_error_prefix() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct RejectA(Arc<AtomicUsize>);
+    impl CommandMacro for RejectA {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, args)))
+                if head == "Num" && matches!(args.as_slice(), [Expr::Lit(..)]))
+            {
+                return Ok(vec![Command::Action(Action::Expr(
+                    span!(),
+                    Expr::Call(span!(), "C".into(), vec![]),
+                ))]);
+            }
+            if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, _))) if head == "A")
+            {
+                Err(Error::BackendError("A rejected by macro".into()))
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (B) (C) (F T) (Num i64))")
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    graph
+        .command_macros
+        .register(Arc::new(RejectA(calls.clone())));
+    assert!(
+        graph
+            .parse_and_run_program(None, "(F (B)) (Num 1) (A)")
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(graph.get_size("F"), 1);
+    assert_eq!(graph.get_size("C"), 1);
+    assert_eq!(graph.get_size("Num"), 0);
+    assert_eq!(graph.get_size("A"), 0);
+}
+
+#[test]
+fn declined_candidates_keep_conditional_command_macro_dispatch() {
+    struct ReplacePrimitiveAction;
+    impl CommandMacro for ReplacePrimitiveAction {
+        fn preserves_closed_constructor_action(&self, _: Option<&str>) -> bool {
+            true
+        }
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            if matches!(&command, Command::Action(Action::Expr(_, Expr::Call(_, head, args)))
+                if head == "Num" && matches!(args.as_slice(), [Expr::Call(_, head, _)] if head == "+"))
+            {
+                // Primitive children are outside the closed-constructor promise.
+                Ok(vec![Command::Action(Action::Expr(
+                    span!(),
+                    Expr::Call(span!(), "B".into(), vec![]),
+                ))])
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    for materialized in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B) (Num i64))")
+            .unwrap();
+        graph
+            .command_macros
+            .register(Arc::new(ReplacePrimitiveAction));
+        let source = "(A) (Num (+ 1 2))";
+        if materialized {
+            let commands = graph.parse_program(None, source).unwrap();
+            graph.run_program(commands).unwrap();
+        } else {
+            graph.parse_and_run_program(None, source).unwrap();
+        }
+        assert_eq!(graph.get_size("A"), 1);
+        assert_eq!(graph.get_size("B"), 1);
+        assert_eq!(graph.get_size("Num"), 0);
+    }
+}
+
+#[test]
+fn expanded_action_fallback_keeps_remaining_output_without_reapplying_macros() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Emit {
+        commands: Vec<Command>,
+        calls: Arc<AtomicUsize>,
+    }
+    impl CommandMacro for Emit {
+        fn transform(
+            &self,
+            _: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            assert_eq!(self.calls.fetch_add(1, Ordering::SeqCst), 0);
+            Ok(self.commands.clone())
+        }
+    }
+    for materialized in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T) (Num i64))")
+            .unwrap();
+        let commands = graph.parse_program(None, "(Num 1) (F (A))").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        graph.command_macros.register(Arc::new(Emit {
+            commands,
+            calls: calls.clone(),
+        }));
+        if materialized {
+            let commands = graph.parse_program(None, "(emit)").unwrap();
+            graph.run_program(commands).unwrap();
+        } else {
+            graph.parse_and_run_program(None, "(emit)").unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(graph.get_size("Num"), 1);
+        assert_eq!(graph.get_size("F"), 1);
+    }
+}
+
+#[test]
+fn raw_source_never_bypasses_builtin_dispatch_for_reserved_constructors() {
+    let mut graph = EGraph::default();
+    graph.ensure_no_reserved_symbols(false);
+    graph.parse_and_run_program(None, "(sort T)").unwrap();
+    for head in ["index", "set", "input", "output"] {
+        graph
+            .parse_and_run_program(None, &format!("(constructor {head} () T)"))
+            .unwrap();
+        assert!(
+            graph
+                .parse_and_run_program(None, &format!("({head})"))
+                .is_err()
+        );
+        assert_eq!(graph.get_size(head), 0);
+    }
+}

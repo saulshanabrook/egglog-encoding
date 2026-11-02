@@ -83,6 +83,10 @@ pub(crate) fn add_injectivity_support(egraph: &mut EGraph) {
 struct LowerInjectivity;
 
 impl CommandMacro for LowerInjectivity {
+    fn preserves_closed_constructor_action(&self, _expression_head: Option<&str>) -> bool {
+        true
+    }
+
     fn transform(
         &self,
         mut command: Command,

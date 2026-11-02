@@ -17,6 +17,69 @@ use egglog_bridge::{ActionRegistry, SharedActionRegistry};
 use enum_map::EnumMap;
 use std::sync::Arc;
 
+/// An expression action or union, independent of its expression representation.
+pub(crate) enum ClosedAction<T> {
+    Expr(T),
+    Union(T, T),
+}
+
+impl<'a> ClosedAction<&'a Expr> {
+    pub(crate) fn from_action(action: &'a Action) -> Option<Self> {
+        match action {
+            Action::Expr(_, expr) => Some(Self::Expr(expr)),
+            Action::Union(_, left, right) => Some(Self::Union(left, right)),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) enum CallOrLiteral<'a, Node> {
+    Call(&'a str, &'a [Node]),
+    Literal(&'a Literal),
+}
+
+/// Borrow constructor calls and literal leaves without an intermediate tree.
+/// Variables, primitive calls, and malformed source lists decline preparation.
+pub(crate) trait CallView: Sized {
+    fn view(&self) -> Option<CallOrLiteral<'_, Self>>;
+}
+
+impl CallView for Expr {
+    fn view(&self) -> Option<CallOrLiteral<'_, Self>> {
+        match self {
+            Expr::Call(_, head, args) => Some(CallOrLiteral::Call(head, args)),
+            Expr::Lit(_, literal) => Some(CallOrLiteral::Literal(literal)),
+            _ => None,
+        }
+    }
+}
+
+impl CallView for ResolvedExpr {
+    fn view(&self) -> Option<CallOrLiteral<'_, Self>> {
+        match self {
+            ResolvedExpr::Call(_, ResolvedCall::Func(func), args) => {
+                Some(CallOrLiteral::Call(&func.name, args))
+            }
+            ResolvedExpr::Lit(_, literal) => Some(CallOrLiteral::Literal(literal)),
+            _ => None,
+        }
+    }
+}
+
+impl CallView for Sexp<'_> {
+    fn view(&self) -> Option<CallOrLiteral<'_, Self>> {
+        match self {
+            Sexp::Literal(literal, _) => Some(CallOrLiteral::Literal(literal)),
+            Sexp::List(items, _) => match items.as_slice() {
+                [] => Some(CallOrLiteral::Literal(&Literal::Unit)),
+                [Sexp::Atom(head, _), args @ ..] => Some(CallOrLiteral::Call(head, args)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 // `ExternalFunction` wrapper for `PurePrim`. Holds the primitive
 // directly so the dispatch chain `external_funcs[id].invoke(...)` →
 // `T::apply(...)` is just one vtable hop plus a direct call — no
@@ -1081,6 +1144,21 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    /// Closed constructor calls have one EqSort output and no overload,
+    /// source-view role, or index behavior requiring general inference.
+    pub(super) fn closed_constructor_type(&self, head: &str) -> Option<&Arc<FuncType>> {
+        if head == "values" || self.is_primitive(head) {
+            return None;
+        }
+        self.get_func_type(head).filter(|func| {
+            func.num_outputs() == 1
+                && func.subtype == FunctionSubtype::Constructor
+                && func.role == FunctionRole::Ordinary
+                && !self.indexes.contains_key(&func.name)
+                && (func.output().as_ref() as &dyn Any).is::<EqSort>()
+        })
+    }
+
     /// Adds a sort constructor to the typechecker's known set of types.
     pub fn add_presort<S: Presort>(&mut self, span: Span) -> Result<(), TypeError> {
         let name = S::presort_name();
@@ -1657,31 +1735,27 @@ impl TypeInfo {
         }
     }
 
-    /// Resolve only unambiguous closed constructor calls, preserving every span.
+    /// Resolve closed constructor calls with literal leaves, preserving every span.
     /// Declining a node leaves all diagnostics to the ordinary constraint solver.
     pub(super) fn typecheck_closed_constructor_action(
         &self,
         action: &Action,
     ) -> Option<ResolvedAction> {
-        fn check_expr<'a>(types: &'a TypeInfo, expr: &Expr) -> Option<(ResolvedExpr, &'a ArcSort)> {
+        fn check_expr(types: &TypeInfo, expr: &Expr) -> Option<(ResolvedExpr, ArcSort)> {
+            if let Expr::Lit(span, literal) = expr {
+                return Some((
+                    ResolvedExpr::Lit(span.clone(), literal.clone()),
+                    sort::literal_sort(literal),
+                ));
+            }
             let Expr::Call(span, head, args) = expr else {
                 return None;
             };
-            if head == "values" || types.is_primitive(head) {
+            let func = types.closed_constructor_type(head)?;
+            if func.input.len() != args.len() {
                 return None;
             }
-            let func = types.get_func_type(head)?;
-            let [output] = func.outputs.as_slice() else {
-                return None;
-            };
-            if func.subtype != FunctionSubtype::Constructor
-                || func.role != FunctionRole::Ordinary
-                || types.indexes.contains_key(&func.name)
-                || !(output.as_ref() as &dyn Any).is::<EqSort>()
-                || func.input.len() != args.len()
-            {
-                return None;
-            }
+            let output = func.output();
             let mut checked = Vec::with_capacity(args.len());
             for (arg, expected) in args.iter().zip(&func.input) {
                 let (arg, sort) = check_expr(types, arg)?;
@@ -1692,19 +1766,19 @@ impl TypeInfo {
             }
             Some((
                 ResolvedExpr::Call(span.clone(), ResolvedCall::Func(func.clone()), checked),
-                output,
+                output.clone(),
             ))
         }
 
         match action {
-            Action::Expr(span, expr) => Some(ResolvedAction::Expr(
+            Action::Expr(span, expr @ Expr::Call(..)) => Some(ResolvedAction::Expr(
                 span.clone(),
                 check_expr(self, expr)?.0,
             )),
-            Action::Union(span, left, right) => {
+            Action::Union(span, left @ Expr::Call(..), right @ Expr::Call(..)) => {
                 let (left, left_sort) = check_expr(self, left)?;
                 let (right, right_sort) = check_expr(self, right)?;
-                (left_sort.name() == right_sort.name() && self.is_sort_unionable(left_sort))
+                (left_sort.name() == right_sort.name() && self.is_sort_unionable(&left_sort))
                     .then(|| ResolvedAction::Union(span.clone(), left, right))
             }
             _ => None,
@@ -1933,7 +2007,8 @@ mod test {
         graph
             .parse_and_run_program(
                 None,
-                "(datatype T (A) (B) (Pair T T) (Num i64))
+                "(datatype T (A) (B) (Pair T T) (Num i64) (Flag bool)
+                             (Text String) (Real f64) (Token Unit))
                  (datatype U (C)) (datatype Frozen (Cold))
                  (function missing (T) T :no-merge)
                  (function tuple-result (T) (T T) :merge (values old0 old1))
@@ -1965,7 +2040,14 @@ mod test {
             ("(union (Cold) (Cold))", false),
             ("(View (A))", false),
             ("(union (View (A)) (B))", false),
-            ("(Num 1)", false),
+            ("(Num 1)", true),
+            ("(Flag true)", true),
+            ("(Text \"literal\")", true),
+            ("(Real 1.5)", true),
+            ("(Token ())", true),
+            ("(Pair (Num 1) (Token ()))", true),
+            ("(union (Num 1) (Token ()))", true),
+            ("(Num \"wrong sort\")", false),
             ("(Pair (A) (C))", false),
             ("(Pair (A))", false),
             ("(union (A) (+ 1 2))", false),

@@ -6,19 +6,28 @@ use crate::*;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
+// Semantic and physical metadata are acquired together, only during dispatch.
+// Entries expire before any command can change a signature or table ID.
 /// Constructor metadata keyed by function name; `None` records functions
 /// that cannot use prepared constructor actions.
-type GroundActionCache = HashMap<String, Option<Rc<egglog_bridge::TableAction>>>;
+type GroundActionCache = HashMap<String, Option<(Arc<FuncType>, Rc<egglog_bridge::TableAction>)>>;
+
+enum GroundExpr {
+    Literal(Literal),
+    Lookup(Rc<egglog_bridge::TableAction>, SmallVec<[usize; 4]>),
+}
 
 struct GroundActions {
-    lookups: Vec<(Rc<egglog_bridge::TableAction>, SmallVec<[usize; 4]>)>,
+    // Postorder nodes; lookup arguments name earlier results. Literals are
+    // interned only during execution, after the complete action is admitted.
+    nodes: Vec<GroundExpr>,
     union: Option<(usize, usize)>,
 }
 
 #[derive(Default)]
 struct GroundActionBatch {
     pending: Vec<GroundActions>,
-    lookups: usize,
+    nodes: usize,
     calls: GroundActionCache,
 }
 
@@ -47,6 +56,8 @@ impl<'a> ActionExecutor<'a> {
         result
     }
 
+    /// Ordinary resolution may replace signatures before backend installation.
+    /// Commit and invalidate metadata before giving it mutable graph access.
     fn committed<T>(
         &mut self,
         operation: impl FnOnce(&mut EGraph) -> Result<T, Error>,
@@ -92,12 +103,19 @@ impl<'a> ActionExecutor<'a> {
         let command_timer = Instant::now();
         let process_before = self.graph.overall_report.process_time();
         let iteration_before = self.graph.overall_report.run.iterations.len();
-        let prepared = match &command {
-            ResolvedNCommand::CoreAction(action) => self
-                .graph
-                .prepare_resolved_ground_action(action, &mut self.pending.calls),
+        let action = match &command {
+            ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, expr)) => {
+                Some(typechecking::ClosedAction::Expr(expr))
+            }
+            ResolvedNCommand::CoreAction(ResolvedAction::Union(_, left, right)) => {
+                Some(typechecking::ClosedAction::Union(left, right))
+            }
             _ => None,
         };
+        let prepared = action.and_then(|action| {
+            self.graph
+                .prepare_ground_action(action, &mut self.pending.calls, |_| true)
+        });
         let result = if let Some(prepared) = prepared {
             self.graph
                 .queue_ground_action(prepared, &mut self.pending)
@@ -126,211 +144,144 @@ impl<'a> ActionExecutor<'a> {
         result
     }
 
-    fn next_command(&mut self, program: &mut ProgramSource<'_>) -> Result<Option<Command>, Error> {
-        match program {
-            ProgramSource::Commands(commands) => Ok(commands.next()),
-            ProgramSource::Text {
-                parser: source,
-                expanded,
-            } => loop {
-                if let Some(command) = expanded.next() {
-                    return Ok(Some(command));
-                }
-                let parsed = self.callback(|graph| {
-                    let timer = Instant::now();
-                    let parsed = graph.parser.parse_next_command(source);
-                    graph.overall_report.frontend_parse += timer.elapsed();
-                    parsed.map_err(Error::from)
-                })?;
-                match parsed {
-                    Some(commands) => *expanded = commands.into_iter(),
-                    None => return Ok(None),
-                }
-            },
-        }
-    }
-
-    pub(super) fn program(
+    /// Reading a candidate does not select an executor. Dispatch performs the
+    /// complete preparation before queueing any action effects.
+    fn prepare_action<Node: typechecking::CallView>(
         &mut self,
-        mut program: ProgramSource<'_>,
-        run_commands: bool,
-    ) -> Result<ResolvedNCommandsWithOutput, Error> {
-        let stream_includes = run_commands && matches!(&program, ProgramSource::Text { .. });
-        let mut outputs = Vec::new();
-        let mut desugared_before_proofs = Vec::new();
-        let mut desugared = Vec::new();
-        while let Some(command) = self.next_command(&mut program)? {
-            let callback_free = !self.graph.are_proofs_enabled()
-                && self
-                    .graph
-                    .command_macros
-                    .can_typecheck_without_callbacks(&command, &self.graph.type_info);
-            let expanded = if callback_free {
-                // The capability also certifies that no macros are registered.
-                vec![command]
-            } else {
-                self.callback(|graph| {
-                    let types = graph
-                        .proof_state
-                        .original_typechecking
-                        .as_ref()
-                        .map(|original| &original.type_info)
-                        .unwrap_or(&graph.type_info);
-                    let timer = Instant::now();
-                    let result =
-                        graph
-                            .command_macros
-                            .apply(command, &mut graph.parser.symbol_gen, types);
-                    graph.overall_report.frontend_other += timer.elapsed();
-                    result
-                })?
-            };
-            for command in expanded {
-                if let Command::Include(span, file) = &command {
-                    let resolved = self.committed(|graph| {
-                        let include_timer = Instant::now();
-                        let s = std::fs::read_to_string(file)
-                            .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
-                        graph.overall_report.frontend_other += include_timer.elapsed();
-                        let s = s?;
-                        let included_program = if !stream_includes || graph.are_proofs_enabled() {
-                            ProgramSource::Commands(
-                                graph
-                                    .parse_program_timed(Some(file.clone()), &s)?
-                                    .into_iter(),
-                            )
-                        } else {
-                            ProgramSource::Text {
-                                parser: SexpParser::new(Some(file.clone()), &s),
-                                expanded: Vec::new().into_iter(),
-                            }
-                        };
-                        // run program internal on these include commands
-                        graph.process_program_internal(included_program, run_commands)
-                    })?;
-                    outputs.extend(resolved.outputs);
-                    desugared.extend(resolved.resolved);
-                    desugared_before_proofs.extend(resolved.resolved_before_proofs);
-                } else {
-                    let resolved = if callback_free
-                        || (!self.graph.are_proofs_enabled()
-                            && matches!(&command, Command::Action(action)
-                                if self.graph.type_info.typecheck_closed_constructor_action(action).is_some()))
-                    {
-                        self.graph.resolve_command(command)?
-                    } else {
-                        self.committed(|graph| graph.resolve_command(command))?
-                    };
-                    // Execution callers discard resolved trees; retaining them here
-                    // duplicates large proof programs. Keep only the checker's history.
-                    if run_commands {
-                        if self.graph.are_proofs_enabled() {
-                            self.graph
-                                .proof_check_program
-                                .extend(resolved.desugared_before_proofs);
-                        }
-                    } else {
-                        desugared_before_proofs.extend(resolved.desugared_before_proofs);
-                        desugared.extend(resolved.desugared.clone());
-                    }
-                    for processed in resolved.desugared {
-                        // even in desugar mode we still run push and pop
-                        if run_commands
-                            || matches!(
-                                processed,
-                                ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
-                            )
-                        {
-                            let result = self.command(processed)?;
-                            outputs.extend(result);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(ResolvedNCommandsWithOutput {
-            outputs,
-            resolved_before_proofs: desugared_before_proofs,
-            resolved: desugared,
-        })
+        action: typechecking::ClosedAction<&Node>,
+        source: bool,
+    ) -> Result<bool, Error> {
+        let timer = Instant::now();
+        let prepared = self
+            .graph
+            .prepare_ground_action(action, &mut self.pending.calls, |head| {
+                !source || self.graph.parser.can_parse_constructor_call(head)
+            });
+        self.graph.overall_report.typecheck += timer.elapsed();
+        let Some(prepared) = prepared else {
+            return Ok(false);
+        };
+        self.graph
+            .queue_ground_action(prepared, &mut self.pending)?;
+        Ok(true)
     }
 }
 
+mod program;
+
 impl EGraph {
-    /// Prepare one already-resolved constructor expression or union without
-    /// allocating IDs or writing. Ordinary resolution has already checked types;
-    /// this walk only admits closed calls supported by the physical native tables.
-    /// Literals, variables, primitives, globals, views, indexes and custom sorts
-    /// retain the ordinary compiler.
-    fn prepare_resolved_ground_action(
+    /// Cache only unambiguous constructor signatures. Resolved calls with a
+    /// primitive alternative retain the compiler and cannot seed source typing.
+    fn constructor_call(
         &self,
-        action: &ResolvedAction,
+        head: &str,
         calls: &mut GroundActionCache,
+    ) -> Option<(Arc<FuncType>, Rc<egglog_bridge::TableAction>)> {
+        if let Some(cached) = calls.get(head) {
+            return cached.clone();
+        }
+        let call = self
+            .type_info
+            .closed_constructor_type(head)
+            .and_then(|func| {
+                let function = self.functions.get(&func.name)?;
+                if function.subtype() != FunctionSubtype::Constructor
+                    || function.is_view()
+                    || function.is_let_binding()
+                {
+                    return None;
+                }
+                let table = egglog_bridge::TableAction::for_constructor_insertions(
+                    &self.backend,
+                    function.backend_id,
+                )?;
+
+                (table.input_arity() == func.input.len()).then(|| (func.clone(), Rc::new(table)))
+            });
+        calls.insert(head.into(), call.clone());
+        call
+    }
+
+    /// Check source, AST, or resolved calls and select native tables in one pure walk.
+    /// Preparation allocates no IDs or rows; a decline keeps the original form
+    /// for ordinary parsing, typing, and compilation.
+    fn prepare_ground_action<Node: typechecking::CallView>(
+        &self,
+        action: typechecking::ClosedAction<&Node>,
+        calls: &mut GroundActionCache,
+        permit_call: impl Fn(&str) -> bool,
     ) -> Option<GroundActions> {
-        fn prepare_expr(
+        fn prepare_expr<Node: typechecking::CallView>(
             graph: &EGraph,
-            expr: &ResolvedExpr,
+            expr: &Node,
             prepared: &mut GroundActions,
             calls: &mut GroundActionCache,
-        ) -> Option<usize> {
-            let GenericExpr::Call(_, ResolvedCall::Func(func), args) = expr else {
-                return None;
-            };
-            let table = if let Some(cached) = calls.get(&func.name) {
-                cached.clone()?
-            } else {
-                let table = (|| {
-                    let function = graph.functions.get(&func.name)?;
-                    if func.subtype != FunctionSubtype::Constructor
-                        || function.subtype() != FunctionSubtype::Constructor
-                        || func.num_outputs() != 1
-                        || func.role.is_global()
-                        || function.is_view()
-                        || function.is_let_binding()
-                        || graph.type_info.indexes.contains_key(&func.name)
-                        || !(func.output().as_ref() as &dyn Any).is::<EqSort>()
-                    {
+            permit_call: &impl Fn(&str) -> bool,
+        ) -> Option<(usize, ArcSort)> {
+            let (node, sort) = match expr.view()? {
+                typechecking::CallOrLiteral::Literal(literal) => (
+                    GroundExpr::Literal(literal.clone()),
+                    sort::literal_sort(literal),
+                ),
+                typechecking::CallOrLiteral::Call(head, args) => {
+                    // Parser macros can change even when their expansion is empty.
+                    if !permit_call(head) {
                         return None;
                     }
-                    let table = egglog_bridge::TableAction::for_constructor_insertions(
-                        &graph.backend,
-                        function.backend_id,
-                    )?;
-
-                    (table.input_arity() == func.input.len()).then(|| Rc::new(table))
-                })();
-                calls.insert(func.name.clone(), table.clone());
-                table?
+                    let (func, table) = graph.constructor_call(head, calls)?;
+                    if func.input.len() != args.len() {
+                        return None;
+                    }
+                    let mut checked_args = SmallVec::new();
+                    for (arg, expected) in args.iter().zip(&func.input) {
+                        let (value, sort) = prepare_expr(graph, arg, prepared, calls, permit_call)?;
+                        if !Arc::ptr_eq(&sort, expected) && sort.name() != expected.name() {
+                            return None;
+                        }
+                        checked_args.push(value);
+                    }
+                    (
+                        GroundExpr::Lookup(table, checked_args),
+                        func.output().clone(),
+                    )
+                }
             };
-            if table.input_arity() != args.len() {
-                return None;
-            }
-            let args = args
-                .iter()
-                .map(|arg| prepare_expr(graph, arg, prepared, calls))
-                .collect::<Option<SmallVec<[usize; 4]>>>()?;
-            let index = prepared.lookups.len();
-            prepared.lookups.push((table, args));
-            Some(index)
+            let index = prepared.nodes.len();
+            prepared.nodes.push(node);
+            Some((index, sort))
         }
 
         if self.proof_state.original_typechecking.is_some() {
             return None;
         }
         let mut prepared = GroundActions {
-            lookups: Vec::new(),
+            nodes: Vec::new(),
             union: None,
         };
         match action {
-            ResolvedAction::Expr(_, expr) => {
-                prepare_expr(self, expr, &mut prepared, calls)?;
+            typechecking::ClosedAction::Expr(expr) => {
+                if !matches!(expr.view()?, typechecking::CallOrLiteral::Call(..)) {
+                    return None;
+                }
+                prepare_expr(self, expr, &mut prepared, calls, &permit_call)?;
             }
-            ResolvedAction::Union(_, left, right) => {
-                let left = prepare_expr(self, left, &mut prepared, calls)?;
-                let right = prepare_expr(self, right, &mut prepared, calls)?;
+            typechecking::ClosedAction::Union(left, right) => {
+                if !matches!(left.view()?, typechecking::CallOrLiteral::Call(..))
+                    || !matches!(right.view()?, typechecking::CallOrLiteral::Call(..))
+                {
+                    return None;
+                }
+                let (left, left_sort) =
+                    prepare_expr(self, left, &mut prepared, calls, &permit_call)?;
+                let (right, right_sort) =
+                    prepare_expr(self, right, &mut prepared, calls, &permit_call)?;
+                if (!Arc::ptr_eq(&left_sort, &right_sort) && left_sort.name() != right_sort.name())
+                    || !self.type_info.is_sort_unionable(&left_sort)
+                {
+                    return None;
+                }
                 prepared.union = Some((left, right));
             }
-            _ => return None,
         }
         Some(prepared)
     }
@@ -347,9 +298,12 @@ impl EGraph {
                         .first()
                         .map(|action| {
                             action
-                                .lookups
+                                .nodes
                                 .iter()
-                                .map(|(table, _)| table.clone())
+                                .filter_map(|node| match node {
+                                    GroundExpr::Lookup(table, _) => Some(table.clone()),
+                                    GroundExpr::Literal(_) => None,
+                                })
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default(),
@@ -368,15 +322,19 @@ impl EGraph {
                 let mut constants = HashMap::default();
                 for action in prepared {
                     values.clear();
-                    for (table, args) in action.lookups {
-                        let value = if args.is_empty() {
-                            *constants
+                    for node in action.nodes {
+                        let value = match node {
+                            GroundExpr::Literal(literal) => {
+                                literal_to_value(state.base_values(), &literal)
+                            }
+                            GroundExpr::Lookup(table, args) if args.is_empty() => *constants
                                 .entry(Rc::as_ptr(&table))
-                                .or_insert_with(|| table.lookup_or_insert(state, &[]).unwrap())
-                        } else {
-                            arguments.clear();
-                            arguments.extend(args.iter().map(|index| values[*index]));
-                            table.lookup_or_insert(state, &arguments).unwrap()
+                                .or_insert_with(|| table.lookup_or_insert(state, &[]).unwrap()),
+                            GroundExpr::Lookup(table, args) => {
+                                arguments.clear();
+                                arguments.extend(args.iter().map(|index| values[*index]));
+                                table.lookup_or_insert(state, &arguments).unwrap()
+                            }
                         };
                         values.push(value);
                     }
@@ -413,11 +371,14 @@ impl EGraph {
     ) -> Result<(), Error> {
         if prepared.union.is_some() {
             self.flush_ground_actions(pending)?;
-            self.eval_ground_actions(vec![prepared])
+            let timer = Instant::now();
+            let result = self.eval_ground_actions(vec![prepared]);
+            self.overall_report.commands_actions += timer.elapsed();
+            result
         } else {
-            pending.lookups += prepared.lookups.len();
+            pending.nodes += prepared.nodes.len();
             pending.pending.push(prepared);
-            if pending.pending.len() >= 256 || pending.lookups >= 16_384 {
+            if pending.pending.len() >= 256 || pending.nodes >= 16_384 {
                 self.flush_ground_actions(pending)?;
             }
             Ok(())
@@ -426,7 +387,7 @@ impl EGraph {
 
     /// Drain exactly once; failed effects are never replayed.
     fn flush_ground_actions(&mut self, pending: &mut GroundActionBatch) -> Result<(), Error> {
-        pending.lookups = 0;
+        pending.nodes = 0;
         if !pending.pending.is_empty() {
             let timer = Instant::now();
             let result = self.eval_ground_actions(std::mem::take(&mut pending.pending));
