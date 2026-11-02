@@ -39,6 +39,22 @@ impl CommandMacroRegistry {
         self.macros.push(macro_impl);
     }
 
+    /// Delay the preceding commit only when command macros and general
+    /// constraint inference cannot invoke extension callbacks.
+    pub(crate) fn can_typecheck_without_callbacks(
+        &self,
+        command: &Command,
+        types: &TypeInfo,
+    ) -> bool {
+        if !self.macros.is_empty() {
+            return false;
+        }
+        match command {
+            Command::Action(action) => types.typecheck_closed_constructor_action(action).is_some(),
+            _ => false,
+        }
+    }
+
     /// Apply all registered macros to a command in sequence
     pub fn apply(
         &self,

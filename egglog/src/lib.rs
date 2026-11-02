@@ -2209,48 +2209,7 @@ impl EGraph {
     }
 
     fn run_command(&mut self, command: ResolvedNCommand) -> Result<Vec<CommandOutput>, Error> {
-        enum CommandPhase {
-            Install,
-            Actions,
-            Check,
-            Other,
-        }
-
-        let phase = match &command {
-            ResolvedNCommand::Sort { .. }
-            | ResolvedNCommand::Function(_)
-            | ResolvedNCommand::Index { .. }
-            | ResolvedNCommand::AddRuleset(..)
-            | ResolvedNCommand::UnstableCombinedRuleset(..)
-            | ResolvedNCommand::NormRule { .. } => CommandPhase::Install,
-            ResolvedNCommand::CoreAction(_)
-            | ResolvedNCommand::CoreActions(_)
-            | ResolvedNCommand::Input { .. } => CommandPhase::Actions,
-            ResolvedNCommand::Check(..) => CommandPhase::Check,
-            _ => CommandPhase::Other,
-        };
-        let command_timer = Instant::now();
-        let process_before = self.overall_report.process_time();
-        let iteration_before = self.overall_report.run.iterations.len();
-        let result = self.run_command_inner(command);
-        let nested_process = self
-            .overall_report
-            .process_time()
-            .saturating_sub(process_before);
-        let nested_rulesets = self.overall_report.run.iterations[iteration_before..]
-            .iter()
-            .map(|iteration| iteration.report.total_time())
-            .sum();
-        let own_time = command_timer
-            .elapsed()
-            .saturating_sub(nested_process + nested_rulesets);
-        match phase {
-            CommandPhase::Install => self.overall_report.frontend_install += own_time,
-            CommandPhase::Actions => self.overall_report.commands_actions += own_time,
-            CommandPhase::Check => self.overall_report.commands_check += own_time,
-            CommandPhase::Other => self.overall_report.commands_other += own_time,
-        }
-        result
+        action_execution::ActionExecutor::run(self, |execution| execution.command(command))
     }
 
     fn run_command_inner(
@@ -2345,11 +2304,7 @@ impl EGraph {
                     panic!("Globals should have been desugared away: {name} = {contents}")
                 }
                 _ => {
-                    if let Some(prepared) = self.prepare_resolved_ground_action(&action) {
-                        self.eval_ground_actions(vec![prepared])?;
-                    } else {
-                        self.eval_actions(&ResolvedActions::new(vec![action.clone()]))?;
-                    }
+                    self.eval_actions(&ResolvedActions::new(vec![action.clone()]))?;
                 }
             },
             // One `eval_actions` call, so the block's `let`s stay local.
@@ -2958,76 +2913,8 @@ impl EGraph {
         program: Vec<Command>,
         run_commands: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
-        let mut outputs = Vec::new();
-        let mut desugared_before_proofs = Vec::new();
-        let mut desugared = Vec::new();
-
-        for before_expanded_command in program {
-            // First do user-provided macro expansion for this command,
-            // which may rely on type information from previous commands.
-            let macro_type_info = self
-                .proof_state
-                .original_typechecking
-                .as_ref()
-                .map(|egraph| &egraph.type_info)
-                .unwrap_or(&self.type_info);
-            let macro_timer = Instant::now();
-            let macro_expanded = self.command_macros.apply(
-                before_expanded_command,
-                &mut self.parser.symbol_gen,
-                macro_type_info,
-            );
-            self.overall_report.frontend_other += macro_timer.elapsed();
-            let macro_expanded = macro_expanded?;
-
-            for command in macro_expanded {
-                // handle include specially- we keep them as-is for desugaring
-                if let Command::Include(span, file) = &command {
-                    let include_timer = Instant::now();
-                    let s = std::fs::read_to_string(file)
-                        .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
-                    self.overall_report.frontend_other += include_timer.elapsed();
-                    let s = s?;
-                    let included_program = self.parse_program_timed(Some(file.clone()), &s)?;
-                    // run program internal on these include commands
-                    let resolved = self.process_program_internal(included_program, run_commands)?;
-                    outputs.extend(resolved.outputs);
-                    desugared.extend(resolved.resolved);
-                    desugared_before_proofs.extend(resolved.resolved_before_proofs);
-                } else {
-                    let resolved = self.resolve_command(command)?;
-                    // Execution callers discard resolved trees; retaining them here
-                    // duplicates large proof programs. Keep only the checker's history.
-                    if run_commands {
-                        if self.are_proofs_enabled() {
-                            self.proof_check_program
-                                .extend(resolved.desugared_before_proofs);
-                        }
-                    } else {
-                        desugared_before_proofs.extend(resolved.desugared_before_proofs);
-                        desugared.extend(resolved.desugared.clone());
-                    }
-
-                    for processed in resolved.desugared {
-                        // even in desugar mode we still run push and pop
-                        if run_commands
-                            || matches!(
-                                processed,
-                                ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
-                            )
-                        {
-                            let result = self.run_command(processed)?;
-                            outputs.extend(result);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(ResolvedNCommandsWithOutput {
-            outputs,
-            resolved_before_proofs: desugared_before_proofs,
-            resolved: desugared,
+        action_execution::ActionExecutor::run(self, |execution| {
+            execution.program(program, run_commands)
         })
     }
 

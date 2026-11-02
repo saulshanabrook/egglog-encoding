@@ -1659,7 +1659,10 @@ impl TypeInfo {
 
     /// Resolve only unambiguous closed constructor calls, preserving every span.
     /// Declining a node leaves all diagnostics to the ordinary constraint solver.
-    fn typecheck_closed_constructor_action(&self, action: &Action) -> Option<ResolvedAction> {
+    pub(super) fn typecheck_closed_constructor_action(
+        &self,
+        action: &Action,
+    ) -> Option<ResolvedAction> {
         fn check_expr<'a>(types: &'a TypeInfo, expr: &Expr) -> Option<(ResolvedExpr, &'a ArcSort)> {
             let Expr::Call(span, head, args) = expr else {
                 return None;

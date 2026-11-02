@@ -1,5 +1,30 @@
 use super::*;
 
+#[test]
+fn execution_scope_commits_pending_prefix_on_success_and_error() {
+    for fails in [false, true] {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (F T))")
+            .unwrap();
+        let command = graph.parse_program(None, "(F (A))").unwrap().remove(0);
+        let commands = graph.resolve_command(command).unwrap().desugared;
+        let result = ActionExecutor::run(&mut graph, |execution| {
+            for command in commands {
+                execution.command(command)?;
+            }
+            assert_eq!(execution.graph.get_size("F"), 0);
+            if fails {
+                Err(Error::BackendError("expected scope error".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result.is_err(), fails);
+        assert_eq!(graph.get_size("F"), 1);
+    }
+}
+
 thread_local! {
     pub(super) static GROUND_ACTIONS_EXECUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -254,6 +279,139 @@ fn ground_actions_keep_numeric_constructor_names_distinct() {
 }
 
 #[test]
+fn insertion_batches_ignore_unrelated_globals_and_containers() {
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (B) (F T))
+            (sort Unused (Vec T)) (let $unrelated 7)",
+        )
+        .unwrap();
+    let actions = graph.parse_program(None, "(F (A)) (F (B))").unwrap();
+    assert!(actions.iter().all(|command| {
+        match command {
+            Command::Action(action) => graph
+                .type_info
+                .typecheck_closed_constructor_action(action)
+                .is_some(),
+            _ => false,
+        }
+    }));
+    graph
+        .parse_and_run_program(None, "(F (A)) (F (B))")
+        .unwrap();
+    assert_eq!(graph.get_size("F"), 2);
+    graph
+        .parse_and_run_program(
+            None,
+            "(check (= $unrelated 7))
+            (check (= (F (A)) (F (A))))",
+        )
+        .unwrap();
+}
+
+#[test]
+fn populated_containers_keep_insertion_admission_and_rebuild_after_union() {
+    for threads in [1, 4] {
+        for direct in [false, true] {
+            let mut graph = EGraph::default();
+            graph.backend.set_num_threads(threads);
+            graph
+                .parse_and_run_program(
+                    None,
+                    "(datatype T (A) (B) (F T))
+                     (sort TVec (Vec T))
+                     (function observed (TVec) i64 :no-merge)
+                     (let $left (vec-of (A)))
+                     (let $right (vec-of (B)))
+                     (set (observed $left) 7)",
+                )
+                .unwrap();
+            let commands = graph
+                .parse_program(None, "(F (A)) (F (B)) (union (A) (B))")
+                .unwrap();
+            assert!(commands.iter().all(|command| {
+                match command {
+                    Command::Action(action) => graph
+                        .type_info
+                        .typecheck_closed_constructor_action(action)
+                        .is_some(),
+                    _ => false,
+                }
+            }));
+            assert_eq!(graph.get_size("F"), 0);
+            run_ground_action_oracle(
+                &mut graph,
+                "(F (A)) (F (B)) (union (A) (B))
+                 (check (= $left $right))
+                 (check (= (observed $right) 7))",
+                direct,
+            )
+            .unwrap();
+            assert_eq!(graph.get_size("F"), 1);
+        }
+    }
+}
+
+#[test]
+fn pending_insertions_commit_before_fail_child_reads() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct ReadSize(Arc<AtomicUsize>);
+    impl Primitive for ReadSize {
+        fn name(&self) -> &str {
+            "read-f-size"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ReadSize {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            let size = state.table_size("F")?;
+            self.0.store(size, Ordering::SeqCst);
+            Some(state.base_values().get(size as i64))
+        }
+    }
+    let observed = Arc::new(AtomicUsize::new(usize::MAX));
+    let mut graph = EGraph::default();
+    graph.add_read_primitive(ReadSize(observed.clone()), None);
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (F T)) (function out () i64 :no-merge)",
+        )
+        .unwrap();
+    let error = graph
+        .parse_and_run_program(None, "(F (A)) (fail (set (out) (read-f-size)))")
+        .unwrap_err();
+    assert!(matches!(error, Error::ExpectFail(..)));
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert_eq!(graph.get_size("F"), 1);
+    assert_eq!(graph.get_size("out"), 0);
+}
+
+#[test]
+fn batches_flush_for_keyed_reads_globals_and_deletes() {
+    let source = "(datatype T (A) (B) (F T))
+            (function f () i64 :no-merge)
+            (function g () i64 :no-merge)
+            (function out () i64 :no-merge)
+            (function value (T) i64 :no-merge)
+            (F (A)) (set (f) 1) (set (g) (f)) (check (= (g) 1))
+            (delete (f)) (fail (check (= (f) 1)))
+            (let $a (A)) (F $a)
+            (set (value (A)) 7) (union (A) (B))
+            (set (out) (value (B))) (check (= (out) 7))";
+    for direct in [false, true] {
+        run_ground_action_oracle(&mut EGraph::default(), source, direct).unwrap();
+    }
+}
+
+#[test]
 fn union_preserves_a_failing_merge_boundary() {
     let mut graph = EGraph::default();
     graph
@@ -291,6 +449,71 @@ fn constructor_rows_remain_subsumed_after_union() {
             });
         assert_eq!(rows, vec![true]);
     }
+}
+
+#[test]
+fn completed_constructor_prefix_survives_macro_errors() {
+    struct RejectCheck;
+    impl CommandMacro for RejectCheck {
+        fn transform(
+            &self,
+            command: Command,
+            _: &mut SymbolGen,
+            _: &TypeInfo,
+        ) -> Result<Vec<Command>, Error> {
+            if matches!(command, Command::Check(..)) {
+                Err(Error::BackendError("expected macro error".into()))
+            } else {
+                Ok(vec![command])
+            }
+        }
+    }
+    let mut graph = EGraph::default();
+    graph
+        .parse_and_run_program(None, "(datatype T (A) (F T))")
+        .unwrap();
+    graph.command_macros.register(Arc::new(RejectCheck));
+    assert!(
+        graph
+            .parse_and_run_program(None, "(F (A)) (check (= (A) (A)))")
+            .is_err()
+    );
+    assert_eq!(graph.get_size("F"), 1);
+}
+
+#[test]
+fn read_primitives_observe_completed_insertions() {
+    #[derive(Clone)]
+    struct ReadSize;
+    impl Primitive for ReadSize {
+        fn name(&self) -> &str {
+            "read-f-size"
+        }
+        fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+            SimpleTypeConstraint::new(self.name(), vec![I64Sort.to_arcsort()], span.clone())
+                .into_box()
+        }
+    }
+    impl ReadPrim for ReadSize {
+        fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, _: &[Value]) -> Option<Value> {
+            Some(
+                state
+                    .base_values()
+                    .get(state.table_size("F").unwrap() as i64),
+            )
+        }
+    }
+    let mut graph = EGraph::default();
+    graph.add_read_primitive(ReadSize, None);
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype T (A) (B) (F T))
+        (function result () i64 :no-merge)
+        (F (A)) (F (B)) (set (result) (read-f-size))
+        (check (= (result) 2))",
+        )
+        .unwrap();
 }
 
 #[test]
