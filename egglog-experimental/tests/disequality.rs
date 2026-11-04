@@ -141,8 +141,11 @@ fn rule_inference_and_lazy_declarations() {
 fn rejects_invalid_disequalities() {
     for source in [
         "(disequal 1 2)",
+        "(rule () ((disequal 1 2)))",
+        "(begin (disequal 1 2))",
         "(datatype T (A)) (datatype S (B)) (disequal (A) (B))",
         "(sort T :no-union) (constructor A () T) (disequal (A) (A))",
+        "(sort T :no-union) (constructor A () T) (rule () ((disequal (A) (A))))",
         "(datatype T (A)) (disequal (A))",
         "(check-contradiction 1)",
     ] {

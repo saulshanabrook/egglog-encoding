@@ -435,7 +435,7 @@ impl CommandMacro for LowerDisequality {
                     .typecheck_function(symbols, &declaration)?;
                 result.push(command);
             } else {
-                result.extend(self.lower(command, symbols, &local_types)?);
+                result.extend(Self::lower(command, symbols, &local_types)?);
             }
         }
         Ok(result)
@@ -444,14 +444,13 @@ impl CommandMacro for LowerDisequality {
 
 impl LowerDisequality {
     fn lower(
-        &self,
         mut command: Command,
         symbols: &mut SymbolGen,
         types: &TypeInfo,
     ) -> Result<Vec<Command>, Error> {
         let mut sorts = BTreeMap::new();
         let mut support_span = None;
-        self.lower_command(&mut command, symbols, types, &mut sorts, &mut support_span)?;
+        Self::lower_command(&mut command, symbols, types, &mut sorts, &mut support_span)?;
         let Some(span) = support_span else {
             return Ok(vec![command]);
         };
@@ -472,11 +471,9 @@ impl LowerDisequality {
             commands.extend(equality_rules(&span, TRUTH));
         }
         for (sort, span) in sorts {
-            let name = equality_name(&sort);
-            if types.get_func_type(&name).is_some() {
-                continue;
+            if types.get_func_type(&equality_name(&sort)).is_none() {
+                commands.extend(equality_rules(&span, &sort));
             }
-            commands.extend(equality_rules(&span, &sort));
         }
         // Proof history survives pop, so a reinstalled rule needs a fresh identity.
         for generated in &mut commands {
@@ -487,11 +484,8 @@ impl LowerDisequality {
         commands.push(command);
         Ok(commands)
     }
-}
 
-impl LowerDisequality {
     fn lower_command(
-        &self,
         command: &mut Command,
         symbols: &mut SymbolGen,
         types: &TypeInfo,
@@ -505,42 +499,38 @@ impl LowerDisequality {
                 let mut probe = rule.clone();
                 probe.head = union_probe(&rule.head);
                 let resolved = types.typecheck_rule(symbols, &probe, false)?;
-                for (action, typed) in rule.head.0.iter_mut().zip(resolved.head.0) {
-                    if let Action::Expr(span, Expr::Call(_, head, args)) = action
-                        && head == PLACEHOLDER
-                    {
-                        let egglog::ast::GenericAction::Union(_, lhs, _) = typed else {
-                            unreachable!()
-                        };
-                        let sort = match lhs {
-                            egglog::ast::ResolvedExpr::Var(_, var) => var.sort,
-                            egglog::ast::ResolvedExpr::Call(_, call, _) => call.output().clone(),
-                            egglog::ast::ResolvedExpr::Lit(_, literal) => {
-                                egglog::sort::literal_sort(&literal)
-                            }
-                        };
-                        if !sort.is_eq_sort() {
-                            return Err(TypeError::NonEqsortUnion(sort, span.clone()).into());
-                        }
-                        if !types.is_sort_unionable(&sort) {
-                            return Err(TypeError::NonUnionableSort(sort, span.clone()).into());
-                        }
-                        sorts.insert(sort.name().into(), span.clone());
-                        *action = Action::Union(
-                            span.clone(),
-                            Expr::Call(span.clone(), equality_name(sort.name()), args.to_vec()),
-                            Expr::Call(span.clone(), FALSE.into(), vec![]),
-                        );
-                    }
-                }
+                lower_typed_actions(&mut rule.head, resolved.head, sorts);
             }
-            Command::Action(Action::Expr(_, Expr::Call(_, head, _))) if head == PLACEHOLDER => {
-                let Command::Action(action) = command else {
+            Command::Action(action) if matches!(&*action, Action::Expr(_, Expr::Call(_, head, _)) if head == PLACEHOLDER) =>
+            {
+                let Action::Expr(span, Expr::Call(_, _, args)) = action else {
                     unreachable!()
                 };
-                let mut actions = Actions::singleton(action.clone());
-                self.lower_actions(&mut actions, vec![], symbols, types, sorts)?;
-                *action = actions.0.remove(0);
+                let [lhs, rhs] = args.as_slice() else {
+                    unreachable!("parser checks disequal arity")
+                };
+                let left = operand_sort(types, symbols, lhs)?;
+                let right = operand_sort(types, symbols, rhs)?;
+                if left.name() != right.name() {
+                    return Err(TypeError::Mismatch {
+                        expr: rhs.clone(),
+                        expected: left,
+                        actual: right,
+                    }
+                    .into());
+                }
+                if !left.is_eq_sort() {
+                    return Err(TypeError::NonEqsortUnion(left, span.clone()).into());
+                }
+                if !types.is_sort_unionable(&left) {
+                    return Err(TypeError::NonUnionableSort(left, span.clone()).into());
+                }
+                sorts.insert(left.name().into(), span.clone());
+                *action = Action::Union(
+                    span.clone(),
+                    Expr::Call(span.clone(), equality_name(left.name()), args.to_vec()),
+                    Expr::Call(span.clone(), FALSE.into(), vec![]),
+                );
             }
             Command::LetBegin(span, _, actions) if matches!(actions.0.last(), Some(Action::Expr(_, Expr::Call(_, head, _))) if head == PLACEHOLDER) =>
             {
@@ -558,21 +548,11 @@ impl LowerDisequality {
                     &Default::default(),
                     Context::Full,
                 )?;
-                let bindings = resolved
-                    .0
-                    .into_iter()
-                    .filter_map(|action| match action {
-                        egglog::ast::GenericAction::Let(span, var, _) => {
-                            Some((var.name, span, var.sort))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                self.lower_actions(actions, bindings, symbols, types, sorts)?;
+                lower_typed_actions(actions, resolved, sorts);
             }
             Command::Fail(_, commands) => {
                 for command in commands {
-                    self.lower_command(command, symbols, types, sorts, support_span)?;
+                    Self::lower_command(command, symbols, types, sorts, support_span)?;
                 }
             }
             Command::RunSchedule(Schedule::Saturate(span, schedule)) if matches!(schedule.as_ref(), Schedule::Run(_, config) if config.ruleset == RULESET) =>
@@ -586,48 +566,33 @@ impl LowerDisequality {
         }
         Ok(())
     }
+}
 
-    fn lower_actions(
-        &self,
-        actions: &mut Actions,
-        bindings: Vec<(String, Span, ArcSort)>,
-        symbols: &mut SymbolGen,
-        types: &TypeInfo,
-        sorts: &mut BTreeMap<String, Span>,
-    ) -> Result<(), Error> {
-        for action in &mut actions.0 {
-            match action {
-                Action::Expr(span, Expr::Call(_, head, args)) if head == PLACEHOLDER => {
-                    let [lhs, rhs] = args.as_slice() else {
-                        unreachable!("parser checks disequal arity")
-                    };
-                    let left = operand_sort(types, symbols, lhs, &bindings)?;
-                    let right = operand_sort(types, symbols, rhs, &bindings)?;
-                    if left.name() != right.name() {
-                        return Err(TypeError::Mismatch {
-                            expr: rhs.clone(),
-                            expected: left,
-                            actual: right,
-                        }
-                        .into());
-                    }
-                    if !left.is_eq_sort() {
-                        return Err(TypeError::NonEqsortUnion(left, span.clone()).into());
-                    }
-                    if !types.is_sort_unionable(&left) {
-                        return Err(TypeError::NonUnionableSort(left, span.clone()).into());
-                    }
-                    sorts.insert(left.name().into(), span.clone());
-                    *action = Action::Union(
-                        span.clone(),
-                        Expr::Call(span.clone(), equality_name(left.name()), args.to_vec()),
-                        Expr::Call(span.clone(), FALSE.into(), vec![]),
-                    );
-                }
-                _ => {}
-            }
+/// Rewrite assertions with the operand sorts already checked by the union probe.
+fn lower_typed_actions(
+    actions: &mut Actions,
+    resolved: egglog::ast::GenericActions<egglog::ResolvedCall, egglog::ResolvedVar>,
+    sorts: &mut BTreeMap<String, Span>,
+) {
+    for (action, typed) in actions.0.iter_mut().zip(resolved.0) {
+        if let Action::Expr(span, Expr::Call(_, head, args)) = action
+            && head == PLACEHOLDER
+        {
+            let egglog::ast::GenericAction::Union(_, lhs, _) = typed else {
+                unreachable!()
+            };
+            let sort = match lhs {
+                egglog::ast::ResolvedExpr::Var(_, var) => var.sort,
+                egglog::ast::ResolvedExpr::Call(_, call, _) => call.output().clone(),
+                egglog::ast::ResolvedExpr::Lit(_, literal) => egglog::sort::literal_sort(&literal),
+            };
+            sorts.insert(sort.name().into(), span.clone());
+            *action = Action::Union(
+                span.clone(),
+                Expr::Call(span.clone(), equality_name(sort.name()), args.to_vec()),
+                Expr::Call(span.clone(), FALSE.into(), vec![]),
+            );
         }
-        Ok(())
     }
 }
 
@@ -653,13 +618,9 @@ fn operand_sort(
     types: &TypeInfo,
     symbols: &mut SymbolGen,
     expr: &Expr,
-    bindings: &[(String, Span, ArcSort)],
 ) -> Result<ArcSort, TypeError> {
     let declared = match expr {
-        Expr::Var(_, name) => bindings
-            .iter()
-            .find_map(|(n, _, s)| (n == name).then_some(s))
-            .or_else(|| types.get_global_sort(name)),
+        Expr::Var(_, name) => types.get_global_sort(name),
         Expr::Call(_, head, _) if !types.is_primitive(head) => {
             types.get_func_type(head).map(|f| f.output())
         }
@@ -667,7 +628,7 @@ fn operand_sort(
     };
     match declared {
         Some(sort) => Ok(sort.clone()),
-        None => types.infer_expr_sort(symbols, expr, bindings, Context::Full),
+        None => types.infer_expr_sort(symbols, expr, &[], Context::Full),
     }
 }
 
