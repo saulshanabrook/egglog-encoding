@@ -5,6 +5,7 @@
 (datatype Term
   (A) (B) (C) (D)
   (U1) (U2) (V1) (V2)
+  (RemainingL) (RemainingR)
   (EqL) (EqR)
   (Num i64 :injective)
   (Pair Term Term :injective)
@@ -33,12 +34,16 @@
 (fail (check (known-disequal? (Plain (A) (C)) (Plain (B) (C)))))
 
 ; Wrap(C) != Wrap(D) => C != D, since C = D => Wrap(C) = Wrap(D).
-; This follows from congruence for any unary function; the query currently
-; applies it only to marked constructors such as Wrap.
+; This follows from congruence and also works for unmarked constructors.
 (disequal (Wrap (C)) (Wrap (D)))
 (check (known-disequal? (C) (D)))
 ; A != B and C != D do not imply A != C.
 (fail (check (known-disequal? (A) (C))))
+
+; Remaining-child reverse congruence needs no injectivity annotation on Plain.
+; Its common first child leaves only the second child potentially unequal.
+(disequal (Plain (C) (RemainingL)) (Plain (C) (RemainingR)))
+(check (known-disequal? (RemainingL) (RemainingR)))
 
 ; Pair(a,b) != Pair(c,d) => (a != c OR b != d), by congruence.
 ; Neither a != c nor b != d follows individually, so neither is inferred.
