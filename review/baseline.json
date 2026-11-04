@@ -1,0 +1,5 @@
+{
+  "scripts/reproduction_prepare_eggcc.py": "84d8327858425e16611d08774fe9b50cf04e6d995fba95552fadfd56f1e41807",
+  "tests/test_reproduction_prepare_eggcc.py": "d25716b2a03161f0679057d95a73d03fc11bb61724af7ed098a04fc421617d69",
+  "benchmarks/reproduction/eggcc-preparation.md": "67817544c1dc4579d5e509d9d2e4e10aade0f2f3a0dc50ed8d27d6a35b564dbb"
+}

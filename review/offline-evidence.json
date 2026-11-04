@@ -1,0 +1,31 @@
+{
+  "status": "offline-source-check-passed",
+  "native_executed": false,
+  "upstream_patch_sha256": "84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495",
+  "core_original_pins": {
+    "Cargo.lock": "466ad68262801a539f11e04a4537d9347c02019d25c480cefed62e67bc31b080",
+    "core-relations/src/hash_index/mod.rs": "78e934b68beb13f9090e9a691f0dfa206f0e8a2535c73b14da7faa21870d7e90",
+    "core-relations/src/hash_index/tests.rs": "772edd5daa58c7e1504b38b9b4a46eda0b8c69d4cd98076fe11a6a612cc08444"
+  },
+  "core_patched_files": {
+    "Cargo.lock": "466ad68262801a539f11e04a4537d9347c02019d25c480cefed62e67bc31b080",
+    "core-relations/src/hash_index/mod.rs": "0d49bcc39665a98e0b63d33a7100ff7fcf8043a6ca1bc6ff7a0a8461e2da8537",
+    "core-relations/src/hash_index/tests.rs": "d30fe19379f57ffce747074b72790b8b3c1b1d98f3b073d233f7a2b80ac977bc"
+  },
+  "original_eggcc_lock_sha256": "271911b11aa595cb22c9bb55915580a6afa7bec3dc8ccd0bf6e284381c916272",
+  "derived_eggcc_lock_sha256": "3addb0ed6a83aba28be309ed62c180c213943847fb1043182da8257d49c6a799",
+  "changed_packages": [
+    "egglog",
+    "egglog-add-primitive",
+    "egglog-ast",
+    "egglog-bridge",
+    "egglog-concurrency",
+    "egglog-core-relations",
+    "egglog-numeric-id",
+    "egglog-reports",
+    "egglog-union-find"
+  ],
+  "original_continuation_verified": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-prerequisites/prepare/d6cd45c8d4e581fad03a3ed83179a6b716c4348d437526a2c63d0ba9d74a54b5/attempt-0001/environment",
+  "original_package_count": 291,
+  "derived_package_count": 291
+}

@@ -1,0 +1,979 @@
+--- a/scripts/reproduction_prepare_eggcc.py
++++ b/scripts/reproduction_prepare_eggcc.py
+@@ -9,9 +9,11 @@
+ 
+ import argparse
+ import json
++import os
+ import platform
+ import shutil
+ import tarfile
++import tomllib
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -24,6 +26,29 @@
+ ARCHIVE_SHA256 = "ced650bba88d7c12ce8091281660a26117ba83c68ad23281289c289ef129558c"
+ LOCK_SHA256 = "271911b11aa595cb22c9bb55915580a6afa7bec3dc8ccd0bf6e284381c916272"
+ LLVM = Path("/opt/homebrew/opt/llvm@18")
++CORE_REVISION = "ebba7bb902bdc1b0f377b6bb22c06ac305912674"
++CORE_URL = "https://github.com/saulshanabrook/egg-smol.git"
++CORE_SOURCE = f"git+{CORE_URL}?branch=codex%2Fsplit-scheduler-can-stop-report#{CORE_REVISION}"
++CORE_PACKAGES = {
++    "egglog",
++    "egglog-ast",
++    "egglog-reports",
++    "egglog-add-primitive",
++    "egglog-bridge",
++    "egglog-concurrency",
++    "egglog-core-relations",
++    "egglog-numeric-id",
++    "egglog-union-find",
++}
++CORE_PINS = {
++    "Cargo.lock": "466ad68262801a539f11e04a4537d9347c02019d25c480cefed62e67bc31b080",
++    "core-relations/src/hash_index/mod.rs": "78e934b68beb13f9090e9a691f0dfa206f0e8a2535c73b14da7faa21870d7e90",
++    "core-relations/src/hash_index/tests.rs": "772edd5daa58c7e1504b38b9b4a46eda0b8c69d4cd98076fe11a6a612cc08444",
++}
++REPAIR_REVISION = "201579afd2b8b646fa518d3065bd319d1a084eba"
++REPAIR_SHA256 = "84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495"
++REPAIR_FIXTURE = "benchmarks/reproduction/fixtures/eggcc-core-row-order.patch"
++REGRESSION = "hash_index::tests::multi_column_column_index_rebuild_orders_each_value_by_row"
+ 
+ 
+ def unpack_source(archive: Path, checkout: Path) -> dict[str, str]:
+@@ -59,8 +84,172 @@
+     return files
+ 
+ 
++def repaired_lock(original: str) -> str:
++    """Change only the nine pinned core package sources; never resolve new versions."""
++    packages = tomllib.loads(original)["package"]
++    core = [row for row in packages if row.get("source") == CORE_SOURCE]
++    if {row["name"] for row in core} != CORE_PACKAGES or len(core) != len(CORE_PACKAGES):
++        raise ValueError("original lock does not contain exactly the nine pinned core packages")
++    if any(row["version"] != "2.0.0" or "checksum" in row for row in core):
++        raise ValueError("original core package identity changed")
++    line = f'source = "{CORE_SOURCE}"\n'
++    if original.count(line) != len(CORE_PACKAGES):
++        raise ValueError("unexpected core source encoding in original lock")
++    derived = original.replace(line, "")
++    expected = [
++        {key: value for key, value in row.items() if key != "source"} if row in core else row for row in packages
++    ]
++    if tomllib.loads(derived)["package"] != expected:
++        raise ValueError("derived lock changes unrelated dependency identities")
++    return derived
++
++
++def seed_cargo_cache(preparation: Preparation, cache: Path, locks: list[Path], *, timeout_sec: int) -> Path:
++    """Copy only immutable locked archives/index entries and independent Git objects.
++
++    Cargo may download missing dependencies into the new home. Original cache
++    paths are never passed to Cargo, including for its package-cache locks.
++    """
++    home = preparation.directory / "cargo-home"
++    home.mkdir()
++    copied: dict[str, str] = {}
++    for lock in locks:
++        for package in tomllib.loads(lock.read_text())["package"]:
++            if package.get("source") != "registry+https://github.com/rust-lang/crates.io-index":
++                continue
++            name, version = package["name"], package["version"]
++            for source in sorted((cache / "registry/cache").glob(f"*/{name}-{version}.crate")):
++                if source.is_symlink() or sha256_file(source) != package["checksum"]:
++                    raise ValueError(f"cached crate differs from locked checksum: {source}")
++                index = cache / "registry/index" / source.parent.name
++                key = name.lower()
++                relative = (
++                    f"{len(key)}/{key}"
++                    if len(key) < 3
++                    else (f"3/{key[0]}/{key}" if len(key) == 3 else f"{key[:2]}/{key[2:4]}/{key}")
++                )
++                for entry in (source, index / "config.json", index / ".cache" / relative):
++                    if not entry.exists():
++                        continue
++                    if entry.is_symlink() or not entry.is_file():
++                        raise ValueError(f"cache seed must be an ordinary file: {entry}")
++                    destination = home / entry.relative_to(cache)
++                    if not destination.exists():
++                        destination.parent.mkdir(parents=True, exist_ok=True)
++                        shutil.copy2(entry, destination)
++                        copied[str(entry)] = sha256_file(destination)
++                break
++    for name in (
++        "egglog-experimental-e48206cd5b150391",
++        "bril-36edbe08a8ae21f1",
++        "inkwell-511a88971ace534e",
++        "egg-smol-65fdca4a5529f39b",
++    ):
++        source = cache / "git/db" / name
++        if not source.exists():
++            continue
++        if source.is_symlink() or any(path.is_symlink() for path in source.rglob("*")):
++            raise ValueError("Git cache seed may not contain symlinks")
++        if (source / "objects/info/alternates").exists():
++            raise ValueError("Git cache seed may not borrow another object store")
++        destination = home / "git/db" / name
++        destination.parent.mkdir(parents=True, exist_ok=True)
++        preparation.step(f"seed-{name}", ["/bin/cp", "-cR", str(source), str(destination)], timeout=timeout_sec)
++    write_json(preparation.directory / "cache-seed.json", {"source": str(cache), "files": copied})
++    return home
++
++
++def verify_continuation(previous: Path) -> dict[str, Any]:
++    """Bind reuse to the successful original source/build, without writing to it."""
++    record: dict[str, Any] = json.loads((previous / "preparation.json").read_text())
++    if record.get("status") != "success" or record.get("revision") != REVISION or record.get("core_repair"):
++        raise ValueError("continuation requires a successful original unrepaired Eggcc preparation")
++    checkout = Path(record["checkout"]).resolve()
++    if checkout != previous / "sources/eggcc":
++        raise ValueError("previous checkout does not belong to its preparation")
++    pins = json.loads((previous / "prepared-source.json").read_text())
++    for relative, digest in pins.items():
++        path = checkout / relative
++        if not path.resolve().is_relative_to(checkout) or path.is_symlink() or sha256_file(path) != digest:
++            raise ValueError(f"previous prepared source changed: {relative}")
++    products = json.loads((previous / "build-products.json").read_text())
++    if products != record["artifacts"]:
++        raise ValueError("previous product manifest differs from receipt")
++    for name, digest in products.items():
++        path = Path(name)
++        if path.is_symlink() or sha256_file(path) != digest:
++            raise ValueError(f"previous build product changed: {name}")
++    if pins.get("Cargo.lock") != LOCK_SHA256 or sha256_file(previous / f"eggcc-{REVISION}.tar.gz") != ARCHIVE_SHA256:
++        raise ValueError("previous original archive/lock identity changed")
++    return record
++
++
++def prepare_core(preparation: Preparation, cache: Path, *, timeout_sec: int) -> tuple[Path, dict[str, Any]]:
++    """Acquire the exact Git revision and apply the exact upstream correction/test."""
++    core = preparation.directory / "sources/egglog-core"
++    cached = cache / "git/db/egg-smol-65fdca4a5529f39b"
++    if cached.is_dir():
++        if (
++            cached.is_symlink()
++            or (cached / "objects/info/alternates").exists()
++            or any(path.is_symlink() for path in cached.rglob("*"))
++        ):
++            raise ValueError("core Git cache must be independent, without symlinks or alternates")
++        preparation.step(
++            "core-clone",
++            ["git", "clone", "--no-hardlinks", "--no-checkout", str(cached), str(core)],
++            timeout=timeout_sec,
++        )
++    else:
++        core.mkdir(parents=True)
++        preparation.step("core-init", ["git", "init", str(core)], timeout=30)
++        preparation.step(
++            "core-fetch", ["git", "fetch", "--depth", "1", CORE_URL, CORE_REVISION], cwd=core, timeout=timeout_sec
++        )
++    preparation.step("core-checkout", ["git", "checkout", "--detach", CORE_REVISION], cwd=core, timeout=30)
++    if preparation.step("core-revision", ["git", "rev-parse", "HEAD"], cwd=core, timeout=30).strip() != CORE_REVISION:
++        raise ValueError("acquired core revision differs from the original dependency")
++    for relative, digest in CORE_PINS.items():
++        if sha256_file(core / relative) != digest:
++            raise ValueError(f"core repair source pin changed: {relative}")
++    files = preparation.step(
++        "core-files", ["git", "ls-tree", "-r", "--name-only", "HEAD"], cwd=core, timeout=30
++    ).splitlines()
++    originals = {relative: sha256_file(core / relative) for relative in files}
++    fixture = ROOT / REPAIR_FIXTURE
++    if sha256_file(fixture) != REPAIR_SHA256:
++        raise ValueError("upstream core correction fixture changed")
++    patch = preparation.directory / "core-row-order.patch"
++    shutil.copy2(fixture, patch)
++    preparation.step("core-patch-check", ["git", "apply", "--check", str(patch)], cwd=core, timeout=30)
++    preparation.step("core-patch", ["git", "apply", str(patch)], cwd=core, timeout=30)
++    modified = {relative: sha256_file(core / relative) for relative in files}
++    if {name for name in files if originals[name] != modified[name]} != set(CORE_PINS) - {"Cargo.lock"}:
++        raise ValueError("core repair changed an unexpected source file")
++    receipt = {
++        "repair": "pr914-row-order-v1",
++        "base_revision": CORE_REVISION,
++        "source_url": CORE_URL,
++        "upstream_commit": REPAIR_REVISION,
++        "upstream_url": f"https://github.com/egraphs-good/egglog/commit/{REPAIR_REVISION}",
++        "patch_sha256": REPAIR_SHA256,
++        "original_files": originals,
++        "prepared_files": modified,
++        "regression": REGRESSION,
++        "proof_validation": False,
++        "benchmark_execution": False,
++    }
++    write_json(preparation.directory / "core-repair.json", receipt)
++    return core, receipt
++
++
+ def prepare_eggcc(
+-    output: Path, engine: Path, *, build_root: Path | None = None, timeout_sec: int = 600
++    output: Path,
++    engine: Path,
++    *,
++    build_root: Path | None = None,
++    timeout_sec: int = 600,
++    continue_from: Path | None = None,
+ ) -> dict[str, Any]:
+     """Prepare one fresh native compiler, leaving configuration blockers explicit.
+ 
+@@ -81,6 +270,12 @@
+         raise ValueError("this proven recipe is for native Apple Silicon with Homebrew LLVM18")
+     if timeout_sec <= 0:
+         raise ValueError("step timeout must be positive")
++    previous = continue_from.resolve() if continue_from else None
++    if previous and (
++        not previous.is_relative_to(durable) or output.is_relative_to(previous) or build_root.is_relative_to(previous)
++    ):
++        raise ValueError("continuation requires a separate retained preparation below reproduction storage")
++    saved = verify_continuation(previous) if previous else None
+     output.mkdir(parents=True)
+     preparation = Preparation(output)
+     blocker = {
+@@ -101,9 +296,10 @@
+         "output": str(output),
+         "build_root": str(build_root),
+         "rust_version": "1.88.0",
++        "core_repair": "pr914-row-order-v1",
+     }
+     try:
+-        tools = {name: shutil.which(name) for name in ("curl", "cargo", "rustc", "rustup", "g++")}
++        tools = {name: shutil.which(name) for name in ("curl", "cargo", "rustc", "rustup", "g++", "git")}
+         if missing := [name for name, path in tools.items() if path is None]:
+             raise ValueError(f"missing original native build prerequisites: {missing}")
+         identities = {str(Path(path).resolve()): sha256_file(Path(path)) for path in tools.values() if path}
+@@ -132,6 +328,7 @@
+             "scripts/reproduction_process.py",
+             "benchmarking/pilot.py",
+             "benchmarking/memory_guard.py",
++            REPAIR_FIXTURE,
+         ):
+             identities[str(ROOT / relative)] = sha256_file(ROOT / relative)
+         identities[str(engine)] = sha256_file(engine)
+@@ -140,11 +337,24 @@
+             snapshot.write(Path(__file__).read_bytes())
+         archive = output / f"eggcc-{REVISION}.tar.gz"
+         url = f"https://codeload.github.com/egraphs-good/eggcc/tar.gz/{REVISION}"
+-        preparation.step(
+-            "download-source",
+-            ["curl", "--fail", "--location", "--max-filesize", str(64 * 1024**2), "--output", str(archive), url],
+-            timeout=timeout_sec,
+-        )
++        if previous:
++            shutil.copy2(previous / archive.name, archive)
++            write_json(
++                output / "continuation.json",
++                {
++                    "previous": str(previous),
++                    "receipt_sha256": sha256_file(previous / "preparation.json"),
++                    "prepared_source_sha256": sha256_file(previous / "prepared-source.json"),
++                    "products_sha256": sha256_file(previous / "build-products.json"),
++                    "reuse": "pinned original archive and private copy-on-write target clone",
++                },
++            )
++        else:
++            preparation.step(
++                "download-source",
++                ["curl", "--fail", "--location", "--max-filesize", str(64 * 1024**2), "--output", str(archive), url],
++                timeout=timeout_sec,
++            )
+         checkout = output / "sources/eggcc"
+         originals = unpack_source(archive, checkout)
+         write_json(output / "original-source.json", {"url": url, "archive_sha256": ARCHIVE_SHA256, "files": originals})
+@@ -156,12 +366,40 @@
+         for relative, content in patched_eggcc_sources(checkout).items():
+             source = checkout / relative
+             preparation.patch(source, [(source.read_text(), content)], "native-capture-" + relative.replace("/", "-"))
+-        write_json(
+-            output / "prepared-source.json", {relative: sha256_file(checkout / relative) for relative in originals}
++        cache = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")).resolve()
++        core, repair = prepare_core(preparation, cache, timeout_sec=timeout_sec)
++        before = manifest.read_text()
++        preparation.patch(
++            manifest,
++            [
++                (
++                    before,
++                    before + f'\n[patch."{CORE_URL}"]\n'
++                    'egglog = { path = "../egglog-core" }\n'
++                    'egglog-ast = { path = "../egglog-core/egglog-ast" }\n'
++                    'egglog-reports = { path = "../egglog-core/egglog-reports" }\n',
++                )
++            ],
++            "core-dependency-override",
+         )
+-        with (output / "Cargo.lock").open("xb") as lock:
+-            lock.write((checkout / "Cargo.lock").read_bytes())
+-        command = [
++        lock = checkout / "Cargo.lock"
++        original_lock = lock.read_text()
++        preparation.patch(lock, [(original_lock, repaired_lock(original_lock))], "core-lock-identities")
++        derived_lock_sha256 = sha256_file(lock)
++        cargo_home = seed_cargo_cache(preparation, cache, [lock, core / "Cargo.lock"], timeout_sec=timeout_sec)
++        if saved:
++            old_target = Path(saved["build_root"]).resolve()
++            if Path(saved["binary"]).resolve() != old_target / "debug/eggcc" or build_root.is_relative_to(old_target):
++                raise ValueError("continuation target does not match the retained compiler")
++            if any(path.is_symlink() for path in old_target.rglob("*")):
++                raise ValueError("continuation target may not contain symlinks")
++            build_root.parent.mkdir(parents=True, exist_ok=True)
++            preparation.step("clone-target", ["/bin/cp", "-cR", str(old_target), str(build_root)], timeout=timeout_sec)
++        prepared_files = {relative: sha256_file(checkout / relative) for relative in originals}
++        write_json(output / "prepared-source.json", prepared_files)
++        with (output / "Cargo.lock").open("xb") as snapshot:
++            snapshot.write((checkout / "Cargo.lock").read_bytes())
++        environment = [
+             "env",
+             f"LLVM_SYS_180_PREFIX={LLVM}",
+             "LIBRARY_PATH=/opt/homebrew/lib",
+@@ -169,6 +407,27 @@
+             "CARGO_PROFILE_DEV_DEBUG=0",
+             "CARGO_INCREMENTAL=0",
+             "RUSTC_WRAPPER=",
++            f"CARGO_HOME={cargo_home}",
++        ]
++        regression = environment + [
++            "cargo",
++            "+1.88.0",
++            "test",
++            "--manifest-path",
++            str(core / "Cargo.toml"),
++            "--locked",
++            "-j1",
++            "-p",
++            "egglog-core-relations",
++            "--lib",
++            REGRESSION,
++            "--",
++            "--exact",
++        ]
++        result = preparation.step("core-regression", regression, cwd=core, timeout=timeout_sec)
++        if "test result: ok. 1 passed; 0 failed;" not in result:
++            raise ValueError("upstream core regression did not execute exactly one passing test")
++        command = environment + [
+             "cargo",
+             "+1.88.0",
+             "build",
+@@ -185,8 +444,19 @@
+             if not product.is_file() or not product.stat().st_size:
+                 raise ValueError(f"successful build omitted required native executable: {product}")
+         products = {str(path): sha256_file(path) for path in (binary, tiger, checkout / "Cargo.lock")}
+-        if products[str(checkout / "Cargo.lock")] != LOCK_SHA256:
+-            raise ValueError("locked build changed the pinned dependency lockfile")
++        if saved and products[str(binary)] == saved["artifacts"][saved["binary"]]:
++            raise ValueError("repair build retained the original uncorrected compiler bytes")
++        if (
++            products[str(checkout / "Cargo.lock")] != derived_lock_sha256
++            or sha256_file(core / "Cargo.lock") != CORE_PINS["Cargo.lock"]
++        ):
++            raise ValueError("locked native gates changed a pinned dependency lockfile")
++        if any(sha256_file(core / relative) != digest for relative, digest in repair["prepared_files"].items()):
++            raise ValueError("native build changed the repaired core sources")
++        if any(sha256_file(checkout / relative) != digest for relative, digest in prepared_files.items()):
++            raise ValueError("native build changed the prepared Eggcc sources")
++        if previous:
++            verify_continuation(previous)
+         write_json(output / "build-products.json", products)
+         settings = {
+             "eggcc": {
+@@ -197,6 +467,7 @@
+                     str(output / "tool-identities.json"),
+                     str(output / "prepared-source.json"),
+                     str(output / "build-products.json"),
++                    str(output / "core-repair.json"),
+                     str(tiger),
+                 ],
+                 "timeout_sec": 300,
+@@ -213,6 +484,9 @@
+             binary=str(binary),
+             tiger=str(tiger),
+             artifacts=products,
++            core_repair_receipt=str(output / "core-repair.json"),
++            original_lock_sha256=LOCK_SHA256,
++            derived_lock_sha256=derived_lock_sha256,
+             reason="Native compiler prepared; actual optimization/replay remains a separate stage",
+         )
+     except (OSError, ValueError, RuntimeError, tarfile.TarError) as error:
+@@ -237,9 +511,16 @@
+     parser.add_argument("--egglog", type=Path, default=ROOT / "target/release/egglog-experimental")
+     parser.add_argument("--build-root", type=Path, help="Fresh optional disposable Cargo target directory")
+     parser.add_argument("--timeout-sec", type=int, default=600)
++    parser.add_argument("--continue-from", type=Path, help="Verified original preparation; reuse only private copies")
+     args = parser.parse_args()
+     with exclusive_job(ROOT / "benchmarks/local/reproduction/stages/.heavy-job.lock"):
+-        record = prepare_eggcc(args.output, args.egglog, build_root=args.build_root, timeout_sec=args.timeout_sec)
++        record = prepare_eggcc(
++            args.output,
++            args.egglog,
++            build_root=args.build_root,
++            timeout_sec=args.timeout_sec,
++            continue_from=args.continue_from,
++        )
+     print(json.dumps({key: record.get(key) for key in ("status", "reason", "settings")}, indent=2))
+     return 0 if record["status"] == "success" else 1
+ 
+--- a/tests/test_reproduction_prepare_eggcc.py
++++ b/tests/test_reproduction_prepare_eggcc.py
+@@ -1,13 +1,26 @@
+ """Durable Eggcc preparation contracts without native builds or downloads."""
+ 
++import hashlib
+ import io
+ import json
+ import tarfile
++import tomllib
+ from pathlib import Path
+ 
+ import pytest
+ 
+ from scripts import reproduction_prepare_eggcc as preparation
++
++
++def original_lock() -> bytes:
++    return (
++        "version = 4\n\n"
++        + "".join(
++            f'[[package]]\nname = "{name}"\nversion = "2.0.0"\nsource = "{preparation.CORE_SOURCE}"\n\n'
++            for name in sorted(preparation.CORE_PACKAGES)
++        )
++        + '[[package]]\nname = "unrelated"\nversion = "1.2.3"\n'
++    ).encode()
+ 
+ 
+ def source_archive(path: Path, files: dict[str, bytes]) -> None:
+@@ -50,9 +63,9 @@
+         preparation.prepare_eggcc(output, engine)
+ 
+ 
+-@pytest.mark.parametrize("omit_tiger", [False, True])
++@pytest.mark.parametrize("omit_tiger,continuation", [(False, False), (True, False), (False, True)])
+ def test_preparation_builds_actual_source_and_keeps_gurobi_blocked(
+-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omit_tiger: bool
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, omit_tiger: bool, continuation: bool
+ ) -> None:
+     monkeypatch.setattr(preparation, "ROOT", tmp_path)
+     monkeypatch.setattr(preparation.platform, "system", lambda: "Darwin")
+@@ -68,6 +81,7 @@
+         "scripts/reproduction_process.py",
+         "benchmarking/pilot.py",
+         "benchmarking/memory_guard.py",
++        preparation.REPAIR_FIXTURE,
+         "llvm/bin/llvm-config",
+         "llvm/lib/libLLVM.dylib",
+     ):
+@@ -78,7 +92,7 @@
+     tool.write_bytes(b"native tool")
+     monkeypatch.setattr(preparation.shutil, "which", lambda _: str(tool))
+     archive = tmp_path / "original.tar.gz"
+-    lock = b"pinned dependencies"
++    lock = original_lock()
+     source_archive(
+         archive,
+         {
+@@ -89,8 +103,6 @@
+         },
+     )
+     monkeypatch.setattr(preparation, "ARCHIVE_SHA256", preparation.sha256_file(archive))
+-    import hashlib
+-
+     monkeypatch.setattr(preparation, "LOCK_SHA256", hashlib.sha256(lock).hexdigest())
+     monkeypatch.setattr(
+         preparation, "patched_eggcc_sources", lambda _: {"src/main.rs": "original compiler\nobservation"}
+@@ -98,6 +110,19 @@
+     commands: list[tuple[str, list[str]]] = []
+     output = tmp_path / "benchmarks/local/reproduction/attempt"
+     build = tmp_path / "target/disposable-eggcc"
++    monkeypatch.setenv("CARGO_HOME", str(tmp_path / "empty-cache"))
++    core_lock = b"version = 4\npackage = []\n"
++    monkeypatch.setattr(preparation, "CORE_PINS", {"Cargo.lock": hashlib.sha256(core_lock).hexdigest()})
++
++    def core_source(preparer: preparation.Preparation, *_: object, **__: object) -> tuple[Path, dict[str, object]]:
++        core = preparer.directory / "sources/egglog-core"
++        core.mkdir()
++        (core / "Cargo.lock").write_bytes(core_lock)
++        receipt: dict[str, object] = {"prepared_files": preparation.CORE_PINS}
++        preparation.write_json(preparer.directory / "core-repair.json", receipt)
++        return core, receipt
++
++    monkeypatch.setattr(preparation, "prepare_core", core_source)
+ 
+     def step(self: preparation.Preparation, name: str, command: list[str], **kwargs: object) -> str:
+         commands.append((name, command))
+@@ -111,12 +136,18 @@
+             Path(command[command.index("--output") + 1]).write_bytes(archive.read_bytes())
+         if name == "build":
+             binary = build / "debug/eggcc"
+-            binary.parent.mkdir(parents=True)
++            binary.parent.mkdir(parents=True, exist_ok=True)
+             binary.write_bytes(b"built compiler")
+             if not omit_tiger:
+                 tiger = output / "sources/eggcc/target/debug/tiger"
+                 tiger.parent.mkdir(parents=True)
+                 tiger.write_bytes(b"built native Tiger")
++        if name == "core-regression":
++            return "test result: ok. 1 passed; 0 failed; 0 ignored\n"
++        if name == "clone-target":
++            import shutil
++
++            shutil.copytree(command[-2], command[-1])
+         return ""
+ 
+     monkeypatch.setattr(preparation.Preparation, "step", step)
+@@ -125,7 +156,42 @@
+         pytest.fail("in-process preparation must use the coordinator's existing job slot")
+ 
+     monkeypatch.setattr(preparation, "exclusive_job", no_nested_lock)
+-    result = preparation.prepare_eggcc(output, engine, build_root=build)
++    previous = None
++    previous_hashes: dict[Path, str] = {}
++    if continuation:
++        previous = tmp_path / "benchmarks/local/reproduction/previous"
++        old_source = previous / "sources/eggcc"
++        old_source.mkdir(parents=True)
++        (old_source / "Cargo.lock").write_bytes(lock)
++        (old_source / "source.rs").write_bytes(b"original prepared source")
++        (previous / f"eggcc-{preparation.REVISION}.tar.gz").write_bytes(archive.read_bytes())
++        old_binary = previous / "cargo-target/debug/eggcc"
++        old_binary.parent.mkdir(parents=True)
++        old_binary.write_bytes(b"old compiler, preserved")
++        products = {str(old_binary): preparation.sha256_file(old_binary)}
++        preparation.write_json(previous / "build-products.json", products)
++        preparation.write_json(
++            previous / "prepared-source.json",
++            {name: preparation.sha256_file(old_source / name) for name in ("Cargo.lock", "source.rs")},
++        )
++        preparation.write_json(
++            previous / "preparation.json",
++            {
++                "status": "success",
++                "revision": preparation.REVISION,
++                "checkout": str(old_source),
++                "build_root": str(previous / "cargo-target"),
++                "binary": str(old_binary),
++                "artifacts": products,
++            },
++        )
++        previous_hashes = {path: preparation.sha256_file(path) for path in previous.rglob("*") if path.is_file()}
++    result = preparation.prepare_eggcc(output, engine, build_root=build, continue_from=previous)
++    assert all(preparation.sha256_file(path) == digest for path, digest in previous_hashes.items())
++    if continuation:
++        assert previous is not None
++        assert "download-source" not in dict(commands)
++        assert dict(commands)["clone-target"] == ["/bin/cp", "-cR", str(previous / "cargo-target"), str(build)]
+     assert result["configuration_blockers"][0]["configuration"] == {
+         "native_options": ["--tiger-ilp", "--ilp-solver", "gurobi"]
+     }
+@@ -145,6 +211,15 @@
+     ):
+         assert flag in build_command
+     assert all("gurobi" not in command and "--run-mode" not in command for _, command in commands)
++    assert f"CARGO_HOME={output / 'cargo-home'}" in build_command
++    assert dict(commands)["core-regression"][-2:] == ["--", "--exact"]
++    assert preparation.REGRESSION in dict(commands)["core-regression"]
++    assert [name for name, _ in commands].index("core-regression") < [name for name, _ in commands].index("build")
++    assert preparation.repaired_lock(lock.decode()) == (output / "Cargo.lock").read_text()
++    assert all(
++        f'{name} = {{ path = "../egglog-core' in (output / "sources/eggcc/Cargo.toml").read_text()
++        for name in ("egglog", "egglog-ast", "egglog-reports")
++    )
+     if omit_tiger:
+         assert result["status"] == "blocked" and "native executable" in result["reason"]
+         assert not (output / "settings.json").exists()
+@@ -154,3 +229,164 @@
+         assert settings["paths"]["checkout"] == str(output / "sources/eggcc")
+         assert settings["paths"]["binary"] == str(build / "debug/eggcc")
+         assert settings["configuration_blockers"] == result["configuration_blockers"]
++
++
++def test_lock_changes_only_exact_core_identities() -> None:
++    source = original_lock().decode()
++    derived = preparation.repaired_lock(source)
++    assert derived == source.replace(f'source = "{preparation.CORE_SOURCE}"\n', "")
++    assert tomllib.loads(derived)["package"][-1] == {"name": "unrelated", "version": "1.2.3"}
++    for wrong in (
++        source.replace("egglog-ast", "other"),
++        source.replace("2.0.0", "2.0.1", 1),
++        source.replace(preparation.CORE_REVISION, "0" * 40),
++    ):
++        with pytest.raises(ValueError, match="core"):
++            preparation.repaired_lock(wrong)
++
++
++def test_upstream_fixture_and_regression_are_exact() -> None:
++    path = preparation.ROOT / preparation.REPAIR_FIXTURE
++    assert preparation.sha256_file(path) == preparation.REPAIR_SHA256
++    patch = path.read_text()
++    assert f"From {preparation.REPAIR_REVISION} " in patch
++    assert "fn " + preparation.REGRESSION.split("::")[-1] + "()" in patch
++    production = patch.split("diff --git a/core-relations/src/hash_index/tests.rs")[0]
++    added = [line for line in production.splitlines() if line.startswith("+") and not line.startswith("+++")]
++    assert len(added) == 5
++    assert "+                group.sort_unstable_by_key(|&(_, row)| row);" in added
++    assert "             pairs.dedup();" in production
++    assert "+    assert_eq!(row_ids, expected);" in patch
++
++
++def test_cache_seed_is_private_checked_and_bounded(tmp_path: Path) -> None:
++    output, cache = tmp_path / "output", tmp_path / "old-cache"
++    output.mkdir()
++    preparer = preparation.Preparation(output)
++    source = cache / "registry/cache/index.crates.io-test/tiny-1.0.0.crate"
++    source.parent.mkdir(parents=True)
++    source.write_bytes(b"pinned archive")
++    index = cache / "registry/index/index.crates.io-test"
++    (index / ".cache/ti/ny").mkdir(parents=True)
++    (index / ".cache/ti/ny/tiny").write_bytes(b"index")
++    (index / "config.json").write_text("{}")
++    lock = tmp_path / "Cargo.lock"
++    lock.write_text(
++        '[[package]]\nname="tiny"\nversion="1.0.0"\n'
++        'source="registry+https://github.com/rust-lang/crates.io-index"\n'
++        f'checksum="{preparation.sha256_file(source)}"\n'
++    )
++    home = preparation.seed_cargo_cache(preparer, cache, [lock, lock], timeout_sec=60)
++    copied = home / source.relative_to(cache)
++    assert copied.read_bytes() == source.read_bytes()
++    assert copied.stat().st_ino != source.stat().st_ino
++    assert not (home / "config.toml").exists()
++    copied.write_bytes(b"new cache writes cannot alter old bytes")
++    assert source.read_bytes() == b"pinned archive"
++    source.write_bytes(b"changed archive")
++    other = tmp_path / "other"
++    other.mkdir()
++    with pytest.raises(ValueError, match="locked checksum"):
++        preparation.seed_cargo_cache(preparation.Preparation(other), cache, [lock], timeout_sec=60)
++
++
++def test_continuation_pins_source_products_and_original_archive(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    previous = tmp_path / "previous"
++    checkout = previous / "sources/eggcc"
++    checkout.mkdir(parents=True)
++    (checkout / "Cargo.lock").write_bytes(original_lock())
++    (checkout / "source.rs").write_bytes(b"instrumented source")
++    archive = previous / f"eggcc-{preparation.REVISION}.tar.gz"
++    archive.write_bytes(b"pinned archive")
++    monkeypatch.setattr(preparation, "ARCHIVE_SHA256", preparation.sha256_file(archive))
++    monkeypatch.setattr(preparation, "LOCK_SHA256", preparation.sha256_file(checkout / "Cargo.lock"))
++    binary = previous / "target/debug/eggcc"
++    binary.parent.mkdir(parents=True)
++    binary.write_bytes(b"original binary")
++    products = {str(binary): preparation.sha256_file(binary)}
++    receipt = {"status": "success", "revision": preparation.REVISION, "checkout": str(checkout), "artifacts": products}
++    preparation.write_json(previous / "preparation.json", receipt)
++    preparation.write_json(previous / "build-products.json", products)
++    preparation.write_json(
++        previous / "prepared-source.json",
++        {name: preparation.sha256_file(checkout / name) for name in ("Cargo.lock", "source.rs")},
++    )
++    assert preparation.verify_continuation(previous) == receipt
++    (checkout / "source.rs").write_bytes(b"drift")
++    with pytest.raises(ValueError, match="prepared source changed"):
++        preparation.verify_continuation(previous)
++    (checkout / "source.rs").write_bytes(b"instrumented source")
++    binary.write_bytes(b"drift")
++    with pytest.raises(ValueError, match="build product changed"):
++        preparation.verify_continuation(previous)
++
++
++@pytest.mark.parametrize("failure", ["source-pin", "unexpected-file", "none"])
++def test_core_acquisition_pins_revision_and_limits_patch_files(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
++) -> None:
++    output = tmp_path / "output"
++    output.mkdir()
++    preparer = preparation.Preparation(output)
++    fixture = tmp_path / preparation.REPAIR_FIXTURE
++    fixture.parent.mkdir(parents=True)
++    fixture.write_bytes(b"controlled patch")
++    monkeypatch.setattr(preparation, "ROOT", tmp_path)
++    monkeypatch.setattr(preparation, "REPAIR_SHA256", preparation.sha256_file(fixture))
++    originals = {
++        "Cargo.lock": b"original lock",
++        "core-relations/src/hash_index/mod.rs": b"original code",
++        "core-relations/src/hash_index/tests.rs": b"original tests",
++        "unrelated.rs": b"unchanged",
++    }
++    pins = {name: hashlib.sha256(data).hexdigest() for name, data in originals.items() if name != "unrelated.rs"}
++    monkeypatch.setattr(preparation, "CORE_PINS", pins)
++    commands: list[str] = []
++
++    def step(self: preparation.Preparation, name: str, command: list[str], **kwargs: object) -> str:
++        commands.append(name)
++        core = output / "sources/egglog-core"
++        if name == "core-checkout":
++            for relative, data in originals.items():
++                path = core / relative
++                path.parent.mkdir(parents=True, exist_ok=True)
++                path.write_bytes(data)
++            if failure == "source-pin":
++                (core / "Cargo.lock").write_bytes(b"drift")
++        if name == "core-revision":
++            return preparation.CORE_REVISION
++        if name == "core-files":
++            return "\n".join(originals)
++        if name == "core-patch":
++            for relative in list(pins)[1:]:
++                (core / relative).write_bytes(originals[relative] + b" exact upstream patch")
++            if failure == "unexpected-file":
++                (core / "unrelated.rs").write_bytes(b"unexpected change")
++        return ""
++
++    monkeypatch.setattr(preparation.Preparation, "step", step)
++    if failure != "none":
++        with pytest.raises(ValueError, match="source pin|unexpected source"):
++            preparation.prepare_core(preparer, tmp_path / "empty-cache", timeout_sec=60)
++        assert not (output / "core-repair.json").exists()
++        if failure == "source-pin":
++            assert "core-patch" not in commands
++    else:
++        core, receipt = preparation.prepare_core(preparer, tmp_path / "empty-cache", timeout_sec=60)
++        assert receipt["base_revision"] == preparation.CORE_REVISION
++        assert receipt["upstream_commit"] == preparation.REPAIR_REVISION
++        assert receipt["original_files"]["Cargo.lock"] == receipt["prepared_files"]["Cargo.lock"]
++        assert (core / "unrelated.rs").read_bytes() == originals["unrelated.rs"]
++        assert commands.index("core-patch-check") < commands.index("core-patch")
++
++
++def test_cache_refuses_borrowed_git_store(tmp_path: Path) -> None:
++    cache, output = tmp_path / "cache", tmp_path / "output"
++    output.mkdir()
++    alternates = cache / "git/db/egg-smol-65fdca4a5529f39b/objects/info/alternates"
++    alternates.parent.mkdir(parents=True)
++    alternates.write_text("/old/cache/objects")
++    with pytest.raises(ValueError, match="borrow"):
++        preparation.seed_cargo_cache(preparation.Preparation(output), cache, [], timeout_sec=60)
+--- a/benchmarks/reproduction/eggcc-preparation.md
++++ b/benchmarks/reproduction/eggcc-preparation.md
+@@ -2,7 +2,7 @@
+ 
+ The new `scripts/reproduction_prepare_eggcc.py` implements the real acquisition,
+ instrumentation and build recipe that already produced a successful Statewalk
+-canary. It does not copy the previous compiler binary. **The new entry point
++canary. Each preparation requires a guarded compiler build. **The original entry point
+ successfully acquired and built the compiler on 2026-09-25**, in 106.8 seconds:
+ `benchmarks/local/reproduction/stages/eggcc-prerequisites/prepare/d6cd45c8d4e581fad03a3ed83179a6b716c4348d437526a2c63d0ba9d74a54b5/attempt-0001/`.
+ The full Statewalk population is now running with this durable environment;
+@@ -36,7 +36,8 @@
+ The root coordinator may call this directly while it owns the shared job slot:
+ 
+ ```python
+-prepare_eggcc(output, engine, build_root=optional_disposable_target, timeout_sec=600)
++prepare_eggcc(output, engine, build_root=optional_disposable_target, timeout_sec=600,
++              continue_from=optional_original_preparation)
+ ```
+ 
+ The API takes **no nested lock**. It returns a record with `status`, `reason`,
+@@ -72,18 +73,18 @@
+ `16be0063133ef0b8ba21cd75ee377002dc3ecbed`, then verifies the successful attempt's
+ SHA-256 `ced650bba88d7c12ce8091281660a26117ba83c68ad23281289c289ef129558c`.
+ Extraction requires ordinary files within the pinned archive root and records
+-all 763 original file hashes. The checked-in Cargo.lock remains
++all 763 original file hashes. The original Cargo.lock is retained with SHA-256
+ `271911b11aa595cb22c9bb55915580a6afa7bec3dc8ccd0bf6e284381c916272`.
++New preparations derive a separate lock for the correction described below.
+ Archive or lock drift is an explicit failure, not an automatic dependency update.
+ 
+-The only patches are the existing isolated `[workspace]` declaration and
++The Eggcc source patches retain the existing isolated `[workspace]` declaration and
+ observation instrumentation returned by the actual
+ `scripts/eggcc_churchroad_complete.py:patched_eggcc_sources`. The preparer does
+ not duplicate or rewrite the instrumentation/extraction algorithm. It records
+ reversible diffs and hashes before and after applying them to acquired sources.
+ 
+-The original successful command is preserved, with only the fresh Cargo target
+-path changed:
++The historical successful build command was:
+ 
+ ```sh
+ env LLVM_SYS_180_PREFIX=/opt/homebrew/opt/llvm@18 \
+@@ -125,8 +126,96 @@
+ 
+ ## Lightweight validation
+ 
+-Five new tests pass: archive hash refusal, traversal refusal, durable/fresh path
+-requirements, exact source-build command and no nested lock, explicit Gurobi
+-blocker, and failure to publish settings if Tiger is missing. The success and
+-missing-Tiger cases are parameterized. Ruff lint/format and Mypy pass. Native
+-children are mocked, so these tests establish the preparation contract only.
++Focused tests cover acquisition pins, traversal refusal, fresh paths, exact
++source-build commands, no nested lock, Gurobi metadata, missing Tiger, private
++cache copies, continuation immutability, narrow dependency identity changes,
++and the exact upstream patch/regression. Native children are mocked; these
++tests establish preparation contracts, not corrected native behavior.
++
++
++## Pinned column-index correction
++
++The retained Cordic diagnostic `benchmarks/local/reproduction/diagnostics/eggcc-cordic-backtrace-0002/`
++failed in `SortedOffsetSlice::new_unchecked` through `SubsetBuffer::make_ref`
++and `ColumnIndex::get_subset`, with offsets `[151, 38, 151, 478]`. This is a
++source-engine failure, before the selected-output replay stage.
++
++New preparations backport only the five production lines and original regression
++from [upstream commit 201579a](https://github.com/egraphs-good/egglog/commit/201579afd2b8b646fa518d3065bd319d1a084eba),
++part of [PR 914](https://github.com/egraphs-good/egglog/pull/914). Equal-value
++multi-column groups are sorted by row before the existing duplicate removal.
++Assertions, schedules, optimization rules, extractors and proof implementation
++remain unchanged. The exact upstream mail patch is tracked at
++`benchmarks/reproduction/fixtures/eggcc-core-row-order.patch`, SHA-256
++`84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495`.
++
++Eggcc remains at `16be0063133ef0b8ba21cd75ee377002dc3ecbed`, its Experimental
++dependency at `08771f9f69de51cc8cdc58e3760b7f00a03e40d8`, and core at
++`ebba7bb902bdc1b0f377b6bb22c06ac305912674` plus that patch. The new core checkout
++has independent Git metadata: its build script cannot accidentally identify
++this repository's HEAD. Revision and exact before-file hashes are checked before
++applying the patch. `core-repair.json` retains all original/prepared core file
++hashes and upstream provenance and is included in the published family identity.
++
++The fresh Eggcc workspace overrides the three core packages directly used by
++Experimental (`egglog`, `egglog-ast`, `egglog-reports`) under the original Git URL
++`https://github.com/saulshanabrook/egg-smol.git`. Their original workspace path
++edges keep all nine core packages together. Only those nine packages' Git source
++fields are removed in the derived Eggcc lock: names, versions, dependency lists,
++checksums and all other packages remain unchanged. The original archive/lock and
++reversible manifest/lock diffs are retained. No unrestricted Cargo update runs.
++
++The upstream regression executes first, with its own original core workspace
++lock (SHA-256 `466ad68262801a539f11e04a4537d9347c02019d25c480cefed62e67bc31b080`):
++
++```sh
++cargo +1.88.0 test --manifest-path FRESH_CORE/Cargo.toml --locked -j1 \
++  -p egglog-core-relations --lib \
++  hash_index::tests::multi_column_column_index_rebuild_orders_each_value_by_row \
++  -- --exact
++```
++
++The preparer requires exactly one passing test before the separate locked Eggcc
++build. Both steps retain commands, logs and guarded results; both use the fresh
++`CARGO_HOME`, existing LLVM settings and disabled Rust wrapper. All original
++locked core/Eggcc source files are checked again before settings are published.
++These preparation gates do not establish Cordic source/replay success or proof
++compatibility. Root must run the actual complete Cordic parent and ordinary
++replays with the resulting new identity. Old successful family observations
++remain associated with their original compiler identity.
++
++## Immutable incremental continuation
++
++To reuse the original successful preparation without changing it:
++
++```sh
++.venv/bin/python -m scripts.reproduction_prepare_eggcc \
++  --output benchmarks/local/reproduction/prerequisites/eggcc-pr914/attempt-NEW \
++  --continue-from ORIGINAL_PREPARATION_ENVIRONMENT \
++  --egglog target/release/egglog-experimental
++```
++
++The original success receipt, prepared source allowlist, product hashes and
++pinned archive/lock must still match. The new attempt re-extracts the retained
++original archive and applies the current capture instrumentation. It never
++builds inside the old source tree (Tiger also writes below that tree regardless
++of `CARGO_TARGET_DIR`). A guarded macOS `cp -cR` clones the old target into a
++fresh directory, using independent copy-on-write files and rejecting symlinks.
++Cargo may reuse eligible compiled dependencies; changed paths/identities can
++still require recompilation. A byte-identical old compiler cannot be published
++as repaired. The old receipt/source/product pins are verified again at completion.
++
++All Cargo work uses a fresh home. Cache seeding copies checksum-verified locked
++registry archives, their sparse index entries and the four original Git object
++stores; no mutable original cache path is given to Cargo. Git stores with
++symlinks or borrowed object stores are refused. Missing cache data may be
++acquired into the fresh home under the original locks. No cache configuration,
++old source checkout or old Tiger executable is reused in place.
++
++The original target measured about 1 GiB. Its clone initially shares physical
++blocks; new build outputs and unpacked private dependencies require additional
++space. Allow roughly 1–3 GiB of new allocation as a planning estimate, while the
++existing guard maintains its 10 GiB free-disk reserve. The source/regression/build
++steps retain the existing 5 GiB process-group ceiling, 2 GiB host reserve,
++warning-pressure allowance, one Cargo job and per-step timeout. The coordinator
++owns the shared lock; only the standalone CLI acquires it.
+--- /dev/null
++++ b/benchmarks/reproduction/fixtures/eggcc-core-row-order.patch
+@@ -0,0 +1,85 @@
++From 201579afd2b8b646fa518d3065bd319d1a084eba Mon Sep 17 00:00:00 2001
++From: Saul Shanabrook <s.shanabrook@gmail.com>
++Date: Tue, 26 May 2026 16:04:51 -0700
++Subject: [PATCH] Fix multi-column column index rebuild ordering
++
++---
++ core-relations/src/hash_index/mod.rs   |  5 +++
++ core-relations/src/hash_index/tests.rs | 44 +++++++++++++++++++++++++-
++ 2 files changed, 48 insertions(+), 1 deletion(-)
++
++diff --git a/core-relations/src/hash_index/mod.rs b/core-relations/src/hash_index/mod.rs
++index dfa7b93a2..edaf44fd1 100644
++--- a/core-relations/src/hash_index/mod.rs
+++++ b/core-relations/src/hash_index/mod.rs
++@@ -350,6 +350,11 @@ impl IndexBase for ColumnIndex {
++ 
++         radix_sort_pairs_by_value(&mut pairs);
++         if cols.len() > 1 {
+++            // Multi-column collection is column-major, so a stable value sort
+++            // can leave each value's rows out of order across columns.
+++            for group in pairs.chunk_by_mut(|a, b| a.0 == b.0) {
+++                group.sort_unstable_by_key(|&(_, row)| row);
+++            }
++             // Remove duplicates (same value in multiple columns of the same row).
++             pairs.dedup();
++         }
++diff --git a/core-relations/src/hash_index/tests.rs b/core-relations/src/hash_index/tests.rs
++index 91cbfb833..07006c719 100644
++--- a/core-relations/src/hash_index/tests.rs
+++++ b/core-relations/src/hash_index/tests.rs
++@@ -1,7 +1,8 @@
++-use crate::numeric_id::NumericId;
+++use crate::{numeric_id::NumericId, offsets::Offsets};
++ 
++ use crate::{
++     TupleIndex,
+++    hash_index::ColumnIndex,
++     table_shortcuts::{fill_table, v},
++     table_spec::{ColumnId, WrappedTable},
++ };
++@@ -89,3 +90,44 @@ fn basic_updates() {
++         }
++     }
++ }
+++
+++#[test]
+++fn multi_column_column_index_rebuild_orders_each_value_by_row() {
+++    let rows = (0..128).map(|i| {
+++        let left = if i >= 96 { v(7) } else { v(1_000 + i) };
+++        let right = if i < 32 { v(7) } else { v(2_000 + i) };
+++        vec![v(i), left, right]
+++    });
+++    let mut table = WrappedTable::new(fill_table(rows, 1, None, |old, new| {
+++        assert_eq!(old, new, "no conflicts in this test");
+++        None
+++    }));
+++    let mut index = Index::new(vec![ColumnId::new(1), ColumnId::new(2)], ColumnIndex::new());
+++    index.refresh(table.as_ref());
+++
+++    empty_execution_state!(es);
+++    let start_version = table.version().major;
+++    while table.version().major == start_version {
+++        table.new_buffer().stage_remove(&[v(0)]);
+++        table.merge(&mut es);
+++        table.new_buffer().stage_insert(&[v(0), v(1000), v(7)]);
+++        table.merge(&mut es);
+++    }
+++
+++    index.refresh(table.as_ref());
+++    let key = v(7);
+++    let subset = index.get_subset(&key).unwrap();
+++    let mut row_ids = Vec::new();
+++    subset.offsets(|row_id| row_ids.push(row_id.index()));
+++
+++    let mut expected = Vec::new();
+++    table
+++        .scan(table.all().as_ref())
+++        .iter()
+++        .for_each(|(row_id, row)| {
+++            if row[1] == key || row[2] == key {
+++                expected.push(row_id.index());
+++            }
+++        });
+++    assert_eq!(row_ids, expected);
+++}

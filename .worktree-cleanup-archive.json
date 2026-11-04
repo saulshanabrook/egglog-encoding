@@ -1,0 +1,635 @@
+{
+  "archived_at": "2026-11-04T12:30:13.373866-08:00",
+  "original_path": "/Users/saul/p/wt/egglog-encoding/eggcc-core-row-order",
+  "original_head": null,
+  "original_branch": null,
+  "staged_tree": null,
+  "staged_commit": null,
+  "kind": "standalone partial source snapshot; no original Git metadata",
+  "note": "Historical experiment archive, not a claim that checks pass. Build/cache directories, Finder files, Python bytecode, and regenerated runtime/rt.o and runtime/rt.bc were excluded. Tracked source and final working files are preserved; staged state is an ancestor commit when it differs from HEAD.",
+  "files": [
+    {
+      "path": ".baseline/benchmarks/reproduction/eggcc-preparation.md",
+      "mode": "100644",
+      "git_blob": "829b964848078638498d406025f873dcda2b742b",
+      "sha256": "67817544c1dc4579d5e509d9d2e4e10aade0f2f3a0dc50ed8d27d6a35b564dbb",
+      "bytes": 6651
+    },
+    {
+      "path": ".baseline/scripts/reproduction_prepare_eggcc.py",
+      "mode": "100644",
+      "git_blob": "9b534a9a0e61b0a6cff5eadbfb2e521c54ba6ebd",
+      "sha256": "84d8327858425e16611d08774fe9b50cf04e6d995fba95552fadfd56f1e41807",
+      "bytes": 12048
+    },
+    {
+      "path": ".baseline/tests/test_reproduction_prepare_eggcc.py",
+      "mode": "100644",
+      "git_blob": "5b5b05360995e9818881c0560e4df2a14675b087",
+      "sha256": "d25716b2a03161f0679057d95a73d03fc11bb61724af7ed098a04fc421617d69",
+      "bytes": 6877
+    },
+    {
+      "path": "HANDOFF.md",
+      "mode": "100644",
+      "git_blob": "2e9d5811d6a785a5fe29eb4961dded986b69ed99",
+      "sha256": "2f74eb2fa8fc760a1f0ed705c3a08edb0f0eaaf8bf69aeef2566011390e9756a",
+      "bytes": 3763
+    },
+    {
+      "path": "benchmarking/__init__.py",
+      "mode": "100644",
+      "git_blob": "c604498e44420b286d7d212a24b04f2b53f6dbfd",
+      "sha256": "37dfb03a41db4e970329742b74c7afbd4e9824ce50f8ce5d774d2bac5a653999",
+      "bytes": 313
+    },
+    {
+      "path": "benchmarking/admission.py",
+      "mode": "100644",
+      "git_blob": "7c3e937f0038b1acec3680390ec2d260dd59a2a5",
+      "sha256": "5cd4424fde9dc68e90810c76e3ff2911d02a076a7c133e605fab19b924d81ba8",
+      "bytes": 6095
+    },
+    {
+      "path": "benchmarking/baseline_selection.py",
+      "mode": "100644",
+      "git_blob": "4666ae8390f96922ea0ab69b86fd9d15bbd09b98",
+      "sha256": "55fa0fe7d1e80e48521bdd7a7605a25be87d7331425789ef608031aa2e3f9717",
+      "bytes": 14727
+    },
+    {
+      "path": "benchmarking/benchmark.py",
+      "mode": "100644",
+      "git_blob": "a07f4970c057b4d280935035ea0dd39a74a9dc9f",
+      "sha256": "df6f33d4c8d8ad0422862ba7b691b23a6ec00499cb6e8a88f811e903671fe413",
+      "bytes": 18129
+    },
+    {
+      "path": "benchmarking/collection.py",
+      "mode": "100644",
+      "git_blob": "e7a738d04f0ff1aa6d2c1fcd8e542f0de49cf176",
+      "sha256": "c8d238dbdfa1cde54300e02442e675701c2ed37f99c5d2fe28c6d385384a8177",
+      "bytes": 23491
+    },
+    {
+      "path": "benchmarking/engines.py",
+      "mode": "100644",
+      "git_blob": "da641f28a3cfee125abf98bab232cc27c88242f7",
+      "sha256": "ff65737f4f413c02eab8fd250470f96dba4bb6d5ee2a00c9ecc7b08ebe0a30a0",
+      "bytes": 1945
+    },
+    {
+      "path": "benchmarking/math_workloads.py",
+      "mode": "100644",
+      "git_blob": "e96a4531780b81ad010b1f4894e32ca521fc1332",
+      "sha256": "c8d0cc256ff0bb54a051725151dbaf533c710aeb4c020b3fcb22582cffe90a6c",
+      "bytes": 11931
+    },
+    {
+      "path": "benchmarking/memory_guard.py",
+      "mode": "100644",
+      "git_blob": "ce266ae4bd7740ee0b5b91a1ada496f4d3a04989",
+      "sha256": "5384d741dccbe32701b1d77f6f13f9b3119f59f3d5efe80b27b75c0571b52a68",
+      "bytes": 7581
+    },
+    {
+      "path": "benchmarking/models.py",
+      "mode": "100644",
+      "git_blob": "fd88bd7547661865823c2795ca29f715db5ea249",
+      "sha256": "79a37da7d9b7b09a78d66862fa11a20d013af5b0cb9220094c77d85226a84269",
+      "bytes": 4781
+    },
+    {
+      "path": "benchmarking/pilot.py",
+      "mode": "100644",
+      "git_blob": "807665e246233664eff32a27a802e9d430bac041",
+      "sha256": "423a2790fa38ba796173743ae0e41bb9b04363dcd537b1728eba116ddfe0a253",
+      "bytes": 27193
+    },
+    {
+      "path": "benchmarking/processes.py",
+      "mode": "100644",
+      "git_blob": "80e169ee8aeb6fa4415b50d911e405e124b5bbd0",
+      "sha256": "21f1184ba33fa8a45a7bcfcae32e9b4568c15c93cfa04f47a0b77deddea8e073",
+      "bytes": 8556
+    },
+    {
+      "path": "benchmarking/profile.py",
+      "mode": "100644",
+      "git_blob": "824ebd3e934461fddbc986c4ae2f1b2e504ef725",
+      "sha256": "8b10463e72c0a8d4b172fde2fdcc28f58fba3da892ac2eb5ab0de8c8616ff8e0",
+      "bytes": 16362
+    },
+    {
+      "path": "benchmarking/reports/__init__.py",
+      "mode": "100644",
+      "git_blob": "1eda1a217f6f1061783a356611d00cd0fc5cda12",
+      "sha256": "2003ed28278e5cfe78056830036b95e0bf88745492f86cf18d2932bc7c159fdc",
+      "bytes": 243
+    },
+    {
+      "path": "benchmarking/reports/analysis.py",
+      "mode": "100644",
+      "git_blob": "d2c956334404ad947ed798116d53c9ffebfb6b47",
+      "sha256": "56602677772db1464b047d052f45055c76903ef16a919d50ca32148c98c8e451",
+      "bytes": 21218
+    },
+    {
+      "path": "benchmarking/reports/catalog.py",
+      "mode": "100644",
+      "git_blob": "3a824008a43866b5302cf9b5d58fd5277985cc15",
+      "sha256": "76c115c53260141ebcdd6e92dca73c461e55a24b2f5ecacd68f0330e0f845aa9",
+      "bytes": 2565
+    },
+    {
+      "path": "benchmarking/reports/interactive.css",
+      "mode": "100644",
+      "git_blob": "f4662ced43e8f3fbab53007635da36ca8299c80d",
+      "sha256": "de43990ef65621e96a37192434d233cf885550edde24da1f1a253cf5a6f5f766",
+      "bytes": 654
+    },
+    {
+      "path": "benchmarking/reports/interactive.js",
+      "mode": "100644",
+      "git_blob": "b33777c1a8a04990b8eef0d26326b670d2687e61",
+      "sha256": "eb42cce57af64b10a7ccaf2ea188508afaa8bc826966600db28b386961fa8509",
+      "bytes": 7317
+    },
+    {
+      "path": "benchmarking/reports/interactive.py",
+      "mode": "100644",
+      "git_blob": "c0d3853c9269e9658b98a0f05de8d120df1c3083",
+      "sha256": "a14b8ddff51bbea50b7b987a92c2ed638b31e6d0c73ab25edfe4c2c4b8827c6d",
+      "bytes": 5858
+    },
+    {
+      "path": "benchmarking/reports/interactive_runtime.py",
+      "mode": "100644",
+      "git_blob": "075a2dba7dc5fbde42aaba3a340bd64b628e9bac",
+      "sha256": "e649b243da94b59ed5601376b107bd8174bcc602c1acfe7bb8c72b7abd26310a",
+      "bytes": 21760
+    },
+    {
+      "path": "benchmarking/reports/presentation.py",
+      "mode": "100644",
+      "git_blob": "cfaee63a6daf89c4dbe0b8669b2b29923e12eaef",
+      "sha256": "9267083688172cadce68a5292c541c5b977dcec797a2f7e139b4feed76ceb16d",
+      "bytes": 32481
+    },
+    {
+      "path": "benchmarking/reports/render.py",
+      "mode": "100644",
+      "git_blob": "ec30fce033ca87083c24bbb24657f721d62e7c6a",
+      "sha256": "1a26a1d7b5393bb11f0b70d4bd46cf2915eeb4a1ba00631baf77a0753c194383",
+      "bytes": 9255
+    },
+    {
+      "path": "benchmarking/reports/store.py",
+      "mode": "100644",
+      "git_blob": "c639f5dcab8cfc65cff253fe1753c0796a401f98",
+      "sha256": "59cac0d0bb1874917a5d300ad5224bef4d10521c66ca58eda6fb482e2c18b0c6",
+      "bytes": 9789
+    },
+    {
+      "path": "benchmarking/samply_analysis.py",
+      "mode": "100644",
+      "git_blob": "1069d06624fc3dc50ada4e5b9ee2e2d481a92980",
+      "sha256": "9909294ce1087ff7556e991f6df42399e551642f7b6cac254c236b3453b57a85",
+      "bytes": 17162
+    },
+    {
+      "path": "benchmarking/suites.py",
+      "mode": "100644",
+      "git_blob": "fac3d9d50cc6c7f46b67be8be24421f873ccd4ce",
+      "sha256": "df0c917b3de2bfbbde5c02849d9ac1213685a12b53d78e6ac19221e03e2017e9",
+      "bytes": 20287
+    },
+    {
+      "path": "benchmarking/targets.py",
+      "mode": "100644",
+      "git_blob": "a412e69d9f2dc33b39d466469038c83ed6c796cd",
+      "sha256": "63b6ce0aff4de9a524ab24f2b1a903241199f42bef0aae70ff8da67ad8e0cebe",
+      "bytes": 11665
+    },
+    {
+      "path": "benchmarking/workloads.py",
+      "mode": "100644",
+      "git_blob": "283b28c931af208bf0d9bf7cbc004910998d852c",
+      "sha256": "f55ebda8f582dc7372c2846750f070d78a8eb0a7c7a6485d1fe92b0a5d1e0def",
+      "bytes": 6873
+    },
+    {
+      "path": "benchmarks/reproduction/eggcc-preparation.md",
+      "mode": "100644",
+      "git_blob": "50cbece7db071e0145f393f20817dbcc4ecb629e",
+      "sha256": "19d00d84cb92436997d529c9bd2eefa8e4481f792557d472f138600c202ddb41",
+      "bytes": 11900
+    },
+    {
+      "path": "benchmarks/reproduction/fixtures/eggcc-core-row-order.patch",
+      "mode": "100644",
+      "git_blob": "10810b6b531ee707ca4b18ebd75f6441da678631",
+      "sha256": "84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495",
+      "bytes": 3095
+    },
+    {
+      "path": "pyproject.toml",
+      "mode": "100644",
+      "git_blob": "b2619ca7a852ee83c76b78b7417b000d603accff",
+      "sha256": "ae362d7280ab44dbf132e70f9b3c2433b8dfb53d8f1a9284715f80e45f79ef0c",
+      "bytes": 1231
+    },
+    {
+      "path": "review/PROPOSAL.md",
+      "mode": "100644",
+      "git_blob": "a6e1b5c8f3fe2b8f156df73976925a9984a3c458",
+      "sha256": "c33d70fedce37d574761bd02a7539c176249b091e0288ae1ca429225027a9ec2",
+      "bytes": 1582
+    },
+    {
+      "path": "review/baseline.json",
+      "mode": "100644",
+      "git_blob": "99f093e57ae0a5e669053235378fb4b0697dd394",
+      "sha256": "afbe8e1b9956f405b82109a90aa173403d23d1bd2abe46c7fbb041872161d9cd",
+      "bytes": 346
+    },
+    {
+      "path": "review/core-row-order.patch",
+      "mode": "100644",
+      "git_blob": "74fc26a31ade548f86d5f721c97fc7c96be0bea3",
+      "sha256": "ad254b06c601df6a05518c7b79f9b51796be5809f058480412945710589cb244",
+      "bytes": 48682
+    },
+    {
+      "path": "review/exact-patch-check/Cargo.lock",
+      "mode": "100644",
+      "git_blob": "3129291f745c155b191d2648a642866106bc3a73",
+      "sha256": "466ad68262801a539f11e04a4537d9347c02019d25c480cefed62e67bc31b080",
+      "bytes": 53978
+    },
+    {
+      "path": "review/exact-patch-check/core-relations/src/hash_index/mod.rs",
+      "mode": "100644",
+      "git_blob": "5e15a1b0e1f9f27e2a13a63455147a6f41c46055",
+      "sha256": "0d49bcc39665a98e0b63d33a7100ff7fcf8043a6ca1bc6ff7a0a8461e2da8537",
+      "bytes": 36566
+    },
+    {
+      "path": "review/exact-patch-check/core-relations/src/hash_index/tests.rs",
+      "mode": "100644",
+      "git_blob": "07006c71906edd34b575b0be6fd48c1017861a31",
+      "sha256": "d30fe19379f57ffce747074b72790b8b3c1b1d98f3b073d233f7a2b80ac977bc",
+      "bytes": 4761
+    },
+    {
+      "path": "review/handoff.json",
+      "mode": "100644",
+      "git_blob": "c11f4f99efa5c3f14b82f58eb2aba7d861cb6bca",
+      "sha256": "933ba902fe1e44dcb64a82ab700e49d9aa6fd129cecc06642b10f27b20ad93b9",
+      "bytes": 1886
+    },
+    {
+      "path": "review/offline-evidence.json",
+      "mode": "100644",
+      "git_blob": "c1c6abaedbb3b32767514d312e26c7ce24ce28e3",
+      "sha256": "3792b82f306a2a2387bf0bc69a08c385e036950813a6e2c1ed70a2eb6176420d",
+      "bytes": 1577
+    },
+    {
+      "path": "review/upstream.patch",
+      "mode": "100644",
+      "git_blob": "10810b6b531ee707ca4b18ebd75f6441da678631",
+      "sha256": "84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495",
+      "bytes": 3095
+    },
+    {
+      "path": "scripts/__init__.py",
+      "mode": "100644",
+      "git_blob": "5146f4a585c25c50ed97ce7796d6fea8a2d41a3c",
+      "sha256": "0a5775df26b52c96c1b8087ecfdaece973d1964c9b24930a196e9711ec15d6b1",
+      "bytes": 62
+    },
+    {
+      "path": "scripts/dialegg_speq_complete.py",
+      "mode": "100644",
+      "git_blob": "8c2b487b34d81c436c3d13264e72f28b7df77d0b",
+      "sha256": "26af2c897b4b1ab60fea856d6051c9ef313638888ce0684a6f5628f219f67f8e",
+      "bytes": 31152
+    },
+    {
+      "path": "scripts/eggcc_churchroad_complete.py",
+      "mode": "100644",
+      "git_blob": "695c1177e8787b5103f1ba65420c8fff58f67728",
+      "sha256": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+      "bytes": 76507
+    },
+    {
+      "path": "scripts/hardboiled_replay.py",
+      "mode": "100644",
+      "git_blob": "94bff00648ba6f797d3a30334b706683a442e6c9",
+      "sha256": "46793002b89644893a5c1b1ebbc4fab688c94ff8eb2e910e10b6e2cc6da14ba8",
+      "bytes": 12857
+    },
+    {
+      "path": "scripts/misaal_reproduction.py",
+      "mode": "100644",
+      "git_blob": "e5dabc2e4ba06ffacecb2b459582805e9ad9a79f",
+      "sha256": "7d029981009587b6b537e4edf38ab5c6c713a2526eabb4516d1bba8ef9fd8ced",
+      "bytes": 61076
+    },
+    {
+      "path": "scripts/nightly_bench.py",
+      "mode": "100644",
+      "git_blob": "62c2a288791b447b7c001892dc1d3c6781748196",
+      "sha256": "22f8ff333aee25795da0fe0fb4a4f3ad07c9fcda010dde2898feaf7b467f7514",
+      "bytes": 5834
+    },
+    {
+      "path": "scripts/paper_benchmarks/__init__.py",
+      "mode": "100644",
+      "git_blob": "4419f98f93aacfcfe8c31068ad6c86b956f52db7",
+      "sha256": "1d8e9279e684236db5dae98f9de6a41189c7c2e3d42882c1d3e0a929776885dd",
+      "bytes": 59
+    },
+    {
+      "path": "scripts/paper_benchmarks/materialize.py",
+      "mode": "100644",
+      "git_blob": "475ea0723162a26effbd337324642b5d23f8e472",
+      "sha256": "3731e2dc5b96fc5ea5977c8e8ec6d669459a9dd1d53aa434230276365dcda3ef",
+      "bytes": 18565
+    },
+    {
+      "path": "scripts/paper_benchmarks/misaal_hvx_concat_harness.cpp",
+      "mode": "100644",
+      "git_blob": "1ec8402623b4b62365790b0529546c8cbc20e343",
+      "sha256": "cd84f0d9c5f56d5192e87b1b88245c0fe32fbb99febfffd38304616e0d987dcc",
+      "bytes": 7591
+    },
+    {
+      "path": "scripts/paper_benchmarks/record_speq.py",
+      "mode": "100644",
+      "git_blob": "cc3c1ad47f827efcb84bc6aaed8261f3f6cdf74b",
+      "sha256": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae",
+      "bytes": 37622
+    },
+    {
+      "path": "scripts/paper_benchmarks/speq_phi_fixtures.ll",
+      "mode": "100644",
+      "git_blob": "92ee17e4a21f5304a9b198f822d0dd032d4836f8",
+      "sha256": "4c3042f905b874432407877f1bb006f2ce69b494f2f13734090e5e1ce2e9c3c8",
+      "bytes": 2531
+    },
+    {
+      "path": "scripts/paper_benchmarks/speq_phi_harness.cpp",
+      "mode": "100644",
+      "git_blob": "e78c23606495f19435e8c671377754a218899a14",
+      "sha256": "0a22cd0d22e3fd68f0a8900c33b6e49ef3f3434636970a89bff513e09215187c",
+      "bytes": 3049
+    },
+    {
+      "path": "scripts/paper_benchmarks/speq_rev_plugin.cpp",
+      "mode": "100644",
+      "git_blob": "4c5117979a42ef2f98f3a30fa641f350827ff8ca",
+      "sha256": "09e04e5a08d91bd9591c187620975f05464697c8b87d23aeee41e5189350724a",
+      "bytes": 933
+    },
+    {
+      "path": "scripts/reproduction_continue_churchroad.py",
+      "mode": "100644",
+      "git_blob": "ed6e405f23555fcc70031f8ab84c89707d776882",
+      "sha256": "5675feed951c27afab6479a01ee06695522afd10bd02dcc41b5d746bcc8c5ee9",
+      "bytes": 13406
+    },
+    {
+      "path": "scripts/reproduction_continue_misaal_simd.py",
+      "mode": "100644",
+      "git_blob": "81da84210c996bf2bd86c4b440a44be9a5b1dadb",
+      "sha256": "90519aa8b39f33feab5837007ef6ce1ea0e84112285858f0cd77bf087d440138",
+      "bytes": 19439
+    },
+    {
+      "path": "scripts/reproduction_corpus.py",
+      "mode": "100644",
+      "git_blob": "aa1c6097cbae821936e0d9f359838fa8d7a1fefe",
+      "sha256": "0424bd679147f39e32a6ff39c9ef0994966e8be7cd9a663e55e2a8a7f5056fc6",
+      "bytes": 4548
+    },
+    {
+      "path": "scripts/reproduction_dispatch.py",
+      "mode": "100644",
+      "git_blob": "893b27839130a6c87f63fb47b2c6a95107edfe49",
+      "sha256": "1ed8c655068e4ebc02ff1158b3db3fa615404c61353fe46b7addd68078fa02e5",
+      "bytes": 5731
+    },
+    {
+      "path": "scripts/reproduction_inventory.py",
+      "mode": "100644",
+      "git_blob": "3d4446bf6ee44a560032eb63474c09ccac1895e7",
+      "sha256": "acf10fc3bf1556fcf0e726fae564f82db60dd9c7e7be1c9ff7b3217ffd50f512",
+      "bytes": 5865
+    },
+    {
+      "path": "scripts/reproduction_misaal_abi_gate.py",
+      "mode": "100644",
+      "git_blob": "21f3c896f797c675996c59d2b7368e4bad118be9",
+      "sha256": "d5fde79733170faa322554b19b5c5f3aa7fddc7c8ecbcd423bb0bf328231e011",
+      "bytes": 20759
+    },
+    {
+      "path": "scripts/reproduction_misaal_groups.py",
+      "mode": "100644",
+      "git_blob": "e4fb56a4bcc0d8436890010f4bb5caa0fee444a1",
+      "sha256": "9c566f67a5b0a526b1ce70d12f74e630d0eaa060c0d109d658e634dc8e975292",
+      "bytes": 23507
+    },
+    {
+      "path": "scripts/reproduction_misaal_hvx_diagnostic.py",
+      "mode": "100644",
+      "git_blob": "ff9613376099001a4841c90eba3231c1836787c9",
+      "sha256": "6e3951ea42883c6080e98f9012a06c5de326a07a80f8ab35fec8b0a9c854e27a",
+      "bytes": 12132
+    },
+    {
+      "path": "scripts/reproduction_misaal_hvx_lowering.py",
+      "mode": "100644",
+      "git_blob": "6322340fdd563f933b6672236f96291cc972e557",
+      "sha256": "1a4ed7497903dd6f9699da8adfdf05a00b55da2d198b2654be0c89b3b95516a6",
+      "bytes": 15511
+    },
+    {
+      "path": "scripts/reproduction_misaal_legalizer.py",
+      "mode": "100644",
+      "git_blob": "7ebb558a903cf6f7d39ced766fe12f265df215c1",
+      "sha256": "bc076dbbbc9bde8e529d157f33c3dbc88076adf468bc21146ab67c243914b974",
+      "bytes": 3197
+    },
+    {
+      "path": "scripts/reproduction_misaal_patterns.py",
+      "mode": "100644",
+      "git_blob": "11cbed15416bd12ecf9a42ae8962057a66a31afb",
+      "sha256": "4511c92e40a95b01730f88c8d6591c6e2ef2cee09b743c4a5b7f66d642dc5d08",
+      "bytes": 15688
+    },
+    {
+      "path": "scripts/reproduction_misaal_runtime.py",
+      "mode": "100644",
+      "git_blob": "d26e4c92127ae35d10c58393dee190d36d407efd",
+      "sha256": "4127fb0a45a1031a334efd13323648a6010256e9a83cff86737c045eb6254c0b",
+      "bytes": 23152
+    },
+    {
+      "path": "scripts/reproduction_preparation.py",
+      "mode": "100644",
+      "git_blob": "bcc4abdb801cd55dd06d3d94a791e81e4731e564",
+      "sha256": "15b573e3a980401a51b604ab96bb8c6f83cfb50ac165e4c7cf4c02425bf3764d",
+      "bytes": 15301
+    },
+    {
+      "path": "scripts/reproduction_prepare_churchroad.py",
+      "mode": "100644",
+      "git_blob": "f54b6da40f3c5ffbccff0b67d97be0702a92bfed",
+      "sha256": "81738dc916b5cb644393364a06c871fcc29bf48dd394160808068df047bdf03b",
+      "bytes": 23182
+    },
+    {
+      "path": "scripts/reproduction_prepare_dialegg.py",
+      "mode": "100644",
+      "git_blob": "53e322bbec38e4a656275326a2766ee7057f3837",
+      "sha256": "03b726bc948132f793d79691184c854930f9c73715e4dbb367f5590e331947c6",
+      "bytes": 14761
+    },
+    {
+      "path": "scripts/reproduction_prepare_eggcc.py",
+      "mode": "100644",
+      "git_blob": "82f1ff8f961e9355f356945a407f806d3dc91852",
+      "sha256": "a06a943be8c2dfe8ee60530750754df545d37675d833234e25c2b1086e98a22c",
+      "bytes": 26488
+    },
+    {
+      "path": "scripts/reproduction_prepare_hardboiled.py",
+      "mode": "100644",
+      "git_blob": "8bede7cacd5e69f1bcc738477c54dd9904100430",
+      "sha256": "e2cd287a707241f261088b356bbbc18dcccf2c45f876ab7506ab6d7a222335ba",
+      "bytes": 15140
+    },
+    {
+      "path": "scripts/reproduction_prepare_misaal.py",
+      "mode": "100644",
+      "git_blob": "5c7efc00c3bace685838ab016681f21fca25c262",
+      "sha256": "a21f47d829ac1c20ac0d7148e1e684fc779ea06a377c6519abc1985bfccb5b03",
+      "bytes": 30955
+    },
+    {
+      "path": "scripts/reproduction_prepare_misaal_arm.py",
+      "mode": "100644",
+      "git_blob": "a68c97399e00b25399f5a81b2659b09378496eed",
+      "sha256": "6735e0df9bcefa3af93679ac43e4fed66ff7054e1e1a9035d16e0e3817143f23",
+      "bytes": 19304
+    },
+    {
+      "path": "scripts/reproduction_prepare_misaal_cases.py",
+      "mode": "100644",
+      "git_blob": "2fb920b5585a470b2c402c29cd4cc37457be8df6",
+      "sha256": "e0d06fd47933d663f693d9770aef9349ebc23af9d63083adb71610ef281fef3b",
+      "bytes": 20858
+    },
+    {
+      "path": "scripts/reproduction_prepare_misaal_hvx.py",
+      "mode": "100644",
+      "git_blob": "d7da44df9b270300b37301679ab328cc07b46ebf",
+      "sha256": "f541dc6a26de3062bbc426cdf2249e139dd161502a713f778d577e44ba3e8cee",
+      "bytes": 19537
+    },
+    {
+      "path": "scripts/reproduction_prepare_misaal_racket.py",
+      "mode": "100644",
+      "git_blob": "c9e0ad9bcd663b2ca1702b8b425f32e0ba5d39d1",
+      "sha256": "4bbdfd2b190cdc8f69b53b84d7756b9ce7f2a6a74f85549dd33a07411b5fc59b",
+      "bytes": 40734
+    },
+    {
+      "path": "scripts/reproduction_prepare_speq.py",
+      "mode": "100644",
+      "git_blob": "e07c27ba1e1c01e431869b2c8b5aa78bcfcee7b1",
+      "sha256": "10895b888ad2badd0dfd573761ceb4a7f00db529af13ae64f34b7a5fbb24b312",
+      "bytes": 26710
+    },
+    {
+      "path": "scripts/reproduction_process.py",
+      "mode": "100644",
+      "git_blob": "34281b5e4be27e29b6160dab9d3ec88c1d3bb54b",
+      "sha256": "a873b771416ebc54f1e315283b09fee11ca65fc1a79025487b7a70b2181609e6",
+      "bytes": 15999
+    },
+    {
+      "path": "scripts/reproduction_stages.py",
+      "mode": "100644",
+      "git_blob": "dec157f7b9cd2d4c492d006097457aacab645d87",
+      "sha256": "c940465e4fc3d263fd8f789a7007110d961ac5abb108fcd448bb31b3decbb348",
+      "bytes": 5372
+    },
+    {
+      "path": "scripts/reproduction_validation.py",
+      "mode": "100644",
+      "git_blob": "82410b5b2d459ee76137dccf3142e7175c635114",
+      "sha256": "cc081922b95a761cdf0320299038143da1f3d27c7f1a6a7a0ccc077a498c2f74",
+      "bytes": 14594
+    },
+    {
+      "path": "scripts/speq_phi_diagnostic.py",
+      "mode": "100644",
+      "git_blob": "5432ffafadad091a0af7785b7394993c8f1825eb",
+      "sha256": "bf085d95b0b6739ca2b86f7fec273ebd13c6d05de0a38836afd3cd114d26a9d4",
+      "bytes": 6784
+    },
+    {
+      "path": "scripts/suite_acquisition.py",
+      "mode": "100644",
+      "git_blob": "597a1fe9fe6651b6dbc980e162039cbc0cabf1f8",
+      "sha256": "7abd61d5788923d3d1e8f495aeba27fc4679c5be96be6ccd00b95c16a005e7e4",
+      "bytes": 21100
+    },
+    {
+      "path": "scripts/suite_capture_dialegg_speq.py",
+      "mode": "100644",
+      "git_blob": "fd18ccc25baf56d66360bf9a725f52bf06bc33d2",
+      "sha256": "726f69e4496c3f312a66f87e56c3bbd930cb41e899224886f2ac4f188c5613d0",
+      "bytes": 42263
+    },
+    {
+      "path": "scripts/suite_capture_eggcc_churchroad.py",
+      "mode": "100644",
+      "git_blob": "9f02aad5206d1fe9b09646d365252c52379a792c",
+      "sha256": "ea9188ceeeeaaaeb0fbabf9fe9caa8c3fd26230dbf9100cf978367f684e09bf6",
+      "bytes": 43930
+    },
+    {
+      "path": "scripts/suite_capture_hardboiled_misaal.py",
+      "mode": "100644",
+      "git_blob": "5f9771cd861ffa8a0d908a7eeba41ed56793124b",
+      "sha256": "e126e41f61d67a24384e8e497266c542451b311ea07f934630e0141abac2c305",
+      "bytes": 52032
+    },
+    {
+      "path": "scripts/suite_reproduction.py",
+      "mode": "100644",
+      "git_blob": "f11f941143f90a4950e93a350c40d2b128958e33",
+      "sha256": "da37409931a706648b5f19f5e73866668f932eb487d6e65551ac12c18e780239",
+      "bytes": 27872
+    },
+    {
+      "path": "tests/__init__.py",
+      "mode": "100644",
+      "git_blob": "cf373300887ad9da39733cfa46597da5c1e14052",
+      "sha256": "e19d0e0659619944610f7a429d20a3ad3fb5815419c5f1037f7af4880e8229c0",
+      "bytes": 77
+    },
+    {
+      "path": "tests/test_reproduction_prepare_eggcc.py",
+      "mode": "100644",
+      "git_blob": "1f0a0a25cea5718f7f709a6bef9d9d422d19b3d3",
+      "sha256": "3ef367f8d48fbca2fc5c86d622e9316a3301898fa33d52026821965200dd3cbf",
+      "bytes": 18694
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "mirror": "/Users/saul/p/wt/egglog-encoding/eggcc-core-row-order",
+  "status": "prepared-not-native-validated",
+  "baseline_sha256": {
+    "scripts/reproduction_prepare_eggcc.py": "84d8327858425e16611d08774fe9b50cf04e6d995fba95552fadfd56f1e41807",
+    "tests/test_reproduction_prepare_eggcc.py": "d25716b2a03161f0679057d95a73d03fc11bb61724af7ed098a04fc421617d69",
+    "benchmarks/reproduction/eggcc-preparation.md": "67817544c1dc4579d5e509d9d2e4e10aade0f2f3a0dc50ed8d27d6a35b564dbb"
+  },
+  "files": {
+    "scripts/reproduction_prepare_eggcc.py": "a06a943be8c2dfe8ee60530750754df545d37675d833234e25c2b1086e98a22c",
+    "tests/test_reproduction_prepare_eggcc.py": "3ef367f8d48fbca2fc5c86d622e9316a3301898fa33d52026821965200dd3cbf",
+    "benchmarks/reproduction/eggcc-preparation.md": "19d00d84cb92436997d529c9bd2eefa8e4481f792557d472f138600c202ddb41",
+    "benchmarks/reproduction/fixtures/eggcc-core-row-order.patch": "84e6de41c4d7e4741773f58ed271f80072fb5ead1ed0c3b26ad6b0a591e93495"
+  },
+  "patch": "/Users/saul/p/wt/egglog-encoding/eggcc-core-row-order/review/core-row-order.patch",
+  "patch_sha256": "ad254b06c601df6a05518c7b79f9b51796be5809f058480412945710589cb244",
+  "checks": [
+    "14 focused mock tests passed",
+    "Ruff check/format passed",
+    "Mypy passed",
+    "exact upstream patch applies to copied ebba source",
+    "actual retained continuation identities verified",
+    "actual lock changes exactly9of291packages",
+    "git apply --check against unchanged root baselines passed"
+  ],
+  "native_executed": false,
+  "independent_review": "Cargo peer found no concrete blocker in preparer/tests/fixture; final delta adds post-build Eggcc source verification, root-cache symlink rejection, strict regression text and completes docs",
+  "pending": [
+    "guarded upstream regression",
+    "locked compiler build",
+    "actual Cordic parent and ordinary replay"
+  ]
+}
