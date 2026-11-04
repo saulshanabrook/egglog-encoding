@@ -1,0 +1,8 @@
+{
+  "source": "User steering while the first facts review was open",
+  "request": "Allow improvements to limits in the current disequality and injectivity encoding when they help EggCC or make reasoning more complete, including propagating a remaining child difference after other children are known equal.",
+  "clarification": "For f(a,b) != f(c,d) and a = c, the conclusion is b != d. This follows from congruence; it does not require f to be injective.",
+  "factsUpdatePending": false,
+  "proposedFact": "Improvements to the encoding are in scope when they help an EggCC case or close an explicitly defined reasoning gap; assess remaining-child disequality propagation and schedule closure, with automated edge-case checks for implemented changes and no claim of unrestricted completeness.",
+  "acceptedFactId": "encoding-gaps"
+}

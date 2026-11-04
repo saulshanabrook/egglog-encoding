@@ -1,0 +1,155 @@
+{
+  "memory_guard_absent": true,
+  "r2_binary": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+  "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+  "raytracing_requested": false,
+  "receipts": {
+    "context-negative": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+        "context-negative"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+        "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2"
+      },
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:53:48.431206Z",
+      "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "raytracing_requested": false,
+      "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "script_sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "started_utc": "2026-10-20T04:53:46.509664Z",
+      "stderr_sha256": "f2a650fdb96afd0ab466a95347ea8879734e6d268ff260d65a4dc1501a5cd94f",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 3600
+    },
+    "inspection": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+        "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2"
+      },
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:53:59.086816Z",
+      "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "raytracing_requested": false,
+      "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py",
+      "script_sha256": "46791f0ee7f17da78cc2169f4dc23bacc754a9b923213e00fe22b2f6161bd04c",
+      "started_utc": "2026-10-20T04:53:58.316772Z",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "5c755df497e7196264598a0159d68914da6b7d47d965f4ec6ed9010f80762be9",
+      "timed_out": false,
+      "timeout_s": 3600
+    },
+    "loop-negative": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+        "loop-negative"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+        "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2"
+      },
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:53:58.289422Z",
+      "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "raytracing_requested": false,
+      "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "script_sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "started_utc": "2026-10-20T04:53:48.459239Z",
+      "stderr_sha256": "3be5df96575753b33128008c850f713abe7dc02c7ee00f4f37285acc1438251f",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 3600
+    },
+    "negative": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+        "negative"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+        "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2"
+      },
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:53:46.481791Z",
+      "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "raytracing_requested": false,
+      "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "script_sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "started_utc": "2026-10-20T04:53:01.090737Z",
+      "stderr_sha256": "3ac43da9464240658b88226139a09a97f9d2491b4693e27f1e2235caec7a1a2a",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 3600
+    },
+    "positive": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+        "positive"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+        "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2"
+      },
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:53:01.055940Z",
+      "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "raytracing_requested": false,
+      "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "script_sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "started_utc": "2026-10-20T04:51:55.554159Z",
+      "stderr_sha256": "843eaa1634f02aee6f505ead0c69379a990e2dbdf40bab09173592fe6c0fd39b",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 3600
+    }
+  },
+  "schema_version": 1,
+  "status": "all-four-matrix-phases-and-inspection-passed",
+  "timing_collected": false
+}

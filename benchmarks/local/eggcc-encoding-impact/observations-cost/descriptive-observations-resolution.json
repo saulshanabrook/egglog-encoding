@@ -1,0 +1,72 @@
+{
+  "utc": "2026-10-18T00:31:26.125023+00:00",
+  "status": "ADMITTED_FOR_ABSOLUTE_DESCRIPTIVE_OBSERVATIONS_ONLY",
+  "decision_before_new_per_arm_distribution_inspection": true,
+  "strict_clean_host_consent": "Still withheld. Original admission omitted explicit attribution of the upload; strict supplement prelaunch conditions were not retrospectively satisfied.",
+  "protocol_deviation": "Report complete data under recorded interactive desktop conditions WITH coincident gh artifact upload (sampled lowCPU, I/Ounmeasured). The exact upload argv/PPID/plant-friends CWD resolves operation category, not historical resource rate/inactivity/harmlessness.",
+  "plan70": "No observed overlapping builds/tests/collectors in selected windows. Upload operation is outside those categories; no CPU/I/O waiver is assumed or inferred.",
+  "user_memory_override": "Entire optional guard uniformly disabled via unset environment variable, not merely a pressure-test bypass. Timeouts/wall/wait4RSS retained.",
+  "allowed_claims": "Absolute total compiler wall and normalized wait4-child RSS; all12 values/arm/case, median/min/max/sampleSD. Separate cases, same frozen source/binary within each three-arm comparison. Illustrative new-minimal-case observations only.",
+  "forbidden_claims": [
+    "controlled-idle/exclusive/fully coordinated host",
+    "harmless upload or unmeasured I/O rates",
+    "feature-causal or isolated audit/component cost",
+    "speedup/statistical significance/production benefit",
+    "combined process-group/live EggCC+Tiger peak or bytes per pair",
+    "pooling original/corrected sources or any oldexcluded block"
+  ],
+  "reviews": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-impact/findings/cost-descriptive-scope-review.md",
+      "sha256": "8152b0d9979420bf7114ec0c35ce575f4b3414a3842d518f00cec423c90286b7"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-impact/findings/cost-descriptive-goal-review.md",
+      "sha256": "1625c877b1210f1f492c2c6521411de8c8fbeb2527788f0e5f81ed5c3d8dd3e6"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-impact/findings/cost-final-host-review.md",
+      "sha256": "b5c4908d14af49e9e1dcfede34e32a4c850fcddab9ae5d8365e0f7f49188b793"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/user-memory-policy-correction.json",
+      "sha256": "2df138b8fd4393be4a63d1507d55d32656017ee6c9b018aa2e61d7564f3f0991"
+    }
+  ],
+  "cohorts": [
+    {
+      "case": "original-one",
+      "block": "block-05",
+      "files": {
+        "study.json": "4f48459fa9b6e6bcfa16b249d88bb79ba877bf69821febc90921102fe54ce6a6",
+        "results.json": "d575b3edc74ca821449df5ec1e7711e5d99bdacd68ca76104b4fbfa02c7f78e5",
+        "collect-command.json": "34cece4a56d52d30dbe08536b9e2b8facbc33fbc4e080039de5f38d26d77a4c8",
+        "verify-command.json": "df88d39ff5632fb49fa314b244f2b1b52094b4397700a3990fe64e403d03d649",
+        "postcapture-command.json": "b02e48e813876adf2fba1d14a2003c982a5d9eaad2d7e979dc624e58fd68db09",
+        "monitor-record.json": "4f07646a3885ea83f49a190241bf2829d3cb38cb48eb46113a7d3c523c30bfc0",
+        "host-before.json": "b99698cd9531eb6f4d0a385fc95fd3a66ad3a5acf6af13590003b414de7220c1",
+        "host-during-01.json": "802ba88f519e93865631a5a898e7d383633af5598fb5c303b5f8ea2372175a12",
+        "host-during-02.json": "d953ad9649156114e5c3d0ac1d866d670652bbf941c1f1d9c81fdb7d4bd26632",
+        "host-after.json": "e45d28044c7b2503130cd4d5374b0a84ba01e39d37f8a7b63bd203ddbc582b42"
+      }
+    },
+    {
+      "case": "corrected-max",
+      "block": "block-03",
+      "files": {
+        "study.json": "cf2c25be89354255201b6d847672b8aa8ea1219119b7d3791613a3ae0023874a",
+        "results.json": "a5d811ccd36109de8695759ddd9aa05a02611890e799ac1d6ab388361c4f9e53",
+        "collect-command.json": "9c346e63070b59f6b9c31b57c182c7b40a8a755d940665b8c16f1f8bc53d665b",
+        "verify-command.json": "3be4e6b895452d02499a88b3b66a012da04e50c2a1b9b7de60330dfc02032df6",
+        "postcapture-command.json": "7772f53841c2f1aa0856816d348cfd0215e96a9d2bfee4de1ee5c2d8a009f870",
+        "monitor-record.json": "bb4b9b7813f37320c05ced18cad3539e24221d042a734bcaf7b78dd0f51924d0",
+        "host-before.json": "afe5f7236546406f09757d56628a4314b1f0b1e657f14fb01f01b81d8fd5d56e",
+        "host-during-01.json": "f4e6d631fa6a18c8962f9183117802060c0ef862bcc39fa8d14f69c34592a63a",
+        "host-during-02.json": "d278a43c67017dd6e9d6ab8d1d0716f7638eb29c3f92df15e072b5bcc1fa2eab",
+        "host-after.json": "abe195a15814c56cf03188a4bf87bef56472d77d9c8a4b04112e6004ccff2331"
+      }
+    }
+  ],
+  "all_previous_invalid_and_failed_attempts_remain_excluded": true,
+  "no_data_count_order_source_arm_timeout_metric_or_sample_change": true
+}

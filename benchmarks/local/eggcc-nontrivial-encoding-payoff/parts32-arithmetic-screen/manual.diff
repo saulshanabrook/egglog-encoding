@@ -1,0 +1,11 @@
+--- source.bril
++++ manual.bril
+@@ -37,7 +37,7 @@
+   hx: int = div x_high_multiple divisor;
+   hy: int = div y_high_multiple divisor;
+   target: bool = eq hx hy;
+-  br target .unexpected .expected;
++  jmp .expected;
+ .unexpected:
+   score: int = const 99;
+   jmp .accumulate;

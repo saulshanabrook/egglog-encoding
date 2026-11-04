@@ -1,0 +1,7 @@
+{
+  "binary_sha256": "7a573e0c68f8654c179499e3b5017c33a9169627397bdac30bd262b0437a8772",
+  "source_archive_sha256": "a746cb676db4e64f388f9988b8e7c2b179406a57ba8326b9092ed63e71920551",
+  "source_root": "/private/tmp/eggcc-same-mask-causal-control",
+  "selected_timed_binary_changed": false,
+  "delta": "diagnostic APPLY_OFF suppresses only main graph Eq=false union after returned private query target; receipt and false Const materialization remain"
+}

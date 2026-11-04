@@ -1,0 +1,128 @@
+{
+  "frozen_utc": "2026-10-19T16:57:04.286100+00:00",
+  "purpose": "diagnostic total EggCC optimize wall time, no speedup threshold",
+  "source_sha256": "f4448682f67a73ab98677b1c997f419175999f4c221e297f1a443e6c95f856dd",
+  "cycles": 10,
+  "observations_per_arm": 10,
+  "warmups_per_arm": 1,
+  "order_rows": [
+    [
+      "U0",
+      "B1",
+      "Encoding",
+      "SeedOnly",
+      "Manual"
+    ],
+    [
+      "B1",
+      "SeedOnly",
+      "U0",
+      "Manual",
+      "Encoding"
+    ],
+    [
+      "SeedOnly",
+      "Manual",
+      "B1",
+      "Encoding",
+      "U0"
+    ],
+    [
+      "Manual",
+      "Encoding",
+      "SeedOnly",
+      "U0",
+      "B1"
+    ],
+    [
+      "Encoding",
+      "U0",
+      "Manual",
+      "B1",
+      "SeedOnly"
+    ],
+    [
+      "Manual",
+      "SeedOnly",
+      "Encoding",
+      "B1",
+      "U0"
+    ],
+    [
+      "Encoding",
+      "Manual",
+      "U0",
+      "SeedOnly",
+      "B1"
+    ],
+    [
+      "U0",
+      "Encoding",
+      "B1",
+      "Manual",
+      "SeedOnly"
+    ],
+    [
+      "B1",
+      "U0",
+      "SeedOnly",
+      "Encoding",
+      "Manual"
+    ],
+    [
+      "SeedOnly",
+      "B1",
+      "Manual",
+      "U0",
+      "Encoding"
+    ]
+  ],
+  "timer": "perf_counter_ns immediately around subprocess.run; compiler --run-data-out inside interval; capture persistence outside",
+  "includes": "all compiler startup, parsing, contextualization, private graph construction, translation, schedule, extraction and emitted Bril; per-query evidence-file output disabled equally",
+  "excludes": "Rust build, generated native lowering and execution",
+  "timeout_s": 180,
+  "identities": {
+    "U0": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+      "mode": "off",
+      "reference": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/optimized.bril",
+      "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+      "emission_sha256": "16b3213e1455acc69115c542a925451d30ffd6b69b44dbcf66474043251fb5d9"
+    },
+    "B1": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/bin-invariants/eggcc",
+      "cwd": "/private/tmp/eggcc-same-mask-candidate",
+      "mode": "off",
+      "reference": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/optimized.bril",
+      "binary_sha256": "5343e3352f74e4e7ec80082a1e47912019d2f37bc641f2ed62891267e465fb87",
+      "emission_sha256": "16b3213e1455acc69115c542a925451d30ffd6b69b44dbcf66474043251fb5d9"
+    },
+    "SeedOnly": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/bin-invariants/eggcc",
+      "cwd": "/private/tmp/eggcc-same-mask-candidate",
+      "mode": "seed-only",
+      "reference": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/seed-only/optimized.bril",
+      "binary_sha256": "5343e3352f74e4e7ec80082a1e47912019d2f37bc641f2ed62891267e465fb87",
+      "emission_sha256": "16b3213e1455acc69115c542a925451d30ffd6b69b44dbcf66474043251fb5d9"
+    },
+    "Manual": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/bin-invariants/eggcc",
+      "cwd": "/private/tmp/eggcc-same-mask-candidate",
+      "mode": "manual",
+      "reference": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/optimized.bril",
+      "binary_sha256": "5343e3352f74e4e7ec80082a1e47912019d2f37bc641f2ed62891267e465fb87",
+      "emission_sha256": "a73c0fdf3260cd4966fe5e6672a92a0f4555a7a33f1e495734e8eb7cd950c1d8"
+    },
+    "Encoding": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/bin-invariants/eggcc",
+      "cwd": "/private/tmp/eggcc-same-mask-candidate",
+      "mode": "encoding",
+      "reference": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/optimized.bril",
+      "binary_sha256": "5343e3352f74e4e7ec80082a1e47912019d2f37bc641f2ed62891267e465fb87",
+      "emission_sha256": "a73c0fdf3260cd4966fe5e6672a92a0f4555a7a33f1e495734e8eb7cd950c1d8"
+    }
+  },
+  "memory_guard_enabled": false,
+  "cpu_isolation": false
+}

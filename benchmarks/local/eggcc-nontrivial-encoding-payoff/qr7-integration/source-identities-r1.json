@@ -1,0 +1,392 @@
+{
+  "archive_entries": [
+    {
+      "member": "eggcc/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630",
+      "size": 71272
+    },
+    {
+      "member": "eggcc/Cargo.toml",
+      "sha256": "9e2feb1df1f51599cdf562523a0feb08619f70571e15f9793f31239d09f1b3b7",
+      "size": 1889
+    },
+    {
+      "member": "eggcc/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e",
+      "size": 44329
+    },
+    {
+      "member": "eggcc/dag_in_context/Cargo.toml",
+      "sha256": "877eb54456871db04956fadefbd18df022c935f08c79e3a94cb3df2a7477e1e7",
+      "size": 947
+    },
+    {
+      "member": "eggcc/dag_in_context/src/lib.rs",
+      "sha256": "31950b4a22a7f53df39e271425382a2d90487b4ac6ebcc19ebf75e612db76170",
+      "size": 42553
+    },
+    {
+      "member": "eggcc/dag_in_context/src/optimizations/mem_simple.egg",
+      "sha256": "ef781f216914744c137cb988cf8490bfda4913bf101a1fcf690051fbf84a53ab",
+      "size": 4891
+    },
+    {
+      "member": "eggcc/dag_in_context/src/scoped_qr7.rs",
+      "sha256": "76b93d107e01e3490b2875903ed3eea111bf4f810f3744bd631bfe5ebf4ae6b2",
+      "size": 38731
+    },
+    {
+      "member": "encoding/Cargo.lock",
+      "sha256": "21b43bf8ea25396ab097718be9f42956189c2473122e12930875f58a149b4c48",
+      "size": 55528
+    },
+    {
+      "member": "encoding/Cargo.toml",
+      "sha256": "1fa84ca387e3010b97faeb1e118d027120a139b58ca998c1fbb0049662a4d0ca",
+      "size": 2842
+    },
+    {
+      "member": "encoding/egglog-experimental/Cargo.toml",
+      "sha256": "9f47f7e5325d6bc97a67ce0cc3af3db04752bbdb9f28fc80fd68698c540f8b16",
+      "size": 884
+    },
+    {
+      "member": "encoding/egglog-experimental/src/disequality.rs",
+      "sha256": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277",
+      "size": 37983
+    },
+    {
+      "member": "encoding/egglog-experimental/src/injectivity.rs",
+      "sha256": "3eccb019378d11155f8dce27dbd7a6780efe7a4a24233536a9cafc9607cfa281",
+      "size": 11734
+    },
+    {
+      "member": "encoding/egglog-experimental/src/lib.rs",
+      "sha256": "29cc7459d737e6289a68dff6d518ce8c7e82cb70e09c6762952e99f4816a4f07",
+      "size": 9178
+    },
+    {
+      "member": "evidence/admit.py",
+      "sha256": "d8522299d851489e97c4f3adfef879de9ad2e87111a9b78fce33ae1be6a7bb65",
+      "size": 5009
+    },
+    {
+      "member": "evidence/binary-identities-r1.json",
+      "sha256": "1de3382b47840ad3f18e3c9aa5f04e688c4f684a35da5c2b08c68ab8f823e302",
+      "size": 622
+    },
+    {
+      "member": "evidence/final-r1/context-negative-results.json",
+      "sha256": "70416239c27a140de6d73132bb7c159bc478c1515d726460660330bc14ba80e4",
+      "size": 709
+    },
+    {
+      "member": "evidence/final-r1/inspection.json",
+      "sha256": "54801698936cd372e2aa8b4d1d76a32c9bf3e706e295b939018cceb9cb533ae0",
+      "size": 3192065
+    },
+    {
+      "member": "evidence/final-r1/loop-negative-results.json",
+      "sha256": "3ddf7756a01b934f9ec2eaf496a338b55d9ca64c863fdf9fe9867cc8e0ae91e1",
+      "size": 2814032
+    },
+    {
+      "member": "evidence/final-r1/negative-results.json",
+      "sha256": "400b47e8a9c0bfb0e318a689dec475125cab7267607e20f7b001d3087f0caae9",
+      "size": 35361
+    },
+    {
+      "member": "evidence/final-r1/positive-results.json",
+      "sha256": "27131a972a82f2fa96058e14b0ed711fe2c3562a3ebd51aec3a29c029b43fb4b",
+      "size": 3209479
+    },
+    {
+      "member": "evidence/fixtures/different-divisor.bril",
+      "sha256": "bd293f158e17a40d8779556436c0738d59ea2ed22007f0e1591775c6f155a39e",
+      "size": 1596
+    },
+    {
+      "member": "evidence/fixtures/omit-quotient-v2.bril",
+      "sha256": "dda036eb840fe629acce040a32eb5eec65ebf022d0eafc5d9cf68f00c5e22407",
+      "size": 1572
+    },
+    {
+      "member": "evidence/fixtures/omit-remainder-v2.bril",
+      "sha256": "1291d6c45d91c2fc954f1cc33ff2d022916db969b59712882f21c18131d90155",
+      "size": 1571
+    },
+    {
+      "member": "evidence/fixtures/source.bril",
+      "sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+      "size": 1574
+    },
+    {
+      "member": "evidence/inspect.py",
+      "sha256": "46791f0ee7f17da78cc2169f4dc23bacc754a9b923213e00fe22b2f6161bd04c",
+      "size": 5861
+    },
+    {
+      "member": "evidence/integration-plan.md",
+      "sha256": "c5ddcfba7219a868537d4f098b12144caffd9413199adb05ba77e95c3219f6b2",
+      "size": 19981
+    },
+    {
+      "member": "evidence/matrix.py",
+      "sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "size": 5950
+    },
+    {
+      "member": "evidence/run.py",
+      "sha256": "2d5c8af481a79e4438ffb190ecd835375104319a8829dc65df3d88bbfa526a7f",
+      "size": 4549
+    },
+    {
+      "member": "evidence/scoped_qr7.rs",
+      "sha256": "76b93d107e01e3490b2875903ed3eea111bf4f810f3744bd631bfe5ebf4ae6b2",
+      "size": 38731
+    },
+    {
+      "member": "evidence/source-admission.json",
+      "sha256": "3015927947776c2b02a2994f4cd42b86399642aa8b915f0f06e6901153576dd0",
+      "size": 5521
+    },
+    {
+      "member": "evidence/write-candidate.py",
+      "sha256": "5596cb3dba4a23d5d7a6cc0af4327d5f9288668dbedeecb3beaddbc462db2d87",
+      "size": 4266
+    }
+  ],
+  "base_archives": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/eggcc-parts32-candidate.tar",
+      "sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+      "size": 3000320
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/encoding-parts32-candidate.tar",
+      "sha256": "bf28b65f200123f5738326a069dad26d9d7004dd72ef89f9f4becd74f11cd82f",
+      "size": 130416640
+    }
+  ],
+  "binary_identity_equal": true,
+  "compiler_delta_patch": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/eggcc-candidate-r1.patch",
+    "sha256": "3242cf2bd7925912fa7902b9fdeee2a98889fe6e1dba5f5d0d93cea31691295f",
+    "size": 54815
+  },
+  "compiler_source_archive": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/corrected-source-r1.tar",
+    "sha256": "17d40620cb9c621ff493cb4edfd5099a487ce0f68ee054184b75381386a7e30e",
+    "size": 9707520
+  },
+  "engine_files": [
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/Cargo.toml",
+      "relative": "Cargo.toml",
+      "sha256": "1fa84ca387e3010b97faeb1e118d027120a139b58ca998c1fbb0049662a4d0ca",
+      "size": 2842
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/Cargo.lock",
+      "relative": "Cargo.lock",
+      "sha256": "21b43bf8ea25396ab097718be9f42956189c2473122e12930875f58a149b4c48",
+      "size": 55528
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/Cargo.toml",
+      "relative": "egglog-experimental/Cargo.toml",
+      "sha256": "9f47f7e5325d6bc97a67ce0cc3af3db04752bbdb9f28fc80fd68698c540f8b16",
+      "size": 884
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/src/lib.rs",
+      "relative": "egglog-experimental/src/lib.rs",
+      "sha256": "29cc7459d737e6289a68dff6d518ce8c7e82cb70e09c6762952e99f4816a4f07",
+      "size": 9178
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/src/injectivity.rs",
+      "relative": "egglog-experimental/src/injectivity.rs",
+      "sha256": "3eccb019378d11155f8dce27dbd7a6780efe7a4a24233536a9cafc9607cfa281",
+      "size": 11734
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/src/disequality.rs",
+      "relative": "egglog-experimental/src/disequality.rs",
+      "sha256": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277",
+      "size": 37983
+    }
+  ],
+  "frozen_compiler_binary": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+    "sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+    "size": 61915472
+  },
+  "harness_files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/admit.py",
+      "relative": "admit.py",
+      "sha256": "d8522299d851489e97c4f3adfef879de9ad2e87111a9b78fce33ae1be6a7bb65",
+      "size": 5009
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/write-candidate.py",
+      "relative": "write-candidate.py",
+      "sha256": "5596cb3dba4a23d5d7a6cc0af4327d5f9288668dbedeecb3beaddbc462db2d87",
+      "size": 4266
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/run.py",
+      "relative": "run.py",
+      "sha256": "2d5c8af481a79e4438ffb190ecd835375104319a8829dc65df3d88bbfa526a7f",
+      "size": 4549
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "relative": "matrix.py",
+      "sha256": "05799b0cc1364e8d98a4455d6a3251cf07f621f040202bfb271f75a870c87f56",
+      "size": 5950
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py",
+      "relative": "inspect.py",
+      "sha256": "46791f0ee7f17da78cc2169f4dc23bacc754a9b923213e00fe22b2f6161bd04c",
+      "size": 5861
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/scoped_qr7.rs",
+      "relative": "scoped_qr7.rs",
+      "sha256": "76b93d107e01e3490b2875903ed3eea111bf4f810f3744bd631bfe5ebf4ae6b2",
+      "size": 38731
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/integration-plan.md",
+      "relative": "integration-plan.md",
+      "sha256": "c5ddcfba7219a868537d4f098b12144caffd9413199adb05ba77e95c3219f6b2",
+      "size": 19981
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/source-admission.json",
+      "relative": "source-admission.json",
+      "sha256": "3015927947776c2b02a2994f4cd42b86399642aa8b915f0f06e6901153576dd0",
+      "size": 5521
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/binary-identities-r1.json",
+      "relative": "binary-identities-r1.json",
+      "sha256": "1de3382b47840ad3f18e3c9aa5f04e688c4f684a35da5c2b08c68ab8f823e302",
+      "size": 622
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/source.bril",
+      "relative": "fixtures/source.bril",
+      "sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+      "size": 1574
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-quotient-v2.bril",
+      "relative": "fixtures/omit-quotient-v2.bril",
+      "sha256": "dda036eb840fe629acce040a32eb5eec65ebf022d0eafc5d9cf68f00c5e22407",
+      "size": 1572
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-remainder-v2.bril",
+      "relative": "fixtures/omit-remainder-v2.bril",
+      "sha256": "1291d6c45d91c2fc954f1cc33ff2d022916db969b59712882f21c18131d90155",
+      "size": 1571
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/different-divisor.bril",
+      "relative": "fixtures/different-divisor.bril",
+      "sha256": "bd293f158e17a40d8779556436c0738d59ea2ed22007f0e1591775c6f155a39e",
+      "size": 1596
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/positive-results.json",
+      "relative": "final-r1/positive-results.json",
+      "sha256": "27131a972a82f2fa96058e14b0ed711fe2c3562a3ebd51aec3a29c029b43fb4b",
+      "size": 3209479
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/negative-results.json",
+      "relative": "final-r1/negative-results.json",
+      "sha256": "400b47e8a9c0bfb0e318a689dec475125cab7267607e20f7b001d3087f0caae9",
+      "size": 35361
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/loop-negative-results.json",
+      "relative": "final-r1/loop-negative-results.json",
+      "sha256": "3ddf7756a01b934f9ec2eaf496a338b55d9ca64c863fdf9fe9867cc8e0ae91e1",
+      "size": 2814032
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/context-negative-results.json",
+      "relative": "final-r1/context-negative-results.json",
+      "sha256": "70416239c27a140de6d73132bb7c159bc478c1515d726460660330bc14ba80e4",
+      "size": 709
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/inspection.json",
+      "relative": "final-r1/inspection.json",
+      "sha256": "54801698936cd372e2aa8b4d1d76a32c9bf3e706e295b939018cceb9cb533ae0",
+      "size": 3192065
+    }
+  ],
+  "host_files": [
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.toml",
+      "relative": "Cargo.toml",
+      "sha256": "9e2feb1df1f51599cdf562523a0feb08619f70571e15f9793f31239d09f1b3b7",
+      "size": 1889
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.lock",
+      "relative": "Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630",
+      "size": 71272
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.toml",
+      "relative": "dag_in_context/Cargo.toml",
+      "sha256": "877eb54456871db04956fadefbd18df022c935f08c79e3a94cb3df2a7477e1e7",
+      "size": 947
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.lock",
+      "relative": "dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e",
+      "size": 44329
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/lib.rs",
+      "relative": "dag_in_context/src/lib.rs",
+      "sha256": "31950b4a22a7f53df39e271425382a2d90487b4ac6ebcc19ebf75e612db76170",
+      "size": 42553
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/optimizations/mem_simple.egg",
+      "relative": "dag_in_context/src/optimizations/mem_simple.egg",
+      "sha256": "ef781f216914744c137cb988cf8490bfda4913bf101a1fcf690051fbf84a53ab",
+      "size": 4891
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/scoped_qr7.rs",
+      "relative": "dag_in_context/src/scoped_qr7.rs",
+      "sha256": "76b93d107e01e3490b2875903ed3eea111bf4f810f3744bd631bfe5ebf4ae6b2",
+      "size": 38731
+    }
+  ],
+  "release_recheck_receipt": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/source-revalidation-r1/commands/corrected-source-release-recheck/receipt.json",
+    "sha256": "518d2a0ea2c2416b976fd71a017c178eeccc9ade3d2638a09a64b40490aa811c",
+    "size": 2845
+  },
+  "revalidated_release_target": {
+    "path": "/private/tmp/encoding-qr7-candidate/target/release/eggcc",
+    "sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+    "size": 61915472
+  },
+  "schema_version": 1,
+  "status": "corrected-source-frozen-and-release-target-revalidated",
+  "timing_samples_taken": false
+}

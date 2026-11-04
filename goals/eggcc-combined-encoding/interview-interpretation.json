@@ -1,0 +1,9 @@
+{
+  "source": "interview-result.json",
+  "resolved": [
+    "New bug/speedup preferred but not required.",
+    "Bounded new representations and integration are allowed.",
+    "Joint use remains the primary search; secondary single-feature findings and scoped negatives remain reportable."
+  ],
+  "unresolvedUserQuestions": []
+}

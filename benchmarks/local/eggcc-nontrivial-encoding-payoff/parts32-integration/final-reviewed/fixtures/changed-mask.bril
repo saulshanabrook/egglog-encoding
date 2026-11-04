@@ -1,0 +1,63 @@
+# ARGS: 0 4294967296 8
+# Attempt 2: arithmetic high half, using typed bitand/sub/div operations only.
+@main(x: int, y: int, n: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  mask: int = const 4294967295;
+  divisor: int = const 4294967296;
+  x_step: int = const 4294967297;
+  y_step: int = const 8589934593;
+  limit: int = const 1000000;
+  n_lo: bool = ge n zero;
+  n_hi: bool = le n limit;
+  valid: bool = and n_lo n_hi;
+  br valid .start .invalid;
+.invalid:
+  invalid_result: int = const -2;
+  print invalid_result;
+  ret;
+.start:
+  count: int = const 0;
+  sum: int = const 0;
+  jmp .header;
+.header:
+  more: bool = lt count n;
+  br more .body .done;
+.body:
+  same_word: bool = eq x y;
+  br same_word .same_word .different_word;
+.different_word:
+  lx: int = bitand x mask;
+  ly: int = bitand y mask;
+  same_low: bool = eq lx ly;
+  br same_low .same_low .different_low;
+.same_low:
+  x_high_multiple: int = sub x lx;
+  y_high_multiple: int = sub y ly;
+  hx: int = div x_high_multiple divisor;
+  hy: int = div y_high_multiple divisor;
+  target: bool = eq hx hy;
+  br target .unexpected .expected;
+.unexpected:
+  score: int = const 99;
+  jmp .accumulate;
+.expected:
+  score: int = const 7;
+  jmp .accumulate;
+.different_low:
+  score: int = const 3;
+  jmp .accumulate;
+.same_word:
+  score: int = const 5;
+  jmp .accumulate;
+.accumulate:
+  mask: int = add mask one;
+  sum: int = add sum score;
+  x: int = add x x_step;
+  y: int = add y y_step;
+  count: int = add count one;
+  jmp .header;
+.done:
+  print sum;
+  ret;
+}

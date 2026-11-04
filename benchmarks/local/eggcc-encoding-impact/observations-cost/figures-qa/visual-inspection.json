@@ -1,0 +1,12 @@
+{
+  "utc": "2026-10-18T00:33:13.972720+00:00",
+  "inspector": "root",
+  "images": [
+    "original-one-figures.png",
+    "corrected-max-figures.png"
+  ],
+  "visual_result": "Both single-page PDF renders show all12 open-circle observations/arm, readable axes/titles/units and median/minmax footer, without clipping, overlapping text, missing glyphs or broken rendering.",
+  "regenerated_images": "Exact PNG hashes match primary counterparts per regeneration-and-render.json, so inspection covers equivalent regenerated PDFs.",
+  "interpretation": "Captions must state interactive-host/known-upload/unmeasured-I/O/protocol-deviation context; plots show absolute observations only.",
+  "pdf_authoring_marker": "../pdf-operation-marker.json"
+}

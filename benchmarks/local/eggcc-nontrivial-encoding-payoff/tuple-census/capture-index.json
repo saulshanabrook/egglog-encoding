@@ -1,0 +1,422 @@
+[
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/ivt.rs",
+    "input_sha256": "a108bb6390cee5ee880982a79ccf54cb15a9b6a4ff29c069f7bbee0a43b39b6c",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/ivt/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/ivt/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/ivt.rs"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:56.715385+00:00",
+    "pid": 18055,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.261407667,
+    "outputs": [
+      {
+        "path": "captures/ivt/graphs/tiger_egraph_0001.json",
+        "bytes": 546424,
+        "sha256": "7fdd69fe5041011ce5e9c66f116d735df09da1bbaac7826bd507e26cbcc24144"
+      },
+      {
+        "path": "captures/ivt/graphs/tiger_egraph_0002.json",
+        "bytes": 973575,
+        "sha256": "8f8b9207db54fc63d843dc4d10232d354a125760200569e85bedcbf7c1e8414e"
+      },
+      {
+        "path": "captures/ivt/graphs/tiger_egraph_0003.json",
+        "bytes": 434616,
+        "sha256": "0bcf88dc66fcfcc74d5fdcef38148e17806a571004f06fc8b0a22ac3d538271e"
+      },
+      {
+        "path": "captures/ivt/run-data.json",
+        "bytes": 393,
+        "sha256": "d9c81c7d31f6089c0574c087a16885e7b69145d326125a0e2b3bce8599730b12"
+      },
+      {
+        "path": "captures/ivt/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/ivt/stdout.txt",
+        "bytes": 629,
+        "sha256": "2f410b4ca8711544e0f896bffa5e1fa1885fbe6a1bc118181ca3f1644ba77737"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:56.978793+00:00"
+  },
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_pass_through.bril",
+    "input_sha256": "93c3315fb1317515a850d4fbef12a85421dfc3060d131b6087bdeaaaa6632c4c",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_pass_through/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_pass_through/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_pass_through.bril"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:57.003863+00:00",
+    "pid": 18059,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.20390279100000003,
+    "outputs": [
+      {
+        "path": "captures/loop_pass_through/graphs/tiger_egraph_0001.json",
+        "bytes": 229923,
+        "sha256": "63dba407e8c0f42fe187f99caef24b52718bf68815658819cb0ede68fe6ce5d3"
+      },
+      {
+        "path": "captures/loop_pass_through/graphs/tiger_egraph_0002.json",
+        "bytes": 234907,
+        "sha256": "b4ae6ce64f42d9316b2f75b1344c60ef72ca7193ea4d1ca7a6decbd8aa64e881"
+      },
+      {
+        "path": "captures/loop_pass_through/graphs/tiger_egraph_0003.json",
+        "bytes": 229924,
+        "sha256": "1eccaee03b816cdb2c3aa6c696d85a2ff0158f898e91375f4f5bdb52e35e3b6f"
+      },
+      {
+        "path": "captures/loop_pass_through/run-data.json",
+        "bytes": 393,
+        "sha256": "a599dc4a1630582f3918ee9b6f8212fc0dd1546b2e203c375aabe645f881be6c"
+      },
+      {
+        "path": "captures/loop_pass_through/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/loop_pass_through/stdout.txt",
+        "bytes": 310,
+        "sha256": "01ebf8fbdd2baef0af7f5e4749b8b277d9086d51bbe405c880d53a52516e050f"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:57.208867+00:00"
+  },
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/lowbit_naive_extra.rs",
+    "input_sha256": "51ef1a48f5bd861493ae955c7e313d579159699eac8b7796fd97f614ba9138c4",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/lowbit_naive_extra/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/lowbit_naive_extra/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/lowbit_naive_extra.rs"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:57.233982+00:00",
+    "pid": 18063,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.27029891699999997,
+    "outputs": [
+      {
+        "path": "captures/lowbit_naive_extra/graphs/tiger_egraph_0001.json",
+        "bytes": 972878,
+        "sha256": "a898cd0fabdabacb15eb8c7a157996b9c23485a13b729f76521ddcaa0023aef7"
+      },
+      {
+        "path": "captures/lowbit_naive_extra/graphs/tiger_egraph_0002.json",
+        "bytes": 1062372,
+        "sha256": "a0b81de84af14be18d066bd7c1b8560cfd3db122f7f9dafdf5ec2ab3014a8c18"
+      },
+      {
+        "path": "captures/lowbit_naive_extra/graphs/tiger_egraph_0003.json",
+        "bytes": 728888,
+        "sha256": "c24eab3175c94b1c49acc5d5a0ae5061400725ed33dffeb2ea2b0727e33c6f85"
+      },
+      {
+        "path": "captures/lowbit_naive_extra/run-data.json",
+        "bytes": 393,
+        "sha256": "2c8c1d8017c7b5cdcfdbecde3a5e64ce873da0df16a61f5c6598da658d3e5a62"
+      },
+      {
+        "path": "captures/lowbit_naive_extra/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/lowbit_naive_extra/stdout.txt",
+        "bytes": 817,
+        "sha256": "677e691f5257537ed2eb45117ef2955f9f2164903eb0127e95d1ed6edfcee459"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:57.506095+00:00"
+  },
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_hoist.bril",
+    "input_sha256": "a44feed252e11b198073b7b26473115b5ab268db5209ded1d965932b0f4f4716",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_hoist/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_hoist/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_hoist.bril"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:57.529898+00:00",
+    "pid": 18067,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.27033108400000005,
+    "outputs": [
+      {
+        "path": "captures/loop_hoist/graphs/tiger_egraph_0001.json",
+        "bytes": 339450,
+        "sha256": "5268a13057ae1500bb7535afe0ed43ecea663fb9aea700d2d5d3628a134dd396"
+      },
+      {
+        "path": "captures/loop_hoist/graphs/tiger_egraph_0002.json",
+        "bytes": 358403,
+        "sha256": "f8cc5b7c3ea0363388f6ce6a4067c0616468f4324432ab1c663f7a5e3efe1431"
+      },
+      {
+        "path": "captures/loop_hoist/graphs/tiger_egraph_0003.json",
+        "bytes": 1570169,
+        "sha256": "de2f47167332550a08319a5c39116618b9482a6fe8754bfded3b7963c9ee4f32"
+      },
+      {
+        "path": "captures/loop_hoist/run-data.json",
+        "bytes": 393,
+        "sha256": "14da3d0547ed109e3d7b88714ee08a65d523e64ade96e103f9df0bd8adc49206"
+      },
+      {
+        "path": "captures/loop_hoist/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/loop_hoist/stdout.txt",
+        "bytes": 566,
+        "sha256": "b7b97afdf737ef2f2ea733df1f86e9269513049fdc88f9f57de60665f4ccea45"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:57.801967+00:00"
+  },
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/if_invariant_do_pull_out.rs",
+    "input_sha256": "1da0e290e8f043ccd9683dc0122166ec22c02d1fa58b11e1ac956e7456263c04",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/if_invariant_do_pull_out/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/if_invariant_do_pull_out/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/if_invariant_do_pull_out.rs"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:57.826375+00:00",
+    "pid": 18071,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.27032875,
+    "outputs": [
+      {
+        "path": "captures/if_invariant_do_pull_out/graphs/tiger_egraph_0001.json",
+        "bytes": 443077,
+        "sha256": "6613b54d6c8877651ecf03b051f869f74e230f83f73ff32809e8667a74285ded"
+      },
+      {
+        "path": "captures/if_invariant_do_pull_out/graphs/tiger_egraph_0002.json",
+        "bytes": 402221,
+        "sha256": "0abe8eb8d08820bb24d6a4e325022f7fe492541c18f3b7a11373d573e606e424"
+      },
+      {
+        "path": "captures/if_invariant_do_pull_out/graphs/tiger_egraph_0003.json",
+        "bytes": 2319173,
+        "sha256": "ae043c16e14d17098d471149c809b98b80d2d9fd91e24b44d2a44eb6c12cdefd"
+      },
+      {
+        "path": "captures/if_invariant_do_pull_out/run-data.json",
+        "bytes": 394,
+        "sha256": "ce2d063b1d5c10b88233eb1f22a2c0b18853bb4743a3584fd09d2ccf8aa42517"
+      },
+      {
+        "path": "captures/if_invariant_do_pull_out/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/if_invariant_do_pull_out/stdout.txt",
+        "bytes": 781,
+        "sha256": "34c81945bcb38b336c3d81b0652460675aa1518f736c2ba48c8c8d4a312a7d5c"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:58.098720+00:00"
+  },
+  {
+    "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "input": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_with_mul_by_inv.bril",
+    "input_sha256": "db3f10bc47b3d13916efd21433d896367d2ef3d833499c5e72fc31488612246b",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "--run-mode",
+      "optimize",
+      "--with-context",
+      "--egraph-out-dir",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_with_mul_by_inv/graphs",
+      "--run-data-out",
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/captures/loop_with_mul_by_inv/run-data.json",
+      "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/tests/passing/small/loop_with_mul_by_inv.bril"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "env": {
+      "PATH": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "TMPDIR": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/tuple-census/tmp",
+      "LC_ALL": "C",
+      "RUST_BACKTRACE": "1"
+    },
+    "timeout_seconds": 180,
+    "external_memory_guard": false,
+    "capture_boundary": "after each complete pass schedule, immediately before tiger extraction",
+    "helpers_before_consumer_capture": "unsupported without code changes",
+    "start_utc": "2026-10-19T06:27:58.121951+00:00",
+    "pid": 18075,
+    "exit_code": 0,
+    "status": "ok",
+    "elapsed_seconds_diagnostic_only": 0.27032254099999986,
+    "outputs": [
+      {
+        "path": "captures/loop_with_mul_by_inv/graphs/tiger_egraph_0001.json",
+        "bytes": 328762,
+        "sha256": "620cc518f8d7c3774dd2e2a61d03f3c0d79672698a3587cce120fab21fff9284"
+      },
+      {
+        "path": "captures/loop_with_mul_by_inv/graphs/tiger_egraph_0002.json",
+        "bytes": 340918,
+        "sha256": "3a0b2d57482d0d54d39be82efeff9d5da0ee01bb912e9077ef559ab18a24c722"
+      },
+      {
+        "path": "captures/loop_with_mul_by_inv/graphs/tiger_egraph_0003.json",
+        "bytes": 1246576,
+        "sha256": "9a90b77b7edee6baa48defa34ab70b0d3a7d5318017ced5b39d2d5065e497f7f"
+      },
+      {
+        "path": "captures/loop_with_mul_by_inv/run-data.json",
+        "bytes": 393,
+        "sha256": "5457a48fac61bb97c02bc9bb6d56c2da36f79644f4fd0c9853296a041d99915f"
+      },
+      {
+        "path": "captures/loop_with_mul_by_inv/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "captures/loop_with_mul_by_inv/stdout.txt",
+        "bytes": 473,
+        "sha256": "4c8157260a7ccd520b184f075f13487e0f16b16dd3df789eabedd50013e593ac"
+      }
+    ],
+    "graph_count": 3,
+    "end_utc": "2026-10-19T06:27:58.393897+00:00"
+  }
+]

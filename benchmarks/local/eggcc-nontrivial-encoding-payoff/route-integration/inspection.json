@@ -1,0 +1,13 @@
+{
+  "status": "audit_passed",
+  "positive_modes": 15,
+  "positive_native_outputs": 300,
+  "negative_native_outputs": 36,
+  "context_negative_outputs": 40,
+  "source_native_outputs": 26,
+  "interpretations": 402,
+  "command_receipts": 1058,
+  "validation": "supporting_only_host_validation_failed",
+  "measured_speedup": false,
+  "preexisting_bug": false
+}

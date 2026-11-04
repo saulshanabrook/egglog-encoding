@@ -1,0 +1,57 @@
+# ARGS: 0 1 8
+# Dynamic, bounded same-base accesses. Every accepted input accesses cells 1 or 2.
+@main(i: int, j: int, n: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  two: int = const 2;
+  three: int = const 3;
+  limit: int = const 1000000;
+  i_lo: bool = ge i zero;
+  i_hi: bool = lt i two;
+  j_lo: bool = ge j zero;
+  j_hi: bool = lt j two;
+  n_lo: bool = ge n zero;
+  n_hi: bool = le n limit;
+  i_ok: bool = and i_lo i_hi;
+  j_ok: bool = and j_lo j_hi;
+  n_ok: bool = and n_lo n_hi;
+  ij_ok: bool = and i_ok j_ok;
+  valid: bool = and ij_ok n_ok;
+  br valid .valid .invalid;
+.invalid:
+  invalid_result: int = const -2;
+  print invalid_result;
+  ret;
+.valid:
+  mi: int = bitand i one;
+  mj: int = bitand j one;
+  same: bool = eq mi mj;
+  br same .equal .distinct;
+.equal:
+  equal_result: int = const -1;
+  print equal_result;
+  ret;
+.distinct:
+  p: ptr<int> = alloc three;
+  ii: int = add i one;
+  jj: int = add j one;
+  pi: ptr<int> = ptradd p ii;
+  pj: ptr<int> = ptradd p jj;
+  count: int = const 0;
+  sum: int = const 0;
+  jmp .header;
+.header:
+  more: bool = lt count n;
+  br more .body .done;
+.body:
+  store pi count;
+  store pj zero;
+  value: int = load pi;
+  sum: int = add sum value;
+  count: int = add count one;
+  jmp .header;
+.done:
+  free p;
+  print sum;
+  ret;
+}

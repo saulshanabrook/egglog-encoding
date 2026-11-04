@@ -1,0 +1,233 @@
+{
+  "status": "native_gate_passed_broad_validation_failed",
+  "scope": "Frozen affine actual-host candidate; this record audits retained commands and does not rerun the matrix or accept snapshots.",
+  "u0_revision": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "isolated_u0": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+  "isolated_candidate": "/private/tmp/eggcc-affine-candidate",
+  "isolated_engine": "/private/tmp/encoding-affine-candidate",
+  "native_gate": {
+    "positive_runs": 140,
+    "semantic_negative_runs": 25,
+    "no_context_runs": 20,
+    "source_and_emitted_interpretations": 200,
+    "outputs_match_oracle": true,
+    "baseline_and_off_emitted_native_parity": true,
+    "manual_and_encoding_emitted_native_parity": true,
+    "actual_emitted_and_native_difference": true
+  },
+  "focused_tests": {
+    "receipt": "validation-focused",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-affine-candidate/dag_in_context/Cargo.toml",
+      "scoped_reasoning",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "8fdf2a2e9c410249578a2e8333257bc0301cb75e468c1f4525955c2b3cb736f3",
+    "stderr_sha256": "718990011bb7f4a0a525afe9089449be06451af8b44cdb294a6d06cfdb7eeef6",
+    "passed": 2
+  },
+  "dag_library_tests": {
+    "receipt": "validation-dag-lib",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-affine-candidate/dag_in_context/Cargo.toml",
+      "--lib",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "fb70ba835a6bc732b932a981d10ef482503a604b6fa2e3ab03029acf8dd27e2d",
+    "stderr_sha256": "7d31045d0232f3421a9fb98cdb797b7d34cac4c637f6e47fd2a9914ad3484d35",
+    "passed": 66
+  },
+  "format": {
+    "receipt": "validation-format",
+    "argv": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "engine_tests": {
+    "receipt": "validation-engine-final",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/encoding-affine-candidate/Cargo.toml",
+      "-p",
+      "egglog-experimental",
+      "--test",
+      "injectivity_disequality",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "d29f0c8232000b491d6cce74d1f99329f6358f8ac1ad19d8d3fe622b5e16957e",
+    "stderr_sha256": "bb2c8280707f435f7e650897c8d5bfff0276545e6a17d6b1e5ac30d8b0c81b04",
+    "passed": 18
+  },
+  "candidate_full_debug": {
+    "receipt": "validation-full-workspace-final",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--workspace"
+    ],
+    "exit_code": 101,
+    "timed_out": false,
+    "stdout_sha256": "50fcbbf4261ee325cceee0a835d80582e0dd13a9bfa1de72a97f022842d31e34",
+    "stderr_sha256": "dc1dfcc4f66f6652a540209cef2703d50092031fd15594cd00c428e146d2bc50",
+    "failed_tests_before_abort": [
+      "branch_duplicate_work-optimize_snapshot",
+      "branch_duplicate_work-optimize-sequential_snapshot",
+      "loop_with_mul_by_inv-optimize_snapshot",
+      "branch_hoisting-optimize-no-ctx_snapshot",
+      "loop_strength_reduction-optimize_snapshot",
+      "strong_loop-optimize_snapshot",
+      "strong_loop-optimize-no-ctx_snapshot",
+      "strong_loop-optimize-sequential_snapshot",
+      "if_invariant_do_pull_out-optimize_snapshot",
+      "if_invariant_do_pull_out-optimize-sequential_snapshot",
+      "if_invariant_dont_pull_out-optimize-sequential_snapshot",
+      "pull_out_small-optimize_snapshot"
+    ],
+    "file_suite_completed": false,
+    "abort": "fatal runtime error: stack overflow, aborting",
+    "failure_origin": "Twelve snapshot mismatches were printed before the process aborted; the full debug suite did not complete."
+  },
+  "candidate_full_release": {
+    "receipt": "validation-host-make-test-release",
+    "argv": [
+      "make",
+      "test"
+    ],
+    "exit_code": 2,
+    "timed_out": false,
+    "stdout_sha256": "0dd497bb8ad7043a3bcb2a7b01ec1cf6ffe22be889628e4f6c1a1a9ec9f146ff",
+    "stderr_sha256": "fbaecb9887771b23470138bdb274c12e362680d23d0167b9905999ff90d79cd1",
+    "eggcc_unit_tests_passed": 31,
+    "eggcc_file_tests_passed": 2421,
+    "doc_tests_ignored": 2,
+    "pending_snapshots": 13,
+    "snapshot_match": "All 13 names and SHA-256 hashes equal the frozen Parts32 E1 eggcc-snapshot-comparison.json rows.",
+    "dag_release_step_reached": false,
+    "failure": "Cargo Insta reports 13 pending snapshots; make test exits 2 before the DAG release step."
+  },
+  "dag_clippy": {
+    "receipt": "validation-dag-clippy-final",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-affine-candidate/dag_in_context/Cargo.toml",
+      "--tests",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 101,
+    "timed_out": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "b5358d76e1c652b37c60c5726e20ae27bb0190a53876ac9573bd978d156eac71",
+    "new_sidecar_diagnostics": 17,
+    "prior_u0_parts32_location_diagnostics": 2,
+    "new_diagnostic_kind": "clippy::needless_borrow",
+    "new_diagnostic_file": "dag_in_context/src/scoped_reasoning.rs"
+  },
+  "u0_full_debug": {
+    "receipt": "validation-u0-full-workspace",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--workspace"
+    ],
+    "exit_code": 101,
+    "timed_out": false,
+    "stdout_sha256": "2c550d31621c2014fccde3023001ad74fd2b0f1692880780fc31db12213b62cd",
+    "stderr_sha256": "4c072db44c1a05094ba79cc90728762e39a5a970118e5e5cd113c7264c613040",
+    "failed_tests_before_abort": [
+      "function_call-dag-optimize",
+      "function_call-optimize",
+      "function_call-llvm-O0_O0-eggcc",
+      "function_call-llvm-O3_O0-eggcc",
+      "loop_invariant_code_motion-optimize_snapshot",
+      "loop_invariant_code_motion-dag-optimize_snapshot",
+      "loop_invariant_code_motion-llvm-O0_O0-eggcc_snapshot",
+      "loop_invariant_code_motion-llvm-O3_O0-eggcc_snapshot"
+    ],
+    "file_suite_completed": false,
+    "abort": "fatal runtime error: stack overflow, aborting",
+    "failure_origin": "Pinned egg-smol core-relations/src/offsets/mod.rs:136:9 panics with slice is not sorted; these eight names are distinct from candidate snapshot failures."
+  },
+  "u0_full_release": {
+    "receipt": "validation-u0-release-make-test",
+    "argv": [
+      "make",
+      "test"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "41709d887fb9944942210faf62c6a1f84ca0faa3abcabded44021f871d61f8e0",
+    "stderr_sha256": "9d2b00ff7578d4df97beb37a840e2d6fad9ae9c704413495b8829a5ffcb97c4c",
+    "eggcc_unit_tests_passed": 31,
+    "eggcc_file_tests_passed": 2421,
+    "dag_tests_passed": 64,
+    "doc_tests_ignored": 2,
+    "pending_snapshots": 0,
+    "clean_checkout": true
+  },
+  "engine_full_check": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/engine-make-check-process-access/receipt.json",
+    "argv": [
+      "make",
+      "check"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "note": "Prior full selected-engine make check; all 884 retained engine files match the corresponding Parts32 E1 candidate and its five changed files match the frozen E1 source manifest."
+  },
+  "historical_engine_harness_failure": {
+    "receipt": "validation-engine",
+    "exit_code": 101,
+    "reason": "Initial isolated engine copy omitted unchanged egg-math-benchmark; --locked workspace resolution failed. The corrected validation-engine-final receipt passes all 18 selected tests."
+  },
+  "failed_command_receipts": {
+    "validation-dag-clippy-final": 101,
+    "validation-engine": 101,
+    "validation-full-workspace-final": 101,
+    "validation-host-make-test-release": 2,
+    "validation-u0-full-workspace": 101
+  },
+  "snapshots_accepted": false,
+  "timing_campaign": false,
+  "qualification": "Supporting mechanism and native-code evidence only: no intermediate-fact rescue, no passing full candidate validation, and no pre-existing compiler bug or measured speedup."
+}

@@ -1,0 +1,55 @@
+{
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+    "--with-context",
+    "--run-mode",
+    "optimize",
+    "--egraph-out-dir",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/different-divisor/encoding/egraphs",
+    "--run-data-out",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/different-divisor/encoding/emit.json",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/different-divisor.bril"
+  ],
+  "cwd": "/private/tmp/eggcc-qr7-candidate",
+  "timeout_s": 180,
+  "exit_code": 0,
+  "launch_error": null,
+  "timed_out": false,
+  "elapsed_s_diagnostic": 0.5452225410008396,
+  "diagnostic_elapsed_is_performance_evidence": false,
+  "environment": {
+    "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "CARGO_BUILD_JOBS": "4",
+    "RUST_TEST_THREADS": "4",
+    "RAYON_NUM_THREADS": "1",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "PATH": "/opt/homebrew/opt/llvm@18/bin:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "CARGO_TARGET_DIR": "/private/tmp/encoding-qr7-candidate/target",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "scoped_mode": "encoding",
+  "scoped_evidence": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/different-divisor/encoding/evidence",
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD"
+  ],
+  "files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+      "sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/different-divisor/encoding/emit.json",
+      "sha256": "f4e6256c615971871bf9c4ba50651e61ca3411900dda7307bc501af6a9e28a68"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/different-divisor.bril",
+      "sha256": "bd293f158e17a40d8779556436c0738d59ea2ed22007f0e1591775c6f155a39e"
+    }
+  ],
+  "executable": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+  "executable_sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+  "stdout_sha256": "f03dd36436e61901119618740f510531def61948296676d93af51191a52b23cf",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

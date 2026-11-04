@@ -1,0 +1,22 @@
+{
+  "family": "omit-quotient-v2",
+  "mode": "u0",
+  "context": true,
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-quotient-v2.bril",
+  "source_sha256": "dda036eb840fe629acce040a32eb5eec65ebf022d0eafc5d9cf68f00c5e22407",
+  "emitted_sha256": "ad95f6f3f80b3eefc7413cfe6099f4c2d931f6cb276faa43be7428a47d05e0fe",
+  "binary_sha256": "026605259367b779dfe04b190eaedcff6a902802ec8637079d02cdfbd0d31b6c",
+  "outputs": [
+    {
+      "args": [
+        5,
+        12,
+        8
+      ],
+      "expected_stdout": "-24\n",
+      "stdout": "-24\n"
+    }
+  ],
+  "queries": [],
+  "performance_samples": false
+}

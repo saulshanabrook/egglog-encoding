@@ -1,0 +1,18 @@
+# Block-02 retry: static admission review
+
+**Consent on static identity; no remaining source/data-binding issue found.** Checked 2026-10-18T00:01:20Z–2026-10-18T00:02:18.612273+00:00. Root retains exclusive responsibility for fresh host screening, reservation, monitoring and launch. This note makes no host-inactivity assertion. I stop work after writing it.
+
+| Complete replacement study | Rechecked SHA-256 |
+| --- | --- |
+| `original-one/block-02/study.json` | `9c72c6f8dc62988dd555653dbd9dd0c23899e4a484819c539dfd269bd086c560` |
+| `corrected-max/block-02/study.json` | `ee210e3e724a8d2405e51248901f6090602b69891803d7544e108c63b4b0e2cc` |
+
+Both still match `replacement-block-02/declaration.json` SHA256 `4025f2169a0cc3ecbf7f37265de55fca1298bb705558415f9175a199fe6f0806`, its invalidation authority `e774e2af…` and unchanged host-screening supplement `c30342cc…`. The only study differences from block-01 remain study ID and Manual/Injective evidence roots; reversing those three values reproduces each complete prior manifest. Source/reference IDs, archived inputs, modes/flags, environment, one warmup/twelve observations/300-second timeout, balanced rotations and metric boundaries are unchanged. All 42 calls per case must be fresh; original-one expects exact false/false and corrected-max true/true.
+
+I verified all 48 provenance entries per case: three arm binary entries, one input and 44 individual artifacts. Expected hashes came from the preserved block-01 **top-level provenance array only**, whose containing file SHA matched the invalidation record; the reader stopped before status/rows. No timing row was deserialized or distribution inspected. This uses immutable identity evidence only and carries no invalid timing sample into block-02. Every current path/hash matches that table and the final package bindings. All 2507 previously retained block-01/source-binding file hashes still match preservation evidence.
+
+Actual endpoints remain original `5d980389feec6270146db9a2cfe4e1775974102ab6c50cdf7bad029471907af1` and corrected `f44edb3cb9c4b9660524335a29bea536571fe2ddbd1bcc68ba589decbd9bcc15`, both with Tiger `bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a`. Their source-manifest hashes remain `5cddb863fa1a242fd028051400fb9a58c54ff33c876fe74a678e29fee020c6a3` / `8748805409bdc89ae7d529521140aacadb85483ffb421b957d82b3a8de0fbc22`; source-package hashes remain `3db5783562ad2d1a4d0d0b0fb84b8a9a32fbf719811a34db3b44845123c3eb9e` / `3b76a46c76de1afaa19b5793e053fd9c424f3d71cf2d6a987c8e0400ebc1780d`. Endpoint authority, source manifest/patch and exact reference/input hashes match. Corrected deliberately retains its reviewed pre-borrow test package; that declared inactive-test difference remains separate from the two-rule production-source difference.
+
+Frozen collector is exactly `79c4147dbe5b74d1d9138e170643a7c09205f55a6d49d355f1fc201c3a811380`; frozen phase-aware helper is exactly `0b3c77b5d8e1349cc849514da327be0b2164b69335d4000ced8649cd28b06afe`. Current 788 compiler source hashes, five E1 hashes and all four frozen Python-helper hashes match their accepted inventories. No source review or gate is reopened; official compiler target failures keep their accepted explicit limits. The unchanged policy still requires common outer `EGGLOG_BENCH_MEMORY_GUARD=1` and excludes the separate diagnostic probe.
+
+Both block-02 directories still contain only `study.json`. Results, receipt directories, enabled evidence roots, postcapture and figure paths are absent. Studies matched again at closing. No project/helper import, test, build, workload, collection, figure or source/protocol edit ran; only this findings file was written. Host admission and any execution remain root-owned.

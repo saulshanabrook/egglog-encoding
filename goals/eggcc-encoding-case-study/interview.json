@@ -1,0 +1,53 @@
+{
+  "stage": "interview",
+  "title": "Eggcc case study for injectivity and disequality",
+  "goalSlug": "eggcc-encoding-case-study",
+  "questions": [
+    {
+      "id": "exploration_boundary",
+      "prompt": "What should bound the eggcc exploration before falling back to a smaller example?",
+      "description": "The initial leads are constructor/constant-merge checks and the active NoAlias memory analysis. Raw tuple Concat is not unconditionally injective because eggcc rewrites tuple partitions associatively. Expression disequality also does not automatically establish runtime pointer nonaliasing. Each candidate needs a semantic justification before it can support a bug or optimization claim.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Audit both leads and prototype up to two promising, semantically justified candidates in isolated worktrees. Allow small dependency/API compatibility changes. If neither yields a convincing case, document the evidence and use a smaller illustrative example; do not expand into a broad compiler or engine rewrite.",
+      "recommendedOptionIds": [
+        "bounded_prototypes"
+      ],
+      "options": [
+        {
+          "id": "bounded_prototypes",
+          "label": "Audit both leads; prototype up to two candidates; then decide"
+        },
+        {
+          "id": "broader_exploration",
+          "label": "Allow broader compiler/runtime work when a promising case needs it"
+        },
+        {
+          "id": "audit_first",
+          "label": "Deliver a feasibility audit before implementing compiler changes"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "paper_deliverable",
+      "prompt": "Should the eventual goal draft the paper section, or stop at the evidence for us to write from?",
+      "description": "The paper is in ../extended-egglog-paper. Its introduction already mentions injectivity and its overview has disequality/example placeholders. In either option, retain reproducible inputs, correctness checks, measured performance, limitations, and an honest account of negative results. Existing author work stays intact; new proof support and Lean mechanization remain outside scope.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Deliver a concise LaTeX section explaining the encodings and their mathematical laws, plus a case-study/evaluation paragraph or table backed by reproducible artifacts. Use a small illustrative case if eggcc produces no convincing result. Keep detailed search notes outside the paper.",
+      "recommendedOptionIds": [
+        "paper_section"
+      ],
+      "options": [
+        {
+          "id": "paper_section",
+          "label": "Draft the paper section plus reproducible study artifacts"
+        },
+        {
+          "id": "evidence_only",
+          "label": "Deliver evidence, candidate assessment, and figures; write the section later"
+        }
+      ],
+      "required": true
+    }
+  ]
+}

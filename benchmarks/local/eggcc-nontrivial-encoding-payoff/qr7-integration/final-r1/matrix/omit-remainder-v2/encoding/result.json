@@ -1,0 +1,92 @@
+{
+  "family": "omit-remainder-v2",
+  "mode": "encoding",
+  "context": true,
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-remainder-v2.bril",
+  "source_sha256": "1291d6c45d91c2fc954f1cc33ff2d022916db969b59712882f21c18131d90155",
+  "emitted_sha256": "ea06a8e7e66c532afe6aeb334db72c2e5a3494cd1dd10bcb5ddf08c5df0fe446",
+  "binary_sha256": "320767e46913dfeb11069ac285caddbe2d0097ce1f92cc5e1bcf137ab5ca1878",
+  "outputs": [
+    {
+      "args": [
+        7,
+        8,
+        8
+      ],
+      "expected_stdout": "-24\n",
+      "stdout": "-24\n"
+    }
+  ],
+  "queries": [
+    {
+      "accepted": false,
+      "export": false,
+      "diagnostic": "recognizer-stage-counts",
+      "functions": 1,
+      "nodes": 259,
+      "loads": 1,
+      "immediate_write": 1,
+      "matching_context": 1,
+      "ancestry": 1,
+      "loop_binding": 1,
+      "true_if_scopes": 4,
+      "eq_predicates": 1,
+      "quotient_pairs": 1,
+      "distinct_slot_pairs": 1,
+      "bounded_pairs": 1,
+      "remainder_pairs": 0,
+      "addresses": 0,
+      "same_allocation": 0,
+      "matching_offsets": 0,
+      "live_fragment": 0,
+      "address_diagnostics": []
+    },
+    {
+      "accepted": false,
+      "export": false,
+      "diagnostic": "recognizer-stage-counts",
+      "functions": 1,
+      "nodes": 179,
+      "loads": 1,
+      "immediate_write": 1,
+      "matching_context": 1,
+      "ancestry": 1,
+      "loop_binding": 1,
+      "true_if_scopes": 4,
+      "eq_predicates": 1,
+      "quotient_pairs": 1,
+      "distinct_slot_pairs": 1,
+      "bounded_pairs": 0,
+      "remainder_pairs": 0,
+      "addresses": 0,
+      "same_allocation": 0,
+      "matching_offsets": 0,
+      "live_fragment": 0,
+      "address_diagnostics": []
+    },
+    {
+      "accepted": false,
+      "export": false,
+      "diagnostic": "recognizer-stage-counts",
+      "functions": 1,
+      "nodes": 178,
+      "loads": 1,
+      "immediate_write": 1,
+      "matching_context": 1,
+      "ancestry": 1,
+      "loop_binding": 1,
+      "true_if_scopes": 4,
+      "eq_predicates": 1,
+      "quotient_pairs": 1,
+      "distinct_slot_pairs": 1,
+      "bounded_pairs": 0,
+      "remainder_pairs": 0,
+      "addresses": 0,
+      "same_allocation": 0,
+      "matching_offsets": 0,
+      "live_fragment": 0,
+      "address_diagnostics": []
+    }
+  ],
+  "performance_samples": false
+}

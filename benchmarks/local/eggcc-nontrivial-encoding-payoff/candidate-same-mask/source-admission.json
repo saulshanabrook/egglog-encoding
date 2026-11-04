@@ -1,0 +1,51 @@
+{
+  "utc": "2026-10-19T16:10:48.010506+00:00",
+  "roots": [
+    {
+      "path": "/private/tmp/eggcc-same-mask-candidate",
+      "source_git": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+      "revision": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+      "archive_sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+      "files": 835
+    },
+    {
+      "path": "/private/tmp/encoding-same-mask-candidate",
+      "source_git": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "revision": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+      "archive_sha256": "bf28b65f200123f5738326a069dad26d9d7004dd72ef89f9f4becd74f11cd82f",
+      "files": 1065
+    }
+  ],
+  "retained_e1_delta": [
+    {
+      "path": "egglog-experimental/src/disequality.rs",
+      "base_sha256": "c2c0621c15a681753a520211fd07703a28843768122bfb78037b78e2ba0211c0",
+      "retained_sha256": "8d56d53d87d0c21595b765f3aa6a9f7e3bc4752b4f87dfbcc651c108fe11bb3c",
+      "copy_sha256": "8d56d53d87d0c21595b765f3aa6a9f7e3bc4752b4f87dfbcc651c108fe11bb3c"
+    },
+    {
+      "path": "egglog-experimental/tests/injectivity_disequality.rs",
+      "base_sha256": "a136d4b091cdd6a260beefa543642f851c339a726b84bd9edc0a2677b2cd2751",
+      "retained_sha256": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c",
+      "copy_sha256": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c"
+    },
+    {
+      "path": "egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "base_sha256": "bf74d512891ecf7bb86383a9e2b9de26c616e7cd958e658ec8fbe8585b8b6d9d",
+      "retained_sha256": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee",
+      "copy_sha256": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee"
+    },
+    {
+      "path": "egglog-experimental/README.md",
+      "base_sha256": "071979dc3a1565cda8d5bb81d4cdd37cce3e1d5713a1a4f1fc181705b8eddee1",
+      "retained_sha256": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318",
+      "copy_sha256": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318"
+    },
+    {
+      "path": "egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "untracked_in_retained_worktree": true,
+      "retained_sha256": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec",
+      "copy_sha256": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec"
+    }
+  ]
+}

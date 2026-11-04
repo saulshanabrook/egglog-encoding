@@ -1,0 +1,6 @@
+{
+  "initial_engine_copy": "Missing untracked retained oracle.rs caused first focused-test compile failure; copied exact file;18 focused engine tests then pass.",
+  "initial_query_schedule": "Initial top-level run syntax wrong; focused tests caught it; corrected to run-schedule(run ruleset);4 current candidate tests pass.",
+  "initial_hot_attempt": "No query: literal7 loop slot had no admitted induction. Preserved source/binary/matrix before adding typed same-index passthrough proof.",
+  "negative_oracle_adapter": "First supplemental expectation for updated slot counted constant7 contributions after seven changed. Source/optimized both67; independent full-source evaluator gives67 and other-index34. Corrected expected values; original child receipts preserved; no compiler failure."
+}

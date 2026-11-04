@@ -1,0 +1,80 @@
+[
+  {
+    "args": [
+      0,
+      1,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  },
+  {
+    "args": [
+      10,
+      11,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      0,
+      1
+    ],
+    "expected_stdout": "3\n",
+    "actual": {
+      "source": "3\n",
+      "optimized": "3\n",
+      "manual": "3\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      2,
+      1
+    ],
+    "expected_stdout": "3\n",
+    "actual": {
+      "source": "3\n",
+      "optimized": "3\n",
+      "manual": "3\n"
+    }
+  },
+  {
+    "args": [
+      9223372036854775807,
+      -9223372036854775808,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  },
+  {
+    "args": [
+      -9223372036854775808,
+      -9223372036854775807,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  }
+]

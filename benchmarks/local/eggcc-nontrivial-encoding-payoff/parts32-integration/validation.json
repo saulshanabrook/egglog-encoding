@@ -1,0 +1,72 @@
+{
+  "engine_make_check": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/engine-make-check-process-access/receipt.json",
+    "exit_code": 0
+  },
+  "engine_registered": {
+    "tests": 18,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/engine-tests/receipt.json"
+  },
+  "host_registered": {
+    "tests": 5,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/focused-reviewed-final/receipt.json",
+    "exit_code": 0
+  },
+  "host_dag_full": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/dag-full-make-test-command/receipt.json",
+    "exit_code": 0,
+    "test_summaries": [
+      "test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  "host_root_make_test": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/eggcc-make-test/receipt.json",
+    "exit_code": 2,
+    "functional_tests_passed": 2421,
+    "pending_snapshots": 13,
+    "pending_snapshots_match_prior": true,
+    "comparison": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/eggcc-snapshot-comparison.json",
+    "snapshots_accepted": false
+  },
+  "host_clippy": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/dag-final-clippy/receipt.json",
+    "exit_code": 101,
+    "new_sidecar_warnings": 0,
+    "existing_issues": [
+      {
+        "file": "dag_in_context/src/extractiongymfastergreedydag.rs",
+        "line": 134,
+        "lint": "unnecessary_unwrap",
+        "matches_pinned_U0": true
+      },
+      {
+        "file": "dag_in_context/src/fastercbcextractor.rs",
+        "line": 991,
+        "lint": "cloned_ref_to_slice_refs",
+        "matches_pinned_U0": true
+      }
+    ]
+  },
+  "native_gate": {
+    "positive_native_executions": 154,
+    "semantic_negative_native_executions": 25,
+    "loop_negative_native_executions": 10,
+    "context_negative_native_executions": 11,
+    "B1_matches_U0": true,
+    "SeedOnly_matches_U0": true,
+    "Encoding_matches_Manual": true,
+    "all_output_checks_passed": true,
+    "native_difference_survives": true,
+    "primitive_only_is_null": true,
+    "all_required_theory_knockouts_restore_U0": true,
+    "exact_high_rescue_restores_Encoding": true,
+    "Eq_false_consumer_knockout_restores_U0": true,
+    "existing_EggCC_false_If_rule_is_essential": false,
+    "SeedOnly_retains_exact_graph_and_seeds_without_reasoning": true,
+    "PrimitiveOnly_retains_exact_graph_and_seeds_without_reasoning": true
+  },
+  "timing_campaign": false,
+  "source_manifest": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-source-identities.json"
+}

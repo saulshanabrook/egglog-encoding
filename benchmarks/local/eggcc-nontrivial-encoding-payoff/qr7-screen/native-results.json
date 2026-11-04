@@ -1,0 +1,145 @@
+[
+  {
+    "args": [
+      12,
+      12,
+      8
+    ],
+    "expected": "28\n",
+    "actual": {
+      "source": "28\n",
+      "optimized": "28\n",
+      "manual": "28\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      0,
+      0
+    ],
+    "expected": "0\n",
+    "actual": {
+      "source": "0\n",
+      "optimized": "0\n",
+      "manual": "0\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      0,
+      1
+    ],
+    "expected": "0\n",
+    "actual": {
+      "source": "0\n",
+      "optimized": "0\n",
+      "manual": "0\n"
+    }
+  },
+  {
+    "args": [
+      63,
+      63,
+      1024
+    ],
+    "expected": "523776\n",
+    "actual": {
+      "source": "523776\n",
+      "optimized": "523776\n",
+      "manual": "523776\n"
+    }
+  },
+  {
+    "args": [
+      7,
+      7,
+      8
+    ],
+    "expected": "28\n",
+    "actual": {
+      "source": "28\n",
+      "optimized": "28\n",
+      "manual": "28\n"
+    }
+  },
+  {
+    "args": [
+      5,
+      12,
+      8
+    ],
+    "expected": "-1\n",
+    "actual": {
+      "source": "-1\n",
+      "optimized": "-1\n",
+      "manual": "-1\n"
+    }
+  },
+  {
+    "args": [
+      12,
+      13,
+      8
+    ],
+    "expected": "-2\n",
+    "actual": {
+      "source": "-2\n",
+      "optimized": "-2\n",
+      "manual": "-2\n"
+    }
+  },
+  {
+    "args": [
+      -1,
+      0,
+      8
+    ],
+    "expected": "-9\n",
+    "actual": {
+      "source": "-9\n",
+      "optimized": "-9\n",
+      "manual": "-9\n"
+    }
+  },
+  {
+    "args": [
+      64,
+      64,
+      8
+    ],
+    "expected": "-9\n",
+    "actual": {
+      "source": "-9\n",
+      "optimized": "-9\n",
+      "manual": "-9\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      1,
+      -1
+    ],
+    "expected": "-9\n",
+    "actual": {
+      "source": "-9\n",
+      "optimized": "-9\n",
+      "manual": "-9\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      1,
+      10000001
+    ],
+    "expected": "-9\n",
+    "actual": {
+      "source": "-9\n",
+      "optimized": "-9\n",
+      "manual": "-9\n"
+    }
+  }
+]

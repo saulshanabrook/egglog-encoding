@@ -1,0 +1,135 @@
+[
+  {
+    "family": "no-context",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/probe-01/fixtures/no-context.bril",
+    "source_sha256": "2c8e88e5012825affe6fce80b91879bd22cd9380baae04793889c5648c97c515",
+    "compiler_sha256": "76ecfc8aea855ec2f21671ee68dd6f30ae7144de3ab4a8407a72b33fcfe79e62",
+    "emitted_sha256": "8934860b4829d4af86eefcd9b2c6389f890c4e1e0c31ab514c955497a5251f55",
+    "main_sha256": "9f5cd78249d9a7237ace32c7fce2e2c5c5b090f42abc1f04fa2d4d548f9663c0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          8
+        ],
+        "expected_stdout": "56\n",
+        "stdout": "56\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "54\n",
+        "stdout": "54\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "24\n",
+        "stdout": "24\n"
+      },
+      {
+        "args": [
+          2147483648,
+          7,
+          2147483648,
+          7,
+          8
+        ],
+        "expected_stdout": "56\n",
+        "stdout": "56\n"
+      },
+      {
+        "args": [
+          4294967295,
+          4294967295,
+          4294967295,
+          4294967295,
+          4
+        ],
+        "expected_stdout": "26\n",
+        "stdout": "26\n"
+      },
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          1
+        ],
+        "expected_stdout": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          1024
+        ],
+        "expected_stdout": "7168\n",
+        "stdout": "7168\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          4294967296,
+          0,
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "queries": []
+  }
+]

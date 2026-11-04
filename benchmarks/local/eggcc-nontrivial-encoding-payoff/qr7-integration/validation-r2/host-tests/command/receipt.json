@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "argv": [
+    "cargo",
+    "insta",
+    "test",
+    "--release",
+    "--unreferenced=reject",
+    "--",
+    "--skip",
+    "raytracewithscreen"
+  ],
+  "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+  "started_utc": "2026-10-20T04:54:09.299023Z",
+  "finished_utc": "2026-10-20T05:02:25.803750Z",
+  "timeout_seconds": 1800,
+  "elapsed_seconds_diagnostic": 496.4970144580002,
+  "diagnostic_elapsed_is_performance_evidence": false,
+  "exit_code": 1,
+  "timed_out": false,
+  "environment": {
+    "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "CARGO_BUILD_JOBS": "4",
+    "RUST_TEST_THREADS": "4",
+    "RAYON_NUM_THREADS": "1",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "CARGO_TERM_COLOR": "never"
+  },
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD",
+    "INSTA_UPDATE",
+    "INSTA_FORCE_PASS"
+  ],
+  "raytracing_requested": false,
+  "explicitly_skipped_test": "raytracewithscreen",
+  "executable": "/Users/saul/.cargo/bin/cargo",
+  "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+  "stdout_sha256": "92288f1122e09c9e0ba5633b999dd3092b71237f471a1402c0d14fe1d8d1de0e",
+  "stderr_sha256": "7f17d51801db4fbbc617bb4ec556beba8379e472cf6eb241d993a3eefcdb0886",
+  "initial_pending_snapshots": 0,
+  "pending_snapshots_after": 13,
+  "checked_in_snapshots_unchanged": true,
+  "source_excluding_generated_snapshots_unchanged": true,
+  "source_before_sha256": "b363d510fce9207b363d1cfda1ab72027d80c2027392285b037cb9548f61b887",
+  "source_after_sha256": "b363d510fce9207b363d1cfda1ab72027d80c2027392285b037cb9548f61b887",
+  "pending_snapshot_manifest_sha256": "3dcef30a4aa4ffd886a32e0a785291c49b1bf04fa2579fe7990500aa11be28f8"
+}

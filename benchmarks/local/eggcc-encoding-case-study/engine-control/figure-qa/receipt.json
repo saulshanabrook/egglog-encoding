@@ -1,0 +1,264 @@
+{
+  "status": "passed",
+  "checked_utc": "2026-10-17T19:24:39.107533+00:00",
+  "operation": "regenerate-only figure QA; no compiler execution, builds, or timing collection",
+  "comparison": "A to B: engine upgrade/adaptation, not encoding gain",
+  "sources_unchanged": {
+    "study": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/study.json",
+      "sha256": "860b087ddd7302db22204a5a697b50dccdde7fa73dea91282228d5627795a59e"
+    },
+    "results": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/results.json",
+      "sha256": "d339b1efe91e6695746ae835378f150b8570d4f684873680c57a1b4a5d2aa9ad"
+    },
+    "collector": {
+      "path": "/Users/saul/p/wt/egglog-encoding/eggcc-study/scripts/eggcc_encoding_case_study.py",
+      "sha256": "79c4147dbe5b74d1d9138e170643a7c09205f55a6d49d355f1fc201c3a811380"
+    }
+  },
+  "invocations_by_phase": {
+    "correctness": 4,
+    "warmup": 4,
+    "measurement": 40
+  },
+  "export_comparisons": [
+    {
+      "file": "README.md",
+      "first_sha256": "21548ca68002a17020cab22f706eaaa7311919e56ab2a926c9ce38c6e8db91ae",
+      "regenerated_sha256": "21548ca68002a17020cab22f706eaaa7311919e56ab2a926c9ce38c6e8db91ae",
+      "byte_equal": true
+    },
+    {
+      "file": "constant_fold_simple.pdf",
+      "first_sha256": "34f2a0fb47eabe2c049fda81309b86a4035213b67dd0a0fdc925b2bc370c3c16",
+      "regenerated_sha256": "34f2a0fb47eabe2c049fda81309b86a4035213b67dd0a0fdc925b2bc370c3c16",
+      "byte_equal": true
+    },
+    {
+      "file": "constant_fold_simple.svg",
+      "first_sha256": "ff5f04dfc0294d0cd8d6755a0aabd5c2724d39e474322d754f9da6730b5ef719",
+      "regenerated_sha256": "ff5f04dfc0294d0cd8d6755a0aabd5c2724d39e474322d754f9da6730b5ef719",
+      "byte_equal": true
+    },
+    {
+      "file": "figure-data.json",
+      "first_sha256": "92771ef1924cdd5c66b637dff227603e2ce359786be44acc510720336b1baf9d",
+      "regenerated_sha256": "92771ef1924cdd5c66b637dff227603e2ce359786be44acc510720336b1baf9d",
+      "byte_equal": true
+    },
+    {
+      "file": "mem_simple_store_forwarding.pdf",
+      "first_sha256": "cf6960e516097351807a5c5eeba588049ab4c4902ebabe229b7fe4f3007d2d2b",
+      "regenerated_sha256": "cf6960e516097351807a5c5eeba588049ab4c4902ebabe229b7fe4f3007d2d2b",
+      "byte_equal": true
+    },
+    {
+      "file": "mem_simple_store_forwarding.svg",
+      "first_sha256": "70f456b0dc1fd26ce5dae9a894f51643c2a17b2b16292a479e9d917c6af3e2ef",
+      "regenerated_sha256": "70f456b0dc1fd26ce5dae9a894f51643c2a17b2b16292a479e9d917c6af3e2ef",
+      "byte_equal": true
+    },
+    {
+      "file": "table.md",
+      "first_sha256": "75ab18224c6c12a888eb2f6b688eb1ed1bcde966d8e3fb90bdde7eb10daf915f",
+      "regenerated_sha256": "75ab18224c6c12a888eb2f6b688eb1ed1bcde966d8e3fb90bdde7eb10daf915f",
+      "byte_equal": true
+    }
+  ],
+  "raw_summary_matches": true,
+  "rss_scope": "wait4 child rusage.ru_maxrss; platform-normalized, not simultaneous process-group peak",
+  "timing_scope": "compiler process wall time including CLI JSON receipt; excludes interpretation; not program execution",
+  "per_case_descriptive": [
+    {
+      "case": "constant_fold_simple",
+      "A": {
+        "case": "constant_fold_simple",
+        "arm": "A",
+        "n": 10,
+        "wall_sec": {
+          "raw": [
+            0.13604595797369257,
+            0.13647079200018197,
+            0.13603208301356062,
+            0.13675354199949652,
+            0.1366621669731103,
+            0.13644104200648144,
+            0.13870658300584182,
+            0.13535050000064075,
+            0.13704070798121393,
+            0.13525558303808793
+          ],
+          "median": 0.1364559170033317,
+          "min": 0.13525558303808793,
+          "max": 0.13870658300584182,
+          "stdev": 0.0009744228305386125
+        },
+        "max_rss_bytes": {
+          "raw": [
+            42237952,
+            42352640,
+            42483712,
+            42516480,
+            42467328,
+            42188800,
+            42319872,
+            42483712,
+            42401792,
+            42303488
+          ],
+          "median": 42377216.0,
+          "min": 42188800,
+          "max": 42516480,
+          "stdev": 113037.7269127436
+        }
+      },
+      "B": {
+        "case": "constant_fold_simple",
+        "arm": "B",
+        "n": 10,
+        "wall_sec": {
+          "raw": [
+            0.13377904199296609,
+            0.1335704589728266,
+            0.13378520804690197,
+            0.13469895796151832,
+            0.13492437498643994,
+            0.13413129199761897,
+            0.13632166699972004,
+            0.13480391696793959,
+            0.13347950001480058,
+            0.1329590420355089
+          ],
+          "median": 0.13395825002226047,
+          "min": 0.1329590420355089,
+          "max": 0.13632166699972004,
+          "stdev": 0.0009677407674025755
+        },
+        "max_rss_bytes": {
+          "raw": [
+            42778624,
+            42745856,
+            42713088,
+            42811392,
+            42844160,
+            42729472,
+            42811392,
+            42729472,
+            42713088,
+            42795008
+          ],
+          "median": 42762240.0,
+          "min": 42713088,
+          "max": 42844160,
+          "stdev": 47011.898363428525
+        }
+      },
+      "median_wall_B_over_A": 0.981696162131172,
+      "median_rss_B_over_A": 1.0090856369611445
+    },
+    {
+      "case": "mem_simple_store_forwarding",
+      "A": {
+        "case": "mem_simple_store_forwarding",
+        "arm": "A",
+        "n": 10,
+        "wall_sec": {
+          "raw": [
+            0.1413297500112094,
+            0.1437348750187084,
+            0.1420508329756558,
+            0.14267237501917407,
+            0.14277358300751075,
+            0.14215233398135751,
+            0.14224725001258776,
+            0.1433927079779096,
+            0.14366649999283254,
+            0.14218091598013416
+          ],
+          "median": 0.1424598125158809,
+          "min": 0.1413297500112094,
+          "max": 0.1437348750187084,
+          "stdev": 0.000781782996869341
+        },
+        "max_rss_bytes": {
+          "raw": [
+            43073536,
+            43155456,
+            43515904,
+            43204608,
+            42582016,
+            43204608,
+            43188224,
+            43401216,
+            43188224,
+            43155456
+          ],
+          "median": 43188224.0,
+          "min": 42582016,
+          "max": 43515904,
+          "stdev": 243020.12866463917
+        }
+      },
+      "B": {
+        "case": "mem_simple_store_forwarding",
+        "arm": "B",
+        "n": 10,
+        "wall_sec": {
+          "raw": [
+            0.14095858298242092,
+            0.14484879199881107,
+            0.1410812500398606,
+            0.14064708299702033,
+            0.14098041702527553,
+            0.14122124999994412,
+            0.1412121249595657,
+            0.14046862500254065,
+            0.14444054098566994,
+            0.14125624997541308
+          ],
+          "median": 0.14114668749971315,
+          "min": 0.14046862500254065,
+          "max": 0.14484879199881107,
+          "stdev": 0.0015692723736426997
+        },
+        "max_rss_bytes": {
+          "raw": [
+            42942464,
+            43008000,
+            43302912,
+            43057152,
+            43024384,
+            43253760,
+            43155456,
+            43139072,
+            43106304,
+            42860544
+          ],
+          "median": 43081728.0,
+          "min": 42860544,
+          "max": 43302912,
+          "stdev": 135557.73040033123
+        }
+      },
+      "median_wall_B_over_A": 0.9907824881068029,
+      "median_rss_B_over_A": 0.9975341426403642
+    }
+  ],
+  "visual_review": {
+    "status": "passed by manual inspection of both actual PDF renders",
+    "checks": [
+      "case title",
+      "A/B n=10 labels",
+      "all plotted observations retained",
+      "median/range marks",
+      "units",
+      "RSS-scope note",
+      "no clipping"
+    ],
+    "rendered_pngs": {
+      "constant_fold_simple.png": "87af8122b0642f31d989ced9edc9c1de7a8ef1f5988ac9748e9efb46e4a3812f",
+      "mem_simple_store_forwarding.png": "0e9e8c1a9231be4ac0bb684ca5d7dd5ad9f9393106e86c1c16957789392837bb"
+    }
+  }
+}

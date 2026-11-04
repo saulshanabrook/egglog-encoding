@@ -1,0 +1,65 @@
+{
+  "phase": "measure",
+  "cycle": 1,
+  "position": 3,
+  "arm": "Manual",
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin-reviewed-final/eggcc",
+    "--with-context",
+    "--run-mode",
+    "optimize",
+    "--run-data-out",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-01-03-Manual/run-data.json",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/fixtures/source.bril"
+  ],
+  "cwd": "/private/tmp/eggcc-parts32-candidate",
+  "timeout_s": 180,
+  "scoped_mode": "manual",
+  "run_data_out": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-01-03-Manual/run-data.json",
+  "fresh_scoped_evidence_dir": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-01-03-Manual/scoped-evidence",
+  "expected_stdout_sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9",
+  "planned_utc": "2026-10-20T02:09:45.549387+00:00",
+  "started_utc": "2026-10-20T02:09:45.549478+00:00",
+  "finished_utc": "2026-10-20T02:09:46.262100+00:00",
+  "duration_ns": 709494708,
+  "exit_code": 0,
+  "timed_out": false,
+  "launch_error": null,
+  "stdout_bytes": 3348,
+  "stdout_sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9",
+  "stdout_exact": true,
+  "stderr_bytes": 0,
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run_data_exists": true,
+  "run_data_sha256": "309e9d4fdca5496c4aaa9ce341157b07afdc6a23cfb95fe387a491a9f5e35d66",
+  "run_data_error": null,
+  "run_data_keys": [
+    "cycles_taken",
+    "eggcc_compile_time",
+    "eggcc_extraction_time",
+    "eggcc_serialization_time",
+    "extract_region_timings",
+    "llvm_compile_time",
+    "original_interpreted",
+    "result_interpreted"
+  ],
+  "scoped_evidence_exists": true,
+  "scoped_evidence_manifest": [
+    {
+      "path": "boundary-0000.json",
+      "bytes": 6685971,
+      "sha256": "440659df97ba76136b2f73dc0448cc08102241c1c1d982aff8ea4e6678a528f4"
+    },
+    {
+      "path": "boundary-0001.json",
+      "bytes": 72,
+      "sha256": "b1d0a57dbf9d9099e75096541c6092f2c4d7253e8add7a9e4b131a69d921328b"
+    },
+    {
+      "path": "boundary-0002.json",
+      "bytes": 72,
+      "sha256": "82eef2b419310d95002fa34fcdcb44a66972a73c74c6b531d9b395f9f0f6c9b1"
+    }
+  ],
+  "success": true
+}

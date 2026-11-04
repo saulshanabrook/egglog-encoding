@@ -1,0 +1,272 @@
+{
+  "reduced_width_exhaustive": [
+    {
+      "width": 1,
+      "pairs": 4
+    },
+    {
+      "width": 2,
+      "pairs": 16
+    },
+    {
+      "width": 3,
+      "pairs": 64
+    },
+    {
+      "width": 4,
+      "pairs": 256
+    },
+    {
+      "width": 5,
+      "pairs": 1024
+    },
+    {
+      "width": 6,
+      "pairs": 4096
+    },
+    {
+      "width": 7,
+      "pairs": 16384
+    },
+    {
+      "width": 8,
+      "pairs": 65536
+    }
+  ],
+  "full_width_pairs": 4177,
+  "injectivity": "32-bit halves decode uniquely; signed interpretation preserves bits",
+  "generic_two_unresolved_children": "Either child may equal its counterpart; neither is forced disequal",
+  "counterexamples": {
+    "missing-high-bound": {
+      "left": [
+        4294967296,
+        0
+      ],
+      "right": [
+        0,
+        0
+      ],
+      "widths": [
+        32,
+        32
+      ],
+      "left_word": 0,
+      "right_word": 0
+    },
+    "missing-low-bound": {
+      "left": [
+        0,
+        4294967296
+      ],
+      "right": [
+        1,
+        0
+      ],
+      "widths": [
+        32,
+        32
+      ],
+      "left_word": 4294967296,
+      "right_word": 4294967296
+    },
+    "different-widths": {
+      "left": [
+        1,
+        0
+      ],
+      "right": [
+        65536,
+        0
+      ],
+      "widths": [
+        32,
+        16
+      ],
+      "left_word": 4294967296,
+      "right_word": 4294967296
+    },
+    "two-fields-vary-high-can-equal": {
+      "left": [
+        0,
+        0
+      ],
+      "right": [
+        0,
+        1
+      ],
+      "widths": [
+        32,
+        32
+      ],
+      "left_word": 0,
+      "right_word": 1
+    },
+    "two-fields-vary-low-can-equal": {
+      "left": [
+        0,
+        0
+      ],
+      "right": [
+        1,
+        0
+      ],
+      "widths": [
+        32,
+        32
+      ],
+      "left_word": 0,
+      "right_word": 4294967296
+    }
+  },
+  "positive_rows": [
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        8
+      ],
+      "expected_stdout": "56\n"
+    },
+    {
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        8
+      ],
+      "expected_stdout": "54\n"
+    },
+    {
+      "args": [
+        0,
+        1,
+        1,
+        1,
+        8
+      ],
+      "expected_stdout": "24\n"
+    },
+    {
+      "args": [
+        2147483648,
+        7,
+        2147483648,
+        7,
+        8
+      ],
+      "expected_stdout": "56\n"
+    },
+    {
+      "args": [
+        4294967295,
+        4294967295,
+        4294967295,
+        4294967295,
+        4
+      ],
+      "expected_stdout": "26\n"
+    },
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0
+      ],
+      "expected_stdout": "0\n"
+    },
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        1
+      ],
+      "expected_stdout": "7\n"
+    },
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        1024
+      ],
+      "expected_stdout": "7168\n"
+    },
+    {
+      "args": [
+        -1,
+        0,
+        0,
+        0,
+        8
+      ],
+      "expected_stdout": "-2\n"
+    },
+    {
+      "args": [
+        4294967296,
+        0,
+        0,
+        0,
+        8
+      ],
+      "expected_stdout": "-2\n"
+    },
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        -1
+      ],
+      "expected_stdout": "-2\n"
+    }
+  ],
+  "negative_rows": [
+    {
+      "kind": "missing-bound",
+      "args": [
+        4294967296,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "different-width",
+      "args": [
+        0,
+        65537,
+        1,
+        1,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "unresolved-fields",
+      "args": [
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    }
+  ],
+  "elapsed_s": 0.04371254099532962
+}

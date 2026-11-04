@@ -1,0 +1,481 @@
+{
+  "status": "diagnostic_only_excluded_cohorts",
+  "accepted_for_paper_performance": false,
+  "valid_for_causal_arm_comparisons": false,
+  "speedup_inference": false,
+  "pooled_blocks": false,
+  "created_utc": "2026-10-18T00:21:41.234579+00:00",
+  "script_sha256": "cd3057c532d34460e8208a0bcaa0c8a5fa1dbeea68d73e3a44e4360cd4261af2",
+  "source_files_sha256": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/invalid-retry-cohorts.json": "540e1bae5834db20dd09c1053c1264443bc6243bb83844294caf1d5b50e81c21",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-04/results.json": "568accf5df72b44f1176760480b76be038e9a04df92943f4ced051ff4ef8141c",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-04/verify-command.json": "e48a69bde32cde8e342a44d82433365f961125d5eed6fecf0f3c7ff854967d04",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-04/postcapture-command.json": "2b4bd74591ff441454245ecf1a225a82658a9b76afdddcf848955a1dd88a4aa9",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-04/postcapture/results.json": "050aa99816b0eb4400c8296d6685eca3bdd679d59823ddf89989b819e8c7efb6",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-02/results.json": "8faa4ae097fc3b9075e638566e542fa01f927c57adc3bea137dc86deb04554e9",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-02/verify-command.json": "091fb3b181cfb348263122f525e95d661de7ff5b44551b228f1c3c987527c026",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-02/postcapture-command.json": "841e96716036bb292e6c5f45f92ed1effb31623a7bd34d3ee4bf60e8a7d1a0d1",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-02/postcapture/results.json": "39f81e5b81c4873bf8ac8e4bde188ca3e4627aa43ce24c2f4965c6efef24a17c"
+  },
+  "cases": [
+    {
+      "case": "original-one",
+      "block": "block-04",
+      "results_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-04/results.json",
+      "results_sha256": "568accf5df72b44f1176760480b76be038e9a04df92943f4ced051ff4ef8141c",
+      "exclusion_reason": "Unresolved transient external Python/Node work overlaps a measured invocation, with failed CWD attribution; second snapshot is post-window. Cannot admit under predeclared unresolved-external-work rule. No claim of a proven forbidden job or slowdown.",
+      "reference": "false\n",
+      "timing_scope": "compiler process wall time including CLI JSON receipt; excludes interpretation; not program execution",
+      "rss_scope": "wait4 child rusage.ru_maxrss; platform-normalized, not simultaneous process-group peak",
+      "ignored_timing_rows": {
+        "correctness": 3,
+        "warmup": 3
+      },
+      "arms": [
+        {
+          "arm": "Off",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            6,
+            11,
+            13,
+            15,
+            20,
+            22,
+            24,
+            29,
+            31,
+            33,
+            38,
+            40
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.1979265830013901,
+              0.15474887494929135,
+              0.15822954196482897,
+              0.17960283299908042,
+              0.1539265419705771,
+              0.15377033303957433,
+              0.15213862498058006,
+              0.15301845798967406,
+              0.15259699994930997,
+              0.15369637502590194,
+              0.15352958301082253,
+              0.15430666698375717
+            ],
+            "median": 0.1538484375050757,
+            "min": 0.15213862498058006,
+            "max": 0.1979265830013901,
+            "sample_sd": 0.014167634058046306
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              44630016,
+              44498944,
+              44531712,
+              44580864,
+              44417024,
+              44630016,
+              44662784,
+              44531712,
+              44695552,
+              44662784,
+              44580864,
+              44498944
+            ],
+            "median": 44580864.0,
+            "min": 44417024,
+            "max": 44695552
+          }
+        },
+        {
+          "arm": "Manual",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            7,
+            9,
+            14,
+            16,
+            18,
+            23,
+            25,
+            27,
+            32,
+            34,
+            36,
+            41
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.3159601670340635,
+              0.2933377909939736,
+              0.29411291604628786,
+              0.29193845798727125,
+              0.2951970829744823,
+              0.3017215409781784,
+              0.2946293749846518,
+              0.29295716603519395,
+              0.29199512500781566,
+              0.2957373749813996,
+              0.2920234590419568,
+              0.29358387499814853
+            ],
+            "median": 0.2938483955222182,
+            "min": 0.29193845798727125,
+            "max": 0.3159601670340635,
+            "sample_sd": 0.006793784976005295
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              45334528,
+              45580288,
+              45629440,
+              45416448,
+              45662208,
+              45629440,
+              45580288,
+              45268992,
+              45285376,
+              45531136,
+              45088768,
+              45350912
+            ],
+            "median": 45473792.0,
+            "min": 45088768,
+            "max": 45662208
+          }
+        },
+        {
+          "arm": "Injective",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            8,
+            10,
+            12,
+            17,
+            19,
+            21,
+            26,
+            28,
+            30,
+            35,
+            37,
+            39
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.33820150000974536,
+              0.29046254203421995,
+              0.2822236660285853,
+              0.2914542500511743,
+              0.2819919169996865,
+              0.29225429199868813,
+              0.2929951660335064,
+              0.2891655000275932,
+              0.2883481670287438,
+              0.28516370797296986,
+              0.28234554099617526,
+              0.2829069579602219
+            ],
+            "median": 0.2887568335281685,
+            "min": 0.2819919169996865,
+            "max": 0.33820150000974536,
+            "sample_sd": 0.01529861636391809
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              45072384,
+              46399488,
+              45449216,
+              45629440,
+              45432832,
+              46301184,
+              45531136,
+              45514752,
+              45449216,
+              45629440,
+              45416448,
+              45432832
+            ],
+            "median": 45481984.0,
+            "min": 45072384,
+            "max": 46399488
+          }
+        }
+      ]
+    },
+    {
+      "case": "corrected-max",
+      "block": "block-02",
+      "results_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-02/results.json",
+      "results_sha256": "8faa4ae097fc3b9075e638566e542fa01f927c57adc3bea137dc86deb04554e9",
+      "exclusion_reason": "Sustained unrelated plant-friends asset tar/gzip packaging at about95percentCPU overlaps both in-run snapshots and after; material external build/I/O work under unchanged CPU policy.",
+      "reference": "true\n",
+      "timing_scope": "compiler process wall time including CLI JSON receipt; excludes interpretation; not program execution",
+      "rss_scope": "wait4 child rusage.ru_maxrss; platform-normalized, not simultaneous process-group peak",
+      "ignored_timing_rows": {
+        "correctness": 3,
+        "warmup": 3
+      },
+      "arms": [
+        {
+          "arm": "Off",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            6,
+            11,
+            13,
+            15,
+            20,
+            22,
+            24,
+            29,
+            31,
+            33,
+            38,
+            40
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.17013433401007205,
+              0.15587800001958385,
+              0.15408100001513958,
+              0.16222683299565688,
+              0.1550702080130577,
+              0.15393495897296816,
+              0.15433541702805087,
+              0.15524287504376844,
+              0.15974245796678588,
+              0.15890287497313693,
+              0.15568120800890028,
+              0.15389129100367427
+            ],
+            "median": 0.15546204152633436,
+            "min": 0.15389129100367427,
+            "max": 0.17013433401007205,
+            "sample_sd": 0.0047984423338632955
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              44515328,
+              44515328,
+              44744704,
+              44630016,
+              44761088,
+              44597248,
+              44908544,
+              44597248,
+              44564480,
+              44597248,
+              44613632,
+              44695552
+            ],
+            "median": 44605440.0,
+            "min": 44515328,
+            "max": 44908544
+          }
+        },
+        {
+          "arm": "Manual",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            7,
+            9,
+            14,
+            16,
+            18,
+            23,
+            25,
+            27,
+            32,
+            34,
+            36,
+            41
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.2908325829776004,
+              0.2877642080420628,
+              0.29641245800303295,
+              0.2959387919981964,
+              0.2982329169753939,
+              0.2900415830081329,
+              0.28889383299974725,
+              0.2899861250189133,
+              0.28651258401805535,
+              0.28766575001645833,
+              0.28413987503154203,
+              0.2897662909817882
+            ],
+            "median": 0.28987620800035074,
+            "min": 0.28413987503154203,
+            "max": 0.2982329169753939,
+            "sample_sd": 0.004262989153940271
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              45531136,
+              45793280,
+              45465600,
+              45613056,
+              45776896,
+              45629440,
+              45301760,
+              45187072,
+              46039040,
+              45776896,
+              45252608,
+              45367296
+            ],
+            "median": 45572096.0,
+            "min": 45187072,
+            "max": 46039040
+          }
+        },
+        {
+          "arm": "Injective",
+          "n": 12,
+          "repetitions": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "source_row_indices": [
+            8,
+            10,
+            12,
+            17,
+            19,
+            21,
+            26,
+            28,
+            30,
+            35,
+            37,
+            39
+          ],
+          "wall_seconds": {
+            "raw_values": [
+              0.30009645799873397,
+              0.2970752909895964,
+              0.29484270804096013,
+              0.2895540419849567,
+              0.2872414169833064,
+              0.2937913749483414,
+              0.29656020796392113,
+              0.31293274997733533,
+              0.2968308749841526,
+              0.2911436249851249,
+              0.2882423749542795,
+              0.2880546659580432
+            ],
+            "median": 0.29431704149465077,
+            "min": 0.2872414169833064,
+            "max": 0.31293274997733533,
+            "sample_sd": 0.0071137788249786725
+          },
+          "wait4_rss_bytes": {
+            "raw_values": [
+              45563904,
+              45252608,
+              45678592,
+              45563904,
+              45891584,
+              45121536,
+              45088768,
+              45350912,
+              45531136,
+              45629440,
+              45727744,
+              45400064
+            ],
+            "median": 45547520.0,
+            "min": 45088768,
+            "max": 45891584
+          }
+        }
+      ]
+    }
+  ],
+  "method": "Only phase=measurement; all 12 repetitions per arm; median/min/max and sample SD (n-1); no trimming/retries/pooling. RSS remains bytes; display MiB divides by 2**20."
+}

@@ -1,0 +1,44 @@
+# ARGS: 8 0 1 6
+@main(n: int, x: int, y: int, m: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  three: int = const 3;
+  five: int = const 5;
+  seven: int = const 7;
+  bad: int = const 99;
+  sum: int = id zero;
+  i: int = id zero;
+  jmp .check;
+.check:
+  more: bool = lt i n;
+  br more .body .done;
+.body:
+  mx: int = bitand x m;
+  my: int = bitand y m;
+  outer: bool = eq mx my;
+  br outer .same .different;
+.same:
+  delta: int = id three;
+  jmp .join;
+.different:
+  ux: int = add x seven;
+  uy: int = add y seven;
+  target: bool = eq ux uy;
+  br target .unexpected .expected;
+.unexpected:
+  delta: int = id bad;
+  jmp .join;
+.expected:
+  delta: int = id seven;
+.join:
+  sum: int = add sum delta;
+  xmul: int = mul x three;
+  x: int = add xmul one;
+  ymul: int = mul y five;
+  y: int = add ymul seven;
+  seven: int = id five;
+  i: int = add i one;
+  jmp .check;
+.done:
+  print sum;
+}

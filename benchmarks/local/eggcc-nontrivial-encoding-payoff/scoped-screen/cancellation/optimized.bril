@@ -1,0 +1,38 @@
+# ARGS: 0 0 1
+@main(v0: int, v1: int, v2: int) {
+  c3_: int = const 1;
+  v4_: int = add c3_ v0;
+  v5_: int = add c3_ v1;
+  v6_: bool = eq v4_ v5_;
+  c7_: int = const 7;
+  br v6_ .b8_ .b9_;
+.b8_:
+  v10_: bool = eq v0 v2;
+  br v10_ .b11_ .b12_;
+.b11_:
+  c13_: int = const 5;
+  print c13_;
+  ret;
+  jmp .b14_;
+.b12_:
+  v15_: int = add c7_ v1;
+  v16_: int = add c7_ v2;
+  v17_: bool = eq v15_ v16_;
+  br v17_ .b18_ .b19_;
+.b18_:
+  c20_: int = const 99;
+  print c20_;
+  ret;
+  jmp .b14_;
+.b19_:
+  c21_: int = const 7;
+  print c21_;
+  ret;
+  jmp .b14_;
+.b9_:
+  c22_: int = const 3;
+  print c22_;
+  ret;
+.b14_:
+}
+

@@ -1,0 +1,126 @@
+{
+  "utc": "2026-10-19T16:19:38.744231+00:00",
+  "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/source.bril",
+      "sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual.bril",
+      "sha256": "0c675c2374e3cecbc82d579f9b56593cc684d3738496aaa78749e413e4559cfb"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized.bril",
+      "sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized.bril",
+      "sha256": "643f612143e7852b91333dcc1ad297a7e93069ec4c02b793d0595f2692b7b6e8"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/run.py",
+      "sha256": "10a24669b19f19e677f9450d06ba6459fc58669b89c9641149b412b20061c792"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/run-v1.py",
+      "sha256": "8986775e06c702bc257c5663f412f865264e8879be5f63f5d67ea897cee1b1ed"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/run-v2.py",
+      "sha256": "cb66236d6d7f8cbdc0202dfb774b06e0c5061c58b98646cea7f5a2d711c38291"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/oracle.py",
+      "sha256": "1c8824f1052ab950cbd8e15f93bbb965bb16560bae8334b69525240e05eaeb3c"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/pilot.py",
+      "sha256": "6f59b7968279b69a9129e8758b81a3aa4a4ab76b5ede53378b66e9583a72fcb3"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/inspect.py",
+      "sha256": "9c291f2471099186800e08609ea3e63b86b5eda3c1fe8ca7c94768d51ca7476c"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/oracle-results.json",
+      "sha256": "2db4dd2551fdb2a13b0cb2df1c51947bdf432044e55b330c3b854974daa8c829"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/native-results.json",
+      "sha256": "aab0ee63837a0d07f2242217ba37b5f573674e9161060e8a22e7dcc0d9672ff6"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/negative-results.json",
+      "sha256": "e81267cb10e6b0385649a00d41c16907647a5921691b45a98528d68e1dca0b5b"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/matched-manual-native-results.json",
+      "sha256": "d84ed5069e62886311e28cf3e6c595e816c27d6cdb8fd155885f8c47613e01b4"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/inspection.json",
+      "sha256": "820a757fc6a93a3d2298d41e63e6c8777a5df02faee59e3d1012694fd4f12431"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13"
+    }
+  ],
+  "args": [
+    "12",
+    "12",
+    "10000000"
+  ],
+  "expected_stdout": "49999995000000\n",
+  "arms": {
+    "baseline": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+    "manual": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program"
+  },
+  "arm_pipeline": "Each one-change source input optimized by identical admitted U0 schedule, then same LLVM18 O3_O3 backend.",
+  "timing_boundary": "Process wall time, immediately before Popen until communicate returns; includes startup, argument parsing, allocation/free, computation and printing; excludes compilation and receipt writes.",
+  "clock": "time.perf_counter_ns",
+  "timeout_seconds": 30,
+  "warmups_per_arm": 2,
+  "measured_rounds": 6,
+  "order_by_round": [
+    [
+      "baseline",
+      "manual"
+    ],
+    [
+      "manual",
+      "baseline"
+    ],
+    [
+      "manual",
+      "baseline"
+    ],
+    [
+      "manual",
+      "baseline"
+    ],
+    [
+      "baseline",
+      "manual"
+    ],
+    [
+      "baseline",
+      "manual"
+    ]
+  ],
+  "environment_complete": {
+    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    "LC_ALL": "C",
+    "TZ": "UTC"
+  },
+  "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+  "external_memory_guard": false,
+  "platform": "macOS-26.6-arm64-arm-64bit",
+  "machine": "arm64",
+  "acceptance": "Pilot measures manual opportunity only. No encoding is implemented, and six rounds are not the full goal speedup campaign."
+}

@@ -1,0 +1,22 @@
+{
+  "result_interpreted": null,
+  "original_interpreted": null,
+  "cycles_taken": null,
+  "llvm_compile_time": {
+    "secs": 0,
+    "nanos": 0
+  },
+  "eggcc_compile_time": {
+    "secs": 0,
+    "nanos": 696359000
+  },
+  "eggcc_extraction_time": {
+    "secs": 0,
+    "nanos": 99633667
+  },
+  "eggcc_serialization_time": {
+    "secs": 0,
+    "nanos": 33930917
+  },
+  "extract_region_timings": []
+}

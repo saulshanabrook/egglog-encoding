@@ -1,0 +1,6 @@
+{
+  "encoding-contribution": "Prefer injectivity and disequality together; either encoding may qualify if a genuine bug or measured speedup is established.",
+  "speedup-outcomes": "Either means either selected category: faster generated-program execution or faster end-to-end compilation; both are eligible.",
+  "unansweredQuestionsOrConcerns": [],
+  "successBoundary": "Only genuine compiler bug or reproducible measured speedup; no negative-result or integration-only completion."
+}

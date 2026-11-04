@@ -1,0 +1,186 @@
+{
+  "scope": "Final local links/anchors and shell/Python syntax only; reproduction commands not rerun. Runtime gate results are in final-gates/summary.json.",
+  "status": "pass",
+  "records": [
+    {
+      "path": "STATUS.md",
+      "sha256": "77e142e1fc088b1a98ceb27ebcd036de3de12d78383b5f5c44ac6e1838629a91",
+      "localLinksChecked": 4,
+      "syntaxOnly": []
+    },
+    {
+      "path": "completion-audit.md",
+      "sha256": "ea40e5759e2a76a6093a8f4e83fd31d67d8450a4274dfa913dfacb23f422b94e",
+      "localLinksChecked": 12,
+      "syntaxOnly": []
+    },
+    {
+      "path": "facts.md",
+      "sha256": "3dc28ac857ae943453bf257e208ae0df1746fe5461ace6b1fdf55d31cdec8c93",
+      "localLinksChecked": 0,
+      "syntaxOnly": []
+    },
+    {
+      "path": "findings/baseline.md",
+      "sha256": "b32b6f2f8c156164457db65984945a6f76736549a1a8dddcefcda28e3754de63",
+      "localLinksChecked": 0,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        },
+        {
+          "block": 2,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        },
+        {
+          "block": 3,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    },
+    {
+      "path": "findings/consumer.md",
+      "sha256": "16e8df5e9afe6404af2913508e047521279c1d90d12be7a32d2b76f339256bb0",
+      "localLinksChecked": 1,
+      "syntaxOnly": []
+    },
+    {
+      "path": "findings/document-review.md",
+      "sha256": "215e249ed34fd039863a6fbbccc02361cc2d878923953515dcada51e371e9736",
+      "localLinksChecked": 0,
+      "syntaxOnly": []
+    },
+    {
+      "path": "findings/gates.md",
+      "sha256": "9f89ac62350053e6f342ce0ad1840485771eed5e07226f996c5d35f258f1ab9d",
+      "localLinksChecked": 0,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        },
+        {
+          "block": 2,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    },
+    {
+      "path": "findings/type-contract.md",
+      "sha256": "f97fc8e07a20183d69f02051727abd49cc027092f2f5a337dd23559e81417273",
+      "localLinksChecked": 14,
+      "syntaxOnly": []
+    },
+    {
+      "path": "findings/type-review.md",
+      "sha256": "d968312c7aa53f823cc1076fa3f1fe7daef27525d4f992ba0eb593301309ceab",
+      "localLinksChecked": 3,
+      "syntaxOnly": []
+    },
+    {
+      "path": "goal.md",
+      "sha256": "d81ef4424abb61086097f532f56bfa95fc983f4e41f5d875555c3b231eff893d",
+      "localLinksChecked": 2,
+      "syntaxOnly": []
+    },
+    {
+      "path": "plan.md",
+      "sha256": "943c66c5247dd7062bae02b5dcdd94dfc214562109fc93a9e4c382dc5e060fef",
+      "localLinksChecked": 7,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    },
+    {
+      "path": "planning/consumers.md",
+      "sha256": "40be1e13be3a73be120831877efb1e9a8bd6f3c40b5d8e9415492c452bd234b2",
+      "localLinksChecked": 28,
+      "syntaxOnly": []
+    },
+    {
+      "path": "planning/encoding.md",
+      "sha256": "9526dbb9fee45c36f8114a93f883e857178e45259bb63f794d4b60fb445bc9a5",
+      "localLinksChecked": 20,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    },
+    {
+      "path": "planning/prior-constraints.md",
+      "sha256": "31feeff5cc3237ffb6e282be7755821d861ce2ee6304238814cf39c389e96da0",
+      "localLinksChecked": 20,
+      "syntaxOnly": []
+    },
+    {
+      "path": "planning/verification.md",
+      "sha256": "382ddf59b16ae4de88d15ebcec60d80c7f260b26f6ab9b3f6f16c66434d3d7e0",
+      "localLinksChecked": 1,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    },
+    {
+      "path": "reference.md",
+      "sha256": "40527552102f173acfe703df0fb3073c09f29c1f0c9135b1d3b3ef38630d662a",
+      "localLinksChecked": 9,
+      "syntaxOnly": []
+    },
+    {
+      "path": "report.md",
+      "sha256": "161fd97ac2f72da561e1dbab39f2c4e5fe30f4f77a3f59956b91212b2fcaddc6",
+      "localLinksChecked": 9,
+      "syntaxOnly": []
+    },
+    {
+      "path": "reproduction.md",
+      "sha256": "a3c78d5b7614d2346fd1cdf5edfad341b9943e9ded3bca1cf58ea8d11aaf6a83",
+      "localLinksChecked": 8,
+      "syntaxOnly": [
+        {
+          "block": 1,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        },
+        {
+          "block": 2,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        },
+        {
+          "block": 3,
+          "language": "sh",
+          "syntax": "pass",
+          "executed": false
+        }
+      ]
+    }
+  ]
+}

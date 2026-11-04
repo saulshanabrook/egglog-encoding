@@ -1,0 +1,190 @@
+{
+  "status": "passed",
+  "semantic_revision_count": 0,
+  "positive_modes": 14,
+  "positive_native_runs": 140,
+  "negative_fixtures": 5,
+  "negative_native_runs": 25,
+  "context_native_runs": 20,
+  "source_and_emitted_interpretations": 200,
+  "successful_captured_commands": 579,
+  "u0_b1_emitted_parity": true,
+  "u0_b1_native_parity": true,
+  "manual_encoding_emitted_parity": true,
+  "manual_encoding_native_parity": true,
+  "u0": {
+    "emitted_sha256": "c7822b3b7107a4ed66edc686aa8d498bd89d04ce789f9505a3440e44ff0c328b",
+    "main_sha256": "bc7097220721072e01b5029d920247fc1da69df4463f7a9eb622fd5cc56bf26a",
+    "retains_99": true
+  },
+  "encoding": {
+    "emitted_sha256": "7d4bf5f059827985a35ef821c8dec0c4fd4932250d41d6ec2e3930d3a373e1b4",
+    "main_sha256": "657ab2c46e74e40a9a4f8850b2e56c0ab8e589d57ae98ced008bdc35b4470791",
+    "retains_99": false
+  },
+  "causal_receipts": {
+    "seed-only": {
+      "key_equal": false,
+      "a_equal_c": false,
+      "b_equal_d": false,
+      "pair_equal": false,
+      "mixed_add_known_disequal": null,
+      "z_known_disequal_w": null,
+      "target_known_disequal": null,
+      "export": false,
+      "application_enabled": true
+    },
+    "cancellation-off": {
+      "key_equal": true,
+      "a_equal_c": false,
+      "b_equal_d": false,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": false,
+      "target_known_disequal": false,
+      "export": false,
+      "application_enabled": true
+    },
+    "target-rescue": {
+      "key_equal": false,
+      "a_equal_c": false,
+      "b_equal_d": false,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": false,
+      "target_known_disequal": true,
+      "export": true,
+      "application_enabled": true
+    },
+    "primitive-only": {
+      "key_equal": false,
+      "a_equal_c": false,
+      "b_equal_d": false,
+      "pair_equal": false,
+      "mixed_add_known_disequal": null,
+      "z_known_disequal_w": null,
+      "target_known_disequal": null,
+      "export": false,
+      "application_enabled": true
+    },
+    "identity-off": {
+      "key_equal": false,
+      "a_equal_c": false,
+      "b_equal_d": false,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": false,
+      "target_known_disequal": false,
+      "export": false,
+      "application_enabled": true
+    },
+    "application-off": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": true,
+      "export": true,
+      "application_enabled": false
+    },
+    "manual": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": true,
+      "export": true,
+      "application_enabled": true
+    },
+    "forward-off": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": false,
+      "export": false,
+      "application_enabled": true
+    },
+    "reverse-off": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": false,
+      "target_known_disequal": false,
+      "export": false,
+      "application_enabled": true
+    },
+    "bridge-off": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": true,
+      "export": false,
+      "application_enabled": true
+    },
+    "query-off": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": null,
+      "export": false,
+      "application_enabled": true
+    },
+    "encoding": {
+      "key_equal": true,
+      "a_equal_c": true,
+      "b_equal_d": true,
+      "pair_equal": true,
+      "mixed_add_known_disequal": true,
+      "z_known_disequal_w": true,
+      "target_known_disequal": true,
+      "export": true,
+      "application_enabled": true
+    }
+  },
+  "negative_summary": {
+    "even-multiplier": {
+      "emitted_and_native_match_u0": true,
+      "accepted_queries": 0
+    },
+    "omitted-first-component": {
+      "emitted_and_native_match_u0": true,
+      "accepted_queries": 0
+    },
+    "omitted-second-component": {
+      "emitted_and_native_match_u0": true,
+      "accepted_queries": 0
+    },
+    "singular-matrix": {
+      "emitted_and_native_match_u0": true,
+      "accepted_queries": 0
+    },
+    "wrong-mixed-branch": {
+      "emitted_and_native_match_u0": true,
+      "accepted_queries": 0
+    }
+  },
+  "context_parity": true,
+  "files": {
+    "positive-results.json": "d5e9a9af9e93c98fb316a10ba0894c8a4afecf85c6ffee6f839bd071eb1071e8",
+    "negative-results.json": "8b0a35285fa701402210abb1352233d4fe64cf66bb650eaa2daa6425cbbdd71b",
+    "context-negative-results.json": "f142d713f67e70902e8c971abc6b74577f2a8066518efc019aadb083e8fd91a2",
+    "verification.json": "0f7b0930d35ead5e68e576f0b9c98e279919da0552ed004d0e473e555310368c",
+    "matrix.py": "562a8220f0e63cbe7ed603e724c74ccf9b5ad87adc67b29829f89a1c48d90497",
+    "verify.py": "61919585e1aea601992ba57a491a77212f7ef3cbcba5bf57457b79f1d116d9d6"
+  }
+}

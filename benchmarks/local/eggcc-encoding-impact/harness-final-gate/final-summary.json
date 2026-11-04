@@ -1,0 +1,89 @@
+{
+  "status": "passed_after_approved_test_fixture_timeout_repair",
+  "utc": "2026-10-17T21:32:32.184200+00:00",
+  "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+  "sourceCheckpoint": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/harness-final-gate/checkpoint-2.json",
+  "sourceCheckpointSha256": "f9d9dc5c6b2d9c6c9910b4702fad5e8ba539649505aad96e30aecc88352b1d01",
+  "harnessPatchSha256": "7489f1043a8b1ab322d44ecc8cee85011eb953b1e6acfd7cf8fee2707937f3f3",
+  "newCollectorTestSha256": "6a6b52ac9e20060c6dad1b43cf6d17d4aed97e25b20404132200bd2a5c671e33",
+  "source20FilesUnchangedDuringFinalGates": true,
+  "initialFailedAttemptPreserved": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/harness-final-gate/check-attempt-1-summary.json",
+  "repair": "test fixture normal timeout1to10sec; deliberate60sec sleeper retains1sec timeout; root directly reviewed/consented; no implementation/Rust/snapshot changes",
+  "check": {
+    "argv": [
+      "make",
+      "check"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 234.8227423329954,
+    "makeExitCode": 0,
+    "pythonPassed": 290,
+    "pythonSkipped": 1,
+    "pythonSummary": "290 passed, 1 skipped in 32.40s",
+    "snapshotsPassed": 2,
+    "rustSummaryCount": 60,
+    "rustPassed": 1804,
+    "rustFailed": 0,
+    "rustIgnored": 6,
+    "rustMeasured": 0,
+    "rustFiltered": 0,
+    "logSha256": {
+      "stdout": "1b0072195c77913e053f0d70eb3210be959ff2142358c11591c09766ddbad7ff",
+      "stderr": "79a4ada208ae87c04a9b4813d1a592403348d5eebd7269e44e76f51032eca9c7"
+    }
+  },
+  "figureTest": "project environment skips optional Matplotlib test (availability probe retained); actual export/regeneration passed in pinned26test postrepair suite",
+  "smoke": {
+    "argv": [
+      "make",
+      "benchmark-smoke",
+      "BENCHMARK_SMOKE_REPORT=/tmp/eggcc-impact-harness-final-smoke-20261017.jsonl"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 100.32948883296922,
+    "outerMemoryGuard": "1",
+    "reportPath": "/tmp/eggcc-impact-harness-final-smoke-20261017.jsonl",
+    "retainedReportPath": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/harness-final-gate/smoke-report.jsonl",
+    "reportSha256": "dd7ae23c0b8972bc7da7388007a4f3e1bcec9dcdc3b2632edad30fb9112829ca",
+    "rowCount": 4,
+    "allRowsSuccessful": true,
+    "identities": [
+      {
+        "file": "egglog-experimental/tests/math-microbenchmark-rational.egg",
+        "treatment": "off",
+        "encoding": "nee",
+        "timeoutSec": 1800
+      },
+      {
+        "file": "egglog-experimental/tests/math-microbenchmark-rational.egg",
+        "treatment": "proofs",
+        "encoding": "nee",
+        "timeoutSec": 1800
+      },
+      {
+        "file": "egglog-experimental/tests/disequality/congruence.egg",
+        "treatment": "off",
+        "encoding": "nee",
+        "timeoutSec": 1800
+      },
+      {
+        "file": "egglog-experimental/tests/disequality/congruence.egg",
+        "treatment": "proofs",
+        "encoding": "nee",
+        "timeoutSec": 1800
+      }
+    ],
+    "binaryPath": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/target/release/egglog-experimental",
+    "binarySha256": "1a7d6ddcf1e59000a9499bf9e4950e03a1934ee3be130769549040a47c4d43b7",
+    "logSha256": {
+      "stdout": "323b8b636d1a3ec4448eaab4e61d9aa77e764e601f9c9ce9dd4507d225c439f0",
+      "stderr": "91824cc3443d467a55c0172460558795d41d870df58e585dea6ace96b8773071"
+    },
+    "studyMeasurements": false
+  },
+  "proofSubsetRerun": false,
+  "costCollection": false,
+  "sharedSlotReleased": true,
+  "findingsPath": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-impact/findings/harness-integration.md",
+  "findingsSha256": "7f92dc44b97c08b921f2eeca967cdfde632621661e185fed1e596e679429f20b"
+}

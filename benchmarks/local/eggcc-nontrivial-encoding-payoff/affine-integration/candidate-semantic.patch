@@ -1,0 +1,713 @@
+--- a/dag_in_context/src/lib.rs
++++ b/dag_in_context/src/lib.rs
+@@ -49,6 +49,7 @@
+ pub mod fastercbcextractor;
+ pub mod pretty_print;
+ pub mod schedule;
++mod scoped_reasoning;
+ 
+ pub type Result = std::result::Result<(), MainError>;
+ 
+@@ -257,6 +258,33 @@
+     let loop_context_unions =
+         context_cache.get_unions_with_sharing(&mut printed, &mut tree_state, &mut term_cache);
+ 
++    if use_context {
++        for predicate in scoped_reasoning::analyze(&program) {
++            let term = predicate.to_egglog_with(&mut tree_state);
++            let predicate_var = print_with_intermediate_helper(
++                &tree_state.termdag,
++                term,
++                &mut term_cache,
++                &mut printed,
++            );
++            let false_expr = RcExpr::new(Expr::Const(
++                crate::schema::Constant::Bool(false),
++                predicate.get_arg_type(),
++                predicate.get_ctx().clone(),
++            ));
++            let term = false_expr.to_egglog_with(&mut tree_state);
++            let false_var = print_with_intermediate_helper(
++                &tree_state.termdag,
++                term,
++                &mut term_cache,
++                &mut printed,
++            );
++            if std::env::var("EGGCC_SCOPED_MODE").as_deref() != Ok("application-off") {
++                writeln!(printed, "(union {predicate_var} {false_var})").unwrap();
++            }
++        }
++    }
++
+     // set the type of each function
+     for func in program.fns() {
+         let func = program.get_function(&func).unwrap();
+--- /dev/null
++++ b/dag_in_context/src/scoped_reasoning.rs
+@@ -0,0 +1,666 @@
++//! Private, exact-scope experiment for a reversible two-word affine key.
++//!
++//! Only a checked final `Eq=false` leaves this sidecar. Dynamic equalities and
++//! disequalities remain in a fresh graph for one source predicate.
++
++use crate::schema::{Assumption, BaseType, BinaryOp, Constant, Expr, RcExpr, TreeProgram, Type};
++use egglog::{new_experimental_egraph_with_options, DisequalityEncoding, Error};
++use serde_json::json;
++use std::{
++    collections::BTreeSet,
++    path::Path,
++    sync::atomic::{AtomicUsize, Ordering},
++};
++
++#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
++enum Word {
++    Slot(usize),
++    Constant(i64),
++    Add(Box<Word>, Box<Word>),
++    Scale(Box<Word>, i64),
++}
++
++fn tuple_length(expr: &RcExpr) -> Option<usize> {
++    match expr.as_ref() {
++        Expr::Single(_) => Some(1),
++        Expr::Concat(a, b) => Some(tuple_length(a)? + tuple_length(b)?),
++        Expr::Empty(_, _) => Some(0),
++        Expr::Arg(Type::TupleT(fields), _) => Some(fields.len()),
++        _ => None,
++    }
++}
++
++/// Project through the branch input syntax without inventing tuple equalities.
++fn project(expr: &RcExpr, index: usize) -> Option<RcExpr> {
++    match expr.as_ref() {
++        Expr::Single(value) if index == 0 => Some(value.clone()),
++        Expr::Concat(left, right) => {
++            let length = tuple_length(left)?;
++            if index < length {
++                project(left, index)
++            } else {
++                project(right, index - length)
++            }
++        }
++        Expr::Arg(Type::TupleT(fields), _) if index < fields.len() => {
++            Some(RcExpr::new(Expr::Get(expr.clone(), index)))
++        }
++        _ => None,
++    }
++}
++
++/// Translate a pure integer expression through its exact enclosing If inputs.
++fn translate(expr: &RcExpr, root: &Assumption, expected: &Assumption) -> Option<Word> {
++    if expr.get_ctx() != expected {
++        return None;
++    }
++    match expr.as_ref() {
++        Expr::Const(Constant::Int(value), _, _) => Some(Word::Constant(*value)),
++        Expr::Arg(Type::Base(BaseType::IntT), ctx) if ctx == root => Some(Word::Slot(0)),
++        Expr::Get(arg, index) => {
++            let Expr::Arg(Type::TupleT(fields), ctx) = arg.as_ref() else {
++                return None;
++            };
++            if fields.get(*index) != Some(&BaseType::IntT) {
++                return None;
++            }
++            if ctx == root {
++                Some(Word::Slot(*index))
++            } else if let Assumption::InIf(_, _, input) = ctx {
++                translate(&project(input, *index)?, root, &input.get_ctx())
++            } else {
++                None
++            }
++        }
++        Expr::Bop(BinaryOp::Add, left, right) => Some(Word::Add(
++            Box::new(translate(left, root, expected)?),
++            Box::new(translate(right, root, expected)?),
++        )),
++        Expr::Bop(BinaryOp::Mul, left, right) => {
++            let left = translate(left, root, expected)?;
++            let right = translate(right, root, expected)?;
++            match (left, right) {
++                (Word::Constant(coefficient), value) | (value, Word::Constant(coefficient)) => {
++                    Some(Word::Scale(Box::new(value), coefficient))
++                }
++                _ => None,
++            }
++        }
++        _ => None,
++    }
++}
++
++/// Match `x + 2*y`, allowing only the commutative presentation of Add/Mul.
++fn affine_first(word: &Word) -> Option<(Word, Word)> {
++    let Word::Add(left, right) = word else {
++        return None;
++    };
++    match (left.as_ref(), right.as_ref()) {
++        (x, Word::Scale(y, 2)) | (Word::Scale(y, 2), x) => Some((x.clone(), y.as_ref().clone())),
++        _ => None,
++    }
++}
++
++/// Match `2*x + 3*y`, allowing only the commutative presentation of Add/Mul.
++fn affine_second(word: &Word) -> Option<(Word, Word)> {
++    let Word::Add(left, right) = word else {
++        return None;
++    };
++    match (left.as_ref(), right.as_ref()) {
++        (Word::Scale(x, 2), Word::Scale(y, 3)) | (Word::Scale(y, 3), Word::Scale(x, 2)) => {
++            Some((x.as_ref().clone(), y.as_ref().clone()))
++        }
++        _ => None,
++    }
++}
++
++/// Return the non-shared Add child, rejecting ambiguous double matches.
++fn other_addend(sum: &Word, shared: &Word) -> Option<Word> {
++    let Word::Add(left, right) = sum else {
++        return None;
++    };
++    match (left.as_ref() == shared, right.as_ref() == shared) {
++        (true, false) => Some(right.as_ref().clone()),
++        (false, true) => Some(left.as_ref().clone()),
++        _ => None,
++    }
++}
++
++fn odd_mul_child(word: &Word) -> Option<Word> {
++    match word {
++        Word::Scale(child, 3) => Some(child.as_ref().clone()),
++        _ => None,
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Mode {
++    Off,
++    SeedOnly,
++    PrimitiveOnly,
++    CancellationOff,
++    ForwardOff,
++    ReverseOff,
++    IdentityOff,
++    TargetRescue,
++    QueryOff,
++    Manual,
++    Encoding,
++    BridgeOff,
++    ApplicationOff,
++}
++
++impl Mode {
++    fn from_env() -> Self {
++        match std::env::var("EGGCC_SCOPED_MODE")
++            .as_deref()
++            .unwrap_or("off")
++        {
++            "off" => Self::Off,
++            "seed-only" => Self::SeedOnly,
++            "primitive-only" => Self::PrimitiveOnly,
++            "cancellation-off" => Self::CancellationOff,
++            "forward-off" => Self::ForwardOff,
++            "reverse-off" => Self::ReverseOff,
++            "identity-off" => Self::IdentityOff,
++            "target-rescue" => Self::TargetRescue,
++            "query-off" => Self::QueryOff,
++            "manual" => Self::Manual,
++            "encoding" => Self::Encoding,
++            "bridge-off" => Self::BridgeOff,
++            "application-off" => Self::ApplicationOff,
++            other => panic!("Unknown EGGCC_SCOPED_MODE: {other}"),
++        }
++    }
++}
++
++type ApplicationRow = (&'static str, Vec<usize>, Vec<i64>, usize, bool);
++
++fn merge(equality: &mut [usize], left: usize, right: usize) {
++    let old = equality[right];
++    let new = equality[left];
++    for value in equality {
++        if *value == old {
++            *value = new;
++        }
++    }
++}
++
++/// Independent finite closure over the same generic rows and committed seeds.
++fn manual(
++    affine_marked: bool,
++    mul_marked: bool,
++    reverse: bool,
++    identity: bool,
++    rescue: bool,
++) -> ([bool; 7], bool) {
++    // 0..5 a,b,c,d,z,w; 6..9 components; 10..13 key products;
++    // 14..15 mixed Adds; 16..17 odd products.
++    let rows: Vec<ApplicationRow> = vec![
++        ("Linear", vec![0, 1], vec![1, 2], 6, false),
++        ("Linear", vec![0, 1], vec![2, 3], 7, false),
++        ("Linear", vec![2, 3], vec![1, 2], 8, false),
++        ("Linear", vec![2, 3], vec![2, 3], 9, false),
++        ("Affine", vec![0, 1], vec![1, 2, 2, 3], 10, affine_marked),
++        ("Affine", vec![2, 3], vec![1, 2, 2, 3], 11, affine_marked),
++        ("Pair", vec![6, 7], vec![], 12, false),
++        ("Pair", vec![8, 9], vec![], 13, false),
++        ("Add", vec![2, 4], vec![], 14, false),
++        ("Add", vec![0, 5], vec![], 15, false),
++        ("OddMul", vec![4], vec![3], 16, mul_marked),
++        ("OddMul", vec![5], vec![3], 17, mul_marked),
++    ];
++    let mut equality = (0..18).collect::<Vec<_>>();
++    merge(&mut equality, 6, 8);
++    merge(&mut equality, 7, 9);
++    if identity {
++        merge(&mut equality, 10, 12);
++        merge(&mut equality, 11, 13);
++    }
++    let mut disequality = BTreeSet::from([(14, 15)]);
++    if rescue {
++        disequality.insert((16, 17));
++    }
++    loop {
++        let before = (equality.clone(), disequality.clone());
++        for (left_name, left_children, left_params, left_output, left_marked) in &rows {
++            for (right_name, right_children, right_params, right_output, _) in &rows {
++                if left_name != right_name || left_params != right_params {
++                    continue;
++                }
++                if left_children
++                    .iter()
++                    .zip(right_children)
++                    .all(|(left, right)| equality[*left] == equality[*right])
++                {
++                    merge(&mut equality, *left_output, *right_output);
++                }
++                if *left_marked && equality[*left_output] == equality[*right_output] {
++                    for (left, right) in left_children.iter().zip(right_children) {
++                        merge(&mut equality, *left, *right);
++                    }
++                }
++            }
++        }
++        disequality = disequality
++            .into_iter()
++            .map(|(left, right)| {
++                let (left, right) = (equality[left], equality[right]);
++                (left.min(right), left.max(right))
++            })
++            .collect();
++        for (left_name, left_children, left_params, left_output, left_marked) in &rows {
++            for (right_name, right_children, right_params, right_output, _) in &rows {
++                if left_name != right_name || left_params != right_params {
++                    continue;
++                }
++                let (left, right) = (equality[*left_output], equality[*right_output]);
++                let output = (left.min(right), left.max(right));
++                for (index, (left_child, right_child)) in
++                    left_children.iter().zip(right_children).enumerate()
++                {
++                    let (left, right) = (equality[*left_child], equality[*right_child]);
++                    let child = (left.min(right), left.max(right));
++                    if *left_marked && disequality.contains(&child) {
++                        disequality.insert(output);
++                    }
++                    if reverse
++                        && disequality.contains(&output)
++                        && left_children.iter().zip(right_children).enumerate().all(
++                            |(other, (left, right))| {
++                                other == index || equality[*left] == equality[*right]
++                            },
++                        )
++                    {
++                        disequality.insert(child);
++                    }
++                }
++            }
++        }
++        if before == (equality.clone(), disequality.clone()) {
++            break;
++        }
++    }
++    let equal = |left: usize, right: usize| equality[left] == equality[right];
++    let disequal = |left: usize, right: usize| {
++        let (left, right) = (equality[left], equality[right]);
++        disequality.contains(&(left.min(right), left.max(right)))
++    };
++    (
++        [
++            equal(10, 11),
++            equal(0, 2),
++            equal(1, 3),
++            equal(12, 13),
++            disequal(14, 15),
++            disequal(4, 5),
++            disequal(16, 17),
++        ],
++        disequality.iter().any(|(left, right)| left == right),
++    )
++}
++
++fn query_disequality(
++    graph: &mut egglog::EGraph,
++    name: &str,
++    left: &str,
++    right: &str,
++    reverse: bool,
++) -> Result<bool, Error> {
++    graph.parse_and_run_program(None,&format!("(relation {name} ())\n(ruleset {name}-query)\n(rule (({} {left} {right})) (({name})) :ruleset {name}-query :naive)\n(run-schedule (run {name}-query))",if reverse{"known-disequal?"}else{"known-disequal-forward-only?"}))?;
++    Ok(graph.get_size(name) > 0)
++}
++
++fn query_equality(
++    graph: &mut egglog::EGraph,
++    name: &str,
++    left: &str,
++    right: &str,
++) -> Result<bool, Error> {
++    graph.parse_and_run_program(
++        None,
++        &format!("(relation {name} ())\n(ruleset {name}-query)\n(rule ((= {left} {right})) (({name})) :ruleset {name}-query :naive)\n(run-schedule (run {name}-query))"),
++    )?;
++    Ok(graph.get_size(name) > 0)
++}
++
++fn prove(mode: Mode) -> Result<(bool, serde_json::Value), Error> {
++    let affine_marked = !matches!(mode, Mode::CancellationOff | Mode::TargetRescue);
++    let mul_marked = !matches!(mode, Mode::ForwardOff | Mode::TargetRescue);
++    let reverse = !matches!(mode, Mode::ReverseOff | Mode::TargetRescue);
++    let identity = !matches!(mode, Mode::IdentityOff | Mode::TargetRescue);
++    let rescue = mode == Mode::TargetRescue;
++    let mut program = format!(
++        "(datatype Scope (ThisScope))\n(datatype Word)\n(datatype Key)\n(constructor A (Scope) Word)\n(constructor B (Scope) Word)\n(constructor C (Scope) Word)\n(constructor D (Scope) Word)\n(constructor Z (Scope) Word)\n(constructor W (Scope) Word)\n(constructor Linear (Word i64 Word i64) Word)\n(constructor Affine (Word Word i64 i64 i64 i64) Key {})\n(constructor Pair (Word Word) Key)\n(constructor Add (Word Word) Word)\n(constructor OddMul (Word i64) Word {})\n(let a (A (ThisScope)))\n(let b (B (ThisScope)))\n(let c (C (ThisScope)))\n(let d (D (ThisScope)))\n(let z (Z (ThisScope)))\n(let w (W (ThisScope)))\n(let uab (Linear a 1 b 2))\n(let vab (Linear a 2 b 3))\n(let ucd (Linear c 1 d 2))\n(let vcd (Linear c 2 d 3))\n(let kab (Affine a b 1 2 2 3))\n(let kcd (Affine c d 1 2 2 3))\n(let pab (Pair uab vab))\n(let pcd (Pair ucd vcd))\n(let acz (Add c z))\n(let aaw (Add a w))\n(let mz (OddMul z 3))\n(let mw (OddMul w 3))\n",
++        if affine_marked { ":injective" } else { "" },
++        if mul_marked { ":injective" } else { "" },
++    );
++    if identity {
++        program.push_str("(union kab pab)\n(union kcd pcd)\n");
++    }
++    program.push_str("(union uab ucd)\n(union vab vcd)\n(disequal acz aaw)\n");
++    if rescue {
++        program.push_str("(disequal mz mw)\n");
++    }
++    let run_engine = !matches!(mode, Mode::SeedOnly | Mode::PrimitiveOnly | Mode::Manual);
++    if run_engine {
++        program.push_str("(run-schedule (saturate injectivity))\n");
++    }
++    let mut graph = new_experimental_egraph_with_options(false, DisequalityEncoding::Nee);
++    graph.parse_and_run_program(None, &program)?;
++    let manual_result = manual(affine_marked, mul_marked, reverse, identity, rescue);
++    let bottom = if run_engine {
++        match graph.parse_and_run_program(None, "(check-contradiction)") {
++            Ok(_) => true,
++            Err(Error::CheckError(..)) => false,
++            Err(error) => return Err(error),
++        }
++    } else if mode == Mode::Manual {
++        manual_result.1
++    } else {
++        false
++    };
++    let mut known = [false; 7];
++    let mut target_queried = false;
++    if !bottom {
++        if mode == Mode::Manual {
++            known = manual_result.0;
++            target_queried = true;
++        } else if !matches!(mode, Mode::SeedOnly | Mode::PrimitiveOnly) {
++            known[0] = query_equality(&mut graph, "KeyEqual", "kab", "kcd")?;
++            known[1] = query_equality(&mut graph, "AEqual", "a", "c")?;
++            known[2] = query_equality(&mut graph, "BEqual", "b", "d")?;
++            known[3] = query_equality(&mut graph, "PairEqual", "pab", "pcd")?;
++            known[4] = query_disequality(&mut graph, "AddKnown", "acz", "aaw", reverse)?;
++            known[5] = query_disequality(&mut graph, "ZKnown", "z", "w", reverse)?;
++            if mode != Mode::QueryOff {
++                known[6] = query_disequality(&mut graph, "TargetKnown", "mz", "mw", reverse)?;
++                target_queried = true;
++            }
++        }
++    }
++    let export = !bottom && known[6] && mode != Mode::BridgeOff;
++    Ok((
++        export,
++        json!({
++            "mode":format!("{mode:?}"),
++            "encoding":"NEE",
++            "program":program,
++            "matrix":[[1,2],[2,3]],
++            "determinant":-1,
++            "component_equal_seeds":[true,true],
++            "mixed_add_disequality_seed":true,
++            "key_equal":known[0],
++            "a_equal_c":known[1],
++            "b_equal_d":known[2],
++            "pair_equal":known[3],
++            "mixed_add_known_disequal":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(known[4])},
++            "z_known_disequal_w":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(known[5])},
++            "target_known_disequal":if target_queried{Some(known[6])}else{None},
++            "target_queried":target_queried,
++            "bottom":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(bottom)},
++            "manual_receipts":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(manual_result.0)},
++            "manual_bottom":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(manual_result.1)},
++            "export":export,
++            "application_enabled":mode!=Mode::ApplicationOff,
++            "affine_marked":affine_marked,
++            "odd_mul_marked":mul_marked,
++            "reverse_enabled":reverse,
++            "representation_identity":identity,
++            "exact_target_rescue":rescue,
++            "injectivity_saturated":run_engine,
++            "engine_witness_queries_run":!matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly|Mode::Manual),
++            "manual_closure_run":mode==Mode::Manual,
++            "primitive_only_marked_primitive_fields":[1,2,2,3,3],
++            "primitive_only_dynamic_witness":false,
++        }),
++    ))
++}
++
++/// Admit only the exact nested affine-key, mixed-Add and odd-product chain.
++pub(crate) fn analyze(program: &TreeProgram) -> Vec<RcExpr> {
++    let mode = Mode::from_env();
++    if mode == Mode::Off {
++        return Vec::new();
++    }
++    static BOUNDARY: AtomicUsize = AtomicUsize::new(0);
++    let boundary = BOUNDARY.fetch_add(1, Ordering::Relaxed);
++    let types = program.typecheck();
++    let mut stack = vec![program.entry.clone()];
++    stack.extend(program.functions.clone());
++    let (mut seen, mut exports, mut receipts) = (BTreeSet::new(), Vec::new(), Vec::new());
++    while let Some(expr) = stack.pop() {
++        if !seen.insert(std::rc::Rc::as_ptr(&expr)) {
++            continue;
++        }
++        stack.extend(expr.children_exprs());
++        let Expr::If(target, _, _, _) = expr.as_ref() else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, target_left, target_right) = target.as_ref() else {
++            continue;
++        };
++        if types.get(&std::rc::Rc::as_ptr(target)) != Some(&Type::Base(BaseType::BoolT)) {
++            continue;
++        }
++        let target_scope = target.get_ctx();
++        let Assumption::InIf(false, mixed_predicate, mixed_input) = &target_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, mixed_left, mixed_right) = mixed_predicate.as_ref() else {
++            continue;
++        };
++        let mixed_scope = mixed_predicate.get_ctx();
++        let Assumption::InIf(true, second_predicate, second_input) = &mixed_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, second_left, second_right) = second_predicate.as_ref() else {
++            continue;
++        };
++        let second_scope = second_predicate.get_ctx();
++        let Assumption::InIf(true, first_predicate, first_input) = &second_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, first_left, first_right) = first_predicate.as_ref() else {
++            continue;
++        };
++        let root = first_predicate.get_ctx();
++        let translated_first = (
++            translate(first_left, &root, &root),
++            translate(first_right, &root, &root),
++        );
++        let translated_second = (
++            translate(second_left, &root, &second_scope),
++            translate(second_right, &root, &second_scope),
++        );
++        let translated_mixed = (
++            translate(mixed_left, &root, &mixed_scope),
++            translate(mixed_right, &root, &mixed_scope),
++        );
++        let translated_target = (
++            translate(target_left, &root, &target_scope),
++            translate(target_right, &root, &target_scope),
++        );
++        let accepted = (|| {
++            let (Some(first_left), Some(first_right)) = &translated_first else {
++                return None;
++            };
++            let (mut left_pair, mut right_pair) =
++                (affine_first(first_left)?, affine_first(first_right)?);
++            let (Some(second_left), Some(second_right)) = &translated_second else {
++                return None;
++            };
++            let second_pairs = (affine_second(second_left)?, affine_second(second_right)?);
++            if second_pairs == (right_pair.clone(), left_pair.clone()) {
++                std::mem::swap(&mut left_pair, &mut right_pair);
++            } else if second_pairs != (left_pair.clone(), right_pair.clone()) {
++                return None;
++            }
++            let ((a, b), (c, d)) = (left_pair, right_pair);
++            if [a.clone(), b.clone(), c.clone(), d.clone()]
++                .iter()
++                .any(|word| matches!(word, Word::Constant(_)))
++                || a == c
++                || b == d
++            {
++                return None;
++            }
++            let (Some(mixed_left), Some(mixed_right)) = &translated_mixed else {
++                return None;
++            };
++            let (z, w) = if let (Some(z), Some(w)) =
++                (other_addend(mixed_left, &c), other_addend(mixed_right, &a))
++            {
++                (z, w)
++            } else {
++                (
++                    other_addend(mixed_right, &c)?,
++                    other_addend(mixed_left, &a)?,
++                )
++            };
++            if z == w || matches!(z, Word::Constant(_)) || matches!(w, Word::Constant(_)) {
++                return None;
++            }
++            let (Some(target_left), Some(target_right)) = &translated_target else {
++                return None;
++            };
++            let target_children = (odd_mul_child(target_left)?, odd_mul_child(target_right)?);
++            if target_children != (z.clone(), w.clone())
++                && target_children != (w.clone(), z.clone())
++            {
++                return None;
++            }
++            Some((a, b, c, d, z, w))
++        })();
++        let Some((a, b, c, d, z, w)) = accepted else {
++            receipts.push(json!({
++                "accepted":false,
++                "reason":"exact affine components, contexts, mixed Add, or odd target mismatch",
++                "first":format!("{translated_first:?}"),
++                "second":format!("{translated_second:?}"),
++                "mixed":format!("{translated_mixed:?}"),
++                "target":format!("{translated_target:?}"),
++            }));
++            continue;
++        };
++        let (export, mut receipt) = match prove(mode) {
++            Ok(value) => value,
++            Err(error) => (
++                false,
++                json!({"analysis_error":format!("{error:?}"),"export":false}),
++            ),
++        };
++        receipt["accepted"] = json!(true);
++        receipt["source_first_component"] = json!(first_predicate.to_string());
++        receipt["source_second_component"] = json!(second_predicate.to_string());
++        receipt["source_mixed_add"] = json!(mixed_predicate.to_string());
++        receipt["source_target"] = json!(target.to_string());
++        receipt["root_scope"] = json!(root.to_string());
++        receipt["second_scope"] = json!(second_scope.to_string());
++        receipt["mixed_scope"] = json!(mixed_scope.to_string());
++        receipt["target_scope"] = json!(target_scope.to_string());
++        receipt["first_input"] = json!(first_input.to_string());
++        receipt["second_input"] = json!(second_input.to_string());
++        receipt["mixed_input"] = json!(mixed_input.to_string());
++        receipt["translated_dynamic_words"] =
++            json!(format!("a={a:?},b={b:?},c={c:?},d={d:?},z={z:?},w={w:?}"));
++        receipts.push(receipt);
++        if export {
++            exports.push(target.clone());
++        }
++    }
++    if let Ok(directory) = std::env::var("EGGCC_SCOPED_EVIDENCE") {
++        std::fs::create_dir_all(&directory).unwrap();
++        let path = Path::new(&directory).join(format!("boundary-{boundary:04}.json"));
++        assert!(!path.exists());
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&json!({
++                "boundary":boundary,
++                "mode":format!("{mode:?}"),
++                "queries":receipts,
++                "exports":exports.len(),
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++    }
++    exports
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn affine_chain_causal_controls() {
++        for mode in [
++            Mode::Encoding,
++            Mode::Manual,
++            Mode::CancellationOff,
++            Mode::ForwardOff,
++            Mode::ReverseOff,
++            Mode::IdentityOff,
++            Mode::TargetRescue,
++            Mode::QueryOff,
++            Mode::PrimitiveOnly,
++            Mode::SeedOnly,
++            Mode::BridgeOff,
++            Mode::ApplicationOff,
++        ] {
++            let (export, receipt) = prove(mode).unwrap();
++            assert_eq!(
++                export,
++                matches!(
++                    mode,
++                    Mode::Encoding | Mode::Manual | Mode::TargetRescue | Mode::ApplicationOff
++                ),
++                "{receipt}",
++            );
++            if mode == Mode::CancellationOff {
++                assert_eq!(receipt["a_equal_c"], false);
++                assert_eq!(receipt["target_known_disequal"], false);
++            }
++            if mode == Mode::ForwardOff {
++                assert_eq!(receipt["z_known_disequal_w"], true);
++                assert_eq!(receipt["target_known_disequal"], false);
++            }
++            if mode == Mode::ReverseOff {
++                assert_eq!(receipt["a_equal_c"], true);
++                assert_eq!(receipt["z_known_disequal_w"], false);
++            }
++            if mode == Mode::IdentityOff {
++                assert_eq!(receipt["pair_equal"], true);
++                assert_eq!(receipt["a_equal_c"], false);
++            }
++            if mode == Mode::Encoding {
++                assert_eq!(
++                    receipt["manual_receipts"],
++                    json!([true, true, true, true, true, true, true]),
++                );
++                assert_eq!(receipt["bottom"], false);
++            }
++        }
++    }
++
++    #[test]
++    fn affine_manual_closure_respects_missing_edges() {
++        assert_eq!(manual(true, true, true, true, false).0, [true; 7]);
++        assert_eq!(
++            manual(false, true, true, true, false).0,
++            [true, false, false, true, true, false, false],
++        );
++        assert_eq!(
++            manual(true, false, true, true, false).0,
++            [true, true, true, true, true, true, false],
++        );
++        assert_eq!(
++            manual(true, true, false, true, false).0,
++            [true, true, true, true, true, false, false],
++        );
++        assert_eq!(
++            manual(true, true, true, false, false).0,
++            [false, false, false, true, true, false, false],
++        );
++    }
++}

@@ -1,0 +1,411 @@
+[
+  {
+    "family": "different-mask",
+    "mode": "u0",
+    "context": true,
+    "source_sha256": "9219c847d9f9acb210b3876f2c1f73a17a397df85f4419bd1e1df678a230194a",
+    "emitted_sha256": "b4db7378bd499fce62832e2eeac2231e592594dcc3be8701468f5f4b9d2c4f0c",
+    "binary_sha256": "a5a8378bf10a0973f6f88e98777ad42c087f97365392fdb4cf5c82f352fa553a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      }
+    ],
+    "evidence": [],
+    "timing_taken": false
+  },
+  {
+    "family": "different-mask",
+    "mode": "off",
+    "context": true,
+    "source_sha256": "9219c847d9f9acb210b3876f2c1f73a17a397df85f4419bd1e1df678a230194a",
+    "emitted_sha256": "b4db7378bd499fce62832e2eeac2231e592594dcc3be8701468f5f4b9d2c4f0c",
+    "binary_sha256": "fbecd5d3e4cf80fc8de7d2a3d67c1346580355b4ce00cbbff1a2e11a190a7f42",
+    "outputs": [
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Off",
+        "pass": 0,
+        "status": "off",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "different-mask",
+    "mode": "encoding",
+    "context": true,
+    "source_sha256": "9219c847d9f9acb210b3876f2c1f73a17a397df85f4419bd1e1df678a230194a",
+    "emitted_sha256": "b4db7378bd499fce62832e2eeac2231e592594dcc3be8701468f5f4b9d2c4f0c",
+    "binary_sha256": "97ec8712297d75478a82094ac3ec8eda0f4513583414e05d6cd29690cf8e63f8",
+    "outputs": [
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Encoding",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "different-mask",
+    "mode": "manual",
+    "context": true,
+    "source_sha256": "9219c847d9f9acb210b3876f2c1f73a17a397df85f4419bd1e1df678a230194a",
+    "emitted_sha256": "b4db7378bd499fce62832e2eeac2231e592594dcc3be8701468f5f4b9d2c4f0c",
+    "binary_sha256": "e43c6f1d329cd82b6a465b922ff665c84834b6861b5b37de9b716f5b2388291e",
+    "outputs": [
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Manual",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "different-shift",
+    "mode": "u0",
+    "context": true,
+    "source_sha256": "8e39b5b32e9f1cf9f709bcdd49357dbdeb938a35923121fa5658cbab79c237fc",
+    "emitted_sha256": "e8af651a0a471278b730eed4a763a5cd3e4ef9962d0311a07d05b4ef9b6da1b3",
+    "binary_sha256": "a62190972f86108a44e490a06dd68119ebb8afe78773a8d3a2e12ebaddaccaf0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [],
+    "timing_taken": false
+  },
+  {
+    "family": "different-shift",
+    "mode": "off",
+    "context": true,
+    "source_sha256": "8e39b5b32e9f1cf9f709bcdd49357dbdeb938a35923121fa5658cbab79c237fc",
+    "emitted_sha256": "e8af651a0a471278b730eed4a763a5cd3e4ef9962d0311a07d05b4ef9b6da1b3",
+    "binary_sha256": "d2b500ffb3deb9a6e1acedc43507a476c5620d7fc0104c0623ad83ac8ed718fa",
+    "outputs": [
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Off",
+        "pass": 0,
+        "status": "off",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "different-shift",
+    "mode": "encoding",
+    "context": true,
+    "source_sha256": "8e39b5b32e9f1cf9f709bcdd49357dbdeb938a35923121fa5658cbab79c237fc",
+    "emitted_sha256": "e8af651a0a471278b730eed4a763a5cd3e4ef9962d0311a07d05b4ef9b6da1b3",
+    "binary_sha256": "db8a916bb3e60358e258259ce39d77f0d328504dac9aff1faacac14dddb7e71a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Encoding",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "different-shift",
+    "mode": "manual",
+    "context": true,
+    "source_sha256": "8e39b5b32e9f1cf9f709bcdd49357dbdeb938a35923121fa5658cbab79c237fc",
+    "emitted_sha256": "e8af651a0a471278b730eed4a763a5cd3e4ef9962d0311a07d05b4ef9b6da1b3",
+    "binary_sha256": "8a528d05398fed6a2457481ba4d48563a121a6dcf79aabbc9418247324e42bca",
+    "outputs": [
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Manual",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "changed-pointer",
+    "mode": "u0",
+    "context": true,
+    "source_sha256": "c74d38e91f26b7b97111cfd22414b4ec04c3b098d11488115232e5ca9c544600",
+    "emitted_sha256": "76d49b97532547c893d75d2e2995c34d8e392081453e216661e22108169b5686",
+    "binary_sha256": "715d6411fd8da8c4fb72426d4c1770db53f0ec6d4c70db5941fa484477136379",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [],
+    "timing_taken": false
+  },
+  {
+    "family": "changed-pointer",
+    "mode": "off",
+    "context": true,
+    "source_sha256": "c74d38e91f26b7b97111cfd22414b4ec04c3b098d11488115232e5ca9c544600",
+    "emitted_sha256": "76d49b97532547c893d75d2e2995c34d8e392081453e216661e22108169b5686",
+    "binary_sha256": "7f3d80581b2303ea8567fb54a58786de08fdcd9e3e599e85c3987a4e6970fa0b",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Off",
+        "pass": 0,
+        "status": "off",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "changed-pointer",
+    "mode": "encoding",
+    "context": true,
+    "source_sha256": "c74d38e91f26b7b97111cfd22414b4ec04c3b098d11488115232e5ca9c544600",
+    "emitted_sha256": "76d49b97532547c893d75d2e2995c34d8e392081453e216661e22108169b5686",
+    "binary_sha256": "9d219f6630bc5ccc28dd37216b5ffb88a860f66129a4bb08493d21ecb5cf15a7",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Encoding",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "changed-pointer",
+    "mode": "manual",
+    "context": true,
+    "source_sha256": "c74d38e91f26b7b97111cfd22414b4ec04c3b098d11488115232e5ca9c544600",
+    "emitted_sha256": "76d49b97532547c893d75d2e2995c34d8e392081453e216661e22108169b5686",
+    "binary_sha256": "0ac1b30525ee283b4668e64213c50894c9e0e30b051a562ebad510233569a4f9",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Manual",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "no-context",
+    "mode": "encoding",
+    "context": false,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "6e0dbe15ca106510d0d16e70c1e612895e0062561156db599c27e61f1ef42c6b",
+    "binary_sha256": "cb1f74367c2572cc5cc8f3d22e0d09487fb1515bd69f4c226d346121266b86cd",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Encoding",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  }
+]

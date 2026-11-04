@@ -1,0 +1,39 @@
+{
+  "status": "success",
+  "checked_utc": "2026-10-17T19:54:02.314808+00:00",
+  "rows": [
+    {
+      "snapshot": "encoding-primary.json",
+      "root": "/Users/saul/p/egglog-encoding",
+      "files_checked": 1151,
+      "changed_files": [],
+      "head_equal": true,
+      "branch_equal": true,
+      "status_equal": true,
+      "authorized_status_exclusion": "goals/eggcc-encoding-case-study/",
+      "passed": true
+    },
+    {
+      "snapshot": "eggcc-primary.json",
+      "root": "/Users/saul/p/eggcc",
+      "files_checked": 6251,
+      "changed_files": [],
+      "head_equal": true,
+      "branch_equal": true,
+      "status_equal": true,
+      "authorized_status_exclusion": "goals/eggcc-encoding-case-study/",
+      "passed": true
+    },
+    {
+      "snapshot": "injectivity-start.json",
+      "root": "/Users/saul/p/wt/egglog-encoding/injectivity",
+      "files_checked": 963,
+      "changed_files": [],
+      "head_equal": true,
+      "branch_equal": true,
+      "status_equal": true,
+      "authorized_status_exclusion": "goals/eggcc-encoding-case-study/",
+      "passed": true
+    }
+  ]
+}

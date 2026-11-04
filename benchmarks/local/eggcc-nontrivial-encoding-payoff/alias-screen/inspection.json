@@ -1,0 +1,492 @@
+{
+  "llvm": {
+    "source": {
+      "_main": {
+        "start_line": 7757,
+        "load_i64": 1,
+        "store_i64": 2,
+        "vector_adds": 0,
+        "sha256": "5f18edd36e0d4156b7eee6691969811e38afb2cc479f38af5ddf2353dd87d0c0"
+      },
+      "main": {
+        "start_line": 7806,
+        "load_i64": 1,
+        "store_i64": 2,
+        "vector_adds": 0,
+        "sha256": "91f0e67987377433e98d424f3c337fbd7bab7b2bf3714a7e6d6a136a152723d3"
+      }
+    },
+    "optimized": {
+      "_main": {
+        "start_line": 7757,
+        "load_i64": 1,
+        "store_i64": 2,
+        "vector_adds": 0,
+        "sha256": "a6ddef386be25a2b213260042474061ecaa0cc614c697de3a16c1ee599db1938"
+      },
+      "main": {
+        "start_line": 7809,
+        "load_i64": 1,
+        "store_i64": 2,
+        "vector_adds": 0,
+        "sha256": "44d1c5cc7cf449e26fa1f0a77945a6f191b42b64ecf8af291993368a0311d941"
+      }
+    },
+    "manual": {
+      "_main": {
+        "start_line": 7757,
+        "load_i64": 0,
+        "store_i64": 0,
+        "vector_adds": 11,
+        "sha256": "87ea2f6bd0db8f0cfc022deb0540c2b519503278cf6fde6c3ca68c4ff379b357"
+      },
+      "main": {
+        "start_line": 7839,
+        "load_i64": 0,
+        "store_i64": 0,
+        "vector_adds": 0,
+        "sha256": "c922e80c47e1040080c0b71be3d6430df8347bbae90c73999a2a5c4eef0199b3"
+      }
+    }
+  },
+  "graphs": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/egraphs/tiger_egraph_0001.json",
+      "sha256": "51df3de7f524263c4587447135345a94fca6eb371d4b10e383b510ff6f52563b",
+      "nodes": 6184,
+      "NoAlias": 0,
+      "DidMemOptimization": 0,
+      "InLoop": 1,
+      "InIf": 6,
+      "loads": [
+        {
+          "id": "function-20-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Load",
+            "function-186-Get",
+            "function-1-Top"
+          ],
+          "eclass": "Expr-297",
+          "cost": 1.0,
+          "subsumed": false,
+          "state_alternatives": [
+            {
+              "id": "function-1-Top",
+              "op": "Top",
+              "children": [
+                "function-0-Write",
+                "function-96-Get",
+                "function-97-Get",
+                "function-0-Top"
+              ],
+              "eclass": "Expr-296",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ],
+          "address_arg_paths": [
+            [
+              {
+                "id": "function-29-Get",
+                "op": "Get",
+                "children": [
+                  "function-66-SubTuple",
+                  "primitive-i64-5"
+                ],
+                "eclass": "Expr-289",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-5-Arg",
+                "op": "Arg",
+                "children": [
+                  "function-3-TupleT",
+                  "function-4-InIf"
+                ],
+                "eclass": "Expr-288",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-4-InIf",
+                "op": "InIf",
+                "children": [
+                  "primitive-bool-1",
+                  "function-197-Get",
+                  "function-75-Concat"
+                ],
+                "eclass": "Assumption-287",
+                "cost": 1.0,
+                "subsumed": false
+              }
+            ]
+          ]
+        }
+      ],
+      "false_eq_contexts": [
+        {
+          "id": "function-3-InIf",
+          "op": "InIf",
+          "children": [
+            "primitive-bool-0",
+            "function-13-Bop",
+            "function-62-SubTuple"
+          ],
+          "eclass": "Assumption-216",
+          "cost": 1.0,
+          "subsumed": false,
+          "predicate": {
+            "op": "Bop",
+            "children": [
+              "function-0-Eq",
+              "function-11-Bop",
+              "function-12-Bop"
+            ],
+            "eclass": "Expr-191",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "left": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-70-Get",
+              "function-66-Get"
+            ],
+            "eclass": "Expr-188",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "right": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-69-Get",
+              "function-12-Const"
+            ],
+            "eclass": "Expr-190",
+            "cost": 1.0,
+            "subsumed": false
+          }
+        }
+      ]
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/egraphs/tiger_egraph_0002.json",
+      "sha256": "9adb1e38c6cc6d323d75c4fe5863c4e2df77be29e732ddb3dc0d9ac184c875c9",
+      "nodes": 11520,
+      "NoAlias": 0,
+      "DidMemOptimization": 0,
+      "InLoop": 2,
+      "InIf": 8,
+      "loads": [
+        {
+          "id": "function-20-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Load",
+            "function-193-Get",
+            "function-1-Top"
+          ],
+          "eclass": "Expr-255",
+          "cost": 1.0,
+          "subsumed": false,
+          "state_alternatives": [
+            {
+              "id": "function-1-Top",
+              "op": "Top",
+              "children": [
+                "function-0-Write",
+                "function-56-Get",
+                "function-57-Get",
+                "function-0-Top"
+              ],
+              "eclass": "Expr-254",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ],
+          "address_arg_paths": [
+            [
+              {
+                "id": "function-19-Get",
+                "op": "Get",
+                "children": [
+                  "function-43-SubTuple",
+                  "primitive-i64-5"
+                ],
+                "eclass": "Expr-247",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-5-Arg",
+                "op": "Arg",
+                "children": [
+                  "function-3-TupleT",
+                  "function-3-InIf"
+                ],
+                "eclass": "Expr-246",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-3-InIf",
+                "op": "InIf",
+                "children": [
+                  "primitive-bool-1",
+                  "function-49-Get",
+                  "function-29-Concat"
+                ],
+                "eclass": "Assumption-245",
+                "cost": 1.0,
+                "subsumed": false
+              }
+            ]
+          ]
+        },
+        {
+          "id": "function-56-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Load",
+            "function-314-Get",
+            "function-16-Subst"
+          ],
+          "eclass": "Expr-5706",
+          "cost": 1.0,
+          "subsumed": false,
+          "state_alternatives": [
+            {
+              "id": "function-2-Top",
+              "op": "Top",
+              "children": [
+                "function-0-Write",
+                "function-259-Get",
+                "function-265-Get",
+                "function-57-AddContext"
+              ],
+              "eclass": "Expr-5753",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ],
+          "address_arg_paths": [
+            [
+              {
+                "id": "function-252-Get",
+                "op": "Get",
+                "children": [
+                  "function-0-AddContext",
+                  "primitive-i64-5"
+                ],
+                "eclass": "Expr-4955",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-9-Arg",
+                "op": "Arg",
+                "children": [
+                  "function-3-TupleT",
+                  "function-1-InLoop"
+                ],
+                "eclass": "Expr-4350",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-1-InLoop",
+                "op": "InLoop",
+                "children": [
+                  "function-168-Concat",
+                  "function-394-Concat"
+                ],
+                "eclass": "Assumption-4349",
+                "cost": 1.0,
+                "subsumed": false
+              }
+            ]
+          ]
+        }
+      ],
+      "false_eq_contexts": [
+        {
+          "id": "function-2-InIf",
+          "op": "InIf",
+          "children": [
+            "primitive-bool-0",
+            "function-13-Bop",
+            "function-39-SubTuple"
+          ],
+          "eclass": "Assumption-199",
+          "cost": 1.0,
+          "subsumed": false,
+          "predicate": {
+            "op": "Bop",
+            "children": [
+              "function-0-Eq",
+              "function-11-Bop",
+              "function-12-Bop"
+            ],
+            "eclass": "Expr-191",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "left": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-61-Get",
+              "function-62-Get"
+            ],
+            "eclass": "Expr-188",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "right": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-63-Get",
+              "function-9-Const"
+            ],
+            "eclass": "Expr-190",
+            "cost": 1.0,
+            "subsumed": false
+          }
+        }
+      ]
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/egraphs/tiger_egraph_0003.json",
+      "sha256": "8f9768f776230255da1569530d5a6a7c6ef76a7b0d9f22bcfa0fc882d2afe01f",
+      "nodes": 17340,
+      "NoAlias": 0,
+      "DidMemOptimization": 0,
+      "InLoop": 1,
+      "InIf": 24,
+      "loads": [
+        {
+          "id": "function-22-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Load",
+            "function-155-Get",
+            "function-337-Get"
+          ],
+          "eclass": "Expr-257",
+          "cost": 1.0,
+          "subsumed": false,
+          "state_alternatives": [
+            {
+              "id": "function-1-Top",
+              "op": "Top",
+              "children": [
+                "function-0-Write",
+                "function-52-Get",
+                "function-53-Get",
+                "function-0-Top"
+              ],
+              "eclass": "Expr-256",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ],
+          "address_arg_paths": [
+            [
+              {
+                "id": "function-20-Get",
+                "op": "Get",
+                "children": [
+                  "function-41-SubTuple",
+                  "primitive-i64-5"
+                ],
+                "eclass": "Expr-250",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-5-Arg",
+                "op": "Arg",
+                "children": [
+                  "function-3-TupleT",
+                  "function-0-InLoop"
+                ],
+                "eclass": "Expr-243",
+                "cost": 1.0,
+                "subsumed": false
+              },
+              {
+                "id": "function-0-InLoop",
+                "op": "InLoop",
+                "children": [
+                  "function-38-Concat",
+                  "function-270-SubTuple"
+                ],
+                "eclass": "Assumption-242",
+                "cost": 1.0,
+                "subsumed": false
+              }
+            ]
+          ]
+        }
+      ],
+      "false_eq_contexts": [
+        {
+          "id": "function-2-InIf",
+          "op": "InIf",
+          "children": [
+            "primitive-bool-0",
+            "function-13-Bop",
+            "function-37-SubTuple"
+          ],
+          "eclass": "Assumption-199",
+          "cost": 1.0,
+          "subsumed": false,
+          "predicate": {
+            "op": "Bop",
+            "children": [
+              "function-0-Eq",
+              "function-11-Bop",
+              "function-12-Bop"
+            ],
+            "eclass": "Expr-191",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "left": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-57-Get",
+              "function-58-Get"
+            ],
+            "eclass": "Expr-188",
+            "cost": 1.0,
+            "subsumed": false
+          },
+          "right": {
+            "op": "Bop",
+            "children": [
+              "function-0-Bitand",
+              "function-59-Get",
+              "function-9-Const"
+            ],
+            "eclass": "Expr-190",
+            "cost": 1.0,
+            "subsumed": false
+          }
+        }
+      ]
+    }
+  ],
+  "commands": {
+    "count": 43,
+    "passed": 43,
+    "timeouts": 0,
+    "elapsed_times_are_performance_evidence": false
+  }
+}

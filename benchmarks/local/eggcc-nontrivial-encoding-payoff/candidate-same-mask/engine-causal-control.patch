@@ -1,0 +1,12 @@
+--- selected/egglog-experimental/src/disequality.rs
++++ controlled/egglog-experimental/src/disequality.rs
+@@ -303,7 +303,8 @@
+         let injective = marked.contains(name);
+         // Reverse congruence is independent of injectivity. Keep its first
+         // fragment scalar and independent of NE/EE representation tables.
+-        let reverse = !name.starts_with("@disequality-")
++        let reverse = std::env::var_os("EGGCC_CONTROL_REVERSE_OFF").is_none()
++            && !name.starts_with("@disequality-")
+             && state.is_sort_unionable(schema.output()) == Some(true)
+             && schema.input.iter().any(|input| input.is_eq_sort())
+             && schema.input.iter().all(|input| {

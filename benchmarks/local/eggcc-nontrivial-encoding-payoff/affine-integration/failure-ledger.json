@@ -1,0 +1,26 @@
+{
+  "semantic_attempts": 1,
+  "semantic_revisions": 0,
+  "attempt_0": {
+    "hypothesis": "The exact nested affine-key guards admit the generic cancellation, reverse-disequality, and odd-multiplier chain.",
+    "prediction": "The target witness is exported and the emitted/native 99 arm disappears.",
+    "result": "passed"
+  },
+  "harness_corrections": [
+    {
+      "failure": "The first pilot passed a workspace-relative candidate binary while the capture cwd was the isolated EggCC root.",
+      "correction": "Use the absolute immutable candidate binary path.",
+      "semantic_effect": "none"
+    },
+    {
+      "failure": "A context-control rerun reused write-once command labels after adding its U0 comparator.",
+      "correction": "Capture both final context arms under the new no-context-final family.",
+      "semantic_effect": "none"
+    },
+    {
+      "failure": "The first registered engine command used --locked against a deliberately trimmed workspace missing egg-math-benchmark.",
+      "correction": "Restore the omitted unchanged workspace member and preserve the original lockfile.",
+      "semantic_effect": "none"
+    }
+  ]
+}

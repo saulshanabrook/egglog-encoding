@@ -1,0 +1,7 @@
+# Find an impactful EggCC encoding case
+
+Continue exploring EggCC for additional uses of injectivity or disequality that establish a reproducible compiler/analysis speedup, generated-program speedup, or genuine baseline compiler bug. Build on the completed case study and improve the encoding where it helps a case or closes a defined reasoning gap, including remaining-child disequality and schedule closure. If substantial exploration produces neither speedup nor bug, deliver an independently reviewed, evidence-backed negative conclusion for the investigated scope.
+
+The shared understanding is the fourteen accepted [facts](facts.md). Follow the approved [execution plan](plan.md), including its source-backed candidate shortlist, semantic restrictions, controls and verification requirements. Preserve the [previous study](../eggcc-encoding-case-study/report.md) and its frozen evidence.
+
+Done when a reproducible research dossier contains the expanded candidate map, semantic justifications, implemented improvements and their limits, correctness evidence, per-workload results, exact rerun instructions, and an audit of every accepted fact. It must establish either an additional attributable speedup or genuine baseline bug, or document substantial targeted experiments and an independent search-exhaustion review resolving the remaining plausible high-value leads. Another neutral example, operation removal, or row-count saving alone does not satisfy the impact objective. Drafting the paper, new proof support, and Lean mechanization are outside scope.

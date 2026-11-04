@@ -1,0 +1,85 @@
+{
+  "all_outliers_retained": true,
+  "all_outputs_exact": true,
+  "arm_median_batch_ns": {
+    "hot-equal-key": {
+      "bridge-off": 32831958.5,
+      "cancellation-off": 32327270.5,
+      "consumer-off": 32755583.5,
+      "encoding": 18014688.0,
+      "identity-off": 31993687.0,
+      "key-rescue": 17903333.5,
+      "manual": 18145375.0,
+      "off": 33119270.5,
+      "primitive-only": 32512687.5,
+      "query-off": 33264770.5,
+      "seed-only": 32739021.0,
+      "transport-off": 32484749.5,
+      "u0": 32587729.0,
+      "x-rescue": 18210521.0
+    },
+    "neutral-zero-trip": {
+      "bridge-off": 17807666.5,
+      "cancellation-off": 18317479.5,
+      "consumer-off": 17579625.0,
+      "encoding": 18247979.5,
+      "identity-off": 18284645.5,
+      "key-rescue": 18344521.0,
+      "manual": 18353875.0,
+      "off": 18566125.0,
+      "primitive-only": 18081937.5,
+      "query-off": 18845750.0,
+      "seed-only": 18417042.0,
+      "transport-off": 17322666.5,
+      "u0": 17636374.5,
+      "x-rescue": 18195896.0
+    }
+  },
+  "completed_invocations": 3948,
+  "design_sha256": "490ca1cea524edfd8e0bc6d2652a87bc1dcddf2989b38be12d54feff7d88b601",
+  "end_state": {
+    "cpu_count": 10,
+    "load_average": [
+      3.548828125,
+      3.94482421875,
+      3.9765625
+    ],
+    "machine": "arm64",
+    "memory_pressure_is_advisory_only": true,
+    "monotonic_ns": 26311669009291,
+    "pid": 37304,
+    "platform": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.14.8",
+    "vm_stat_exit_code": 0,
+    "vm_stat_stderr": "",
+    "vm_stat_stdout_sha256": "9d05f4d3dbb44b5445d5617a4586e96f57b832b80995cfdc617b59f127a7b2b4",
+    "wall_time_ns": 1792467375476872000
+  },
+  "events_sha256_before_completion": "b526c9005b6dd649a0f51fab3e381b143e6f0c2225ff8d2debc2891ba3095cdb",
+  "memory_pressure_was_not_an_admission_gate": true,
+  "preflight_sha256": "4e9a25c793b0e05eba3f3bb657db44814579fc4364110fa3ec48d295ca6fc712",
+  "process_snapshots_sha256": "39eaefd54b5905511c3c873008cb4029e4ad92d7b452cd0f8288919aef955523",
+  "raw_row_count": 392,
+  "samples_sha256": "68aef2fc184359abd6c3c3ff9720b85814d5236447e9e319e5c3ddcf452090af",
+  "schema_version": 1,
+  "session": "screen",
+  "start_state": {
+    "cpu_count": 10,
+    "load_average": [
+      2.84326171875,
+      3.82470703125,
+      3.935546875
+    ],
+    "machine": "arm64",
+    "memory_pressure_is_advisory_only": true,
+    "monotonic_ns": 26302073645833,
+    "pid": 37304,
+    "platform": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.14.8",
+    "vm_stat_exit_code": 0,
+    "vm_stat_stderr": "",
+    "vm_stat_stdout_sha256": "9e0e1121d961a226406cf42d2856766d8dda4a66fa127bf896f2b1021347ca38",
+    "wall_time_ns": 1792467365881221000
+  },
+  "warmups_sha256": "ad3ea29e50ad1ed03da064af610edfbbdbbc977668c2d31b7a6e9504cae8a427"
+}

@@ -1,0 +1,88 @@
+{
+  "pass": 0,
+  "mode": "Injective",
+  "points": [
+    {
+      "token": 0,
+      "input_index": 0,
+      "parent": null,
+      "branch": null,
+      "context": "InFunc(\"main\")",
+      "input_type": "TupleT([IntT, StateT])",
+      "region_input": "Tuple([Const(Int(9223372036854775807)), StateV])"
+    },
+    {
+      "token": 1,
+      "input_index": 0,
+      "parent": 0,
+      "branch": true,
+      "context": "InIf(true, Bop(LessThan, Const(Int(0), TupleT([IntT, StateT]), InFunc(\"main\")), Get(Arg(TupleT([IntT, StateT]), InFunc(\"main\")), 0)), Concat(Single(Get(Arg(TupleT([IntT, StateT]), InFunc(\"main\")), 1)), Concat(Single(Const(Int(0), TupleT([IntT, StateT]), InFunc(\"main\"))), Concat(Single(Get(Arg(TupleT([IntT, StateT]), InFunc(\"main\")), 0)), Single(Const(Int(2), TupleT([IntT, StateT]), InFunc(\"main\")))))))",
+      "input_type": "TupleT([StateT, IntT, IntT, IntT])",
+      "region_input": "Tuple([StateV, Const(Int(0)), Const(Int(9223372036854775807)), Const(Int(2))])"
+    }
+  ],
+  "seeds": [
+    {
+      "id": 0,
+      "expr": "__tmp50",
+      "term": "(Const (Bool false) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))",
+      "point": 0,
+      "value": false,
+      "origin": "contextual-literal"
+    },
+    {
+      "id": 1,
+      "expr": "__tmp52",
+      "term": "(Const (Bool true) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))",
+      "point": 0,
+      "value": true,
+      "origin": "contextual-literal"
+    },
+    {
+      "id": 2,
+      "expr": "__tmp53",
+      "term": "(Const (Bool false) (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf true (Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Single (Const (Int 2) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))))))))",
+      "point": 1,
+      "value": false,
+      "origin": "contextual-literal"
+    },
+    {
+      "id": 3,
+      "expr": "__tmp54",
+      "term": "(Const (Bool true) (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf true (Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Single (Const (Int 2) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))))))))",
+      "point": 1,
+      "value": true,
+      "origin": "contextual-literal"
+    },
+    {
+      "id": 4,
+      "expr": "__tmp13",
+      "term": "(Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0))",
+      "point": 0,
+      "value": true,
+      "origin": "feasible-pure-expression"
+    },
+    {
+      "id": 5,
+      "expr": "__tmp37",
+      "term": "(Bop (LessThan) (Bop (Mul) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf true (Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Single (Const (Int 2) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")))))))) 2) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf true (Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Single (Const (Int 2) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")))))))) 3)) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf true (Bop (LessThan) (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 0) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\"))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")) 0)) (Single (Const (Int 2) (TupleT (TCons (IntT) (TCons (StateT) (TNil)))) (InFunc \"main\")))))))) 1))",
+      "point": 1,
+      "value": true,
+      "origin": "feasible-pure-expression"
+    }
+  ],
+  "skipped_regions": [
+    {
+      "parent": 0,
+      "branch": false,
+      "observations": 0,
+      "reason": "unselected-region-not-evaluated"
+    }
+  ],
+  "supported_bool_observations": 2,
+  "detached_pure_bool_evaluations": 2,
+  "structural_print_visits": 1,
+  "literal_injective": true,
+  "eval_bool_at_injective": false,
+  "expr_annotations": false
+}

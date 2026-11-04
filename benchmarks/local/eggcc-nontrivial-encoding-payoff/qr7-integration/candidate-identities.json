@@ -1,0 +1,64 @@
+{
+  "status": "written-not-built",
+  "files": [
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.toml",
+      "relative": "Cargo.toml",
+      "sha256": "9e2feb1df1f51599cdf562523a0feb08619f70571e15f9793f31239d09f1b3b7"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.lock",
+      "relative": "Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.toml",
+      "relative": "dag_in_context/Cargo.toml",
+      "sha256": "877eb54456871db04956fadefbd18df022c935f08c79e3a94cb3df2a7477e1e7"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.lock",
+      "relative": "dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/lib.rs",
+      "relative": "dag_in_context/src/lib.rs",
+      "sha256": "41ec121dab8b75bf520985dd1ba12eeeef642a8ca7d877581c3c190ee09ee79b"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/optimizations/mem_simple.egg",
+      "relative": "dag_in_context/src/optimizations/mem_simple.egg",
+      "sha256": "ef781f216914744c137cb988cf8490bfda4913bf101a1fcf690051fbf84a53ab"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/scoped_qr7.rs",
+      "relative": "dag_in_context/src/scoped_qr7.rs",
+      "sha256": "c0b166ab3963b4b1e2c606ef35826773ca8fa6e35d5c6796a27eaab56328f1c3"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/admit.py",
+      "sha256": "d8522299d851489e97c4f3adfef879de9ad2e87111a9b78fce33ae1be6a7bb65"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py",
+      "sha256": "46791f0ee7f17da78cc2169f4dc23bacc754a9b923213e00fe22b2f6161bd04c"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py",
+      "sha256": "6d8177feac271efff8723f2ed8d094692d851f71de8ada9710bfe3fecea8b6ab"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/run.py",
+      "sha256": "7c63f956ff625132f0b2100d5568fae57f89ddd8e4d2f7a5a01a352686d914e6"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/write-candidate.py",
+      "sha256": "5596cb3dba4a23d5d7a6cc0af4327d5f9288668dbedeecb3beaddbc462db2d87"
+    }
+  ],
+  "cargo_executed": false,
+  "compiler_executed": false,
+  "native_executed": false,
+  "timing_taken": false
+}

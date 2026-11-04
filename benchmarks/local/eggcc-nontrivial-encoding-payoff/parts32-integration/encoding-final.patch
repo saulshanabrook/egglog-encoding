@@ -1,0 +1,597 @@
+--- a/egglog-experimental/README.md
++++ b/egglog-experimental/README.md
+@@ -65,14 +65,29 @@
+ For two existing applications of the same marked constructor, any unequal
+ corresponding arguments establish unequal results. Primitive arguments use native
+ `!=`; equality-sort arguments use asserted `(disequal ...)` facts or recursive
+-witnesses. For a marked unary constructor with an equality-sort argument, known
+-unequal results also establish unequal arguments. Multiple-argument constructors
+-have no reverse rule.
++witnesses. For any constructor, marked or unmarked, unequal results establish
++unequal arguments at one position when every other argument is already equal:
++
++```lisp
++(datatype Input (Common) (Left) (Right))
++(datatype Output (Pair Input Input))
++(disequal (Pair (Common) (Left)) (Pair (Common) (Right)))
++(check (known-disequal? (Left) (Right)))
++```
++
++This reverse rule follows from congruence and needs no injectivity annotation.
++It accepts a unionable equality-sort output and focused argument with primitive
++or unionable equality-sort siblings. Containers and custom function tables are
++outside this fragment. Two unresolved positions do not select one unequal pair,
++and different constructor names supply no disjointness witness. Only marked
++constructors propagate unequal arguments forward to unequal results.
+ 
+ Queries read the current graph without creating constructor applications or
+ storing derived disequality pairs. They need no saturation; equality propagation
+-still requires scheduling `injectivity`. Unknown equality supplies no inequality
+-witness. Cycles terminate, although a query can visit many value pairs. Use
++still requires scheduling `injectivity`. Queries use committed sibling equalities
++and do not jointly close equality and disequality. Unknown equality supplies no
++inequality witness. Cycles terminate, although each structural query scans
++eligible rows into a transient parent index and can visit many value pairs. Use
+ `:naive` for rules whose bodies call this predicate, because its reads extend
+ beyond the rule's explicit table atoms. The new query currently supports ordinary
+ execution only; term encoding and proof testing reject it. See the executable
+--- a/egglog-experimental/src/disequality.rs
++++ b/egglog-experimental/src/disequality.rs
+@@ -44,12 +44,16 @@
+ //! (check (known-disequal? (Num 1) (Num 2)))
+ //! ```
+ //!
+-//! The query combines stored disequalities with structural implications for
+-//! `:injective` constructors, without saturation. A differing corresponding
+-//! argument can establish unequal results at any arity. Unequal results can
+-//! establish unequal arguments only for a marked unary constructor with an
+-//! equality-sort argument. There is no reverse rule for multiple arguments,
+-//! inequality from missing equality, or disjointness between constructor names.
++//! The query combines stored disequalities with two structural implications,
++//! without saturation. For a `:injective` constructor, a differing corresponding
++//! argument can establish unequal results. For a constructor whether marked or
++//! unmarked, unequal results can establish unequal arguments at one position
++//! when every other position is already equal. This reverse rule is ordinary
++//! congruence's contrapositive; it does not require injectivity. Unary reverse
++//! inference has no sibling guard. The reverse fragment requires a unionable
++//! equality-sort output and focused argument, with primitive or unionable
++//! equality-sort siblings; containers and custom function tables are excluded.
++//! There is no inequality from missing equality or disjointness between names.
+ //! Subsumed constructor rows participate. The query has no validator and
+ //! currently supports ordinary execution only, without term/proof encoding.
+ //!
+@@ -103,8 +107,8 @@
+ //! relation keys, while EE compares the existing `Eq_S` result with `F`.
+ //! A stored self-disequality is observable even when the operands are equal.
+ //!
+-//! Structural search reads the scoped marked-constructor names recorded by
+-//! `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
++//! Structural search reads constructor schemas and the scoped marked-constructor
++//! names recorded by `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
+ //! right)` goals. Each pair is sorted before insertion into a per-call visited
+ //! set, so orientation changes and cycles do not cause repeated exploration.
+ //! Runtime values do not carry the primitive's resolved root sort; the search
+@@ -114,20 +118,28 @@
+ //! For a result pair, indexed reads find existing rows of the same marked
+ //! constructor. Their row cross-product supplies one alternative per argument:
+ //! a native primitive mismatch is a witness, and an equality-sort field adds a
+-//! child-pair goal. For a unary equality-sort argument pair, read-only
+-//! constructor lookups add the existing parent-result pair as a reverse goal.
++//! child-pair goal. For an equality-sort argument pair, a transient index of
++//! existing constructor rows finds same-constructor parents at the same argument
++//! position. When every other child column matches, their result pair becomes a
++//! reverse goal. These siblings use the committed graph's canonical values;
++//! queries do not run injectivity to make additional siblings equal. Private
++//! disequality representation constructors are excluded from reverse indexing,
++//! so these implications do not depend on the NEE/EE storage layout.
+ //! Each queued alternative suffices to establish the goal it came from; a
+ //! path to a stored fact or primitive mismatch is a finite witness. A cycle
+ //! with no such endpoint establishes nothing.
+ //!
+ //! The search creates no constructor applications, unions, or persistent
+-//! derived-pair cache. Only its queue, visited pairs, and fetched row groups are
+-//! temporary. Worst-case work can still include many value pairs and matching
+-//! row cross-products. Ordinary assertion storage and private contradiction
++//! derived-pair cache. Its queue, visited pairs, parent index and fetched row
++//! groups are temporary. Index construction scans eligible rows on each
++//! structural query; worst-case work also includes many value pairs and
++//! matching row cross-products. This is not unrestricted disequality closure:
++//! for example, two unresolved argument positions remain unsupported even when
++//! they repeat the same pair. Ordinary assertion storage and private contradiction
+ //! normalization remain separate from this demand-driven search.
+ 
+ use std::{
+-    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
++    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+     str::FromStr,
+     sync::Arc,
+ };
+@@ -136,8 +148,8 @@
+     ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
+     ReadPrim, ReadState, TypeError, TypeInfo, Value,
+     ast::{
+-        Action, Actions, Command, Expr, Fact, Macro, ParseError, Parser, Rule, RuleEvalMode,
+-        RunConfig, Schedule, Schema, Sexp, Span,
++        Action, Actions, Command, Expr, Fact, FunctionSubtype, Macro, ParseError, Parser, Rule,
++        RuleEvalMode, RunConfig, Schedule, Schema, Sexp, Span,
+     },
+     constraint::{Constraint, TypeConstraint},
+     sort::S,
+@@ -178,7 +190,8 @@
+ /// Install syntax and its lowering pass before enabling term/proof encoding.
+ /// Call once on a fresh graph; the encoding is fixed for that graph.
+ pub(crate) fn add_disequality_support(egraph: &mut EGraph, encoding: DisequalityEncoding) {
+-    egraph.add_read_primitive(KnownDisequal(encoding), None);
++    egraph.add_read_primitive(KnownDisequal(encoding, true), None);
++    egraph.add_read_primitive(KnownDisequal(encoding, false), None);
+     egraph.parser.add_action_macro(Arc::new(Disequal));
+     egraph
+         .parser
+@@ -193,11 +206,15 @@
+ /// No validator is registered, so term/proof modes reject this predicate;
+ /// the separate assertion encodings retain their existing mode support.
+ #[derive(Clone)]
+-struct KnownDisequal(DisequalityEncoding);
++struct KnownDisequal(DisequalityEncoding, bool);
+ 
+ impl Primitive for KnownDisequal {
+     fn name(&self) -> &str {
+-        "known-disequal?"
++        if self.1 {
++            "known-disequal?"
++        } else {
++            "known-disequal-forward-only?"
++        }
+     }
+ 
+     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+@@ -233,7 +250,7 @@
+         let [lhs, rhs] = args else {
+             unreachable!("known-disequal? arity is checked before execution")
+         };
+-        match known_disequal(&state, self.0, *lhs, *rhs) {
++        match known_disequal(&state, self.0, *lhs, *rhs, self.1) {
+             Ok(true) => Some(state.base_to_value(())),
+             Ok(false) => None,
+             Err(error) => {
+@@ -245,7 +262,7 @@
+ }
+ 
+ /// Search typed, unordered pair goals against the current committed graph.
+-/// Every edge is a sound same-constructor forward or unary reverse implication;
++/// Every edge is a sound marked forward or sibling-guarded reverse implication;
+ /// any path to a stored assertion or native primitive mismatch is a witness.
+ /// The per-call visited set terminates cycles, and all row/parent lookups are
+ /// read-only, including subsumed rows. See the module explanation for costs.
+@@ -254,6 +271,7 @@
+     encoding: DisequalityEncoding,
+     lhs: Value,
+     rhs: Value,
++    allow_reverse: bool,
+ ) -> Result<bool, Error> {
+     let mut sorts = BTreeSet::new();
+     // The common explicit-assertion case needs no structural search.
+@@ -273,25 +291,64 @@
+             sorts.insert(sort.to_owned());
+         }
+     }
+-    let mut names = Vec::new();
++    let mut marked = HashSet::new();
+     if state
+         .table_size(crate::injectivity::MARKED_CONSTRUCTORS)
+         .is_some()
+     {
+         state.function_entries(crate::injectivity::MARKED_CONSTRUCTORS, |entry| {
+-            names.push(state.value_to_base::<S>(entry.inputs[0]).0);
++            marked.insert(state.value_to_base::<S>(entry.inputs[0]).0);
+         })?;
+     }
+     let mut constructors = Vec::new();
+-    for name in &names {
++    for name in state.tables() {
++        if state.table_subtype(name) != Some(FunctionSubtype::Constructor) {
++            continue;
++        }
+         let schema = state.constructor_schema(name)?;
++        let injective = marked.contains(name);
++        // Reverse congruence is independent of injectivity. Keep its first
++        // fragment scalar and independent of NE/EE representation tables.
++        let reverse = allow_reverse
++            && !name.starts_with("@disequality-")
++            && state.is_sort_unionable(schema.output()) == Some(true)
++            && schema.input.iter().any(|input| input.is_eq_sort())
++            && schema.input.iter().all(|input| {
++                !input.is_container_sort()
++                    && (!input.is_eq_sort() || state.is_sort_unionable(input) == Some(true))
++            });
++        if !injective && !reverse {
++            continue;
++        }
+         sorts.insert(schema.output().name().to_owned());
+         for sort in &schema.input {
+             if sort.is_eq_sort() {
+                 sorts.insert(sort.name().to_owned());
+             }
+         }
+-        constructors.push((name.as_str(), schema));
++        constructors.push((name, schema, injective, reverse));
++    }
++    // Index existing applications by each equality-sort child for this call.
++    // Rows are retained once; index entries reference their position and include
++    // subsumed applications. No parent application or derived pair is stored.
++    let mut applications = Vec::new();
++    let mut parents: HashMap<(&str, Value), Vec<(usize, usize)>> = HashMap::new();
++    for (constructor, &(name, schema, _, reverse)) in constructors.iter().enumerate() {
++        if !reverse {
++            continue;
++        }
++        state.constructor_enodes(name, |node| {
++            let application = applications.len();
++            applications.push((constructor, node.children.to_vec(), node.eclass));
++            for (position, (&child, input)) in node.children.iter().zip(&schema.input).enumerate() {
++                if input.is_eq_sort() {
++                    parents
++                        .entry((input.name(), child))
++                        .or_default()
++                        .push((application, position));
++                }
++            }
++        })?;
+     }
+     // ReadPrim does not receive its resolved input type. Eq-sort IDs share one
+     // global counter (as in unstable-subst), so probing another sort cannot
+@@ -308,8 +365,8 @@
+         if asserted_disequal(state, encoding, &sort, left, right)? {
+             return Ok(true);
+         }
+-        for &(name, schema) in &constructors {
+-            if schema.output().name() == sort {
++        for &(name, schema, injective, _) in &constructors {
++            if injective && schema.output().name() == sort {
+                 let mut left_rows = Vec::new();
+                 let mut right_rows = Vec::new();
+                 state.constructor_enodes_for_eclass(name, left, |node| {
+@@ -330,17 +387,29 @@
+                     }
+                 }
+             }
+-            if let [input] = schema.input.as_slice()
+-                && input.name() == sort
+-                && input.is_eq_sort()
+-            {
+-                // Constructor lookup is read-only and includes subsumed rows.
+-                // Missing applications supply no reverse implication.
+-                if let (Some(a), Some(b)) = (
+-                    state.eclass_of(name, RawValues(vec![left]))?,
+-                    state.eclass_of(name, RawValues(vec![right]))?,
+-                ) {
+-                    pending.push_back((schema.output().name().to_owned(), a, b));
++        }
++        if let (Some(left_parents), Some(right_parents)) = (
++            parents.get(&(sort.as_str(), left)),
++            parents.get(&(sort.as_str(), right)),
++        ) {
++            for &(a, position) in left_parents {
++                let (constructor, a_children, a_result) = &applications[a];
++                for &(b, other_position) in right_parents {
++                    let (other_constructor, b_children, b_result) = &applications[b];
++                    if constructor == other_constructor
++                        && position == other_position
++                        && a_children
++                            .iter()
++                            .zip(b_children)
++                            .enumerate()
++                            .all(|(index, (a, b))| index == position || a == b)
++                    {
++                        pending.push_back((
++                            constructors[*constructor].1.output().name().to_owned(),
++                            *a_result,
++                            *b_result,
++                        ));
++                    }
+                 }
+             }
+         }
+--- a/egglog-experimental/tests/injectivity/injectivity-disequality.egg
++++ b/egglog-experimental/tests/injectivity/injectivity-disequality.egg
+@@ -5,6 +5,7 @@
+ (datatype Term
+   (A) (B) (C) (D)
+   (U1) (U2) (V1) (V2)
++  (RemainingL) (RemainingR)
+   (EqL) (EqR)
+   (Num i64 :injective)
+   (Pair Term Term :injective)
+@@ -33,12 +34,16 @@
+ (fail (check (known-disequal? (Plain (A) (C)) (Plain (B) (C)))))
+ 
+ ; Wrap(C) != Wrap(D) => C != D, since C = D => Wrap(C) = Wrap(D).
+-; This follows from congruence for any unary function; the query currently
+-; applies it only to marked constructors such as Wrap.
++; This follows from congruence and also works for unmarked constructors.
+ (disequal (Wrap (C)) (Wrap (D)))
+ (check (known-disequal? (C) (D)))
+ ; A != B and C != D do not imply A != C.
+ (fail (check (known-disequal? (A) (C))))
++
++; Remaining-child reverse congruence needs no injectivity annotation on Plain.
++; Its common first child leaves only the second child potentially unequal.
++(disequal (Plain (C) (RemainingL)) (Plain (C) (RemainingR)))
++(check (known-disequal? (RemainingL) (RemainingR)))
+ 
+ ; Pair(a,b) != Pair(c,d) => (a != c OR b != d), by congruence.
+ ; Neither a != c nor b != d follows individually, so neither is inferred.
+--- a/egglog-experimental/tests/injectivity_disequality.rs
++++ b/egglog-experimental/tests/injectivity_disequality.rs
+@@ -2,6 +2,9 @@
+ 
+ use egglog::EGraph;
+ use egglog_experimental::{DisequalityEncoding, new_experimental_egraph_with_options};
++
++#[path = "injectivity_disequality/oracle.rs"]
++mod oracle;
+ 
+ fn for_encodings(program: &str, mut verify: impl FnMut(&mut EGraph, DisequalityEncoding)) {
+     for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
+@@ -14,6 +17,235 @@
+ }
+ 
+ #[test]
++fn unmarked_binary_reverse_congruence_is_cross_sort() {
++    for_encodings(
++        "(datatype Input (A) (B) (C))
++         (datatype Output (F Input Input))
++         (disequal (F (A) (B)) (F (A) (C)))",
++        |graph, encoding| {
++            graph
++                .parse_and_run_program(None, "(check (known-disequal? (B) (C)))")
++                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
++        },
++    );
++}
++
++#[test]
++fn reverse_congruence_matches_scalar_siblings_and_preserves_forward_opt_in() {
++    for_encodings(
++        r#"
++        (datatype Input (Leaf i64))
++        (datatype Output (U Input) (B Input Input) (T Input Input Input)
++                         (M i64 bool String Input) (Other Input))
++        (constructor Hidden (Input Input) Output :internal-hidden)
++        (disequal (U (Leaf 0)) (U (Leaf 1)))
++        (disequal (B (Leaf 2) (Leaf 99)) (B (Leaf 3) (Leaf 99)))
++        (disequal (B (Leaf 99) (Leaf 4)) (B (Leaf 99) (Leaf 5)))
++        (disequal (T (Leaf 6) (Leaf 99) (Leaf 99)) (T (Leaf 7) (Leaf 99) (Leaf 99)))
++        (disequal (T (Leaf 99) (Leaf 8) (Leaf 99)) (T (Leaf 99) (Leaf 9) (Leaf 99)))
++        (disequal (T (Leaf 99) (Leaf 99) (Leaf 10)) (T (Leaf 99) (Leaf 99) (Leaf 11)))
++        (disequal (M 3 true "tag" (Leaf 12)) (M 3 true "tag" (Leaf 13)))
++        (disequal (M 3 true "tag" (Leaf 14)) (M 4 true "tag" (Leaf 15)))
++        (disequal (M 3 true "tag" (Leaf 16)) (M 3 false "tag" (Leaf 17)))
++        (disequal (M 3 true "tag" (Leaf 18)) (M 3 true "other" (Leaf 19)))
++        (disequal (B (Leaf 20) (Leaf 22)) (B (Leaf 21) (Leaf 23)))
++        (B (Leaf 0) (Leaf 99)) (B (Leaf 1) (Leaf 99))
++        (union (B (Leaf 30) (Leaf 31)) (B (Leaf 32) (Leaf 33)))
++        (disequal (U (Leaf 40)) (Other (Leaf 41)))
++        (disequal (Hidden (Leaf 42) (Leaf 99)) (Hidden (Leaf 43) (Leaf 99)))
++        (disequal (T (Leaf 44) (Leaf 99) (Leaf 44)) (T (Leaf 45) (Leaf 99) (Leaf 45)))
++        "#,
++        |graph, encoding| {
++            let rows = graph.num_tuples();
++            let tables = graph.get_function_names();
++            graph
++                .parse_and_run_program(
++                    None,
++                    r#"
++                    (check (known-disequal? (Leaf 0) (Leaf 1)))
++                    (check (known-disequal? (Leaf 3) (Leaf 2)))
++                    (check (known-disequal? (Leaf 4) (Leaf 5)))
++                    (check (known-disequal? (Leaf 6) (Leaf 7)))
++                    (check (known-disequal? (Leaf 8) (Leaf 9)))
++                    (check (known-disequal? (Leaf 10) (Leaf 11)))
++                    (check (known-disequal? (Leaf 12) (Leaf 13)))
++                    (fail (check (known-disequal? (Leaf 14) (Leaf 15))))
++                    (fail (check (known-disequal? (Leaf 16) (Leaf 17))))
++                    (fail (check (known-disequal? (Leaf 18) (Leaf 19))))
++                    (fail (check (known-disequal? (Leaf 20) (Leaf 21))))
++                    (fail (check (known-disequal? (Leaf 22) (Leaf 23))))
++                    (fail (check (known-disequal? (B (Leaf 0) (Leaf 99)) (B (Leaf 1) (Leaf 99)))))
++                    (fail (check (= (Leaf 30) (Leaf 32))))
++                    (fail (check (known-disequal? (Leaf 30) (Leaf 32))))
++                    (fail (check (known-disequal? (Leaf 40) (Leaf 41))))
++                    (check (known-disequal? (Leaf 42) (Leaf 43)))
++                    ; The fragment requires every other position already equal;
++                    ; it does not simplify repeated disjuncts from two positions.
++                    (fail (check (known-disequal? (Leaf 44) (Leaf 45))))
++                    "#,
++                )
++                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
++            assert_eq!(graph.num_tuples(), rows);
++            assert_eq!(graph.get_function_names(), tables);
++        },
++    );
++}
++
++#[test]
++fn reverse_congruence_leaves_containers_and_function_tables_outside_the_fragment() {
++    for_encodings(
++        "(datatype Input (Leaf i64))
++         (datatype Output (Result i64))
++         (sort Inputs (Vec Input))
++         (constructor WithContainer (Input Inputs) Output)
++         (relation O ())
++         (function Custom (Input Input) Output :merge old)
++         (disequal (WithContainer (Leaf 0) (vec-empty)) (WithContainer (Leaf 1) (vec-empty)))
++         (set (Custom (Leaf 4) (Leaf 5)) (Result 0))
++         (set (Custom (Leaf 4) (Leaf 6)) (Result 1))
++         (disequal (Result 0) (Result 1))",
++        |graph, encoding| {
++            // Relations supply an actual non-unionable equality sort; there is
++            // no surface `sort :no-union` declaration in this parser.
++            let opaque = graph
++                .type_info()
++                .get_func_type("O")
++                .unwrap()
++                .output()
++                .name()
++                .to_owned();
++            graph
++                .parse_and_run_program(
++                    None,
++                    &format!(
++                        "(constructor WithOpaque (Input {opaque}) Output)\n\
++                         (disequal (WithOpaque (Leaf 2) (O)) (WithOpaque (Leaf 3) (O)))"
++                    ),
++                )
++                .unwrap();
++            let rows = graph.num_tuples();
++            let tables = graph.get_function_names();
++            graph
++                .parse_and_run_program(
++                    None,
++                    "(fail (check (known-disequal? (Leaf 0) (Leaf 1))))
++                     (fail (check (known-disequal? (Leaf 2) (Leaf 3))))
++                     (fail (check (known-disequal? (Leaf 5) (Leaf 6))))",
++                )
++                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
++            assert_eq!(graph.num_tuples(), rows);
++            assert_eq!(graph.get_function_names(), tables);
++        },
++    );
++}
++
++#[test]
++fn naive_consumers_observe_late_equalities_and_parent_assertions_under_both_schedulers() {
++    for extended in [false, true] {
++        for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
++            let mut graph = new_experimental_egraph_with_options(extended, encoding);
++            graph
++                .parse_and_run_program(
++                    None,
++                    "(datatype Input (Leaf i64) (Wrap Input :injective))
++                     (datatype Output (Pair Input Input))
++                     (relation Request (Input Input))
++                     (relation Found (Input Input))
++                     (ruleset consume)
++                     (rule ((Request left right) (known-disequal? left right))
++                           ((Found left right)) :ruleset consume :naive)
++                     (disequal (Pair (Leaf 0) (Leaf 1)) (Pair (Leaf 2) (Leaf 3)))
++                     (union (Wrap (Leaf 0)) (Wrap (Leaf 2)))
++                     (Request (Leaf 1) (Leaf 3))
++                     (Pair (Leaf 4) (Leaf 5)) (Pair (Leaf 4) (Leaf 6))
++                     (Request (Leaf 5) (Leaf 6))
++                     (disequal (Pair (Leaf 7) (Leaf 8)) (Pair (Leaf 9) (Leaf 10)))
++                     (fail (check (known-disequal? (Leaf 1) (Leaf 3))))
++                     (run-schedule (saturate consume))
++                     (fail (check (Found (Leaf 1) (Leaf 3))))
++                     (fail (check (Found (Leaf 5) (Leaf 6))))
++                     (fail (check-contradiction))
++                     (fail (check (= (Leaf 0) (Leaf 2))))
++                     (union (Leaf 7) (Leaf 9))
++                     (check (known-disequal? (Leaf 8) (Leaf 10)))
++                     (run-schedule (saturate injectivity consume))
++                     (check (Found (Leaf 1) (Leaf 3)))
++                     (fail (check (Found (Leaf 5) (Leaf 6))))
++                     (disequal (Pair (Leaf 4) (Leaf 5)) (Pair (Leaf 4) (Leaf 6)))
++                     (run-schedule (saturate consume))
++                     (check (Found (Leaf 5) (Leaf 6)))
++                     (fail (check-contradiction))
++                     (union (Leaf 1) (Leaf 3))
++                     (check-contradiction)",
++                )
++                .unwrap_or_else(|error| panic!("{encoding:?}, extended={extended}: {error}"));
++        }
++    }
++}
++
++#[test]
++fn unmarked_reverse_rows_follow_subsumption_pop_and_failed_redeclaration() {
++    for_encodings(
++        "(datatype Input (Leaf i64))
++         (datatype Output)
++         (push)
++         (constructor Scoped (Input Input) Output)
++         (disequal (Scoped (Leaf 0) (Leaf 1)) (Scoped (Leaf 0) (Leaf 2)))
++         (subsume (Scoped (Leaf 0) (Leaf 1)))
++         (union (Leaf 0) (Leaf 10))
++         (check (known-disequal? (Leaf 1) (Leaf 2)))
++         (pop)
++         (constructor Scoped (Input Input) Output)
++         (Scoped (Leaf 0) (Leaf 1)) (Scoped (Leaf 0) (Leaf 2))
++         (fail (check (known-disequal? (Leaf 1) (Leaf 2))))",
++        |graph, encoding| {
++            assert!(
++                graph
++                    .parse_and_run_program(
++                        None,
++                        "(constructor Scoped (Input Input) Output :injective)"
++                    )
++                    .is_err()
++            );
++            graph
++                .parse_and_run_program(
++                    None,
++                    "(disequal (Leaf 1) (Leaf 2))
++                     (fail (check (known-disequal? (Scoped (Leaf 0) (Leaf 1)) (Scoped (Leaf 0) (Leaf 2)))))",
++                )
++                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
++        },
++    );
++}
++
++#[test]
++fn unmarked_reverse_cycles_terminate_with_and_without_a_finite_witness() {
++    for_encodings(
++        "(datatype Term (A) (B) (Anchor) (Pair Term Term))
++         (datatype Outside (Witness Term))
++         (union (A) (Pair (A) (Anchor)))
++         (union (B) (Pair (B) (Anchor)))",
++        |graph, encoding| {
++            let rows = graph.num_tuples();
++            graph
++                .parse_and_run_program(None, "(fail (check (known-disequal? (A) (B))))")
++                .unwrap();
++            assert_eq!(graph.num_tuples(), rows);
++            graph
++                .parse_and_run_program(None, "(disequal (Witness (A)) (Witness (B)))")
++                .unwrap();
++            let rows = graph.num_tuples();
++            let tables = graph.get_function_names();
++            graph
++                .parse_and_run_program(None, "(check (known-disequal? (A) (B)))")
++                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
++            assert_eq!(graph.num_tuples(), rows);
++            assert_eq!(graph.get_function_names(), tables);
++        },
++    );
++}
++
++#[test]
+ fn native_fields_supply_witnesses_without_assertion_tables_or_pair_storage() {
+     for_encodings(
+         "(datatype Input (A) (B))
+@@ -71,7 +303,7 @@
+ }
+ 
+ #[test]
+-fn reverse_witnesses_are_unary_only_and_cross_sort() {
++fn reverse_witnesses_are_annotation_independent_but_do_not_choose_ambiguous_children() {
+     for_encodings(
+         "(datatype Input (A) (B) (C) (D) (E) (G))
+          (datatype Output (F Input :injective) (Pair Input Input :injective) (Other Input))
+@@ -85,7 +317,7 @@
+                     None,
+                     "(check (known-disequal? (A) (B)))
+                      (check (known-disequal? (B) (A)))
+-                     (fail (check (known-disequal? (C) (D))))
++                     (check (known-disequal? (C) (D)))
+                      (fail (check (known-disequal? (E) (G))))",
+                 )
+                 .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
+@@ -236,6 +468,7 @@
+             "(datatype A (X)) (datatype B (Y)) (check (known-disequal? (X) (Y)))",
+             "(datatype A (X)) (check (known-disequal? (X)))",
+             "(sort Items (Vec i64)) (check (known-disequal? (vec-of 1) (vec-of 2)))",
++            "(relation O ()) (check (known-disequal? (O) (O)))",
+         ] {
+             assert!(
+                 new_experimental_egraph_with_options(false, encoding)

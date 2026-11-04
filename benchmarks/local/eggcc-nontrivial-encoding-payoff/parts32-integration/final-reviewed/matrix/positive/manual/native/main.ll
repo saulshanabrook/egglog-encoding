@@ -1,0 +1,123 @@
+define noundef i32 @main(i32 %argc, ptr nocapture readonly %argv) local_unnamed_addr #28 {
+label149:
+  %"calculate offset" = getelementptr inbounds ptr, ptr %argv, i64 1
+  %"load arg" = load ptr, ptr %"calculate offset", align 8
+  %parse_int = tail call i64 @_bril_parse_int(ptr %"load arg")
+  %"calculate offset1" = getelementptr inbounds ptr, ptr %argv, i64 2
+  %"load arg2" = load ptr, ptr %"calculate offset1", align 8
+  %parse_int3 = tail call i64 @_bril_parse_int(ptr %"load arg2")
+  %"calculate offset4" = getelementptr inbounds ptr, ptr %argv, i64 3
+  %"load arg5" = load ptr, ptr %"calculate offset4", align 8
+  %parse_int6 = tail call i64 @_bril_parse_int(ptr %"load arg5")
+  %var7.i = icmp ult i64 %parse_int6, 1000001
+  br i1 %var7.i, label %b13_.i, label %_main.exit
+
+b13_.i:                                           ; preds = %label149
+  %var11.not.i = icmp eq i64 %parse_int6, 0
+  br i1 %var11.not.i, label %_main.exit, label %b39_.i.preheader
+
+b39_.i.preheader:                                 ; preds = %b13_.i
+  %min.iters.check = icmp ult i64 %parse_int6, 8
+  br i1 %min.iters.check, label %b39_.i.preheader21, label %vector.ph
+
+vector.ph:                                        ; preds = %b39_.i.preheader
+  %n.vec = and i64 %parse_int6, 1048568
+  %0 = mul nuw nsw i64 %n.vec, 4294967297
+  %ind.end = add i64 %parse_int, %0
+  %1 = mul nuw nsw i64 %n.vec, 8589934593
+  %ind.end1 = add i64 %parse_int3, %1
+  %.splatinsert = insertelement <2 x i64> poison, i64 %parse_int, i64 0
+  %.splat = shufflevector <2 x i64> %.splatinsert, <2 x i64> poison, <2 x i32> zeroinitializer
+  %induction = add <2 x i64> %.splat, <i64 0, i64 4294967297>
+  %.splatinsert7 = insertelement <2 x i64> poison, i64 %parse_int3, i64 0
+  %.splat8 = shufflevector <2 x i64> %.splatinsert7, <2 x i64> poison, <2 x i32> zeroinitializer
+  %induction9 = add <2 x i64> %.splat8, <i64 0, i64 8589934593>
+  br label %vector.body
+
+vector.body:                                      ; preds = %vector.body, %vector.ph
+  %index = phi i64 [ 0, %vector.ph ], [ %index.next, %vector.body ]
+  %vec.ind = phi <2 x i64> [ %induction, %vector.ph ], [ %vec.ind.next, %vector.body ]
+  %vec.ind10 = phi <2 x i64> [ %induction9, %vector.ph ], [ %vec.ind.next15, %vector.body ]
+  %vec.phi = phi <2 x i64> [ zeroinitializer, %vector.ph ], [ %26, %vector.body ]
+  %vec.phi16 = phi <2 x i64> [ zeroinitializer, %vector.ph ], [ %27, %vector.body ]
+  %vec.phi17 = phi <2 x i64> [ zeroinitializer, %vector.ph ], [ %28, %vector.body ]
+  %vec.phi18 = phi <2 x i64> [ zeroinitializer, %vector.ph ], [ %29, %vector.body ]
+  %step.add = add <2 x i64> %vec.ind, <i64 8589934594, i64 8589934594>
+  %step.add4 = add <2 x i64> %vec.ind, <i64 17179869188, i64 17179869188>
+  %step.add5 = add <2 x i64> %vec.ind, <i64 25769803782, i64 25769803782>
+  %step.add11 = add <2 x i64> %vec.ind10, <i64 17179869186, i64 17179869186>
+  %step.add12 = add <2 x i64> %vec.ind10, <i64 34359738372, i64 34359738372>
+  %step.add13 = add <2 x i64> %vec.ind10, <i64 51539607558, i64 51539607558>
+  %2 = icmp eq <2 x i64> %vec.ind10, %vec.ind
+  %3 = icmp eq <2 x i64> %step.add11, %step.add
+  %4 = icmp eq <2 x i64> %step.add12, %step.add4
+  %5 = icmp eq <2 x i64> %step.add13, %step.add5
+  %6 = xor <2 x i64> %vec.ind10, %vec.ind
+  %7 = xor <2 x i64> %step.add11, %step.add
+  %8 = xor <2 x i64> %step.add12, %step.add4
+  %9 = xor <2 x i64> %step.add13, %step.add5
+  %10 = and <2 x i64> %6, <i64 4294967295, i64 4294967295>
+  %11 = and <2 x i64> %7, <i64 4294967295, i64 4294967295>
+  %12 = and <2 x i64> %8, <i64 4294967295, i64 4294967295>
+  %13 = and <2 x i64> %9, <i64 4294967295, i64 4294967295>
+  %14 = icmp eq <2 x i64> %10, zeroinitializer
+  %15 = icmp eq <2 x i64> %11, zeroinitializer
+  %16 = icmp eq <2 x i64> %12, zeroinitializer
+  %17 = icmp eq <2 x i64> %13, zeroinitializer
+  %18 = select <2 x i1> %14, <2 x i64> <i64 7, i64 7>, <2 x i64> <i64 3, i64 3>
+  %19 = select <2 x i1> %15, <2 x i64> <i64 7, i64 7>, <2 x i64> <i64 3, i64 3>
+  %20 = select <2 x i1> %16, <2 x i64> <i64 7, i64 7>, <2 x i64> <i64 3, i64 3>
+  %21 = select <2 x i1> %17, <2 x i64> <i64 7, i64 7>, <2 x i64> <i64 3, i64 3>
+  %22 = select <2 x i1> %2, <2 x i64> <i64 5, i64 5>, <2 x i64> %18
+  %23 = select <2 x i1> %3, <2 x i64> <i64 5, i64 5>, <2 x i64> %19
+  %24 = select <2 x i1> %4, <2 x i64> <i64 5, i64 5>, <2 x i64> %20
+  %25 = select <2 x i1> %5, <2 x i64> <i64 5, i64 5>, <2 x i64> %21
+  %26 = add <2 x i64> %22, %vec.phi
+  %27 = add <2 x i64> %23, %vec.phi16
+  %28 = add <2 x i64> %24, %vec.phi17
+  %29 = add <2 x i64> %25, %vec.phi18
+  %index.next = add nuw i64 %index, 8
+  %vec.ind.next = add <2 x i64> %vec.ind, <i64 34359738376, i64 34359738376>
+  %vec.ind.next15 = add <2 x i64> %vec.ind10, <i64 68719476744, i64 68719476744>
+  %30 = icmp eq i64 %index.next, %n.vec
+  br i1 %30, label %middle.block, label %vector.body, !llvm.loop !6914
+
+middle.block:                                     ; preds = %vector.body
+  %bin.rdx = add <2 x i64> %27, %26
+  %bin.rdx19 = add <2 x i64> %28, %bin.rdx
+  %bin.rdx20 = add <2 x i64> %29, %bin.rdx19
+  %31 = tail call i64 @llvm.vector.reduce.add.v2i64(<2 x i64> %bin.rdx20)
+  %cmp.n = icmp eq i64 %parse_int6, %n.vec
+  br i1 %cmp.n, label %_main.exit, label %b39_.i.preheader21
+
+b39_.i.preheader21:                               ; preds = %b39_.i.preheader, %middle.block
+  %v34_.0.i.ph = phi i64 [ %parse_int, %b39_.i.preheader ], [ %ind.end, %middle.block ]
+  %v32_.0.i.ph = phi i64 [ %parse_int3, %b39_.i.preheader ], [ %ind.end1, %middle.block ]
+  %v30_.0.i.ph = phi i64 [ 0, %b39_.i.preheader ], [ %n.vec, %middle.block ]
+  %v29_.0.i.ph = phi i64 [ 0, %b39_.i.preheader ], [ %31, %middle.block ]
+  br label %b39_.i
+
+b39_.i:                                           ; preds = %b39_.i.preheader21, %b39_.i
+  %v34_.0.i = phi i64 [ %var102.i, %b39_.i ], [ %v34_.0.i.ph, %b39_.i.preheader21 ]
+  %v32_.0.i = phi i64 [ %var99.i, %b39_.i ], [ %v32_.0.i.ph, %b39_.i.preheader21 ]
+  %v30_.0.i = phi i64 [ %var96.i, %b39_.i ], [ %v30_.0.i.ph, %b39_.i.preheader21 ]
+  %v29_.0.i = phi i64 [ %var93.i, %b39_.i ], [ %v29_.0.i.ph, %b39_.i.preheader21 ]
+  %var35.i = icmp eq i64 %v32_.0.i, %v34_.0.i
+  %32 = xor i64 %v32_.0.i, %v34_.0.i
+  %33 = and i64 %32, 4294967295
+  %var56.i = icmp eq i64 %33, 0
+  %..i = select i1 %var56.i, i64 7, i64 3
+  %v49_.0.i = select i1 %var35.i, i64 5, i64 %..i
+  %var93.i = add i64 %v49_.0.i, %v29_.0.i
+  %var96.i = add nuw nsw i64 %v30_.0.i, 1
+  %var99.i = add i64 %v32_.0.i, 8589934593
+  %var102.i = add i64 %v34_.0.i, 4294967297
+  %exitcond.not.i = icmp eq i64 %var96.i, %parse_int6
+  br i1 %exitcond.not.i, label %_main.exit, label %b39_.i, !llvm.loop !6915
+
+_main.exit:                                       ; preds = %b39_.i, %middle.block, %label149, %b13_.i
+  %var93.lcssa.sink.i = phi i64 [ -2, %label149 ], [ 0, %b13_.i ], [ %31, %middle.block ], [ %var93.i, %b39_.i ]
+  tail call void @_bril_print_int(i64 %var93.lcssa.sink.i)
+  tail call void @_bril_print_end()
+  ret i32 0
+}

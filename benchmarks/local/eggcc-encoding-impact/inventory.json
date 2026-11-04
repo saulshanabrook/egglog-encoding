@@ -1,0 +1,477 @@
+{
+  "kind": "initial-provenance-infrastructure-inventory-not-benchmark-or-implementation",
+  "recordedUtc": "2026-10-17T20:46:12.855662+00:00",
+  "selection": {
+    "startedUtc": "2026-10-17T20:41:12.906424+00:00",
+    "approvedPlanSha256": "ea1ab25f0970a4ce6ed20e47fa3117ee16172f52b4935dc9f7796a387083b712",
+    "encodingBase": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+    "encodingWorktree": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+    "compilerBase": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+    "compilerWorktree": "/Users/saul/p/wt/eggcc/encoding-impact",
+    "encodingPr119": {
+      "state": "OPEN",
+      "head": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+      "url": "https://github.com/saulshanabrook/egglog-encoding/pull/119"
+    },
+    "liveRemoteMain": {
+      "eggcc": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+      "encoding": "03e533714524c1b21be77edff46fb694120b8b81"
+    },
+    "sourceFreshness": "gh pr view and git ls-remote checked at execution start; no source branch reset, merge or pull performed",
+    "priorGoalTurn": "progress: reviewed goal package completed; no previous execution turn",
+    "preservation": "preservation/initial.json captures six existing checkouts and 1536 old evidence files"
+  },
+  "approvedPlanMatchesCapturedContract": true,
+  "metadata": {
+    "compiler-root-metadata": {
+      "rawMetadata": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-root-metadata.stdout",
+      "workspaceRoot": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "targetDirectory": "/Users/saul/p/wt/eggcc/encoding-impact/target",
+      "packageCount": 291,
+      "selectedPackages": [
+        {
+          "name": "bril-rs",
+          "version": "0.1.0",
+          "source": "git+https://github.com/uwplse/bril?branch=main#06117c089c2d235ff8d040bb3d0cfd1e2a1c4880",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/bril-36edbe08a8ae21f1/06117c0/bril-rs/Cargo.toml",
+          "resolvedFeatures": [
+            "float",
+            "memory",
+            "ssa"
+          ]
+        },
+        {
+          "name": "bril-rs",
+          "version": "0.1.0",
+          "source": "git+https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c089c2d235ff8d040bb3d0cfd1e2a1c4880",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/bril-36edbe08a8ae21f1/06117c0/bril-rs/Cargo.toml",
+          "resolvedFeatures": [
+            "char",
+            "float",
+            "import",
+            "memory",
+            "position",
+            "speculate",
+            "ssa"
+          ]
+        },
+        {
+          "name": "brillvm",
+          "version": "0.1.0",
+          "source": "git+https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c089c2d235ff8d040bb3d0cfd1e2a1c4880",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/bril-36edbe08a8ae21f1/06117c0/bril-rs/brillvm/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "coin_cbc",
+          "version": "0.1.8",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/coin_cbc-0.1.8/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "lazy_static",
+            "singlethread-cbc"
+          ]
+        },
+        {
+          "name": "coin_cbc_sys",
+          "version": "0.1.2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/coin_cbc_sys-0.1.2/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "dag_in_context",
+          "version": "0.1.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "eggcc",
+          "version": "0.1.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/eggcc/encoding-impact/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "llvm"
+          ]
+        },
+        {
+          "name": "egglog",
+          "version": "2.0.0",
+          "source": "git+https://github.com/egraphs-good/egglog.git?branch=codex/pr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-7c9491f597880af0/9b5ce11/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "egglog-bridge",
+          "version": "2.0.0",
+          "source": "git+https://github.com/egraphs-good/egglog.git?branch=codex/pr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-7c9491f597880af0/9b5ce11/egglog-bridge/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "egglog-experimental",
+          "version": "0.1.0",
+          "source": "git+https://github.com/egraphs-good/egglog-experimental.git?branch=codex/eggcc-proof-baseline-pr927#19ed86667733c56e4072956ce3b414b6860660bc",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/19ed866/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "default"
+          ]
+        },
+        {
+          "name": "egraph-serialize",
+          "version": "0.3.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egraph-serialize-0.3.0/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "inkwell",
+          "version": "0.4.0",
+          "source": "git+https://github.com/TheDan64/inkwell.git?rev=6c0fb56b3554e939f9ca61b465043d6a84fb7b95#6c0fb56b3554e939f9ca61b465043d6a84fb7b95",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/inkwell-511a88971ace534e/6c0fb56/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "llvm-sys-180",
+            "llvm18-0",
+            "target-aarch64",
+            "target-all",
+            "target-amdgpu",
+            "target-arm",
+            "target-bpf",
+            "target-hexagon",
+            "target-lanai",
+            "target-loongarch",
+            "target-mips",
+            "target-msp430",
+            "target-nvptx",
+            "target-powerpc",
+            "target-riscv",
+            "target-sparc",
+            "target-systemz",
+            "target-webassembly",
+            "target-x86",
+            "target-xcore"
+          ]
+        },
+        {
+          "name": "llvm-sys",
+          "version": "180.0.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/llvm-sys-180.0.0/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "ordered-float",
+          "version": "5.1.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ordered-float-5.1.0/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "serde",
+            "std"
+          ]
+        }
+      ],
+      "priorMetadata": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/baseline-root-metadata.stdout",
+      "sameDependencyIdentitySetAsHistoricalA": true,
+      "addedDependencyIdentities": [],
+      "removedDependencyIdentities": []
+    },
+    "compiler-dag-metadata": {
+      "rawMetadata": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-dag-metadata.stdout",
+      "workspaceRoot": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context",
+      "targetDirectory": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/target",
+      "packageCount": 185,
+      "selectedPackages": [
+        {
+          "name": "bril-rs",
+          "version": "0.1.0",
+          "source": "git+https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c089c2d235ff8d040bb3d0cfd1e2a1c4880",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/bril-36edbe08a8ae21f1/06117c0/bril-rs/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "coin_cbc",
+          "version": "0.1.8",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/coin_cbc-0.1.8/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "lazy_static",
+            "singlethread-cbc"
+          ]
+        },
+        {
+          "name": "coin_cbc_sys",
+          "version": "0.1.2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/coin_cbc_sys-0.1.2/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "dag_in_context",
+          "version": "0.1.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "egglog",
+          "version": "2.0.0",
+          "source": "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-duckdb-ce2099a6a916290b/07650be/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "egglog-bridge",
+          "version": "2.0.0",
+          "source": "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-duckdb-ce2099a6a916290b/07650be/egglog-bridge/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "egglog-experimental",
+          "version": "0.1.0",
+          "source": "git+https://github.com/egraphs-good/egglog-experimental.git?branch=codex/eggcc-proof-baseline-pr927#6b37b6b31cf878fd7384e470b216398d9cc006fe",
+          "manifestPath": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/6b37b6b/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "default"
+          ]
+        },
+        {
+          "name": "egraph-serialize",
+          "version": "0.3.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egraph-serialize-0.3.0/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "ordered-float",
+          "version": "5.1.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ordered-float-5.1.0/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "serde",
+            "std"
+          ]
+        }
+      ],
+      "priorMetadata": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/baseline-dag-metadata.stdout",
+      "sameDependencyIdentitySetAsHistoricalA": true,
+      "addedDependencyIdentities": [],
+      "removedDependencyIdentities": []
+    },
+    "encoding-metadata": {
+      "rawMetadata": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-metadata.stdout",
+      "workspaceRoot": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "targetDirectory": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/target",
+      "packageCount": 235,
+      "selectedPackages": [
+        {
+          "name": "egglog",
+          "version": "2.0.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "default",
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "egglog-bridge",
+          "version": "2.0.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog/egglog-bridge/Cargo.toml",
+          "resolvedFeatures": []
+        },
+        {
+          "name": "egglog-experimental",
+          "version": "3.0.0",
+          "source": null,
+          "manifestPath": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/Cargo.toml",
+          "resolvedFeatures": [
+            "bin",
+            "default"
+          ]
+        },
+        {
+          "name": "egraph-serialize",
+          "version": "0.3.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egraph-serialize-0.3.0/Cargo.toml",
+          "resolvedFeatures": [
+            "graphviz",
+            "serde"
+          ]
+        },
+        {
+          "name": "ordered-float",
+          "version": "5.3.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "manifestPath": "/Users/saul/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ordered-float-5.3.0/Cargo.toml",
+          "resolvedFeatures": [
+            "default",
+            "serde",
+            "std"
+          ]
+        }
+      ]
+    }
+  },
+  "commands": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/commands.json",
+    "sha256": "848d44eb7119404a47810307934cf165a7e5599fbd0de3c754d7fb5f53cdf4a9",
+    "count": 42,
+    "manifestsUnchanged": true,
+    "allIdentityMetadataCommandsSucceeded": true,
+    "expectedDiffExit": {
+      "runner-guard-diff": 1
+    }
+  },
+  "fileIdentities": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/files.json",
+    "sha256": "fcd8aa551dea16312ea7cae980355a0186a19b3b65155e8c4a9d976d08ce2628",
+    "count": 129,
+    "existingExpectedHashesAllMatch": true
+  },
+  "collectorCheckpoint": {
+    "source": "/Users/saul/p/wt/egglog-encoding/eggcc-study-harness",
+    "destination": "/Users/saul/p/wt/egglog-encoding/eggcc-study",
+    "files": [
+      {
+        "path": "scripts/eggcc_encoding_case_study.py",
+        "sha256": "79c4147dbe5b74d1d9138e170643a7c09205f55a6d49d355f1fc201c3a811380"
+      },
+      {
+        "path": "scripts/eggcc_encoding_case_study.md",
+        "sha256": "66b125c2375fc68bff2659a9c3baf0652420e01fd524f80b3cb92965d40017a5"
+      },
+      {
+        "path": "tests/test_eggcc_encoding_case_study.py",
+        "sha256": "90a2fddab01a471fd51155aaebe1be0229a145c6e8174ebcab66235244e70093"
+      }
+    ],
+    "patch": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/harness/harness.patch",
+    "patchSha256": "632740a1c68eccb4b87ba9bf09b7888fb5ee2e130eede6a6cd7859138a621152",
+    "patchPaths": [
+      "scripts/eggcc_encoding_case_study.md",
+      "scripts/eggcc_encoding_case_study.py",
+      "tests/test_eggcc_encoding_case_study.py"
+    ],
+    "threeFilesMatchPatchPaths": true,
+    "availableAsTrackedSelectedBase": false,
+    "staticImportBoundary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/import-compatibility.json",
+    "staticImportBoundarySha256": "d33772679a61a785d450949d27b4a3cf13cc5c615c7890edddf8641e17272a0e",
+    "runtimeImportSmokePerformed": false
+  },
+  "prototypePatchChecks": {
+    "retarget/prototype/final/full.patch": {
+      "actualSha256": "7ab6605cedbdb7e6e44fe7b4a6f1768033b1cb83bb7c4f3ad5aee391f64cb08c",
+      "expectedSha256": "7ab6605cedbdb7e6e44fe7b4a6f1768033b1cb83bb7c4f3ad5aee391f64cb08c",
+      "matches": true
+    },
+    "retarget/prototype/final/feature.patch": {
+      "actualSha256": "243298fbf886be35e9919d54a73bfa4a973e8da62c7a1361fcf455cc8b913183",
+      "expectedSha256": "243298fbf886be35e9919d54a73bfa4a973e8da62c7a1361fcf455cc8b913183",
+      "matches": true
+    }
+  },
+  "toolInterpretation": {
+    "rustCompiler": "Rust 1.91.0 uses LLVM 21.1.2 internally; this is distinct from the Bril LLVM 18 backend.",
+    "runtimeCompiler": "nightly-2024-05-01 is installed: rustc 1.80.0-nightly, LLVM 18.1.4.",
+    "brilBackend": "Homebrew LLVM18.1.8 opt and clang-18 are installed; current CLI chooses opt (opt-18 absent) and clang-18 (present), rather than /usr/bin/clang21",
+    "python": "Explicit installed CPython 3.13.11; ambient python3 is 3.14.8; project minimum is 3.12.",
+    "uv": "0.13.0 Homebrew; no package installation or environment synchronization performed",
+    "physicalHost": "Apple M4, Mac16,1, arm64, 16 GiB, 10 CPUs, macOS 26.6 build 25G72; LLVM 18 reports Host CPU apple-m1, which is not the physical model.",
+    "cbc": "pkg-config resolves arm64 Homebrew CBC 2.10.13 in /opt/homebrew despite inherited PKG_CONFIG_PATH mentioning /usr/local; no native link was performed."
+  },
+  "nativeArtifacts": {
+    "frozenBinaryCheck": "A, B, final-prototype compilers and their three Tiger files match historical checkpoint hashes; all inspected MachO binaries are arm64",
+    "linkage": "otool-L retained; non-system absolute linked library files exist and are hashed; this is static availability, not execution/ABI validation",
+    "runtimeCandidate": "Old encoding-study-retarget/runtime/rt.bc and rt.o match archived hashes, with the same runtime sources as the new compiler; historical LLVM 18 verify receipt is retained.",
+    "runtimePathRule": "EGGCC_ROOT, or cwd when unset, determines runtime/rt.bc and runtime/rt.o. Current EGGCC_ROOT is unset.",
+    "newCompilerRuntimeReady": false,
+    "runtimeMissingAt": [
+      "/Users/saul/p/wt/eggcc/encoding-impact/runtime/rt.bc",
+      "/Users/saul/p/wt/eggcc/encoding-impact/runtime/rt.o",
+      "/Users/saul/p/wt/eggcc/encoding-study-baseline/runtime/rt.bc",
+      "/Users/saul/p/wt/eggcc/encoding-study-baseline/runtime/rt.o"
+    ],
+    "nativeRuntimeExecutionOrBitcodeReverificationPerformed": false,
+    "tigerLookup": "current executable sibling first, then compile-time manifest parent target/release andtarget/debug; hash the actual selected sibling; build script writes manifest-parent target irrespective of Cargo target override"
+  },
+  "defaultBoundaries": {
+    "cliContexts": "off unless --with-context; Rust EggccConfig default true",
+    "productionNonWeaklyLinear": true,
+    "fileHarnessNonWeaklyLinear": false,
+    "optimizer": "default optimize, parallel/all passes unless explicit override; full previous study receipts showthree passes",
+    "nativeExtraction": "greedy Tiger by default; tiger-ilp/time-ilp false, solver option Gurobi default is still passed; no ILP executed here",
+    "interpreterArgs": "retained #ARGS fixture header; trailing CLI bril_args are parsed but unused",
+    "llvmLevels": [
+      "O0_O0",
+      "O1_O0",
+      "O2_O0",
+      "O3_O0",
+      "O3_O3"
+    ],
+    "collector": "Only optimizer mode; correctness uses --interp separately. Defaults: 1 warmup, 10 observations, 300s; a four-arm balanced pilot must explicitly request 12 observations.",
+    "memoryGuard": "current primary guard is opt-in EGGLOG_BENCH_MEMORY_GUARD=1; unset in inventory environment; selected old runner has no guard; current primary safety cap10GiB groupRSS,normal pressure,2GiB reserve, distinct from wait4 reportedRSS"
+  },
+  "gapsBeforeFairNewComparison": [
+    "Explicitly select new isolated harness basis: old three-file collector is uncommitted checkpoint, absent from selected encoding commit; do not alter encoding worker source.",
+    "Minimal static guarded-runner reuse needs current processes.py plus memory_guard.py; selected old models/engines supply Status andFileSpec. Dynamic import/focused guard+collector checks remain required after authorized integration.",
+    "Compiler root and standalone DAG still resolve different historical engines. New encoding retarget needs both manifests andboth lock/metadata captures; source/binary checkpoints must include local path dependency modifications.",
+    "No new compiler binary orfeature config built; frozen A/B/prototype are distinct historical endpoints, not current worker code. New treatment source options/manual primitive guards/closure must be fixed by implementation owners.",
+    "Select and explicitly bind compatible EGGCC_ROOT/runtime artifacts for native lowering; new compiler cwd has no generated runtime. Do not invoke old runtime install/build or replace frozen artifacts.",
+    "Native backend final code, stdout/exit/counter boundaries and new benchmark precision remain untested; no native adapter justified or implemented yet.",
+    "Fresh uv collector/figure environment andexact pinned plotting dependency have not been imported/tested in this inventory.",
+    "Capture effective thread/env/tool/runtime/library identities percohort; current RAYON_NUM_THREADS andmemoryguard are unset, not future intended settings. Do not silently inherit them."
+  ],
+  "prohibitedActionsPerformed": {
+    "builds": false,
+    "tests": false,
+    "compilerWorkloads": false,
+    "timingMeasurements": false,
+    "sourceEdits": false,
+    "oldArtifactWrites": false,
+    "projectImports": false,
+    "remoteFreshnessRechecked": false
+  },
+  "currentWorktreeIdentity": {
+    "compiler": {
+      "head": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "branch": "codex/encoding-impact",
+      "status": "?? tests/encoding_impact/"
+    },
+    "encoding": {
+      "head": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+      "branch": "codex/eggcc-impact-encoding",
+      "status": "M egglog-experimental/src/disequality.rs\n M egglog-experimental/tests/injectivity_disequality.rs"
+    }
+  },
+  "currentWorktreeIdentityNote": "Other owners are concurrently editing their authorized code; this records identities, not a stable final source checkpoint or preservation verdict."
+}

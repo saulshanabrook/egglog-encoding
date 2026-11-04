@@ -1,0 +1,37 @@
+{
+  "status": "source reconstruction only; no build or compiler execution",
+  "host_root": "/private/tmp/eggcc-pack32-candidate",
+  "encoding_root": "/private/tmp/encoding-pack32-candidate",
+  "base_archives": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/eggcc-parts32-candidate.tar",
+      "sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/encoding-parts32-candidate.tar",
+      "sha256": "bf28b65f200123f5738326a069dad26d9d7004dd72ef89f9f4becd74f11cd82f"
+    }
+  ],
+  "reviewed_overlay": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-source.tar",
+    "members": {
+      "eggcc/Cargo.lock": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630",
+      "eggcc/Cargo.toml": "9f966e66dd5deb21b6a67ceb255770b3d4fa689851591c6bd0ccc0d83e1d2dd4",
+      "eggcc/dag_in_context/Cargo.lock": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e",
+      "eggcc/dag_in_context/Cargo.toml": "d85e1d65d1be19eeb55347186ee90d279adef91debf8fbcde0948b9882f00c0b",
+      "eggcc/dag_in_context/src/lib.rs": "b03a532a272787912b34daee638f4cbed8bccc97b19cde4eed0db036345a47b1",
+      "eggcc/dag_in_context/src/scoped_reasoning.rs": "f4f9fef2f06e066faedaf345c1281076b0cd0f17cbe6ebdde117ca1c5a347d4a",
+      "encoding/egglog-experimental/README.md": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318",
+      "encoding/egglog-experimental/src/disequality.rs": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277",
+      "encoding/egglog-experimental/tests/injectivity/injectivity-disequality.egg": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee",
+      "encoding/egglog-experimental/tests/injectivity_disequality.rs": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c",
+      "encoding/egglog-experimental/tests/injectivity_disequality/oracle.rs": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec",
+      "eggcc/runtime/rt.bc": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91",
+      "eggcc/runtime/rt.o": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+    }
+  },
+  "base_revisions": {
+    "eggcc": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+    "encoding": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5"
+  }
+}

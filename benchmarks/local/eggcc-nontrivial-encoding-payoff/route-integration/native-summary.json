@@ -1,0 +1,107 @@
+{
+  "application-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "bridge-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "cancellation-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "disequality-rescue": {
+    "eq_i64": 3,
+    "conditional_branches": 0,
+    "target99": false,
+    "native99": false,
+    "entry_instructions": 53
+  },
+  "encoding": {
+    "eq_i64": 3,
+    "conditional_branches": 0,
+    "target99": false,
+    "native99": false,
+    "entry_instructions": 53
+  },
+  "equality-rescue": {
+    "eq_i64": 3,
+    "conditional_branches": 0,
+    "target99": false,
+    "native99": false,
+    "entry_instructions": 53
+  },
+  "forward-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "identity-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "manual": {
+    "eq_i64": 3,
+    "conditional_branches": 0,
+    "target99": false,
+    "native99": false,
+    "entry_instructions": 53
+  },
+  "off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "primitive-only": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "query-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "reverse-off": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "seed-only": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  },
+  "u0": {
+    "eq_i64": 4,
+    "conditional_branches": 2,
+    "target99": true,
+    "native99": true,
+    "entry_instructions": 57
+  }
+}

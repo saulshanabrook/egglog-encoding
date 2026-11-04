@@ -1,0 +1,1258 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index eca6f27f..edde4e85 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -96,6 +96,15 @@ version = "1.0.101"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
+ 
++[[package]]
++name = "ar_archive_writer"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
++dependencies = [
++ "object 0.39.1",
++]
++
+ [[package]]
+ name = "arbitrary"
+ version = "1.4.2"
+@@ -538,7 +547,7 @@ dependencies = [
+  "cranelift-control",
+  "cranelift-module",
+  "log",
+- "object",
++ "object 0.32.2",
+  "target-lexicon",
+ ]
+ 
+@@ -789,7 +798,6 @@ dependencies = [
+ [[package]]
+ name = "egglog"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "chrono",
+  "clap",
+@@ -798,6 +806,7 @@ dependencies = [
+  "egglog-add-primitive",
+  "egglog-ast",
+  "egglog-bridge",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -814,6 +823,7 @@ dependencies = [
+  "rayon",
+  "rustc-hash 2.1.1",
+  "serde_json",
++ "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+ ]
+@@ -821,7 +831,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-add-primitive"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "quote",
+  "syn 2.0.114",
+@@ -830,7 +839,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-ast"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "ordered-float",
+ ]
+@@ -838,10 +846,10 @@ dependencies = [
+ [[package]]
+ name = "egglog-bridge"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "anyhow",
+  "dyn-clone",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -852,7 +860,6 @@ dependencies = [
+  "num-rational",
+  "once_cell",
+  "ordered-float",
+- "rayon",
+  "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+@@ -861,19 +868,17 @@ dependencies = [
+ [[package]]
+ name = "egglog-concurrency"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "arc-swap",
+  "bumpalo",
++ "crossbeam",
+  "egglog-numeric-id",
+- "rayon",
+  "smallvec",
+ ]
+ 
+ [[package]]
+ name = "egglog-core-relations"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "anyhow",
+  "bumpalo",
+@@ -892,7 +897,6 @@ dependencies = [
+  "num",
+  "once_cell",
+  "rand 0.9.2",
+- "rayon",
+  "rustc-hash 2.1.1",
+  "smallvec",
+  "thiserror 2.0.18",
+@@ -901,33 +905,29 @@ dependencies = [
+ 
+ [[package]]
+ name = "egglog-experimental"
+-version = "0.1.0"
+-source = "git+https://github.com/egraphs-good/egglog-experimental.git?branch=codex%2Feggcc-proof-baseline-pr927#19ed86667733c56e4072956ce3b414b6860660bc"
++version = "3.0.0"
+ dependencies = [
+  "egglog",
+  "egglog-ast",
+  "egglog-reports",
++ "fixedbitset 0.5.7",
++ "hashbrown 0.16.1",
+  "lazy_static",
+  "log",
+  "num",
++ "stacker",
+ ]
+ 
+ [[package]]
+ name = "egglog-numeric-id"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+-dependencies = [
+- "rayon",
+-]
+ 
+ [[package]]
+ name = "egglog-reports"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "clap",
+  "hashbrown 0.16.1",
+- "indexmap",
+  "rustc-hash 2.1.1",
+  "serde",
+  "serde_json",
+@@ -937,7 +937,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-union-find"
+ version = "2.0.0"
+-source = "git+https://github.com/egraphs-good/egglog.git?branch=codex%2Fpr927-plus-pr930-eggcc-proof#9b5ce1114ac1cf407be78f1ec9493324fd296920"
+ dependencies = [
+  "crossbeam",
+  "egglog-concurrency",
+@@ -1035,7 +1034,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1658,6 +1657,15 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "object"
++version = "0.39.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
++dependencies = [
++ "memchr",
++]
++
+ [[package]]
+ name = "once_cell"
+ version = "1.21.3"
+@@ -1833,6 +1841,16 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "psm"
++version = "0.1.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
++dependencies = [
++ "ar_archive_writer",
++ "cc",
++]
++
+ [[package]]
+ name = "quote"
+ version = "1.0.44"
+@@ -2060,7 +2078,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -2208,6 +2226,19 @@ version = "1.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+ 
++[[package]]
++name = "stacker"
++version = "0.1.25"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "libc",
++ "psm",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "string_cache"
+ version = "0.8.9"
+@@ -2293,7 +2324,7 @@ dependencies = [
+  "getrandom 0.4.1",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -2605,7 +2636,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+diff --git a/Cargo.toml b/Cargo.toml
+index f28f6f87..dcd0202f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -9,7 +9,7 @@ name = "files"
+ 
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental.git", branch = "codex/eggcc-proof-baseline-pr927", package = "egglog-experimental" }
++egglog = { path = "/Users/saul/p/wt/egglog-encoding/eggcc-study/egglog-experimental", package = "egglog-experimental" }
+ egraph-serialize = "0.3.0"
+ log = "0.4.19"
+ thiserror = "1"
+diff --git a/dag_in_context/Cargo.lock b/dag_in_context/Cargo.lock
+index 69684741..e4cc333a 100644
+--- a/dag_in_context/Cargo.lock
++++ b/dag_in_context/Cargo.lock
+@@ -83,6 +83,15 @@ version = "1.0.102"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+ 
++[[package]]
++name = "ar_archive_writer"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
++dependencies = [
++ "object",
++]
++
+ [[package]]
+ name = "arc-swap"
+ version = "1.8.2"
+@@ -430,7 +439,6 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+ [[package]]
+ name = "egglog"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "chrono",
+  "clap",
+@@ -439,6 +447,7 @@ dependencies = [
+  "egglog-add-primitive",
+  "egglog-ast",
+  "egglog-bridge",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -455,6 +464,7 @@ dependencies = [
+  "rayon",
+  "rustc-hash 2.1.1",
+  "serde_json",
++ "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+ ]
+@@ -462,7 +472,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-add-primitive"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "quote",
+  "syn 2.0.90",
+@@ -471,7 +480,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-ast"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "ordered-float",
+ ]
+@@ -479,10 +487,10 @@ dependencies = [
+ [[package]]
+ name = "egglog-bridge"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "anyhow",
+  "dyn-clone",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -493,7 +501,6 @@ dependencies = [
+  "num-rational",
+  "once_cell",
+  "ordered-float",
+- "rayon",
+  "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+@@ -502,19 +509,17 @@ dependencies = [
+ [[package]]
+ name = "egglog-concurrency"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "arc-swap",
+  "bumpalo",
++ "crossbeam",
+  "egglog-numeric-id",
+- "rayon",
+  "smallvec",
+ ]
+ 
+ [[package]]
+ name = "egglog-core-relations"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "anyhow",
+  "bumpalo",
+@@ -533,7 +538,6 @@ dependencies = [
+  "num",
+  "once_cell",
+  "rand 0.9.2",
+- "rayon",
+  "rustc-hash 2.1.1",
+  "smallvec",
+  "thiserror 2.0.18",
+@@ -542,33 +546,29 @@ dependencies = [
+ 
+ [[package]]
+ name = "egglog-experimental"
+-version = "0.1.0"
+-source = "git+https://github.com/egraphs-good/egglog-experimental.git?branch=codex%2Feggcc-proof-baseline-pr927#6b37b6b31cf878fd7384e470b216398d9cc006fe"
++version = "3.0.0"
+ dependencies = [
+  "egglog",
+  "egglog-ast",
+  "egglog-reports",
++ "fixedbitset",
++ "hashbrown 0.16.1",
+  "lazy_static",
+  "log",
+  "num",
++ "stacker",
+ ]
+ 
+ [[package]]
+ name = "egglog-numeric-id"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+-dependencies = [
+- "rayon",
+-]
+ 
+ [[package]]
+ name = "egglog-reports"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "clap",
+  "hashbrown 0.16.1",
+- "indexmap",
+  "rustc-hash 2.1.1",
+  "serde",
+  "serde_json",
+@@ -578,7 +578,6 @@ dependencies = [
+ [[package]]
+ name = "egglog-union-find"
+ version = "2.0.0"
+-source = "git+https://github.com/oflatt/egglog-duckdb.git?branch=oflatt-container-proofs#07650bedfe246ecaf4490d3074bc30bc5442bfe3"
+ dependencies = [
+  "crossbeam",
+  "egglog-concurrency",
+@@ -1036,6 +1035,15 @@ dependencies = [
+  "autocfg",
+ ]
+ 
++[[package]]
++name = "object"
++version = "0.39.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
++dependencies = [
++ "memchr",
++]
++
+ [[package]]
+ name = "once_cell"
+ version = "1.21.3"
+@@ -1135,6 +1143,16 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "psm"
++version = "0.1.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
++dependencies = [
++ "ar_archive_writer",
++ "cc",
++]
++
+ [[package]]
+ name = "quote"
+ version = "1.0.37"
+@@ -1412,6 +1430,19 @@ version = "1.13.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+ 
++[[package]]
++name = "stacker"
++version = "0.1.25"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "libc",
++ "psm",
++ "windows-sys 0.61.2",
++]
++
+ [[package]]
+ name = "strsim"
+ version = "0.11.1"
+@@ -1652,6 +1683,15 @@ dependencies = [
+  "windows-targets",
+ ]
+ 
++[[package]]
++name = "windows-sys"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++dependencies = [
++ "windows-link",
++]
++
+ [[package]]
+ name = "windows-targets"
+ version = "0.52.6"
+diff --git a/dag_in_context/Cargo.toml b/dag_in_context/Cargo.toml
+index 3da2e40f..2b56866d 100644
+--- a/dag_in_context/Cargo.toml
++++ b/dag_in_context/Cargo.toml
+@@ -6,7 +6,7 @@ edition = "2021"
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental.git", branch = "codex/eggcc-proof-baseline-pr927", package = "egglog-experimental" }
++egglog = { path = "/Users/saul/p/wt/egglog-encoding/eggcc-study/egglog-experimental", package = "egglog-experimental" }
+ smallvec = "1.11.1"
+ strum = "0.25"
+ strum_macros = "0.25"
+diff --git a/dag_in_context/src/lib.rs b/dag_in_context/src/lib.rs
+index 348e0a43..fdc936dc 100644
+--- a/dag_in_context/src/lib.rs
++++ b/dag_in_context/src/lib.rs
+@@ -67,7 +67,7 @@ fn new_single_threaded_egraph() -> egglog::EGraph {
+ }
+ 
+ fn prologue_for_config(config: &EggccConfig) -> String {
+-    [
++    let mut prologue = [
+         include_str!("schema.egg"),
+         include_str!("type_analysis.egg"),
+         include_str!("utility/util.egg"),
+@@ -108,7 +108,12 @@ fn prologue_for_config(config: &EggccConfig) -> String {
+         include_str!("optimizations/non_weakly_linear.egg"),
+         &rulesets(config),
+     ]
+-    .join("\n")
++    .join("\n");
++    if config.exact_local_addresses != ExactLocalAddressMode::Off {
++        prologue.push('\n');
++        prologue.push_str(include_str!("optimizations/exact_local_addresses.egg"));
++    }
++    prologue
+ }
+ 
+ pub fn prologue() -> String {
+@@ -211,10 +216,9 @@ pub fn build_program(
+     inline_program: Option<&TreeProgram>,
+     fns: &[String],
+     schedule: &str,
+-    ablate: Option<&str>,
+-    use_context: bool,
+-    disable_hacker_rules: bool,
++    config: &EggccConfig,
+ ) -> String {
++    config.assert_valid_exact_local_addresses();
+     // inlining first before adding context
+     let to_inline = inline_program.unwrap_or(program);
+     let inlined = if inline_program.is_some() {
+@@ -228,7 +232,7 @@ pub fn build_program(
+     };
+ 
+     // Then add context or dummy context based on flag
+-    let (program, context_cache) = if use_context {
++    let (program, context_cache) = if config.use_context {
+         inlined.add_context()
+     } else {
+         inlined.add_dummy_ctx()
+@@ -270,19 +274,15 @@ pub fn build_program(
+         .unwrap();
+     }
+ 
+-    let config_for_prologue = EggccConfig {
+-        disable_hacker_rules,
+-        ..EggccConfig::default()
+-    };
+-    let mut prologue = prologue_for_config(&config_for_prologue);
++    let mut prologue = prologue_for_config(config);
+     let mut schedule = schedule.to_string();
+ 
+-    if let Some(ablate) = ablate {
++    if let Some(ablate) = config.ablate.as_deref() {
+         prologue = ablate_prologue(&prologue, ablate);
+         schedule = ablate_schedule(&schedule, ablate);
+     }
+ 
+-    let prologue = if !use_context {
++    let prologue = if !config.use_context {
+         remove_new_contexts(&prologue)
+     } else {
+         prologue
+@@ -311,8 +311,9 @@ pub fn build_program(
+ (run initialization 1) 
+ 
+ ; Schedule
+-{schedule}
+-"
++{schedule}{}
++",
++        config.exact_local_addresses.egglog_schedule(),
+     )
+ }
+ 
+@@ -344,7 +345,7 @@ fn has_debug_exprs(serialized_egraph: &egraph_serialize::EGraph) -> bool {
+ pub fn check_roundtrip_egraph(program: &TreeProgram) {
+     let fns = program.fns();
+     let schedule = format!("\n(run-schedule\n   {})", schedule::types_only());
+-    let egglog_prog = build_program(program, None, &fns, &schedule, None, true, false);
++    let egglog_prog = build_program(program, None, &fns, &schedule, &EggccConfig::default());
+ 
+     log::info!("Running egglog program...");
+     let mut egraph = new_single_threaded_egraph();
+@@ -378,6 +379,45 @@ pub enum IlpSolver {
+     Cbc,
+ }
+ 
++/// Opt-in controls for the restricted exact local address case study.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
++pub enum ExactLocalAddressMode {
++    #[default]
++    Off,
++    Keys,
++    Query,
++    Manual,
++}
++
++impl ExactLocalAddressMode {
++    // Propagation is deliberately one round at a time. Only the nongenerative
++    // audit may saturate before the consumer, so cyclic histories reject promptly.
++    fn egglog_schedule(self) -> String {
++        let consumer = match self {
++            Self::Off => return String::new(),
++            Self::Keys => "",
++            Self::Query => "exact-query",
++            Self::Manual => "exact-manual-pairs exact-manual-consumer",
++        };
++        let types = schedule::types_and_indexing();
++        format!(
++            "
++(run-schedule
++  (saturate
++    (saturate exact-addresses injectivity exact-address-audit)
++    {consumer}
++    exact-address-audit
++    mem-simple
++    {types}
++    exact-address-audit))
++(run-schedule injectivity exact-address-audit)
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal state)))
++"
++        )
++    }
++}
++
+ #[derive(Clone, Debug)]
+ pub struct EggccConfig {
+     pub schedule: Schedule,
+@@ -406,6 +446,8 @@ pub struct EggccConfig {
+     pub ilp_solver: IlpSolver,
+     /// When set, dump the serialized e-graphs sent to tiger into this directory.
+     pub egraph_dump_dir: Option<PathBuf>,
++    /// Restricted ordinary-mode exact local address analysis and consumer.
++    pub exact_local_addresses: ExactLocalAddressMode,
+ }
+ 
+ #[derive(Clone, Serialize, Deserialize)]
+@@ -452,6 +494,18 @@ impl Default for EggccTimeStatistics {
+ }
+ 
+ impl EggccConfig {
++    // Validate both graph-building and optimize's zero-pass return path.
++    fn assert_valid_exact_local_addresses(&self) {
++        assert!(
++            self.exact_local_addresses == ExactLocalAddressMode::Off || self.use_context,
++            "exact local addresses require contexts"
++        );
++        assert!(
++            self.exact_local_addresses == ExactLocalAddressMode::Off || self.ablate.is_none(),
++            "exact local addresses do not support ablation"
++        );
++    }
++
+     pub fn get_schedule_list(&self) -> Vec<CompilerPass> {
+         match self.schedule {
+             Schedule::Parallel => parallel_schedule(self),
+@@ -486,6 +540,7 @@ impl Default for EggccConfig {
+             ilp_minimize_objective: true,
+             ilp_solver: IlpSolver::default(),
+             egraph_dump_dir: None,
++            exact_local_addresses: ExactLocalAddressMode::Off,
+         }
+     }
+ }
+@@ -892,6 +947,7 @@ pub fn optimize(
+     program: &TreeProgram,
+     eggcc_config: &EggccConfig,
+ ) -> std::result::Result<(TreeProgram, EggccTimeStatistics), egglog::Error> {
++    eggcc_config.assert_valid_exact_local_addresses();
+     let mut eggcc_serialization_time = Duration::from_millis(0);
+     let mut eggcc_extraction_time = Duration::from_millis(0);
+     let schedule_list = eggcc_config.get_schedule_list();
+@@ -945,9 +1001,7 @@ pub fn optimize(
+                 inline_program.as_ref(),
+                 &batch,
+                 schedule.egglog_schedule(),
+-                eggcc_config.ablate.as_deref(),
+-                eggcc_config.use_context,
+-                eggcc_config.disable_hacker_rules,
++                eggcc_config,
+             );
+ 
+             log::info!("Running egglog program...");
+@@ -1153,3 +1207,6 @@ fn egglog_test_internal(
+ 
+     Ok(res?)
+ }
++
++#[cfg(test)]
++mod exact_local_addresses_tests;
+diff --git a/src/main.rs b/src/main.rs
+index f6bc2118..a7d1c831 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,5 +1,5 @@
+-use clap::Parser;
+-use dag_in_context::{EggccConfig, IlpSolver, Schedule};
++use clap::{CommandFactory, Parser};
++use dag_in_context::{EggccConfig, ExactLocalAddressMode, IlpSolver, Schedule};
+ use eggcc::util::{visualize, InterpMode, LLVMOptLevel, Run, RunMode, TestProgram};
+ use std::{ffi::OsStr, iter::once, path::PathBuf};
+ 
+@@ -92,8 +92,11 @@ struct Args {
+     egraph_out_dir: Option<PathBuf>,
+     /// By default,  rules that match on context are disabled. References to context in the rule body are replaced with a dummy context. Finally, any rules that depend on context fundamentally (annotated manually) are skipped.
+     /// Using this flag enables all context-aware rules and adds context to the initial program.
+-    #[clap(long)]
++    #[clap(long, required_if_eq_any = [("exact_local_addresses", "keys"), ("exact_local_addresses", "query"), ("exact_local_addresses", "manual")])]
+     with_context: bool,
++    /// Restricted exact local address analysis; enabled modes require --with-context.
++    #[clap(long, value_enum, default_value_t = ExactLocalAddressMode::Off)]
++    exact_local_addresses: ExactLocalAddressMode,
+     /// Disable the hacker ruleset in hackers_delight.egg.
+     #[clap(long)]
+     no_hacker_rules: bool,
+@@ -107,6 +110,14 @@ struct Args {
+ 
+ fn main() {
+     let args = Args::parse();
++    if args.exact_local_addresses != ExactLocalAddressMode::Off && args.ablate.is_some() {
++        Args::command()
++            .error(
++                clap::error::ErrorKind::ArgumentConflict,
++                "--exact-local-addresses enabled modes do not support --ablate",
++            )
++            .exit();
++    }
+ 
+     // enable logging
+     env_logger::init();
+@@ -164,6 +175,7 @@ fn main() {
+             ilp_minimize_objective: !args.ilp_no_minimize,
+             ilp_solver: args.ilp_solver,
+             egraph_dump_dir: args.egraph_out_dir,
++            exact_local_addresses: args.exact_local_addresses,
+         },
+     };
+ 
+@@ -201,3 +213,27 @@ fn main() {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod exact_address_cli_tests {
++    use super::*;
++
++    #[test]
++    fn enabled_modes_require_contexts() {
++        for mode in ["keys", "query", "manual"] {
++            assert!(
++                Args::try_parse_from(["eggcc", "--exact-local-addresses", mode, "input.bril"])
++                    .is_err()
++            );
++            assert!(Args::try_parse_from([
++                "eggcc",
++                "--with-context",
++                "--exact-local-addresses",
++                mode,
++                "input.bril"
++            ])
++            .is_ok());
++        }
++        assert!(Args::try_parse_from(["eggcc", "input.bril"]).is_ok());
++    }
++}
+diff --git a/src/util.rs b/src/util.rs
+index 56ca79ff..da62a66a 100644
+--- a/src/util.rs
++++ b/src/util.rs
+@@ -770,15 +770,8 @@ impl Run {
+                 let rvsdg =
+                     crate::Optimizer::program_to_rvsdg(&self.prog_with_args.program).unwrap();
+                 let tree = rvsdg.to_dag_encoding();
+-                let unfolded_program = build_program(
+-                    &tree,
+-                    None,
+-                    &tree.fns(),
+-                    "",
+-                    self.eggcc_config.ablate.as_deref(),
+-                    self.eggcc_config.use_context,
+-                    self.eggcc_config.disable_hacker_rules,
+-                );
++                let unfolded_program =
++                    build_program(&tree, None, &tree.fns(), "", &self.eggcc_config);
+                 let folded_program = tree.pretty_print_to_egglog();
+                 let program =
+                     format!("{unfolded_program} \n {folded_program} \n (check (= PROG_PP PROG))");
+@@ -861,9 +854,7 @@ impl Run {
+                     inline_program,
+                     &dag.fns(),
+                     last_schedule_step.egglog_schedule(),
+-                    eggcc_config.ablate.as_deref(),
+-                    eggcc_config.use_context,
+-                    eggcc_config.disable_hacker_rules,
++                    &eggcc_config,
+                 );
+                 (
+                     vec![Visualization {
+diff --git a/dag_in_context/src/exact_local_addresses_tests.rs b/dag_in_context/src/exact_local_addresses_tests.rs
+new file mode 100644
+index 00000000..8dd1dbdb
+--- /dev/null
++++ b/dag_in_context/src/exact_local_addresses_tests.rs
+@@ -0,0 +1,120 @@
++use super::*;
++use std::{
++    panic::{catch_unwind, AssertUnwindSafe},
++    time::Instant,
++};
++
++const PREFIX: &str = r#"
++(let ty (TupleT (TCons (StateT) (TNil))))
++(let ctx (InFunc "main"))
++(FunctionHasType "main" ty ty)
++(let initial (Get (Arg ty ctx) 0))
++(let size (Const (Int 1) ty ctx))
++(let a0 (Alloc 0 size initial (PointerT (IntT))))
++(let p (Get a0 0))
++(let a1 (Alloc 0 size (Get a0 1) (PointerT (IntT))))
++(let q (Get a1 0))
++"#;
++
++#[test]
++fn exact_local_addresses_reject_seeded_conflicts() {
++    for mode in [
++        ExactLocalAddressMode::Keys,
++        ExactLocalAddressMode::Query,
++        ExactLocalAddressMode::Manual,
++    ] {
++        let config = EggccConfig {
++            exact_local_addresses: mode,
++            ..EggccConfig::default()
++        };
++        for (poison, diagnostic) in [
++            ("(union p q)", "pointer has incompatible keys"),
++            (
++                "(FreshState initial \"main\" 7)",
++                "state has unequal ordinal counts",
++            ),
++            (
++                "(union initial (Get a0 1))",
++                "state has unequal ordinal counts",
++            ),
++            (
++                "(union (LocalCell \"main\" 0 0) (LocalCell \"main\" 1 0))",
++                "injectivity violation",
++            ),
++        ] {
++            let program = format!(
++                "{}\n{PREFIX}\n{poison}\n{}\n(panic \"reached serialization sentinel\")",
++                prologue_for_config(&config),
++                mode.egglog_schedule()
++            );
++            let start = Instant::now();
++            let result = catch_unwind(AssertUnwindSafe(|| {
++                new_single_threaded_egraph().parse_and_run_program(None, &program)
++            }));
++            let message = match result {
++                Ok(Err(error)) => error.to_string(),
++                Err(payload) => payload
++                    .downcast_ref::<String>()
++                    .cloned()
++                    .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
++                    .expect("string panic diagnostic"),
++                Ok(Ok(_)) => panic!("seeded conflict was accepted: {mode:?}: {poison}"),
++            };
++            assert!(
++                message.contains(diagnostic),
++                "{mode:?}: {poison}: {message}"
++            );
++            assert!(!message.contains("serialization sentinel"), "{message}");
++            assert!(
++                start.elapsed().as_secs_f64() < 2.0,
++                "rejection was not prompt: {mode:?}: {poison}"
++            );
++        }
++    }
++}
++
++#[test]
++fn exact_local_addresses_require_supported_configuration() {
++    use crate::ast::*;
++    let program = function(
++        "main",
++        tuplet_vec(vec![statet()]),
++        tuplet_vec(vec![statet()]),
++        single(getat(0)),
++    )
++    .func_to_program();
++    for mode in [
++        ExactLocalAddressMode::Keys,
++        ExactLocalAddressMode::Query,
++        ExactLocalAddressMode::Manual,
++    ] {
++        let config = EggccConfig {
++            exact_local_addresses: mode,
++            use_context: false,
++            ..EggccConfig::default()
++        };
++        let result = catch_unwind(AssertUnwindSafe(|| {
++            build_program(&program, None, &program.fns(), "", &config)
++        }));
++        assert!(result.is_err(), "{mode:?} accepted erased contexts");
++        let zero_pass = EggccConfig {
++            stop_after_n_passes: 0,
++            ..config.clone()
++        };
++        assert!(catch_unwind(AssertUnwindSafe(|| optimize(&program, &zero_pass))).is_err());
++        let config = EggccConfig {
++            exact_local_addresses: mode,
++            ablate: Some("mem-simple".to_string()),
++            ..EggccConfig::default()
++        };
++        let result = catch_unwind(AssertUnwindSafe(|| {
++            build_program(&program, None, &program.fns(), "", &config)
++        }));
++        assert!(result.is_err(), "{mode:?} accepted ablation");
++        let zero_pass = EggccConfig {
++            stop_after_n_passes: 0,
++            ..config.clone()
++        };
++        assert!(catch_unwind(AssertUnwindSafe(|| optimize(&program, &zero_pass))).is_err());
++    }
++}
+diff --git a/dag_in_context/src/optimizations/exact_local_addresses.egg b/dag_in_context/src/optimizations/exact_local_addresses.egg
+new file mode 100644
+index 00000000..847064d5
+--- /dev/null
++++ b/dag_in_context/src/optimizations/exact_local_addresses.egg
+@@ -0,0 +1,110 @@
++; Opt-in exact address witnesses for closed, context-aware integer-memory prefixes.
++; Ordinary execution only; no annotations on Expr or runtime allocation ids.
++; New immutable structural data. No annotation is placed on Expr or mutable
++; analysis records. Static Alloc ids are intentionally absent from these keys.
++(datatype AddressKey (LocalCell String i64 i64 :injective))
++(relation FreshState (Expr String i64))
++(relation LocalAllocation (Expr String i64 i64))
++(relation LiveAllocation (Expr Expr String i64))
++(relation ExactLocalAddress (Expr Expr AddressKey i64))
++(relation ConflictingKey (Expr))
++(relation ConflictingOrdinal (Expr))
++(ruleset exact-addresses)
++(ruleset exact-address-audit)
++(ruleset exact-query)
++(ruleset exact-manual-pairs)
++(ruleset exact-manual-consumer)
++(relation DidExactOptimization (String))
++(relation ManualNoAlias (Expr Expr Expr))
++; Enforced domain: one function input state, direct positive constant-sized
++; integer allocations, and constant-integer stores. There are no propagation
++; rules for other effects; existing source equalities can expose eligible forms.
++(rule ((FunctionHasType name (TupleT (TCons (StateT) (TNil))) output-type)
++       (= state (Get (Arg (TupleT (TCons (StateT) (TNil))) (InFunc name)) 0)))
++      ((FreshState state name 0)) :ruleset exact-addresses)
++(rule ((FreshState state name ordinal)
++       (= allocation (Alloc id (Const (Int size) ty (InFunc name)) state (PointerT (IntT))))
++       (> size 0)
++       (< ordinal 9223372036854775807))
++      ((FreshState (Get allocation 1) name (+ ordinal 1))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation (Get allocation 1) allocation name ordinal)
++       (ExactLocalAddress (Get allocation 0) allocation (LocalCell name ordinal 0) size))
++      :ruleset exact-addresses)
++(rule ((= allocation (Alloc id amount state pointerty))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation state previous name previous-ordinal))
++      ((LiveAllocation (Get allocation 1) previous name previous-ordinal))
++      :ruleset exact-addresses)
++(rule ((FreshState state name next)
++       (= pointer-key (LocalCell name ordinal offset))
++       (ExactLocalAddress pointer origin pointer-key size)
++       (LiveAllocation state origin name ordinal)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state)))
++      ((FreshState write name next)) :ruleset exact-addresses)
++(rule ((FreshState write name next)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state))
++       (LiveAllocation state origin name ordinal))
++      ((LiveAllocation write origin name ordinal)) :ruleset exact-addresses)
++
++; These guards establish 0 <= offset+delta < size before the action adds.
++; Thus addition is representable, and no host/runtime wraparound is assumed.
++(rule ((ExactLocalAddress pointer origin (LocalCell name ordinal offset) size)
++       (= shifted (Bop (PtrAdd) pointer (Const (Int delta) ty (InFunc name))))
++       (>= delta (- 0 offset))
++       (< delta (- size offset)))
++      ((ExactLocalAddress shifted origin (LocalCell name ordinal (+ offset delta)) size))
++      :ruleset exact-addresses)
++
++; Direct nongenerative audits read the just-updated tables. They run inside
++; ordinal propagation saturation and before/after memory consumers.
++(rule ((ExactLocalAddress pointer origin key1 size1)
++       (ExactLocalAddress pointer origin2 key2 size2)
++       (known-disequal? key1 key2))
++      ((ConflictingKey pointer)
++       (panic "exact-address rejection: pointer has incompatible keys"))
++      :ruleset exact-address-audit :naive)
++(rule ((FreshState state name i) (FreshState state name j) (!= i j))
++      ((ConflictingOrdinal state)
++       (panic "exact-address rejection: state has unequal ordinal counts"))
++      :ruleset exact-address-audit)
++
++; Query consumer: source mem_simple.egg:71-81 with the NoAlias premise replaced
++; by exact live-key premises. The graph read requires :naive.
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ExactLocalAddress write-addr write-origin write-key write-size)
++       (ExactLocalAddress load-addr load-origin load-key load-size)
++       (= write-key (LocalCell name write-ordinal write-offset))
++       (= load-key (LocalCell name load-ordinal load-offset))
++       (LiveAllocation state write-origin name write-ordinal)
++       (LiveAllocation state load-origin name load-ordinal)
++       (known-disequal? write-key load-key))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "query")) :ruleset exact-query :naive)
++
++; Equivalent manual comparison uses exactly the same key/liveness domain.
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= pi qi))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= po qo))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ManualNoAlias write-addr load-addr state))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "manual")) :ruleset exact-manual-consumer)
++
+diff --git a/tests/encoding/README.md b/tests/encoding/README.md
+new file mode 100644
+index 00000000..1c6bfb2d
+--- /dev/null
++++ b/tests/encoding/README.md
+@@ -0,0 +1,46 @@
++# Restricted exact local address experiment
++
++`--exact-local-addresses off|keys|query|manual` defaults to `off`. Enabled modes
++require `--with-context` and reject `--ablate`. They apply only to state-only function inputs and
++supported positive constant-sized integer allocations, bounded constant offsets,
++and constant-integer writes with live origins. Other effects have no propagation
++rule; existing source equalities or AST inlining can expose eligible forms.
++Static allocation ids do not establish freshness. No annotation is put on Expr,
++Const or other runtime constructors, and witnesses are not exported to global
++NoAlias.
++
++The existing source passes finish normally. Before each serialization, the
++feature runs audited single-step key propagation, its selected consumer, existing
++memory forwarding and type/indexing. The audit runs inside ordinal saturation and
++before/after consumers; key, ordinal and injectivity conflicts abort before
++native extraction. This is an ordinary-mode experiment, with no new proof support.
++
++`keys` derives analysis and audits without new memory rewrites. `query` uses the
++structural disequality witness. `manual` uses state-scoped primitive key-field
++comparisons with the same eligibility contract. All enabled modes share the same
++query-based consistency audit; manual is not query-free. Off-to-keys also adds
++memory/type fixed-point closure after the source schedule, so it is not a pure
++annotation-cost contrast. Query and manual share that closure. This candidate has no
++asserted disequality workload, so NEE/EE assertion-storage costs are not isolated.
++
++`fresh-allocations.bril` comes from the semantic study's source-derived two-store
++example (`memory.rs::load_after_write_without_alias`): the load must return 17,
++not 99. Off/keys retain that load; query/manual remove it through the real native
++pipeline. `same-pointer.bril` and `zero-offset.bril` must both return the later 99.
++
++Focused checks, from the compiler root:
++
++```sh
++cargo +1.91.0 test --locked --release --manifest-path dag_in_context/Cargo.toml --lib exact_local_addresses_
++cargo +1.91.0 test --locked --release --no-default-features --test exact_local_addresses
++cargo +1.91.0 test --locked --release --no-default-features --bin eggcc exact_address_cli_tests
++```
++
++The rejection tests exercise pointer/key/count/cyclic seeded violations in every
++enabled mode and require rejection within 2 seconds before a serialization sentinel.
++These are deliberate invariant violations, not discovered compiler bugs. The
++native test uses all 3 default passes, contexts, greedy Tiger, production
++non_weakly_linear=true and both interpreters. It checks non-null expected outputs,
++off/keys source identity and actual load removal. CLI correctness additionally
++requires checking both non-null JSON interpreter fields: `--interp` alone does
++not assert agreement.
+diff --git a/tests/encoding/fresh-allocations.bril b/tests/encoding/fresh-allocations.bril
+new file mode 100644
+index 00000000..d02d8b17
+--- /dev/null
++++ b/tests/encoding/fresh-allocations.bril
+@@ -0,0 +1,16 @@
++# Proposed real-compiler input, derived from the operation sequence in
++# dag_in_context/src/optimizations/memory.rs:439-469, not a captured compiler run.
++@main() {
++    one: int = const 1;
++    old: int = const 17;
++    new: int = const 99;
++    p: ptr<int> = alloc one;
++    q: ptr<int> = alloc one;
++    store p old;
++    store q new;
++    value: int = load p;
++    print value;
++    free q;
++    free p;
++    ret;
++}
+diff --git a/tests/encoding/same-pointer.bril b/tests/encoding/same-pointer.bril
+new file mode 100644
+index 00000000..ecb9b1eb
+--- /dev/null
++++ b/tests/encoding/same-pointer.bril
+@@ -0,0 +1,13 @@
++# Same-address control: the later write must win.
++@main() {
++    one: int = const 1;
++    old: int = const 17;
++    new: int = const 99;
++    p: ptr<int> = alloc one;
++    store p old;
++    store p new;
++    value: int = load p;
++    print value;
++    free p;
++    ret;
++}
+diff --git a/tests/encoding/zero-offset.bril b/tests/encoding/zero-offset.bril
+new file mode 100644
+index 00000000..9c80d898
+--- /dev/null
++++ b/tests/encoding/zero-offset.bril
+@@ -0,0 +1,15 @@
++# Zero-offset alias control: the later write must win.
++@main() {
++    one: int = const 1;
++    zero: int = const 0;
++    old: int = const 17;
++    new: int = const 99;
++    p: ptr<int> = alloc one;
++    q: ptr<int> = ptradd p zero;
++    store p old;
++    store q new;
++    value: int = load p;
++    print value;
++    free p;
++    ret;
++}
+diff --git a/tests/exact_local_addresses.rs b/tests/exact_local_addresses.rs
+new file mode 100644
+index 00000000..0c8e048e
+--- /dev/null
++++ b/tests/exact_local_addresses.rs
+@@ -0,0 +1,83 @@
++use dag_in_context::ExactLocalAddressMode;
++use eggcc::util::{InterpMode, Run, RunMode, TestProgram};
++use std::path::PathBuf;
++
++#[test]
++fn exact_local_addresses_full_native_round_trips() {
++    for (case, expected) in [
++        ("fresh-allocations", "17\n"),
++        ("same-pointer", "99\n"),
++        ("zero-offset", "99\n"),
++    ] {
++        let input =
++            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/encoding/{case}.bril"));
++        let mut off_bril = None;
++        for mode in [
++            ExactLocalAddressMode::Off,
++            ExactLocalAddressMode::Keys,
++            ExactLocalAddressMode::Query,
++            ExactLocalAddressMode::Manual,
++        ] {
++            let mut run = Run::new(
++                TestProgram::BrilFile(input.clone()).read_program(),
++                RunMode::Optimize,
++            );
++            run.interp = InterpMode::Interp;
++            run.eggcc_config.non_weakly_linear = true;
++            run.eggcc_config.exact_local_addresses = mode;
++            let result = run.run().unwrap();
++            assert_eq!(
++                result.original_interpreted.as_deref(),
++                Some(expected),
++                "{case}: {mode:?}"
++            );
++            assert_eq!(
++                result.result_interpreted.as_deref(),
++                Some(expected),
++                "{case}: {mode:?}"
++            );
++            let bril = &result.visualizations[0].result;
++            if mode == ExactLocalAddressMode::Off {
++                off_bril = Some(bril.clone());
++            } else if mode == ExactLocalAddressMode::Keys {
++                assert_eq!(
++                    Some(bril),
++                    off_bril.as_ref(),
++                    "keys changed output for {case}"
++                );
++            }
++            if case == "fresh-allocations" {
++                assert_eq!(
++                    bril.contains(" = load "),
++                    matches!(
++                        mode,
++                        ExactLocalAddressMode::Off | ExactLocalAddressMode::Keys
++                    ),
++                    "{mode:?}: {bril}"
++                );
++            }
++        }
++    }
++}
++
++#[test]
++fn exact_local_addresses_cli_rejects_ablation() {
++    for mode in ["keys", "query", "manual"] {
++        let output = std::process::Command::new(env!("CARGO_BIN_EXE_eggcc"))
++            .args([
++                "--with-context",
++                "--exact-local-addresses",
++                mode,
++                "--ablate",
++                "mem-simple",
++                "input.bril",
++            ])
++            .output()
++            .unwrap();
++        assert_eq!(output.status.code(), Some(2));
++        assert!(String::from_utf8(output.stderr)
++            .unwrap()
++            .contains("do not support --ablate"));
++        assert!(output.stdout.is_empty());
++    }
++}

@@ -1,0 +1,61 @@
+{
+  "case": "mul-minimal-max",
+  "arm": "A",
+  "mode": "optimize",
+  "diagnostic_ablation": [],
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc",
+    "--with-context",
+    "--run-mode",
+    "optimize",
+    "--interp",
+    "--run-data-out",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/run-data.json",
+    "--egraph-out-dir",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/egraphs",
+    "/Users/saul/p/wt/eggcc/encoding-impact/tests/encoding_impact/arithmetic/mul-minimal-max.bril"
+  ],
+  "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+  "env": {
+    "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0Acvxay:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg06zkSLr:/Users/saul/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0koUR7b:/Users/saul/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg02WeeWf:/Users/saul/.codex/packages/standalone/releases/0.161.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0UKoOEk:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/1112_1791436627170/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "HOME": "/Users/saul",
+    "TMPDIR": "/var/folders/x4/rfvvhxcd53lft2b9844dw1lr0000gn/T/",
+    "USER": "saul",
+    "LOGNAME": "saul",
+    "SHELL": "/opt/homebrew/bin/fish",
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "LC_CTYPE": "C.UTF-8",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "PKG_CONFIG_PATH": "/usr/local/opt/cbc/lib/pkgconfig",
+    "RAYON_NUM_THREADS": "1",
+    "RUST_LOG": "info"
+  },
+  "timeout_seconds": 60,
+  "returncode": 0,
+  "timed_out": false,
+  "expected": "true\n",
+  "original_interpreted": "true\n",
+  "result_interpreted": "false\n",
+  "non_null_equal_expected": false,
+  "passes_started": [
+    0,
+    1,
+    2
+  ],
+  "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc",
+  "binary_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+  "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger",
+  "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+  "input": "/Users/saul/p/wt/eggcc/encoding-impact/tests/encoding_impact/arithmetic/mul-minimal-max.bril",
+  "input_sha256": "f6624abf3e6018b7e6d2d5e410afff2f95822965515361b644cfc61ba8fd31eb",
+  "files_sha256": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/stdout": "6a1b6c94b811b12562d66c6e2d26cf4f23f4e2ab0568c4366a0b3a217328dff5",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/stderr": "60302f38db7850f57c12fbddf6c0d5dd7cf960bafcbfcc73bb649f45a25bd064",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/run-data.json": "3d111b36f17fb131c651200a9c0d1b16409fb30d4bb4c46bc08f9cd16aea4035",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/egraphs/tiger_egraph_0003.json": "35b0c115c9bf12502c90833c556a80b8c1052309db90f4cf9a832041cfc6b3a1",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/egraphs/tiger_egraph_0002.json": "35b0c115c9bf12502c90833c556a80b8c1052309db90f4cf9a832041cfc6b3a1",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/egraphs/tiger_egraph_0001.json": "8b2c9457596e56883607031c34e9ab9072d885ef0cf5c80f03e276303e3e8811"
+  }
+}

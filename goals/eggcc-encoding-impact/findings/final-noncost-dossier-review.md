@@ -1,0 +1,25 @@
+# Final bounded noncost dossier review
+
+Consent to the completed noncost evidence and the integrated preliminary corrections. One concrete rerun-command documentation correction is required below. No new semantic, source-identity, attribution or completed-evidence blocker was found. Costs, figures, host-window admission and full goal completion remain expressly unproven. No compiler/engine command, controller, build, test or project import was executed; only documents and narrow CLI declarations/static study metadata were read. Compute remains quiescent.
+
+The reviewed document hashes matched at start/end:
+
+| Document | SHA-256 |
+| --- | --- |
+| `report.md` | `512eb9ee2a925ff92b739251b331dd08e27d81bbdc61461b9fb2ffe95726c319` |
+| `candidate-map.md` | `e4ea6aef685276664f0a15c175a73962a7385998491c55c4f63641d02052e153` |
+| `rerun.md` | `207442819cdcabf33a5c1f5853aba7235201cb709827941477a91a19c788ad91` |
+
+**Required documentation correction:** `rerun.md:12` exports `CC` as the EggCC source directory and uses it throughout later commands. `CC` conventionally names the C compiler executable; an exported directory can break fresh native builds and unnecessarily contaminates subsequent environments. Rename the task path variable to `EGGCC_SOURCE` throughout, leaving native compiler variables alone. Root accepted that correction and will verify no `CC` assignment/reference remains. This needs a bounded text/hash check, not a test/build/workload rerun. Consent to the command recipe is conditional on this change.
+
+The three earlier findings are integrated correctly. The report now acknowledges the eleven unattributed `.DS_Store` metadata changes, retains the strict preservation failure, and separately states the classified absence of substantive/frozen-evidence drift. It links the completed two-call final reproduction with exact false/false and true/true outputs. The source-corrected treatment is complete and final source/endpoint admission is bounded rather than implying green compiler gates. The candidate map uses the same boundaries. Root separately identified and will remove the remaining assembly-only “rerun instructions pending” clauses in report/candidate map; they are not a technical blocker or a request for further execution.
+
+Reusing `final-claims-preliminary-review.md`, the law/storage/schedule claims and positive genuine-bug route remain consented. The report preserves selected-input observation semantics and manual equivalence; it does not turn Expr inequivalence into universal runtime inequality/nonaliasing. Actual new-host diagnostics and full native pipelines remain distinct from old/E1 initialized replay/algebra contrasts. Untested C3/C4/C5/C6 leads remain visible, preventing a negative search-exhaustion conclusion without undermining the accepted positive bug route.
+
+The rerun guide correctly binds final-original and corrected compiler/Tiger/source/patch identities, uncommitted patches and base revisions, the complete E1 patch rather than its incomplete development diff, absolute dependency pins and relocation limits, separate corrected source/test inventories, and compatible runtime reuse. It uses fresh output directories, frozen sibling Tiger, the independent two-call script and actual CLI shape. The four-mode fixed oracle runs the live-layout driver; original exit 1 requires the complete specific red signature, while corrected acceptance requires all four true/true successes. No arbitrary nonzero process error is admitted as red, and no full corrected-suite pass is claimed. Reusing an already-used mutation controller directory is explicitly excluded.
+
+Official compiler `make test`/`make nits` failures, all 13 pending snapshots and three strict lint warnings, fresh matched current-E1 attribution, the test-only borrow repair and deliberately limited post-fix reruns are reported honestly. Passing runtime assertions or diagnostic lint allowances are not substituted for passing official targets. The integration harness's nwl=false boundary is distinguished from the actual CLI true-default matrix. Full encoding/harness gates and ordinary-mode examples remain separate from compiler gates and costs.
+
+The cost commands are unambiguously prospective, preserve whole invalid block-01 cohorts, require root host-window admission, and distinguish static artifact reuse from measurement reuse. Their collect/verify/figures argument shapes match the existing collector declaration; helper subcommand/options and source/reference artifact IDs match the static block-02 declarations. Those declared study hashes match the guide. Phase/null-output validation, explicit postcapture ownership, weaker successful-collector PID/stderr provenance, memory metric boundaries, independent figure regeneration and per-case reporting are retained. This is command/document consistency review, not validation of any block-02 run or figure.
+
+Only the source-path variable rename and acknowledged stale assembly clauses remain from this bounded docs pass. Changes to completed semantic/evidence claims require relevant review; later costs/figures/full-completion admission remains a separate review.

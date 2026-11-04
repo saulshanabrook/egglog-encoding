@@ -1,0 +1,211 @@
+   Compiling libc v0.2.181
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.23
+   Compiling quote v1.0.44
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.8.0
+   Compiling zerocopy v0.8.39
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.16.1
+   Compiling indexmap v2.13.0
+   Compiling autocfg v1.5.0
+   Compiling cc v1.2.55
+   Compiling ahash v0.8.12
+   Compiling anyhow v1.0.101
+   Compiling itoa v1.0.17
+   Compiling crossbeam-utils v0.8.21
+   Compiling syn v2.0.114
+   Compiling zmij v1.0.20
+   Compiling serde_derive v1.0.228
+   Compiling smallvec v1.15.1
+   Compiling serde v1.0.228
+   Compiling num-traits v0.2.19
+   Compiling serde_json v1.0.149
+   Compiling log v0.4.29
+   Compiling clap_derive v4.5.55
+   Compiling anstyle-parse v0.2.7
+   Compiling hashbrown v0.14.5
+   Compiling getrandom v0.2.17
+   Compiling bumpalo v3.19.1
+   Compiling colorchoice v1.0.4
+   Compiling anstyle v1.0.13
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle-query v1.1.5
+   Compiling anstream v0.6.21
+   Compiling ppv-lite86 v0.2.21
+   Compiling clap_lex v1.0.0
+   Compiling crossbeam-epoch v0.9.18
+   Compiling clap_builder v4.5.58
+   Compiling cranelift-isle v0.106.2
+   Compiling rustversion v1.0.22
+   Compiling clap v4.5.58
+   Compiling crossbeam-deque v0.8.6
+   Compiling rand_core v0.6.4
+   Compiling thiserror-impl v1.0.69
+   Compiling aho-corasick v1.1.4
+   Compiling cranelift-codegen-shared v0.106.2
+   Compiling regex-syntax v0.8.9
+   Compiling rustix v1.1.3
+   Compiling getrandom v0.4.1
+   Compiling pest v2.8.6
+   Compiling regex-automata v0.4.14
+   Compiling cranelift-codegen-meta v0.106.2
+   Compiling thiserror v1.0.69
+   Compiling num-integer v0.1.46
+   Compiling errno v0.3.14
+   Compiling bitflags v2.10.0
+   Compiling target-lexicon v0.12.16
+   Compiling cranelift-codegen v0.106.2
+   Compiling getrandom v0.3.4
+   Compiling pest_meta v2.8.6
+   Compiling dirs-sys-next v0.1.2
+   Compiling crossbeam-channel v0.5.15
+   Compiling crossbeam-queue v0.3.12
+   Compiling hashbrown v0.13.2
+   Compiling parking_lot_core v0.9.12
+   Compiling slice-group-by v0.3.1
+   Compiling arbitrary v1.4.2
+   Compiling scopeguard v1.2.0
+   Compiling typenum v1.19.0
+   Compiling fastrand v2.3.0
+   Compiling crunchy v0.2.4
+   Compiling cranelift-entity v0.106.2
+   Compiling cranelift-bforest v0.106.2
+   Compiling tempfile v3.25.0
+   Compiling lock_api v0.4.14
+   Compiling cranelift-control v0.106.2
+   Compiling regalloc2 v0.9.3
+   Compiling crossbeam v0.8.4
+   Compiling dirs-next v2.0.0
+   Compiling pest_generator v2.8.6
+   Compiling rand_core v0.9.5
+   Compiling object v0.39.1
+   Compiling syn v1.0.109
+   Compiling num-bigint v0.4.6
+   Compiling regex v1.12.3
+   Compiling arc-swap v1.8.1
+   Compiling rand_chacha v0.3.1
+   Compiling libmimalloc-sys v0.1.44
+   Compiling gimli v0.28.1
+   Compiling utf8parse v0.2.2
+   Compiling tiny-keccak v2.0.2
+   Compiling siphasher v1.0.2
+   Compiling phf_shared v0.11.3
+   Compiling egglog-concurrency v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/concurrency)
+   Compiling rand v0.8.5
+   Compiling num-rational v0.4.2
+   Compiling into-attr-derive v0.2.1
+   Compiling ar_archive_writer v0.5.3
+   Compiling rand_chacha v0.9.0
+   Compiling pest_derive v2.8.6
+   Compiling term v0.7.0
+   Compiling parking_lot v0.12.5
+   Compiling num-iter v0.1.45
+   Compiling num-complex v0.4.6
+   Compiling ordered-float v5.1.0
+   Compiling thiserror-impl v2.0.18
+   Compiling fixedbitset v0.4.2
+   Compiling either v1.15.0
+   Compiling lazy_static v1.5.0
+   Compiling semver v1.0.27
+   Compiling precomputed-hash v0.1.1
+   Compiling bit-vec v0.6.3
+   Compiling new_debug_unreachable v1.0.6
+   Compiling regex-lite v0.1.9
+   Compiling same-file v1.0.6
+   Compiling egglog-reports v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/egglog-reports)
+   Compiling walkdir v2.5.0
+   Compiling llvm-sys v180.0.0
+   Compiling egglog-union-find v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/union-find)
+   Compiling string_cache v0.8.9
+   Compiling bit-set v0.5.3
+   Compiling itertools v0.11.0
+   Compiling petgraph v0.6.5
+   Compiling thiserror v2.0.18
+   Compiling ena v0.14.4
+   Compiling num v0.4.3
+   Compiling ascii-canvas v3.0.0
+   Compiling bitmaps v2.1.0
+   Compiling rand v0.9.2
+   Compiling psm v0.1.32
+   Compiling dashmap v6.1.0
+   Compiling chrono v0.4.43
+   Compiling lalrpop-util v0.20.2
+   Compiling bril-rs v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling enum-map-derive v0.17.0
+   Compiling pico-args v0.5.0
+   Compiling strsim v0.11.1
+   Compiling crc32fast v1.5.0
+   Compiling unicode-xid v0.2.6
+   Compiling pkg-config v0.3.32
+   Compiling coin_cbc_sys v0.1.2
+   Compiling egglog-core-relations v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/core-relations)
+   Compiling lalrpop v0.20.2
+   Compiling enum-map v2.7.3
+   Compiling egglog v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog)
+   Compiling mimalloc v0.1.48
+   Compiling sized-chunks v0.6.5
+   Compiling rayon-core v1.13.0
+   Compiling graphviz-rust v0.9.3
+   Compiling env_filter v1.0.0
+   Compiling rand_xoshiro v0.6.0
+   Compiling stacker v0.1.25
+   Compiling csv-core v0.1.13
+   Compiling time-core v0.1.3
+   Compiling jiff v0.2.19
+   Compiling num-conv v0.1.0
+   Compiling powerfmt v0.2.0
+   Compiling ryu v1.0.23
+   Compiling csv v1.4.0
+   Compiling deranged v0.3.11
+   Compiling env_logger v0.11.9
+   Compiling time-macros v0.2.20
+   Compiling im-rc v15.1.0
+   Compiling egraph-serialize v0.3.0
+   Compiling egglog-bridge v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/egglog-bridge)
+   Compiling rayon v1.11.0
+   Compiling ahash v0.7.8
+   Compiling bril2json v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling egglog-ast v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/egglog-ast)
+   Compiling egglog-add-primitive v2.0.0 (/private/tmp/encoding-qr7-candidate/egglog/src/sort/add_primitive)
+   Compiling mach v0.3.2
+   Compiling num_threads v0.1.7
+   Compiling triomphe v0.1.15
+   Compiling bitflags v1.3.2
+   Compiling argh_shared v0.1.14
+   Compiling inkwell v0.4.0 (https://github.com/TheDan64/inkwell.git?rev=6c0fb56b3554e939f9ca61b465043d6a84fb7b95#6c0fb56b)
+   Compiling time v0.3.39
+   Compiling argh_derive v0.1.14
+   Compiling region v2.2.0
+   Compiling archery v1.2.2
+   Compiling brilirs v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling hashbrown v0.12.3
+   Compiling object v0.32.2
+   Compiling inkwell_internals v0.9.0 (https://github.com/TheDan64/inkwell.git?rev=6c0fb56b3554e939f9ca61b465043d6a84fb7b95#6c0fb56b)
+   Compiling wasmtime-jit-icache-coherence v19.0.2
+   Compiling console v0.15.11
+   Compiling byteorder v1.5.0
+   Compiling similar v2.7.0
+   Compiling dag_in_context v0.1.0 (/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context)
+   Compiling termcolor v1.4.1
+   Compiling strum_macros v0.25.3
+   Compiling simplelog v0.12.2
+   Compiling insta v1.46.3
+   Compiling fxhash v0.2.1
+   Compiling argh v0.1.14
+   Compiling symbol_table v0.3.0
+   Compiling coin_cbc v0.1.8
+   Compiling rpds v1.2.0
+   Compiling graphviz-rust v0.8.0
+   Compiling bril-rs v0.1.0 (https://github.com/uwplse/bril?branch=main#06117c08)
+   Compiling brillvm v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling rs2bril v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling egglog-experimental v3.0.0 (/private/tmp/encoding-qr7-candidate/egglog-experimental)
+   Compiling cranelift-module v0.106.2
+   Compiling cranelift-native v0.106.2
+   Compiling cranelift-jit v0.106.2
+   Compiling cranelift-object v0.106.2
+   Compiling cranelift-frontend v0.106.2
+   Compiling brilift v0.1.0 (https://github.com/uwplse/bril?rev=06117c089c2d235ff8d040bb3d0cfd1e2a1c4880#06117c08)
+   Compiling eggcc v0.1.0 (/private/tmp/eggcc-qr7-candidate-nits-r2)
+    Finished `release` profile [optimized] target(s) in 1m 13s

@@ -1,0 +1,11 @@
+--- source.bril
++++ manual.bril
+@@ -35,7 +35,7 @@
+   hx: int = shr x shift;
+   hy: int = shr y shift;
+   target: bool = eq hx hy;
+-  br target .unexpected .expected;
++  jmp .expected;
+ .unexpected:
+   score: int = const 99;
+   jmp .accumulate;

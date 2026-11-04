@@ -1,0 +1,4 @@
+
+thread 'main' (1140752) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

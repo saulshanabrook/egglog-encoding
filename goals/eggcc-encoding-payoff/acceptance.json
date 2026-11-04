@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "facts_source": "goals/eggcc-encoding-payoff/facts.md",
+  "facts_source_sha256": "cabf4e7ec192658a1d7932c901cb380aab1af3a9f9ea8ebc98a14f95d3257092",
+  "overall_status": "passed",
+  "qualifying_route": "constructed_generated_runtime_speedups",
+  "status_counts": {
+    "pass": 13,
+    "pending": 0,
+    "fail": 0,
+    "not_applicable": 1
+  },
+  "result_roles": {
+    "strongest_substantive_consumer_injectivity_only": "QR7",
+    "strongest_combined_injectivity_and_disequality": "Parts32",
+    "smaller_combined_replication": "same-mask"
+  },
+  "validation_boundary": {
+    "repository_root_make_check": "passed",
+    "selected_engine_make_check": "passed",
+    "eggcc_dag_suite": "passed",
+    "eggcc_host_root_suite": "failed_on_13_unaccepted_dependency_retarget_snapshots",
+    "eggcc_host_nits": "failed_on_one_inherited_u0_root_clippy_diagnostic_before_direct_dag_checks",
+    "snapshots_accepted": false,
+    "host_failures_waived_or_described_as_green": false,
+    "eggcc_host_root_format": "passed_after_r2_cleanup",
+    "eggcc_host_dag_format": "passed_after_r2_cleanup",
+    "eggcc_host_dag_clippy": "failed_on_two_inherited_u0_diagnostics_with_zero_qr7_diagnostics",
+    "r1_qr7_specific_direct_check_findings": [
+      "dag_formatting_differences",
+      "dag_clippy_type_complexity",
+      "dag_clippy_identity_op"
+    ],
+    "candidate_specific_qr7_validation_defects_remaining_after_r2_cleanup": 0,
+    "r1_r2_semantic_and_execution_content_equivalent": true,
+    "r1_r2_complete_macho_files_byte_equal": false,
+    "qr7_timing_authority": "frozen_r1_macho_files_only"
+  },
+  "facts": [
+    {
+      "id": "strict-payoff",
+      "source_line": 3,
+      "status": "pass",
+      "finding": "Two correctness-preserving generated-runtime results satisfy the strict payoff gate. QR7 is the strongest substantive-consumer injectivity-only result: Encoding/U0 is 0.5505494231 with bootstrap 95% [0.5471011571,0.5575021727]. Parts32 is the strongest combined result: Encoding/U0 is 0.91398 to 0.92504 across all three workloads and both sessions, with every required upper bound below 0.99.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/timing-r1/independent-verification.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing/independent-verification.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "encoding-choice",
+      "source_line": 4,
+      "status": "pass",
+      "finding": "Parts32 materially requires both encodings: marked forward disequality transports x!=y through the lossless constructor, representation equalities expose unequal Pair applications, and sibling-guarded reverse congruence isolates high(x)!=high(y). QR7 separately demonstrates injective cancellation reaching a memory consumer and makes no disequality claim.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/inspection.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/report.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "bug-evidence",
+      "source_line": 5,
+      "status": "not_applicable",
+      "finding": "No compiler bug is claimed for the qualifying result; acceptance uses the generated-runtime route.",
+      "strongest_evidence_paths": [
+        "goals/eggcc-encoding-payoff/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "prior-result-exclusions",
+      "source_line": 6,
+      "status": "pass",
+      "finding": "The accepted results exclude the prior Mul/Add/Sub ObservedBool conflicts, structural typing, LocalCell and CSR studies, retarget snapshots and lints, planted faults, unsupported inputs, and integration-introduced defects. P1 and A1 remain explicit failed leads rather than payoffs.",
+      "strongest_evidence_paths": [
+        "goals/eggcc-encoding-payoff/report.md",
+        "goals/eggcc-nontrivial-encoding-payoff/hypotheses.jsonl",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-codex-audit.md",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-fable-validation.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "speedup-evidence",
+      "source_line": 7,
+      "status": "pass",
+      "finding": "QR7 and Parts32 use immutable matched native arms, explicit fresh-process timing boundaries, exact outputs, repeated balanced observations, complete-block bootstrap intervals, fair U0/B1/SeedOnly/Manual comparisons, and independent verification beyond variability. Compiler and lowering time are excluded. QR7 timing directly measures the frozen r1 Mach-O files; the validation-only r2 cleanup has equivalent executed content but different complete file hashes and carries no separate timing claim.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/prospective-timing-design-r1.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/timing-r1/independent-verification.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/prospective-timing-design-frozen.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing/independent-verification.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/r1-r2-comparison.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "causal-comparison",
+      "source_line": 8,
+      "status": "pass",
+      "finding": "Both qualifying results execute through actual compiler consumers with fixed-input feature knockouts, exact intermediate rescues, primitive-only nulls, and faithful Manual comparators. QR7's added must-alias bridge and Parts32's exact Eq=false application are each downstream-causal; no unique logical power or encoding-led bug discovery is claimed. The cleaned r2 QR7 matrix reproduces all 37 semantic cases, 177 native outputs, and the exact r1 process-entry instruction groups.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/inspection.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/actual-binary-inspection-r1.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/inspection.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/r1-r2-comparison.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/actual-binary-inspection-r2.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "semantic-scope",
+      "source_line": 9,
+      "status": "pass",
+      "finding": "The reports justify the total signed-i64 QR7 and Parts32 laws, equality-sort fields, private branch scope, checked transport, feasible paths, exact contextual exports, unsupported-field behavior, and relevant lifetime/effect boundaries. Raw Expr, generic Concat, mutable global analysis, and static allocation-site disequality are not assumed.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md",
+        "goals/eggcc-encoding-payoff/reference.md",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-fable-validation.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "implementation-scope",
+      "source_line": 10,
+      "status": "pass",
+      "finding": "The successful candidates use bounded source-context sidecars and exact consumer bridges. The A1 attempt stops at its prescribed revision budget instead of broadening into general alias, path, lifetime, or effect analysis. No proof support, Lean work, paper edit, commit, push, or pull request was performed.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/source-admission.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/source-admission.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-integration/actual-r0/report.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "correctness",
+      "source_line": 11,
+      "status": "pass",
+      "finding": "Registered mechanism tests, independent oracles, positive and negative boundaries, emitted/interpreter checks, and native checks pass for the qualifying cases. Repository root make check, the isolated selected-engine check, and the cleaned r2 EggCC DAG suite pass. Direct r1 checks exposed QR7-local formatting and two DAG Clippy findings; the four-hunk r2 cleanup fixes them. Root and DAG formatting pass, while the remaining one root and two DAG Clippy diagnostics reproduce in pinned U0. The EggCC host remains explicitly non-green on the same 13 unaccepted dependency-retarget snapshots; all test bodies pass and no snapshot is accepted.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/final-summary.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/validation-summary.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/comparison.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/comparison.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/root-make-check-r4/receipt.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/engine-make-check-py314-git-r3/receipt.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/validation.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "preservation",
+      "source_line": 12,
+      "status": "pass",
+      "finding": "Pinned sources, dependencies, patches, binaries, commands, inputs, configurations, prior studies, failed attempts, and raw timing rows remain identified in durable evidence. The r2 cleanup is a separate four-hunk patch with before/after manifests; r1 timing evidence remains immutable. Dirty author work and unrelated source are preserved; no prior evidence or snapshots were rewritten or accepted.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/root-make-check-r4/receipt.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/source-identities-r1.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-source-identities.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/final-validation-summary.json",
+        "goals/eggcc-encoding-payoff/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/nits-r2.patch",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/final-summary.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "measurement-honesty",
+      "source_line": 13,
+      "status": "pass",
+      "finding": "Parts32 reports every workload and session separately; QR7 reports its hot and neutral workloads separately. Both use one native backend per matched comparison and exact output checks. Rule-only time, rejected sessions, failed attempts, and the descriptive compiler-time diagnostic are excluded from accepted speedup claims.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/timing-r1/independent-verification.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing/independent-verification.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "search-discipline",
+      "source_line": 14,
+      "status": "pass",
+      "finding": "The append-only ledger records early falsifiers, revisions, successes, and terminal failures. Search continued after the first payoff through QR7 and bounded P1/A1 probes. Fresh cycle-06 Codex and authenticated read-only Fable passes, independently source-validated, identify no new bounded eligible family. This closes the finite search without claiming global impossibility.",
+      "strongest_evidence_paths": [
+        "goals/eggcc-nontrivial-encoding-payoff/hypotheses.jsonl",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-codex-audit.md",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-fable-audit.md",
+        "goals/eggcc-nontrivial-encoding-payoff/cycles/06-fable-validation.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/report.md",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-integration/actual-r0/report.md"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "resources",
+      "source_line": 15,
+      "status": "pass",
+      "finding": "Memory pressure never blocks acceptance or discards measurements, and every reviewed final receipt records EGGLOG_BENCH_MEMORY_GUARD absent. Commands retain finite timeouts and errors. The heavy raytracewithscreen host test was filtered as requested; the ordinary raytrace-test-benchmark fixture ran and passed.",
+      "strongest_evidence_paths": [
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/root-make-check-r4/receipt.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/final-summary.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/final-validation-summary.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/prospective-timing-design-r1.json",
+        "benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/prospective-timing-design-frozen.json"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    },
+    {
+      "id": "deliverables",
+      "source_line": 16,
+      "status": "pass",
+      "finding": "The explanation connects the rules, compiler consumers, controls, measured results, failed leads, and limits; the reference records compact laws and authorities; the reproduction guide separates operational commands and interpretation. The acceptance map and append-only lead ledger are machine-readable and complete for the bounded search.",
+      "strongest_evidence_paths": [
+        "goals/eggcc-encoding-payoff/report.md",
+        "goals/eggcc-encoding-payoff/reference.md",
+        "goals/eggcc-encoding-payoff/reproduce.md",
+        "goals/eggcc-encoding-payoff/acceptance.json",
+        "goals/eggcc-nontrivial-encoding-payoff/hypotheses.jsonl"
+      ],
+      "remaining_gate": null,
+      "completion_blocker": false
+    }
+  ]
+}

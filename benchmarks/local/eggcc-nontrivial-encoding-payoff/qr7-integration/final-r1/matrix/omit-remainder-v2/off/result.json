@@ -1,0 +1,22 @@
+{
+  "family": "omit-remainder-v2",
+  "mode": "off",
+  "context": true,
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-remainder-v2.bril",
+  "source_sha256": "1291d6c45d91c2fc954f1cc33ff2d022916db969b59712882f21c18131d90155",
+  "emitted_sha256": "ea06a8e7e66c532afe6aeb334db72c2e5a3494cd1dd10bcb5ddf08c5df0fe446",
+  "binary_sha256": "30b70b1243295edfd84911a010a819b8160dcdb77721e41d96ef501a25fb491b",
+  "outputs": [
+    {
+      "args": [
+        7,
+        8,
+        8
+      ],
+      "expected_stdout": "-24\n",
+      "stdout": "-24\n"
+    }
+  ],
+  "queries": [],
+  "performance_samples": false
+}

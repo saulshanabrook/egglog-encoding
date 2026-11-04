@@ -1,0 +1,83 @@
+{
+  "status": "supporting_only_host_validation_failed",
+  "failed_commands": [
+    {
+      "command": "dag-clippy",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/dag-clippy/receipt.json"
+    },
+    {
+      "command": "dag-clippy-audit-final",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/dag-clippy-audit-final/receipt.json"
+    },
+    {
+      "command": "dag-clippy-final",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/dag-clippy-final/receipt.json"
+    },
+    {
+      "command": "focused",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/focused/receipt.json"
+    },
+    {
+      "command": "host-clippy-final",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/host-clippy-final/receipt.json"
+    },
+    {
+      "command": "host-make-test",
+      "exit_code": 2,
+      "timed_out": false,
+      "receipt": "commands/host-make-test/receipt.json"
+    },
+    {
+      "command": "host-make-test-disk-retry",
+      "exit_code": 2,
+      "timed_out": false,
+      "receipt": "commands/host-make-test-disk-retry/receipt.json"
+    },
+    {
+      "command": "host-make-test-final",
+      "exit_code": 2,
+      "timed_out": false,
+      "receipt": "commands/host-make-test-final/receipt.json"
+    },
+    {
+      "command": "u0-root-clippy",
+      "exit_code": 101,
+      "timed_out": false,
+      "receipt": "commands/u0-root-clippy/receipt.json"
+    }
+  ],
+  "capture_failures": [
+    {
+      "path": "commands/cli-help/capture-failure.json",
+      "retry": "commands/cli-help-final/receipt.json",
+      "recovered": true
+    }
+  ],
+  "compile_reference_error_corrected": true,
+  "sidecar_lint_error_corrected": true,
+  "snapshots_accepted": false,
+  "semantic_importer_revisions": 0,
+  "control_receipt_refinement": "PrimitiveOnly retains actual fixed-column comparison counts before binary freeze",
+  "timing_campaign": false,
+  "resource_contaminated_full_runs": [
+    "host-make-test",
+    "host-make-test-final"
+  ],
+  "required_full_host_receipt": "commands/host-make-test-disk-retry/receipt.json",
+  "required_full_host_disk_errors": 0,
+  "functional_root_tests_passed": 2421,
+  "pending_snapshots": 13,
+  "pending_snapshots_match_frozen_parts32": true,
+  "standalone_dag_release_passed": 66,
+  "final_validation_collector_reconciled_with_fresh_u0_lint_evidence": true
+}

@@ -1,0 +1,349 @@
+{
+  "status": "complete",
+  "completionRoute": "positive_selected_baseline_bug",
+  "speedupClaim": false,
+  "searchExhaustionClaim": false,
+  "facts": [
+    {
+      "id": "deliverable",
+      "text": "Deliver a research dossier for the paper with an expanded candidate map, reproducible EggCC experiments, per-workload results, and regenerable tables or figures; drafting the paper itself is outside this goal.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "report.md",
+        "rerun.md",
+        "candidate-map.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/dossier-finalization/documentation-reference-check-02.json",
+        "findings/cost-final-numeric-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-05/figures/figure-data.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-03/figures/figure-data.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/regeneration-and-render.json",
+        "reference.md",
+        "study-record.md",
+        "findings/documentation-explanation-review.md"
+      ],
+      "verification": "The research dossier, expanded candidate map, exact rerun guide, repeated per-workload tables/raw values and regenerable SVG/PDF figures are complete. Paper drafting remains outside scope."
+    },
+    {
+      "id": "preservation",
+      "text": "Build on the completed eggcc-encoding-case-study without altering its frozen evidence, preserve existing author changes, and record revisions, dependency pins, configurations, and experiment changes in isolated worktrees.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/initial.json",
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/verification-after-harness-review.json",
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/verification-after-compiler-strict.json",
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/verification-after-compiler-review.json",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/verification-after-cost-strict.json",
+        "../../benchmarks/local/eggcc-encoding-impact/preservation/verification-after-cost-review.json",
+        "../../benchmarks/local/eggcc-encoding-impact/dossier-finalization/final-compiler-source-check.json",
+        "findings/cost-final-numeric-review.md"
+      ],
+      "verification": "Initial 11,109-file/six-checkout and 1,536-prior-artifact inventory retained. After-cost strict audit fails only on eleven unattributed .DS_Store paths; classified audit finds no substantive source/status/HEAD or prior frozen-evidence drift. Latest 788-file current compiler identity check and independent encoding/harness/boundary identities match."
+    },
+    {
+      "id": "search",
+      "text": "Search beyond the first local-address example for sound uses of injectivity or disequality in real EggCC consumers, including bug detection, new optimizations, and replacements for existing analyses; record why each promising lead is pursued or rejected.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "candidate-map.md",
+        "findings/compiler.md",
+        "../../benchmarks/local/eggcc-encoding-impact/compiler/c2-screen/checkpoint.json",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-descriptive-goal-review.md"
+      ],
+      "verification": "C1 genuine selected-baseline bug was pursued and independently reproduced; C2 existing CSR/matrix producer-consumer screen found no distinct-address demand overlap. C3-C6 remain documented future leads. No exhaustion or impossibility claim."
+    },
+    {
+      "id": "semantics",
+      "text": "Every constructor law and disequality-to-optimization inference used in a result has an explicit semantic justification, including relevant context and effect restrictions; previously rejected unsound laws are not reused without a new justification.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "observation-slice.md",
+        "findings/encoding-review.md",
+        "findings/observation-implementation-review.md",
+        "findings/corrected-control-evidence-review.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-numeric-review.md"
+      ],
+      "verification": "Remaining-child reasoning is contrapositive congruence. Forward child difference and equal-parent cancellation are injective-only. Restricted feasible-point observer uses injective immutable Boolean literals, unmarked EvalBoolAt and opaque matching points; no pointwise or all-input disequality claim."
+    },
+    {
+      "id": "encoding-gaps",
+      "text": "Improvements to the encoding are in scope when they help an EggCC case or close an explicitly defined reasoning gap; assess remaining-child disequality propagation and schedule closure, with automated edge-case checks for implemented changes and no claim of unrestricted completeness.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "findings/encoding.md",
+        "findings/encoding-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/encoding/full-check/final-summary.json",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/results.json"
+      ],
+      "verification": "Five-file E1 implementation closes the explicit n-ary remaining-child query gap using transient committed-row search, with no stored derived-pair relation. Full gates, 16,192 finite-fragment oracle pairs and edge cases pass. Schedule, containers, primitive operands, proof mode and repeated-pair incompleteness are explicit."
+    },
+    {
+      "id": "implementation",
+      "text": "Promising cases may include compiler or runtime changes needed to demonstrate their impact, with each change tied to the case and no new proof support or Lean mechanization.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "../../benchmarks/local/eggcc-encoding-impact/encoding/reviewable-1.patch",
+        "../../benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/uncorrected-source.json",
+        "findings/compiler-final-gates-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-summary.json",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-numeric-review.md"
+      ],
+      "verification": "Encoding and compiler changes are frozen in isolated worktrees and bound to actual cases. Official compiler test/nits failures are retained with fresh matched baseline attribution; the new cfg(test) lint repair has affected-suite validation. No new proof support, Lean work, paper edits, commit or push."
+    },
+    {
+      "id": "workloads",
+      "text": "Prefer existing EggCC or Bril workloads; label new or scaled examples, document their connection to an actual compiler consumer, and distinguish them from production evidence.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "findings/compiler.md",
+        "findings/measurement-binding.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-replacement-binding.md"
+      ],
+      "verification": "The two new minimized Bril fixtures are derived from actual EggCC interval-rule behavior and explicitly labeled non-production. Existing CSR/matrix kernels were screened separately. No production benefit is inferred."
+    },
+    {
+      "id": "correctness",
+      "text": "Each implemented optimization or analysis case runs through actual EggCC optimization and has automated positive, negative, and source-versus-optimized execution checks where supported; encoding-only replays are labeled separately.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "findings/observation-evidence-review.md",
+        "findings/observation-fresh-evidence-review.md",
+        "findings/observation-python2-final-review.md",
+        "findings/corrected-control-evidence-review.md",
+        "findings/compiler-final-gates-review.md",
+        "findings/fresh-final-reproduction-review.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-numeric-review.md"
+      ],
+      "verification": "Actual debug/final release 37-case matrices, original red/corrected green and 24 nearby expectations, ten repeated invocations, independently fresh representative calls, and all 84 cost calls are bound to actual artifacts/receipts. Positive, negative and source/result references are checked. Old/E1 replay is initialization-only, not a full old-query compiler comparison."
+    },
+    {
+      "id": "bugs",
+      "text": "A claimed genuine compiler bug has a minimized reproducer, a sound violated invariant, and a reproducible failure in baseline EggCC; invalid annotations and deliberately seeded faults do not count as baseline bugs.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "../../benchmarks/local/eggcc-encoding-impact/independent-bug-reproduction/review.md",
+        "findings/corrected-control-evidence-review.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/fresh-final-reproduction-review.md"
+      ],
+      "verification": "Valid MAX input produces true in source and false in the selected baseline through all three native passes. Six independent A/B/prototype-off/control calls reproduce it. Exact two-rule deletion control avoids the mismatch with verified byte restoration; no seeded fault or invalid injectivity annotation underlies the bug."
+    },
+    {
+      "id": "speedup",
+      "text": "A reproducible compiler or analysis speedup, a generated-program speedup, or a genuine baseline compiler bug can satisfy the impact objective; a removed operation, fewer stored rows, or another neutral example alone cannot.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "../../benchmarks/local/eggcc-encoding-impact/independent-bug-reproduction/verification.json",
+        "findings/corrected-control-evidence-review.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-descriptive-goal-review.md"
+      ],
+      "verification": "The independently reproduced genuine selected-baseline compiler bug satisfies the positive impact route. No compiler, analysis, generated-program or production speedup is claimed."
+    },
+    {
+      "id": "comparison",
+      "text": "Speedup claims use fair baseline and feature controls, validate outputs, and isolate the contribution of the encoding from accompanying changes; analysis replacements include an equivalent manual comparison when applicable.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "findings/observation-comparison-review.md",
+        "findings/corrected-control-evidence-review.md",
+        "findings/measurement-protocol.md",
+        "findings/compiler-final-gates-review.md",
+        "findings/cost-replacement-binding.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-numeric-review.md",
+        "findings/cost-descriptive-scope-review.md",
+        "findings/cost-descriptive-goal-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/descriptive-observations-resolution.json"
+      ],
+      "verification": "Manual and Injective use identical feasible observations/seeds and matched per-case source/binary controls; common-seed/no-audit preserves the bug. The cost data are absolute descriptive recorded-host observations only, with no ratios, causal feature/component cost or significance inference. Original/corrected variants are never pooled."
+    },
+    {
+      "id": "measurement",
+      "text": "Report repeated measurements and variability per workload, retain neutral results and regressions, and keep compiler or analysis time, compiler memory, and generated-program runtime as separate metrics with explicit measurement boundaries.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "findings/measurement-protocol.md",
+        "findings/measurement-binding.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/invalid-block-01.json",
+        "findings/cost-replacement-binding.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-final-numeric-review.md",
+        "findings/cost-final-host-review.md",
+        "findings/cost-descriptive-scope-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/descriptive-observations-resolution.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-05/study.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-03/study.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/figure-captions.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/regeneration-and-render.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/visual-inspection.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/user-memory-policy-correction.json"
+      ],
+      "verification": "Both final blocks have 42 successful calls: three correctness, three warmup and 36 measurements (12 per arm), balanced order, exact false/true references and null later interpreter fields. Independent raw-value/median/range/sample-SD/MiB checks pass. Wall and wait4-child RSS boundaries, known upload/unmeasured I/O/protocol deviation and uniformly disabled entire optional memory guard are explicit. Earlier invalid/refused/setup cohorts remain separately retained and excluded."
+    },
+    {
+      "id": "reproduction",
+      "text": "Retain exact inputs, case origins, commands, configurations, raw machine-readable observations, and scripts that verify evidence and regenerate reported results.",
+      "automatedVerification": true,
+      "status": "verified",
+      "evidence": [
+        "rerun.md",
+        "../../benchmarks/local/eggcc-encoding-impact/independent-bug-reproduction/reproduce.py",
+        "findings/fresh-final-reproduction-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/fresh-final-reproduction/reproduce.py",
+        "../../benchmarks/local/eggcc-encoding-impact/fresh-final-reproduction/run-01/results.json",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/dossier-finalization/documentation-reference-check-02.json",
+        "findings/cost-final-numeric-review.md",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/independent-final-review/independent-stats.py",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/independent-final-review/figure-check.json",
+        "../../benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/regeneration-and-render.json"
+      ],
+      "verification": "Exact base revisions, patches, inventories, binary/helper/collector/interpreter/toolchain pins, inputs, commands, raw rows, receipts, trees and rerun instructions are retained. Fresh representative reproduction passes. Per-case JSON/table/SVG/PDF regenerate byte-identically; rendered PNGs match and all four pages were independently visually inspected."
+    },
+    {
+      "id": "stopping",
+      "text": "A negative conclusion is allowed only after an evidence-backed search exhaustion review of the candidate map and substantial targeted experiments explains why the remaining plausible high-value leads did not produce an impact; do not stop at an arbitrary prototype count or claim that no use case can exist.",
+      "automatedVerification": false,
+      "status": "verified",
+      "evidence": [
+        "candidate-map.md",
+        "goal.md",
+        "../../benchmarks/local/eggcc-encoding-impact/independent-bug-reproduction/review.md",
+        "findings/final-claims-preliminary-review.md",
+        "findings/final-noncost-dossier-review.md",
+        "findings/cost-descriptive-goal-review.md"
+      ],
+      "verification": "This is a positive genuine-bug completion, not a negative search-exhaustion result. Remaining plausible leads stay visible and untested; no arbitrary prototype count or claim that no use case exists is used."
+    }
+  ],
+  "pendingCriticalEvidence": [],
+  "independentFinalReview": {
+    "path": "findings/final-dossier-review.md",
+    "sha256": "ce47382e5a4f927d6f32279212f5f1bce4a0034f27e9b79ca95375a251fd361a",
+    "result": "Consent to completion on the positive genuine selected-baseline bug route; all fourteen facts satisfied within explicit limits. Pre-bookend hashes are retained in the review; only authorized status/link/hash closeout followed."
+  },
+  "freshFinalReproduction": "findings/fresh-final-reproduction-review.md",
+  "preservationException": "Eleven .DS_Store paths only; strict failure retained, no author-source or prior frozen-evidence drift.",
+  "preliminaryIndependentReview": {
+    "path": "findings/final-claims-preliminary-review.md",
+    "sha256": "200e57aa2235540f44f258b478a4649312f48666e771cf88142e8d2c87ce4f5d",
+    "result": "No new technical blocker; three documentation updates integrated; costs/figures/final assembly expressly pending."
+  },
+  "documentationCorrections": {
+    "report.md": "45a96833f7951152b9fff4708af9e3e15ff00d003ca568574331794c770d179e",
+    "candidate-map.md": "9e97088b02462dddcfe9cea4597ca9e2caf2467309673fc9ca32d0ef7ca7f3d9",
+    "rerun.md": "65f7fa4cf01eddd64d710a98bf1b6df37691387b52bfd700fa3acd8394f6d8e1"
+  },
+  "noncostIndependentReview": {
+    "path": "findings/final-noncost-dossier-review.md",
+    "sha256": "204418047890c7495ea44ca1dbe809cba5bba5edd24d09b8b4640db186c63507",
+    "result": "Completed noncost evidence and command recipe consented; bounded required documentation corrections satisfied. No costs/figures/full-completion admission.",
+    "integrationCheck": "../../benchmarks/local/eggcc-encoding-impact/dossier-finalization/documentation-reference-check-02.json"
+  },
+  "measurementScope": {
+    "claim": "absolute_descriptive_recorded_host_observations",
+    "strictCleanHostConsent": "withheld",
+    "protocolDeviation": "Known low-CPU release upload omitted from manual prelaunch attribution; I/O unmeasured. Narrow descriptive scope resolved and reviewed before final distributions opened.",
+    "memoryPolicy": "Whole optional memory guard uniformly unset at user request; timeout and wall/wait4 accounting retained. No CPU/I/O waiver inferred.",
+    "resolution": "../../benchmarks/local/eggcc-encoding-impact/observations-cost/descriptive-observations-resolution.json",
+    "resolutionSha256": "bc1e252fdec94474bc7840c61feb29bfeebe5c85ab90fdfa5ad91deb8c01452a",
+    "selectedBlocks": [
+      "original-one/block-05",
+      "corrected-max/block-03"
+    ],
+    "measurementsPerArmPerCase": 12,
+    "speedupOrCausalClaim": false
+  },
+  "numericIndependentReview": {
+    "path": "findings/cost-final-numeric-review.md",
+    "sha256": "1dcf98227f7abd730056fa27745b857fa570d0a1f9a90842a78b839cd8a7f960",
+    "result": "No technical, numeric or figure blocker for narrowly admitted descriptive use."
+  },
+  "finalDocumentationCheck": "../../benchmarks/local/eggcc-encoding-impact/dossier-finalization/documentation-reference-check-05.json",
+  "completedUtc": "2026-10-18T00:44:43.116268+00:00",
+  "documentationRevision": {
+    "purpose": "User-requested Claude Fable subprocess audit and collaborator-facing Diataxis revision.",
+    "utc": "2026-10-18T02:27:36.543351+00:00",
+    "report": "report.md",
+    "reference": "reference.md",
+    "preservedPreviousReport": "study-record.md",
+    "reviewedHashes": {
+      "report.md": "640fd18dfe483456e25c8db401d8644cbab4fd2aed56aaef2a30e63cf199223a",
+      "reference.md": "f3c82540e515aa8fb127a13a3d0a07cd736c514a4c361d7294a5476108030431"
+    },
+    "claudeAudit": {
+      "path": "findings/claude-fable-diataxis-audit.md",
+      "sha256": "5a3407bdeaa83a1cb8ec6c75c760e6300c7d7fb3894e6328c4651f4caddbdaa2",
+      "model": "claude-fable-5-1",
+      "effort": "max",
+      "role": "Initial independent audit; parent revised afterward."
+    },
+    "sourceReview": {
+      "path": "findings/claude-fable-revision-source-review.md",
+      "sha256": "41bcf6d3758e5b85500ae53a1f6859111b52f60986147fa24f81d517a02ec337",
+      "result": "Consent; no remaining factual/semantic blocker."
+    },
+    "staticCheck": "../../benchmarks/local/eggcc-encoding-impact/claude-fable-documentation-audit/revision-static-check.json",
+    "revisionDisposition": "../../benchmarks/local/eggcc-encoding-impact/claude-fable-documentation-audit/revision-disposition.json",
+    "scope": "Documentation only; completed scientific goal, source and raw results unchanged."
+  },
+  "documentationRevisionHistory": [
+    {
+      "purpose": "User-requested Diataxis explanation with compact mathematical/encoding and EggCC rule reference. Documentation only; scientific claims and results unchanged.",
+      "utc": "2026-10-18T01:57:58.961831+00:00",
+      "report": "report.md",
+      "reference": "reference.md",
+      "preservedPreviousReport": "study-record.md",
+      "preservedPreviousReportSha256": "45a96833f7951152b9fff4708af9e3e15ff00d003ca568574331794c770d179e",
+      "review": {
+        "path": "findings/documentation-explanation-review.md",
+        "sha256": "efdef1887f8f30dcd02f001025aef02d7ab29d50efb7ae7c8f5277d85df3ccd5",
+        "result": "Consent; no semantic blockers."
+      },
+      "reviewedHashes": {
+        "report.md": "3a33d0a6be9abe0cedbc342f492000c067c5c7eeac06bea558a8e6705e640395",
+        "reference.md": "2cf5552706248dfb21dc2f1d08798c6e9c550fbd81d5d196becddac58cbf293f"
+      },
+      "staticCheck": "../../benchmarks/local/eggcc-encoding-impact/documentation-explanation/static-check.json",
+      "scope": "No implementation, measurement, workload, test, paper, proof, commit or push changes.",
+      "connectionClarification": {
+        "record": "../../benchmarks/local/eggcc-encoding-impact/documentation-explanation/connection-clarification.json",
+        "reportSha256": "d5a53e5fde6604f1b822edcef8ca62de311579786c55ec2793f5e957f336ddfe",
+        "purpose": "Explain the same-program integration, concrete evaluator and optional prequery; original documentation review hashes identify the prior version."
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/native/program",
+    "0",
+    "0",
+    "1"
+  ],
+  "cwd": "/private/tmp/eggcc-qr7-candidate",
+  "timeout_s": 30,
+  "exit_code": 0,
+  "launch_error": null,
+  "timed_out": false,
+  "elapsed_s_diagnostic": 0.007034750000457279,
+  "diagnostic_elapsed_is_performance_evidence": false,
+  "environment": {
+    "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "CARGO_BUILD_JOBS": "4",
+    "RUST_TEST_THREADS": "4",
+    "RAYON_NUM_THREADS": "1",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "PATH": "/opt/homebrew/opt/llvm@18/bin:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "CARGO_TARGET_DIR": "/private/tmp/encoding-qr7-candidate/target",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "scoped_mode": "off",
+  "scoped_evidence": null,
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD"
+  ],
+  "files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/native/program",
+      "sha256": "249845dcd4114f5777086a00aa415b60aa47a47bb80fe987c249c42e3dd0052f"
+    }
+  ],
+  "executable": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/native/program",
+  "executable_sha256": "249845dcd4114f5777086a00aa415b60aa47a47bb80fe987c249c42e3dd0052f",
+  "stdout_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

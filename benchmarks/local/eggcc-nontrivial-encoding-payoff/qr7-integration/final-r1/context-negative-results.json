@@ -1,0 +1,24 @@
+[
+  {
+    "family": "no-context",
+    "mode": "encoding",
+    "context": false,
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/source.bril",
+    "source_sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+    "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "binary_sha256": "0a4dec5c1cbbe7e1c329cecb5861cd0505bc218236946694aeba5317d30cb6fb",
+    "outputs": [
+      {
+        "args": [
+          12,
+          12,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      }
+    ],
+    "queries": [],
+    "performance_samples": false
+  }
+]

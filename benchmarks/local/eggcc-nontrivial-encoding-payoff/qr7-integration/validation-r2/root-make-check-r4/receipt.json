@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "make",
+    "check"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "started_utc": "2026-10-20T05:07:56.284992Z",
+  "finished_utc": "2026-10-20T05:11:28.921146Z",
+  "timeout_s": 3600,
+  "timed_out": false,
+  "exit_code": 0,
+  "stdout_sha256": "9a7b81b906769acc3a6797cf591cfe52b070e520bd8d5e71a089055b2ae7e219",
+  "stderr_sha256": "27e262d7c528d08477549b7366dc9c273741bc3851ebb24a589350a5c5a08221",
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD"
+  ],
+  "raytracing_requested": false
+}

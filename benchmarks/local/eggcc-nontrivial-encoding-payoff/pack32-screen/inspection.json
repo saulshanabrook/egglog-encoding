@@ -1,0 +1,216 @@
+{
+  "llvm": {
+    "source": {
+      "_main": {
+        "start_line": 7758,
+        "compare_eq_i64": 5,
+        "score99": true,
+        "conditional_branches": 5,
+        "sha256": "07160a6c040d340643d83ad493baa272b5e82b63a9e290c284a4c2de22e44b04"
+      },
+      "main": {
+        "start_line": 7819,
+        "compare_eq_i64": 5,
+        "score99": true,
+        "conditional_branches": 5,
+        "sha256": "75252a215ad1f65f95abc20ca1971b0f2c1ef7c06f9ff5c2dbe208f3b8b8ec45"
+      }
+    },
+    "optimized": {
+      "_main": {
+        "start_line": 7758,
+        "compare_eq_i64": 5,
+        "score99": true,
+        "conditional_branches": 5,
+        "sha256": "03dbf295a91a58b6eac8df16b883411573ab369ed83294b01307ea5641d4dff2"
+      },
+      "main": {
+        "start_line": 7819,
+        "compare_eq_i64": 5,
+        "score99": true,
+        "conditional_branches": 5,
+        "sha256": "84eabfa21b353fca59ff4aeb05fee88ba1a33e7cf6a0935d56a807a4344884b5"
+      }
+    },
+    "manual": {
+      "_main": {
+        "start_line": 7758,
+        "compare_eq_i64": 4,
+        "score99": false,
+        "conditional_branches": 3,
+        "sha256": "c34aa4483b075c0d4c4ac33e78852287d4ef652d6a5cde5d6fed2b834fa1cf4a"
+      },
+      "main": {
+        "start_line": 7809,
+        "compare_eq_i64": 4,
+        "score99": false,
+        "conditional_branches": 3,
+        "sha256": "d8a3b392d8e70e5cb80be9d9e2da01883e788860697b24dfddf5f6ba2d61c2ea"
+      }
+    }
+  },
+  "graphs": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-screen/egraphs/tiger_egraph_0001.json",
+      "sha256": "a0acb94967f5c74c90eadaa01423484ec661dc1b6e4c1a7789921165d5188480",
+      "nodes": 22783,
+      "packed_patterns": [],
+      "translated_target_equalities": []
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-screen/egraphs/tiger_egraph_0002.json",
+      "sha256": "c4e4536e570cb150fe7df2445980a3edebf4d318072820f2c3acc429aa3a4424",
+      "nodes": 25419,
+      "packed_patterns": [
+        {
+          "row": "function-83-Bop",
+          "packed_class": "Expr-14674",
+          "high": "Expr-13256",
+          "low": "Expr-13041"
+        },
+        {
+          "row": "function-84-Bop",
+          "packed_class": "Expr-14674",
+          "high": "Expr-13256",
+          "low": "Expr-13041"
+        },
+        {
+          "row": "function-85-Bop",
+          "packed_class": "Expr-14673",
+          "high": "Expr-13352",
+          "low": "Expr-13304"
+        },
+        {
+          "row": "function-86-Bop",
+          "packed_class": "Expr-14673",
+          "high": "Expr-13352",
+          "low": "Expr-13304"
+        }
+      ],
+      "translated_target_equalities": []
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-screen/egraphs/tiger_egraph_0003.json",
+      "sha256": "14c9f1c7e5811e192bb1f83a66bde198ef2c9fb062ff5c2006d94998d5904031",
+      "nodes": 31656,
+      "packed_patterns": [
+        {
+          "row": "function-23-Bop",
+          "packed_class": "Expr-273",
+          "high": "Expr-269",
+          "low": "Expr-272"
+        },
+        {
+          "row": "function-25-Bop",
+          "packed_class": "Expr-277",
+          "high": "Expr-274",
+          "low": "Expr-276"
+        },
+        {
+          "row": "function-28-Bop",
+          "packed_class": "Expr-315",
+          "high": "Expr-311",
+          "low": "Expr-314"
+        },
+        {
+          "row": "function-45-Bop",
+          "packed_class": "Expr-273",
+          "high": "Expr-269",
+          "low": "Expr-272"
+        },
+        {
+          "row": "function-46-Bop",
+          "packed_class": "Expr-277",
+          "high": "Expr-274",
+          "low": "Expr-276"
+        },
+        {
+          "row": "function-47-Bop",
+          "packed_class": "Expr-315",
+          "high": "Expr-311",
+          "low": "Expr-314"
+        }
+      ],
+      "translated_target_equalities": [
+        {
+          "row": "function-32-Bop",
+          "predicate_class": "Expr-399",
+          "left_children": [
+            "Expr-394"
+          ],
+          "right_children": [
+            "Expr-397"
+          ],
+          "equivalent_eq_rows": [
+            {
+              "id": "function-32-Bop",
+              "op": "Bop",
+              "children": [
+                "function-0-Eq",
+                "function-79-AddContext",
+                "function-80-AddContext"
+              ],
+              "eclass": "Expr-399",
+              "cost": 1.0,
+              "subsumed": false
+            },
+            {
+              "id": "function-60-Bop",
+              "op": "Bop",
+              "children": [
+                "function-0-Eq",
+                "function-49-Bop",
+                "function-48-Bop"
+              ],
+              "eclass": "Expr-399",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ]
+        },
+        {
+          "row": "function-60-Bop",
+          "predicate_class": "Expr-399",
+          "left_children": [
+            "Expr-397"
+          ],
+          "right_children": [
+            "Expr-394"
+          ],
+          "equivalent_eq_rows": [
+            {
+              "id": "function-32-Bop",
+              "op": "Bop",
+              "children": [
+                "function-0-Eq",
+                "function-79-AddContext",
+                "function-80-AddContext"
+              ],
+              "eclass": "Expr-399",
+              "cost": 1.0,
+              "subsumed": false
+            },
+            {
+              "id": "function-60-Bop",
+              "op": "Bop",
+              "children": [
+                "function-0-Eq",
+                "function-49-Bop",
+                "function-48-Bop"
+              ],
+              "eclass": "Expr-399",
+              "cost": 1.0,
+              "subsumed": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "commands": {
+    "count": 64,
+    "successes": 64,
+    "timeouts": 0,
+    "elapsed_times_are_performance_evidence": false
+  }
+}

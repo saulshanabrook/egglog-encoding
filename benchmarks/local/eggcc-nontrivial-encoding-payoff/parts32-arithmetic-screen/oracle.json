@@ -1,0 +1,270 @@
+{
+  "reduced_exhaustive": [
+    {
+      "field_width": 1,
+      "words": 4
+    },
+    {
+      "field_width": 2,
+      "words": 16
+    },
+    {
+      "field_width": 3,
+      "words": 64
+    },
+    {
+      "field_width": 4,
+      "words": 256
+    },
+    {
+      "field_width": 5,
+      "words": 1024
+    },
+    {
+      "field_width": 6,
+      "words": 4096
+    },
+    {
+      "field_width": 7,
+      "words": 16384
+    },
+    {
+      "field_width": 8,
+      "words": 65536
+    }
+  ],
+  "full_width_words": 4108,
+  "boundary_witnesses": [
+    {
+      "x": -9223372036854775808,
+      "low": 0,
+      "difference": -9223372036854775808,
+      "high": -2147483648
+    },
+    {
+      "x": -9223372036854775807,
+      "low": 1,
+      "difference": -9223372036854775808,
+      "high": -2147483648
+    },
+    {
+      "x": -9223372032559808513,
+      "low": 4294967295,
+      "difference": -9223372036854775808,
+      "high": -2147483648
+    },
+    {
+      "x": -4294967297,
+      "low": 4294967295,
+      "difference": -8589934592,
+      "high": -2
+    },
+    {
+      "x": -4294967296,
+      "low": 0,
+      "difference": -4294967296,
+      "high": -1
+    },
+    {
+      "x": -1,
+      "low": 4294967295,
+      "difference": -4294967296,
+      "high": -1
+    },
+    {
+      "x": 0,
+      "low": 0,
+      "difference": 0,
+      "high": 0
+    },
+    {
+      "x": 1,
+      "low": 1,
+      "difference": 0,
+      "high": 0
+    },
+    {
+      "x": 4294967295,
+      "low": 4294967295,
+      "difference": 0,
+      "high": 0
+    },
+    {
+      "x": 4294967296,
+      "low": 0,
+      "difference": 4294967296,
+      "high": 1
+    },
+    {
+      "x": 9223372036854775806,
+      "low": 4294967294,
+      "difference": 9223372032559808512,
+      "high": 2147483647
+    },
+    {
+      "x": 9223372036854775807,
+      "low": 4294967295,
+      "difference": 9223372032559808512,
+      "high": 2147483647
+    }
+  ],
+  "general_proof": {
+    "base": 4294967296,
+    "remainder_range": [
+      0,
+      4294967295
+    ],
+    "quotient_range": [
+      -2147483648,
+      2147483647
+    ],
+    "exact_difference_range": [
+      -9223372036854775808,
+      9223372032559808512
+    ],
+    "argument": "Euclidean x=q*2^32+r with r=x&0xffffffff; x-r=q*2^32 is representable and division is exact"
+  },
+  "positive_rows": [
+    {
+      "args": [
+        0,
+        4294967296,
+        8
+      ],
+      "expected_stdout": "56\n"
+    },
+    {
+      "args": [
+        0,
+        0,
+        8
+      ],
+      "expected_stdout": "54\n"
+    },
+    {
+      "args": [
+        4294967296,
+        0,
+        8
+      ],
+      "expected_stdout": "54\n"
+    },
+    {
+      "args": [
+        0,
+        1,
+        8
+      ],
+      "expected_stdout": "24\n"
+    },
+    {
+      "args": [
+        -9223372036854775808,
+        -9223372032559808512,
+        8
+      ],
+      "expected_stdout": "56\n"
+    },
+    {
+      "args": [
+        9223372036854775807,
+        9223372032559808511,
+        8
+      ],
+      "expected_stdout": "54\n"
+    },
+    {
+      "args": [
+        -1,
+        4294967295,
+        8
+      ],
+      "expected_stdout": "56\n"
+    },
+    {
+      "args": [
+        0,
+        4294967296,
+        0
+      ],
+      "expected_stdout": "0\n"
+    },
+    {
+      "args": [
+        0,
+        4294967296,
+        1
+      ],
+      "expected_stdout": "7\n"
+    },
+    {
+      "args": [
+        0,
+        4294967296,
+        1024
+      ],
+      "expected_stdout": "7168\n"
+    },
+    {
+      "args": [
+        0,
+        4294967296,
+        -1
+      ],
+      "expected_stdout": "-2\n"
+    }
+  ],
+  "negative_rows": [
+    {
+      "kind": "missing-word-disequality",
+      "args": [
+        0,
+        0,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "missing-low-equality",
+      "args": [
+        0,
+        1,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "wrong-mask",
+      "args": [
+        0,
+        2147483648,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "wrong-divisor",
+      "args": [
+        0,
+        4294967296,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    },
+    {
+      "kind": "unequal-divisors",
+      "args": [
+        281474976710656,
+        4294967296,
+        1
+      ],
+      "expected_stdout": "99\n",
+      "invalid_manual_stdout": "7\n"
+    }
+  ],
+  "compiler_invoked": false
+}

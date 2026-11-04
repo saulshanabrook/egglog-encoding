@@ -1,0 +1,2540 @@
+{
+  "all_random_executions_correct": true,
+  "all_raw_correct": true,
+  "all_winning_executions_correct": true,
+  "artifact_sha256": {
+    "b1_assembly": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a",
+    "b1_emitted": "16b3213e1455acc69115c542a925451d30ffd6b69b44dbcf66474043251fb5d9",
+    "encoding_assembly": "bea1d5f29236a47e3a43a5139fb6f844ebea03090a3b077342cc8cde609e43cc",
+    "encoding_emitted": "a73c0fdf3260cd4966fe5e6672a92a0f4555a7a33f1e495734e8eb7cd950c1d8",
+    "manual_assembly": "bea1d5f29236a47e3a43a5139fb6f844ebea03090a3b077342cc8cde609e43cc",
+    "manual_emitted": "a73c0fdf3260cd4966fe5e6672a92a0f4555a7a33f1e495734e8eb7cd950c1d8",
+    "u0_emitted": "16b3213e1455acc69115c542a925451d30ffd6b69b44dbcf66474043251fb5d9"
+  },
+  "binary_sha256": {
+    "B1": "90ce73810da2e79c6f18e385a9444790ad5d4406a78f6a8dd3bb24c44b4ee21a",
+    "Encoding": "3d81e83ff64cff5702ca5d0402fee07b002286ee2b75b881d63a7f204d0ec370",
+    "Manual": "e2c1d2b8405c6b5618ce633b8263b3814841bf7b1d6583f712b54fe950ede2cf",
+    "U0": "2694f6a18b5251a9954efc3d75c7acae1d898d429e1f0600e202858aa3d306ce"
+  },
+  "design_sha256": "a8eca05eaf0455536d737ea9064adff54573022e26ea68a1073323f3848c6a0e",
+  "executions": [
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "0",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "0",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "0",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "0",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "1",
+        "0",
+        "1",
+        "1"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "7\n",
+      "stderr": "",
+      "stdout": "7\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "1",
+        "0",
+        "1",
+        "1"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "7\n",
+      "stderr": "",
+      "stdout": "7\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "1",
+        "0",
+        "1",
+        "1"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "7\n",
+      "stderr": "",
+      "stdout": "7\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "1",
+        "0",
+        "1",
+        "1"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "7\n",
+      "stderr": "",
+      "stdout": "7\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "8",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "48\n",
+      "stderr": "",
+      "stdout": "48\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "8",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "48\n",
+      "stderr": "",
+      "stdout": "48\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "8",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "48\n",
+      "stderr": "",
+      "stdout": "48\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "8",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "48\n",
+      "stderr": "",
+      "stdout": "48\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "17",
+        "-9223372036854775808",
+        "9223372036854775807",
+        "-1"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "17",
+        "-9223372036854775808",
+        "9223372036854775807",
+        "-1"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "17",
+        "-9223372036854775808",
+        "9223372036854775807",
+        "-1"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "17",
+        "-9223372036854775808",
+        "9223372036854775807",
+        "-1"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "31",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "93\n",
+      "stderr": "",
+      "stdout": "93\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "31",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "93\n",
+      "stderr": "",
+      "stdout": "93\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "31",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "93\n",
+      "stderr": "",
+      "stdout": "93\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "31",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "93\n",
+      "stderr": "",
+      "stdout": "93\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "32",
+        "-1",
+        "0",
+        "4294967295"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "32",
+        "-1",
+        "0",
+        "4294967295"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "32",
+        "-1",
+        "0",
+        "4294967295"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "32",
+        "-1",
+        "0",
+        "4294967295"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "19",
+        "0",
+        "0",
+        "-1"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "129\n",
+      "stderr": "",
+      "stdout": "129\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "19",
+        "0",
+        "0",
+        "-1"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "129\n",
+      "stderr": "",
+      "stdout": "129\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "19",
+        "0",
+        "0",
+        "-1"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "129\n",
+      "stderr": "",
+      "stdout": "129\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "19",
+        "0",
+        "0",
+        "-1"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "129\n",
+      "stderr": "",
+      "stdout": "129\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "23",
+        "-7",
+        "7",
+        "6"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "141\n",
+      "stderr": "",
+      "stdout": "141\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "23",
+        "-7",
+        "7",
+        "6"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "141\n",
+      "stderr": "",
+      "stdout": "141\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "23",
+        "-7",
+        "7",
+        "6"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "141\n",
+      "stderr": "",
+      "stdout": "141\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "23",
+        "-7",
+        "7",
+        "6"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "141\n",
+      "stderr": "",
+      "stdout": "141\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "3",
+        "-622423416900656799",
+        "-7902172220648187652",
+        "5352099592899727893"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "3",
+        "-622423416900656799",
+        "-7902172220648187652",
+        "5352099592899727893"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "3",
+        "-622423416900656799",
+        "-7902172220648187652",
+        "5352099592899727893"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "3",
+        "-622423416900656799",
+        "-7902172220648187652",
+        "5352099592899727893"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "8",
+        "-7283544229232863710",
+        "5564355017033056113",
+        "1113073044191387774"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "8",
+        "-7283544229232863710",
+        "5564355017033056113",
+        "1113073044191387774"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "8",
+        "-7283544229232863710",
+        "5564355017033056113",
+        "1113073044191387774"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "8",
+        "-7283544229232863710",
+        "5564355017033056113",
+        "1113073044191387774"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "28",
+        "3684215453633853655",
+        "-4620284714750118453",
+        "-6281849496620471110"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "28",
+        "3684215453633853655",
+        "-4620284714750118453",
+        "-6281849496620471110"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "28",
+        "3684215453633853655",
+        "-4620284714750118453",
+        "-6281849496620471110"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "28",
+        "3684215453633853655",
+        "-4620284714750118453",
+        "-6281849496620471110"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "23",
+        "8232686967012078647",
+        "-56321915533181840",
+        "5522649465242424582"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "161\n",
+      "stderr": "",
+      "stdout": "161\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "23",
+        "8232686967012078647",
+        "-56321915533181840",
+        "5522649465242424582"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "161\n",
+      "stderr": "",
+      "stdout": "161\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "23",
+        "8232686967012078647",
+        "-56321915533181840",
+        "5522649465242424582"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "161\n",
+      "stderr": "",
+      "stdout": "161\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "23",
+        "8232686967012078647",
+        "-56321915533181840",
+        "5522649465242424582"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "161\n",
+      "stderr": "",
+      "stdout": "161\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "11",
+        "6781319596754340591",
+        "5844788771458288007",
+        "-1522628489301740492"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "11",
+        "6781319596754340591",
+        "5844788771458288007",
+        "-1522628489301740492"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "11",
+        "6781319596754340591",
+        "5844788771458288007",
+        "-1522628489301740492"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "11",
+        "6781319596754340591",
+        "5844788771458288007",
+        "-1522628489301740492"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "9",
+        "4688822992697458457",
+        "827539718650053245",
+        "-3475779108450628573"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "63\n",
+      "stderr": "",
+      "stdout": "63\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "9",
+        "4688822992697458457",
+        "827539718650053245",
+        "-3475779108450628573"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "63\n",
+      "stderr": "",
+      "stdout": "63\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "9",
+        "4688822992697458457",
+        "827539718650053245",
+        "-3475779108450628573"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "63\n",
+      "stderr": "",
+      "stdout": "63\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "9",
+        "4688822992697458457",
+        "827539718650053245",
+        "-3475779108450628573"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "63\n",
+      "stderr": "",
+      "stdout": "63\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "25",
+        "-9178854210813522647",
+        "-3822357744582427097",
+        "-1823521251879641416"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "25",
+        "-9178854210813522647",
+        "-3822357744582427097",
+        "-1823521251879641416"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "25",
+        "-9178854210813522647",
+        "-3822357744582427097",
+        "-1823521251879641416"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "25",
+        "-9178854210813522647",
+        "-3822357744582427097",
+        "-1823521251879641416"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "25",
+        "-8964084165716185152",
+        "2117807796071463354",
+        "338130794184647307"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "25",
+        "-8964084165716185152",
+        "2117807796071463354",
+        "338130794184647307"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "25",
+        "-8964084165716185152",
+        "2117807796071463354",
+        "338130794184647307"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "25",
+        "-8964084165716185152",
+        "2117807796071463354",
+        "338130794184647307"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "27",
+        "-5257071959551201539",
+        "-8776267330097132634",
+        "-4568452614803452715"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "189\n",
+      "stderr": "",
+      "stdout": "189\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "27",
+        "-5257071959551201539",
+        "-8776267330097132634",
+        "-4568452614803452715"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "189\n",
+      "stderr": "",
+      "stdout": "189\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "27",
+        "-5257071959551201539",
+        "-8776267330097132634",
+        "-4568452614803452715"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "189\n",
+      "stderr": "",
+      "stdout": "189\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "27",
+        "-5257071959551201539",
+        "-8776267330097132634",
+        "-4568452614803452715"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "189\n",
+      "stderr": "",
+      "stdout": "189\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "0",
+        "4240587997403668577",
+        "-6117097333176228972",
+        "-60888042388967176"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "0",
+        "4240587997403668577",
+        "-6117097333176228972",
+        "-60888042388967176"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "0",
+        "4240587997403668577",
+        "-6117097333176228972",
+        "-60888042388967176"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "0",
+        "4240587997403668577",
+        "-6117097333176228972",
+        "-60888042388967176"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "0\n",
+      "stderr": "",
+      "stdout": "0\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "10",
+        "-7002857107184943165",
+        "2448377802506760533",
+        "4325378556581003143"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "10",
+        "-7002857107184943165",
+        "2448377802506760533",
+        "4325378556581003143"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "10",
+        "-7002857107184943165",
+        "2448377802506760533",
+        "4325378556581003143"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "10",
+        "-7002857107184943165",
+        "2448377802506760533",
+        "4325378556581003143"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "11",
+        "9063347164892729474",
+        "-69807348789660609",
+        "-6378738502791512881"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "11",
+        "9063347164892729474",
+        "-69807348789660609",
+        "-6378738502791512881"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "11",
+        "9063347164892729474",
+        "-69807348789660609",
+        "-6378738502791512881"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "11",
+        "9063347164892729474",
+        "-69807348789660609",
+        "-6378738502791512881"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "19",
+        "2616496897601852123",
+        "2277005397107893511",
+        "-4673974187466973874"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "133\n",
+      "stderr": "",
+      "stdout": "133\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "19",
+        "2616496897601852123",
+        "2277005397107893511",
+        "-4673974187466973874"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "133\n",
+      "stderr": "",
+      "stdout": "133\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "19",
+        "2616496897601852123",
+        "2277005397107893511",
+        "-4673974187466973874"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "133\n",
+      "stderr": "",
+      "stdout": "133\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "19",
+        "2616496897601852123",
+        "2277005397107893511",
+        "-4673974187466973874"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "133\n",
+      "stderr": "",
+      "stdout": "133\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "2",
+        "-1504224754535724690",
+        "-802214909564424858",
+        "-7099867679767553787"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "2",
+        "-1504224754535724690",
+        "-802214909564424858",
+        "-7099867679767553787"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "2",
+        "-1504224754535724690",
+        "-802214909564424858",
+        "-7099867679767553787"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "2",
+        "-1504224754535724690",
+        "-802214909564424858",
+        "-7099867679767553787"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "22",
+        "-5330812504931972353",
+        "-6947544156476912796",
+        "-1108948708022546023"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "154\n",
+      "stderr": "",
+      "stdout": "154\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "22",
+        "-5330812504931972353",
+        "-6947544156476912796",
+        "-1108948708022546023"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "154\n",
+      "stderr": "",
+      "stdout": "154\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "22",
+        "-5330812504931972353",
+        "-6947544156476912796",
+        "-1108948708022546023"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "154\n",
+      "stderr": "",
+      "stdout": "154\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "22",
+        "-5330812504931972353",
+        "-6947544156476912796",
+        "-1108948708022546023"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "154\n",
+      "stderr": "",
+      "stdout": "154\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "5",
+        "5468222825543942476",
+        "9087953789711490836",
+        "1438654530963194352"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "35\n",
+      "stderr": "",
+      "stdout": "35\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "5",
+        "5468222825543942476",
+        "9087953789711490836",
+        "1438654530963194352"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "35\n",
+      "stderr": "",
+      "stdout": "35\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "5",
+        "5468222825543942476",
+        "9087953789711490836",
+        "1438654530963194352"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "35\n",
+      "stderr": "",
+      "stdout": "35\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "5",
+        "5468222825543942476",
+        "9087953789711490836",
+        "1438654530963194352"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "35\n",
+      "stderr": "",
+      "stdout": "35\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "6",
+        "-4987303039002794153",
+        "6650643401166035032",
+        "3775405121204754440"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "42\n",
+      "stderr": "",
+      "stdout": "42\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "6",
+        "-4987303039002794153",
+        "6650643401166035032",
+        "3775405121204754440"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "42\n",
+      "stderr": "",
+      "stdout": "42\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "6",
+        "-4987303039002794153",
+        "6650643401166035032",
+        "3775405121204754440"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "42\n",
+      "stderr": "",
+      "stdout": "42\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "6",
+        "-4987303039002794153",
+        "6650643401166035032",
+        "3775405121204754440"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "42\n",
+      "stderr": "",
+      "stdout": "42\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "2",
+        "-3807892910543673859",
+        "4584034912993620945",
+        "-7630422886013511"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "2",
+        "-3807892910543673859",
+        "4584034912993620945",
+        "-7630422886013511"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "2",
+        "-3807892910543673859",
+        "4584034912993620945",
+        "-7630422886013511"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "2",
+        "-3807892910543673859",
+        "4584034912993620945",
+        "-7630422886013511"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "14\n",
+      "stderr": "",
+      "stdout": "14\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "28",
+        "1553069817569404226",
+        "-4212325633839055103",
+        "-3262907095994736728"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "28",
+        "1553069817569404226",
+        "-4212325633839055103",
+        "-3262907095994736728"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "28",
+        "1553069817569404226",
+        "-4212325633839055103",
+        "-3262907095994736728"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "28",
+        "1553069817569404226",
+        "-4212325633839055103",
+        "-3262907095994736728"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "196\n",
+      "stderr": "",
+      "stdout": "196\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "4",
+        "-148020296097142381",
+        "5194272157183175153",
+        "-4312923078000292418"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "28\n",
+      "stderr": "",
+      "stdout": "28\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "4",
+        "-148020296097142381",
+        "5194272157183175153",
+        "-4312923078000292418"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "28\n",
+      "stderr": "",
+      "stdout": "28\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "4",
+        "-148020296097142381",
+        "5194272157183175153",
+        "-4312923078000292418"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "28\n",
+      "stderr": "",
+      "stdout": "28\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "4",
+        "-148020296097142381",
+        "5194272157183175153",
+        "-4312923078000292418"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "28\n",
+      "stderr": "",
+      "stdout": "28\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "11",
+        "7125319737845412217",
+        "5252250466466586171",
+        "-1599779275092917206"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "11",
+        "7125319737845412217",
+        "5252250466466586171",
+        "-1599779275092917206"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "11",
+        "7125319737845412217",
+        "5252250466466586171",
+        "-1599779275092917206"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "11",
+        "7125319737845412217",
+        "5252250466466586171",
+        "-1599779275092917206"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "77\n",
+      "stderr": "",
+      "stdout": "77\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "31",
+        "-7545300530507580548",
+        "4511741560663010914",
+        "5171036708557875081"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "31",
+        "-7545300530507580548",
+        "4511741560663010914",
+        "5171036708557875081"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "31",
+        "-7545300530507580548",
+        "4511741560663010914",
+        "5171036708557875081"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "31",
+        "-7545300530507580548",
+        "4511741560663010914",
+        "5171036708557875081"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "25",
+        "-2045076146857633884",
+        "-2067568869108031961",
+        "4665234692754885374"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "25",
+        "-2045076146857633884",
+        "-2067568869108031961",
+        "4665234692754885374"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "25",
+        "-2045076146857633884",
+        "-2067568869108031961",
+        "4665234692754885374"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "25",
+        "-2045076146857633884",
+        "-2067568869108031961",
+        "4665234692754885374"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "175\n",
+      "stderr": "",
+      "stdout": "175\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "18",
+        "4214828674171095390",
+        "330688156252165958",
+        "7585953114745793496"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "126\n",
+      "stderr": "",
+      "stdout": "126\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "18",
+        "4214828674171095390",
+        "330688156252165958",
+        "7585953114745793496"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "126\n",
+      "stderr": "",
+      "stdout": "126\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "18",
+        "4214828674171095390",
+        "330688156252165958",
+        "7585953114745793496"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "126\n",
+      "stderr": "",
+      "stdout": "126\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "18",
+        "4214828674171095390",
+        "330688156252165958",
+        "7585953114745793496"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "126\n",
+      "stderr": "",
+      "stdout": "126\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "17",
+        "7231027097934781365",
+        "2776106558449815702",
+        "-8157527501761832990"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "17",
+        "7231027097934781365",
+        "2776106558449815702",
+        "-8157527501761832990"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "17",
+        "7231027097934781365",
+        "2776106558449815702",
+        "-8157527501761832990"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "17",
+        "7231027097934781365",
+        "2776106558449815702",
+        "-8157527501761832990"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "119\n",
+      "stderr": "",
+      "stdout": "119\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "3",
+        "6197294544250353861",
+        "-3513746838555162754",
+        "1083407815978054653"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "3",
+        "6197294544250353861",
+        "-3513746838555162754",
+        "1083407815978054653"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "3",
+        "6197294544250353861",
+        "-3513746838555162754",
+        "1083407815978054653"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "3",
+        "6197294544250353861",
+        "-3513746838555162754",
+        "1083407815978054653"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "21\n",
+      "stderr": "",
+      "stdout": "21\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "8",
+        "-5721299603119225829",
+        "-4103119529780121032",
+        "-4380622659618705557"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "8",
+        "-5721299603119225829",
+        "-4103119529780121032",
+        "-4380622659618705557"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "8",
+        "-5721299603119225829",
+        "-4103119529780121032",
+        "-4380622659618705557"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "8",
+        "-5721299603119225829",
+        "-4103119529780121032",
+        "-4380622659618705557"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "7",
+        "2434928216304144816",
+        "6645899842912422468",
+        "-960976054861928598"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "49\n",
+      "stderr": "",
+      "stdout": "49\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "7",
+        "2434928216304144816",
+        "6645899842912422468",
+        "-960976054861928598"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "49\n",
+      "stderr": "",
+      "stdout": "49\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "7",
+        "2434928216304144816",
+        "6645899842912422468",
+        "-960976054861928598"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "49\n",
+      "stderr": "",
+      "stdout": "49\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "7",
+        "2434928216304144816",
+        "6645899842912422468",
+        "-960976054861928598"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "49\n",
+      "stderr": "",
+      "stdout": "49\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "32",
+        "-7207567138475955171",
+        "-4854215290742501390",
+        "3891106056670832191"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "32",
+        "-7207567138475955171",
+        "-4854215290742501390",
+        "3891106056670832191"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "32",
+        "-7207567138475955171",
+        "-4854215290742501390",
+        "3891106056670832191"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "32",
+        "-7207567138475955171",
+        "-4854215290742501390",
+        "3891106056670832191"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "224\n",
+      "stderr": "",
+      "stdout": "224\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "31",
+        "6742979081946458027",
+        "8579405284770529416",
+        "-4721071820318109416"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "31",
+        "6742979081946458027",
+        "8579405284770529416",
+        "-4721071820318109416"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "31",
+        "6742979081946458027",
+        "8579405284770529416",
+        "-4721071820318109416"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "31",
+        "6742979081946458027",
+        "8579405284770529416",
+        "-4721071820318109416"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "217\n",
+      "stderr": "",
+      "stdout": "217\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "8",
+        "7049886733935216103",
+        "1839778869629998968",
+        "-963085152234156266"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "8",
+        "7049886733935216103",
+        "1839778869629998968",
+        "-963085152234156266"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "8",
+        "7049886733935216103",
+        "1839778869629998968",
+        "-963085152234156266"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "8",
+        "7049886733935216103",
+        "1839778869629998968",
+        "-963085152234156266"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "56\n",
+      "stderr": "",
+      "stdout": "56\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "10",
+        "-7993078850214964852",
+        "2209155329412507975",
+        "3900553976600504335"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "10",
+        "-7993078850214964852",
+        "2209155329412507975",
+        "3900553976600504335"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "10",
+        "-7993078850214964852",
+        "2209155329412507975",
+        "3900553976600504335"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "10",
+        "-7993078850214964852",
+        "2209155329412507975",
+        "3900553976600504335"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "70\n",
+      "stderr": "",
+      "stdout": "70\n"
+    }
+  ],
+  "frozen_gate_passed": true,
+  "manual_encoding_assembly_identical": true,
+  "manual_encoding_emitted_identical": true,
+  "measured_rows": 128,
+  "random_case_count": 40,
+  "random_execution_count": 160,
+  "ratios": {
+    "B1/U0": {
+      "all_faster": false,
+      "bootstrap95": [
+        0.9985957546781943,
+        1.0018336190260035
+      ],
+      "median": 1.0003429329007747
+    },
+    "Encoding/U0": {
+      "all_faster": true,
+      "bootstrap95": [
+        0.9804194178181054,
+        0.9816407467298164
+      ],
+      "median": 0.9808384932922646
+    },
+    "Manual/U0": {
+      "all_faster": false,
+      "bootstrap95": [
+        0.9800444168379328,
+        0.9823044214721325
+      ],
+      "median": 0.9808732336426238
+    }
+  },
+  "raw_rows": 140,
+  "raw_sha256": "8fc9f141fc1bb953437a489c49c50ae697d375b4df6f19e9406d29a51c4fa0de",
+  "summary_sha256": "cddb1209170035e51ebcbd7b3cd46f4a5a4fb22b1cf33ae5cd96579707b791c9",
+  "u0_b1_emitted_identical": true,
+  "warmup_rows": 12,
+  "winning_cycle_oracle": {
+    "deltas": [
+      3,
+      7,
+      7,
+      7,
+      7,
+      3,
+      7,
+      7
+    ],
+    "period": 8,
+    "period_sum": 48,
+    "periods": 25000000,
+    "remainder": 0,
+    "state_modulus": 8
+  },
+  "winning_executions": [
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+        "200000000",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "U0",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "1200000000\n",
+      "stderr": "",
+      "stdout": "1200000000\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+        "200000000",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "B1",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "1200000000\n",
+      "stderr": "",
+      "stdout": "1200000000\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+        "200000000",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Manual",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "1200000000\n",
+      "stderr": "",
+      "stdout": "1200000000\n"
+    },
+    {
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+        "200000000",
+        "0",
+        "1",
+        "6"
+      ],
+      "arm": "Encoding",
+      "correct": true,
+      "exit_code": 0,
+      "expected_stdout": "1200000000\n",
+      "stderr": "",
+      "stdout": "1200000000\n"
+    }
+  ],
+  "winning_expected_stdout": "1200000000\n"
+}

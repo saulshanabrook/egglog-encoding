@@ -1,0 +1,11 @@
+# Parts32 whole-session restart amendment
+
+The first repaired-runner campaign began under accepted preflight SHA-256 `cd7691e1feec57a02093cab4b4bd9890c892f6c38073ea019c069d56846fc1a3`. Session 1 passed its start, cycle-15, cycle-30, and cycle-45 process checks. At the cycle-60 boundary, the fixed process policy found an unrelated Cargo process and Rust compiler, so the runner emitted `process_snapshot_failed`, emitted `session_failed`, and exited. It preserved 45 warmups, 900 raw observation rows, five process snapshots, and seven event rows. No summary or independent-verification artifact exists.
+
+This amendment is fixed before inspecting any elapsed sample value, calculating any ratio, or running a replacement observation. Only file/line counts, event metadata, and the rejected process inventory were read. The rejected inventory identifies Cargo PID 35998 and Rust PID 36260 as known compiler jobs. The incomplete rows cannot enter any estimate, interval, gate, plot, or narrative result.
+
+The failed campaign will be archived byte-for-byte under `timing-aborted-process-admission-01/`, with its accepted preflight renamed `timing-preflight-aborted-process-admission-01.json`, its screen transcript retained separately, and a hash manifest covering every archived byte. Nothing will be deleted or overwritten.
+
+A replacement campaign may start only after an independent audit confirms the archive, the absence of a live measurement process, and unchanged design/producer/verifier/cohort hashes. It must create a new exclusive preflight from a passing host inventory and rerun all 90 cycles of session 1 from the beginning. It may then run all 90 cycles of session 2. The replacement uses the identical frozen design, session labels, workload and arm order, warmups, timer boundary, estimator, bootstrap, thresholds, checkpoints, and verifier. The archived 60-cycle attempt remains visible as a process-admission failure and is never combined with the replacement.
+
+This is a whole-session retry after a prospective environmental validity check, not selective repetition based on performance. If a replacement session fails another fixed checkpoint, preserve it in the same way and do not weaken process admission or inspect its performance values to choose a retry.

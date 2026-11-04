@@ -1,0 +1,66 @@
+{
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "--with-context",
+    "--run-mode",
+    "llvm",
+    "--optimize-egglog",
+    "false",
+    "--optimize-bril-llvm",
+    "O3_O3",
+    "-o",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/program",
+    "--llvm-output-dir",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/program.ll",
+    "--run-data-out",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/lower.json",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/optimized.bril"
+  ],
+  "cwd": "/private/tmp/eggcc-parts32-candidate",
+  "timeout_s": 180,
+  "elapsed_s": 0.4891298330621794,
+  "exit_code": 0,
+  "timed_out": false,
+  "environment": {
+    "EGGCC_ROOT": "/private/tmp/eggcc-parts32-candidate",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "CARGO_BUILD_JOBS": "4",
+    "RUST_TEST_THREADS": "4",
+    "RAYON_NUM_THREADS": "1",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "PATH": "/opt/homebrew/opt/llvm@18/bin:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0Acvxay:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg06zkSLr:/Users/saul/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0koUR7b:/Users/saul/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg02WeeWf:/Users/saul/.codex/packages/standalone/releases/0.161.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0UKoOEk:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/1112_1791436627170/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "CARGO_TARGET_DIR": "/private/tmp/encoding-parts32-candidate/target",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "extra_environment": {},
+  "scoped_mode": "off",
+  "scoped_evidence": null,
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD"
+  ],
+  "files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+      "sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/program",
+      "sha256": "2d3e5ac14ab4784e1dd761e2f6a231e1c7f6a29f667362a9eac5998fea1e3fbd"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/program.ll",
+      "sha256": "ff0180e578f9c8d22c179f687808a8b6498f5630e239941df1c3ec132a78d433"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/native/lower.json",
+      "sha256": "13328e2d75364f378e8a0ed8deda8f24cac6980301eb263b818b02e49234675a"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/wrong-divisor/encoding/optimized.bril",
+      "sha256": "aad5fef003f692eafbce11683fa262e823d8f3f4a0fe50748ac7e9669a338aa8"
+    }
+  ],
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -1,0 +1,3470 @@
+{
+  "arm_order_design": "14-treatment even Williams square; every complete block balances positions and directed immediate predecessors",
+  "arms": {
+    "bridge-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/bridge-off/native/program.asm",
+      "assembly_sha256": "a8729e384df8aac841b89f07e643008969ab2442dd7b9e10317f768e6aabd0f2",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/bridge-off/native/program",
+      "binary_sha256": "b846ea51ac1eb7658a5252d9746abc67b36d0a387466414e631b82b35ece9fa7",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/bridge-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "bridge-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "cancellation-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/cancellation-off/native/program.asm",
+      "assembly_sha256": "2ed8b2d2b25fbc97d5106225b9c423f3f3dc775963172f71e4a9de2ab891276d",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/cancellation-off/native/program",
+      "binary_sha256": "be19da38757f69b583589d06a182afa9bf967b38ab42ce9735d4f27b0937d8e2",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/cancellation-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "cancellation-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "consumer-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/consumer-off/native/program.asm",
+      "assembly_sha256": "583af48b4043385efc04f697b4404541ef8a7b16afe80c09ecac59feef9cc83d",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/consumer-off/native/program",
+      "binary_sha256": "7a29af405046e4dcc6e10af5f15f877e274843aff7e016a731a3c7b32725bab7",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/consumer-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "consumer-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "encoding": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/encoding/native/program.asm",
+      "assembly_sha256": "cba48d1048c9dbe0cb08013c0067a18ea658346a9f786ed773d264c690678db9",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/encoding/native/program",
+      "binary_sha256": "5da4993ee2c22aca629b654db8b81fc2143eb3faa8f66cae5a43ed1bf98c52f9",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/encoding/optimized.bril",
+      "emitted_sha256": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+      "mode": "encoding",
+      "process_main_backward_branches": 0,
+      "process_main_instruction_count": 55,
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+    },
+    "identity-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/identity-off/native/program.asm",
+      "assembly_sha256": "0d64fd4f01cfc7ac3ebb6215af801bd06e56775c2ec72b43a374e6bcec32c5f6",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/identity-off/native/program",
+      "binary_sha256": "cd4a905183efe6c3dd4d805aa29f9605c1d9461d310c9e757b8c144d16c1e164",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/identity-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "identity-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "key-rescue": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/native/program.asm",
+      "assembly_sha256": "2eaf94a5fe9c135865f8f91f407c5a2599911d1936c6acd3b371afd8e190d4bb",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/native/program",
+      "binary_sha256": "249845dcd4114f5777086a00aa415b60aa47a47bb80fe987c249c42e3dd0052f",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/key-rescue/optimized.bril",
+      "emitted_sha256": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+      "mode": "key-rescue",
+      "process_main_backward_branches": 0,
+      "process_main_instruction_count": 55,
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+    },
+    "manual": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/manual/native/program.asm",
+      "assembly_sha256": "d3508b4fe7d75e51e7c64f50e901947ae1db113dd86091d393182a176ef96d69",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/manual/native/program",
+      "binary_sha256": "6f3175f39a68c89f1e7a013e58e05f22650a585874407af6251589e8c6d2a67c",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/manual/optimized.bril",
+      "emitted_sha256": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+      "mode": "manual",
+      "process_main_backward_branches": 0,
+      "process_main_instruction_count": 55,
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+    },
+    "off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/off/native/program.asm",
+      "assembly_sha256": "7139371b4a670c5ff20a36b2afb234a4b83fcdbb3295b7a0e75a55c693c31deb",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/off/native/program",
+      "binary_sha256": "27b7e9e6fcdfe8d476b5163ea8f0d2e16de9595b623c36ba72091f9088ba8278",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "primitive-only": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/primitive-only/native/program.asm",
+      "assembly_sha256": "774ccc2c5bcd2d77a58df8430a32d484dbd0f074aab27985bec92b7875e79557",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/primitive-only/native/program",
+      "binary_sha256": "f3fdf7e46f67d5d8a50653a026d47f46d96c575d8de009bdfce8ecbee89ed8db",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/primitive-only/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "primitive-only",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "query-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/query-off/native/program.asm",
+      "assembly_sha256": "32a0d55fc816ebdd2fc10726bd53044e505cc7a641361181d6a2c3fe938c05f2",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/query-off/native/program",
+      "binary_sha256": "b2cad0d32e07f9b3247a71c0a439587b0fabde7262734b4f108b3e2b52aaa640",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/query-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "query-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "seed-only": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/seed-only/native/program.asm",
+      "assembly_sha256": "7bfe8f40c4d27875d07b891a3a24a09490a538540a4e0f2350793eba69c5aab6",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/seed-only/native/program",
+      "binary_sha256": "d1b77d2929a296126d066fef8acb8bbe9384a22ffbb4d265deee364e5915c098",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/seed-only/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "seed-only",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "transport-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/transport-off/native/program.asm",
+      "assembly_sha256": "d8a92cdfc47146cfdae70b95632062984e5381fa53b668503e9445de6ae8970d",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/transport-off/native/program",
+      "binary_sha256": "92375392dd995b2033c54245744dd8138e130761aa05d0e2634dde4a53977cd2",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/transport-off/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "transport-off",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "u0": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/u0/native/program.asm",
+      "assembly_sha256": "96bd208dbe8408af804681cf1e7cc6d4b55425cf173d3b6c15c847e51f3fc381",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/u0/native/program",
+      "binary_sha256": "981bcd7d585206bcf52d074b4fade792088da70c90c3fa1e9784b80d3a5ff29f",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/u0/optimized.bril",
+      "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+      "mode": "u0",
+      "process_main_backward_branches": 2,
+      "process_main_instruction_count": 91,
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "x-rescue": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/x-rescue/native/program.asm",
+      "assembly_sha256": "0d736c178e789d0f431b3c2c5286fb57168167b401c7858b57ef8a1028076b45",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/x-rescue/native/program",
+      "binary_sha256": "a987335a914896bb3d31ea6cc56f8ed2e68ab5868fd1e100b12d84aed5279d0d",
+      "emitted": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/matrix/positive/x-rescue/optimized.bril",
+      "emitted_sha256": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+      "mode": "x-rescue",
+      "process_main_backward_branches": 0,
+      "process_main_instruction_count": 55,
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+    }
+  },
+  "binary_inspection": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/actual-binary-inspection-r1.json",
+  "binary_inspection_sha256": "7cfc70703384fa1b4e5f2c563c01b640b2115035600fcf6163e8b93298297ed4",
+  "bootstrap_draws": 10000,
+  "bootstrap_seed": 7019,
+  "bootstrap_unit": "complete 14-cycle Williams block",
+  "child_environment": {
+    "LANG": "C",
+    "LC_ALL": "C",
+    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"
+  },
+  "clock": "Python time.perf_counter_ns around ten serial fresh processes",
+  "compiler_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+  "compiler_binary_sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+  "compiler_delta_patch": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/eggcc-candidate-r1.patch",
+  "compiler_delta_patch_sha256": "3242cf2bd7925912fa7902b9fdeee2a98889fe6e1dba5f5d0d93cea31691295f",
+  "compiler_source_archive": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/corrected-source-r1.tar",
+  "compiler_source_archive_sha256": "17d40620cb9c621ff493cb4edfd5099a487ce0f68ee054184b75381386a7e30e",
+  "compiler_timing_excluded_reason": "audit-only manual closure also runs in encoding and the manual arm also materializes the engine graph",
+  "confirmation_gate": "every primary hot complete-block bootstrap 95% upper bound is below 0.99",
+  "endpoint": "fresh-process execution of generated Mach-O programs; compiler and lowering time excluded",
+  "failure_policy": "retain partial artifacts and stop on timeout, signal, nonzero exit, stderr, or wrong stdout",
+  "frozen_utc": "2026-10-20T03:35:48.698098+00:00",
+  "invocations_per_observation": 10,
+  "memory_guard": "EGGLOG_BENCH_MEMORY_GUARD must be absent from parent and child environments",
+  "memory_pressure_policy": "recorded descriptively and never used to block or discard a session",
+  "native_backend": "untouched admitted U0 lowering with LLVM 18 O3_O3 and optimize-egglog=false",
+  "outlier_policy": "retain every completed observation; no exclusions or adaptive reruns",
+  "primary_hot_comparisons": [
+    [
+      "encoding",
+      "u0"
+    ],
+    [
+      "encoding",
+      "off"
+    ],
+    [
+      "encoding",
+      "seed-only"
+    ],
+    [
+      "encoding",
+      "primitive-only"
+    ],
+    [
+      "manual",
+      "u0"
+    ]
+  ],
+  "raytracing": "excluded",
+  "revision": 1,
+  "same_code_gate": "on confirmation hot workload, every arm median in each instruction-identical group is within 2% of that group's reference",
+  "same_code_groups": {
+    "baseline": {
+      "arms": [
+        "bridge-off",
+        "cancellation-off",
+        "consumer-off",
+        "identity-off",
+        "off",
+        "primitive-only",
+        "query-off",
+        "seed-only",
+        "transport-off",
+        "u0"
+      ],
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+      "reference": "u0"
+    },
+    "winning": {
+      "arms": [
+        "encoding",
+        "key-rescue",
+        "manual",
+        "x-rescue"
+      ],
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360",
+      "reference": "encoding"
+    }
+  },
+  "schema_version": 1,
+  "screen_gate": "every primary hot paired median ratio is below 0.99",
+  "sessions": [
+    {
+      "complete_blocks": 1,
+      "cycle_order": [
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 0,
+          "cycle": 0,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 0,
+          "cycle": 1,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 0,
+          "cycle": 2,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 0,
+          "cycle": 3,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 0,
+          "cycle": 4,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 0,
+          "cycle": 5,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 0,
+          "cycle": 6,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 0,
+          "cycle": 7,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 0,
+          "cycle": 8,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 0,
+          "cycle": 9,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 0,
+          "cycle": 10,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 0,
+          "cycle": 11,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 0,
+          "cycle": 12,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 0,
+          "cycle": 13,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        }
+      ],
+      "cycles": 14,
+      "name": "screen"
+    },
+    {
+      "complete_blocks": 8,
+      "cycle_order": [
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 0,
+          "cycle": 0,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 0,
+          "cycle": 1,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 0,
+          "cycle": 2,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 0,
+          "cycle": 3,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 0,
+          "cycle": 4,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 0,
+          "cycle": 5,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 0,
+          "cycle": 6,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 0,
+          "cycle": 7,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 0,
+          "cycle": 8,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 0,
+          "cycle": 9,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 0,
+          "cycle": 10,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 0,
+          "cycle": 11,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 0,
+          "cycle": 12,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 0,
+          "cycle": 13,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 1,
+          "cycle": 14,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 1,
+          "cycle": 15,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 1,
+          "cycle": 16,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 1,
+          "cycle": 17,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 1,
+          "cycle": 18,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 1,
+          "cycle": 19,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 1,
+          "cycle": 20,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 1,
+          "cycle": 21,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 1,
+          "cycle": 22,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 1,
+          "cycle": 23,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 1,
+          "cycle": 24,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 1,
+          "cycle": 25,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 1,
+          "cycle": 26,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 1,
+          "cycle": 27,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 2,
+          "cycle": 28,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 2,
+          "cycle": 29,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 2,
+          "cycle": 30,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 2,
+          "cycle": 31,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 2,
+          "cycle": 32,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 2,
+          "cycle": 33,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 2,
+          "cycle": 34,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 2,
+          "cycle": 35,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 2,
+          "cycle": 36,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 2,
+          "cycle": 37,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 2,
+          "cycle": 38,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 2,
+          "cycle": 39,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 2,
+          "cycle": 40,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 2,
+          "cycle": 41,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 3,
+          "cycle": 42,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 3,
+          "cycle": 43,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 3,
+          "cycle": 44,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 3,
+          "cycle": 45,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 3,
+          "cycle": 46,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 3,
+          "cycle": 47,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 3,
+          "cycle": 48,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 3,
+          "cycle": 49,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 3,
+          "cycle": 50,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 3,
+          "cycle": 51,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 3,
+          "cycle": 52,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 3,
+          "cycle": 53,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 3,
+          "cycle": 54,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 3,
+          "cycle": 55,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 4,
+          "cycle": 56,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 4,
+          "cycle": 57,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 4,
+          "cycle": 58,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 4,
+          "cycle": 59,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 4,
+          "cycle": 60,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 4,
+          "cycle": 61,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 4,
+          "cycle": 62,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 4,
+          "cycle": 63,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 4,
+          "cycle": 64,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 4,
+          "cycle": 65,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 4,
+          "cycle": 66,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 4,
+          "cycle": 67,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 4,
+          "cycle": 68,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 4,
+          "cycle": 69,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 5,
+          "cycle": 70,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 5,
+          "cycle": 71,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 5,
+          "cycle": 72,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 5,
+          "cycle": 73,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 5,
+          "cycle": 74,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 5,
+          "cycle": 75,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 5,
+          "cycle": 76,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 5,
+          "cycle": 77,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 5,
+          "cycle": 78,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 5,
+          "cycle": 79,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 5,
+          "cycle": 80,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 5,
+          "cycle": 81,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 5,
+          "cycle": 82,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 5,
+          "cycle": 83,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 6,
+          "cycle": 84,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 6,
+          "cycle": 85,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 6,
+          "cycle": 86,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 6,
+          "cycle": 87,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 6,
+          "cycle": 88,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 6,
+          "cycle": 89,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 6,
+          "cycle": 90,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 6,
+          "cycle": 91,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 6,
+          "cycle": 92,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 6,
+          "cycle": 93,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 6,
+          "cycle": 94,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 6,
+          "cycle": 95,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 6,
+          "cycle": 96,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 6,
+          "cycle": 97,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "cancellation-off",
+            "identity-off",
+            "manual",
+            "x-rescue",
+            "encoding",
+            "key-rescue",
+            "primitive-only",
+            "query-off",
+            "seed-only",
+            "transport-off",
+            "off",
+            "bridge-off",
+            "u0",
+            "consumer-off"
+          ],
+          "complete_block": 7,
+          "cycle": 98,
+          "williams_row": 6,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "manual",
+            "cancellation-off",
+            "encoding",
+            "identity-off",
+            "primitive-only",
+            "x-rescue",
+            "seed-only",
+            "key-rescue",
+            "off",
+            "query-off",
+            "u0",
+            "transport-off",
+            "consumer-off",
+            "bridge-off"
+          ],
+          "complete_block": 7,
+          "cycle": 99,
+          "williams_row": 5,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "encoding",
+            "manual",
+            "primitive-only",
+            "cancellation-off",
+            "seed-only",
+            "identity-off",
+            "off",
+            "x-rescue",
+            "u0",
+            "key-rescue",
+            "consumer-off",
+            "query-off",
+            "bridge-off",
+            "transport-off"
+          ],
+          "complete_block": 7,
+          "cycle": 100,
+          "williams_row": 4,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "primitive-only",
+            "encoding",
+            "seed-only",
+            "manual",
+            "off",
+            "cancellation-off",
+            "u0",
+            "identity-off",
+            "consumer-off",
+            "x-rescue",
+            "bridge-off",
+            "key-rescue",
+            "transport-off",
+            "query-off"
+          ],
+          "complete_block": 7,
+          "cycle": 101,
+          "williams_row": 3,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "seed-only",
+            "primitive-only",
+            "off",
+            "encoding",
+            "u0",
+            "manual",
+            "consumer-off",
+            "cancellation-off",
+            "bridge-off",
+            "identity-off",
+            "transport-off",
+            "x-rescue",
+            "query-off",
+            "key-rescue"
+          ],
+          "complete_block": 7,
+          "cycle": 102,
+          "williams_row": 2,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "off",
+            "seed-only",
+            "u0",
+            "primitive-only",
+            "consumer-off",
+            "encoding",
+            "bridge-off",
+            "manual",
+            "transport-off",
+            "cancellation-off",
+            "query-off",
+            "identity-off",
+            "key-rescue",
+            "x-rescue"
+          ],
+          "complete_block": 7,
+          "cycle": 103,
+          "williams_row": 1,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "u0",
+            "off",
+            "consumer-off",
+            "seed-only",
+            "bridge-off",
+            "primitive-only",
+            "transport-off",
+            "encoding",
+            "query-off",
+            "manual",
+            "key-rescue",
+            "cancellation-off",
+            "x-rescue",
+            "identity-off"
+          ],
+          "complete_block": 7,
+          "cycle": 104,
+          "williams_row": 0,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "consumer-off",
+            "u0",
+            "bridge-off",
+            "off",
+            "transport-off",
+            "seed-only",
+            "query-off",
+            "primitive-only",
+            "key-rescue",
+            "encoding",
+            "x-rescue",
+            "manual",
+            "identity-off",
+            "cancellation-off"
+          ],
+          "complete_block": 7,
+          "cycle": 105,
+          "williams_row": 13,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "bridge-off",
+            "consumer-off",
+            "transport-off",
+            "u0",
+            "query-off",
+            "off",
+            "key-rescue",
+            "seed-only",
+            "x-rescue",
+            "primitive-only",
+            "identity-off",
+            "encoding",
+            "cancellation-off",
+            "manual"
+          ],
+          "complete_block": 7,
+          "cycle": 106,
+          "williams_row": 12,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "transport-off",
+            "bridge-off",
+            "query-off",
+            "consumer-off",
+            "key-rescue",
+            "u0",
+            "x-rescue",
+            "off",
+            "identity-off",
+            "seed-only",
+            "cancellation-off",
+            "primitive-only",
+            "manual",
+            "encoding"
+          ],
+          "complete_block": 7,
+          "cycle": 107,
+          "williams_row": 11,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "query-off",
+            "transport-off",
+            "key-rescue",
+            "bridge-off",
+            "x-rescue",
+            "consumer-off",
+            "identity-off",
+            "u0",
+            "cancellation-off",
+            "off",
+            "manual",
+            "seed-only",
+            "encoding",
+            "primitive-only"
+          ],
+          "complete_block": 7,
+          "cycle": 108,
+          "williams_row": 10,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "key-rescue",
+            "query-off",
+            "x-rescue",
+            "transport-off",
+            "identity-off",
+            "bridge-off",
+            "cancellation-off",
+            "consumer-off",
+            "manual",
+            "u0",
+            "encoding",
+            "off",
+            "primitive-only",
+            "seed-only"
+          ],
+          "complete_block": 7,
+          "cycle": 109,
+          "williams_row": 9,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        },
+        {
+          "arm_order": [
+            "x-rescue",
+            "key-rescue",
+            "identity-off",
+            "query-off",
+            "cancellation-off",
+            "transport-off",
+            "manual",
+            "bridge-off",
+            "encoding",
+            "consumer-off",
+            "primitive-only",
+            "u0",
+            "seed-only",
+            "off"
+          ],
+          "complete_block": 7,
+          "cycle": 110,
+          "williams_row": 8,
+          "workload_order": [
+            "hot-equal-key",
+            "neutral-zero-trip"
+          ]
+        },
+        {
+          "arm_order": [
+            "identity-off",
+            "x-rescue",
+            "cancellation-off",
+            "key-rescue",
+            "manual",
+            "query-off",
+            "encoding",
+            "transport-off",
+            "primitive-only",
+            "bridge-off",
+            "seed-only",
+            "consumer-off",
+            "off",
+            "u0"
+          ],
+          "complete_block": 7,
+          "cycle": 111,
+          "williams_row": 7,
+          "workload_order": [
+            "neutral-zero-trip",
+            "hot-equal-key"
+          ]
+        }
+      ],
+      "cycles": 112,
+      "name": "confirmation"
+    }
+  ],
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/source.bril",
+  "source_identities": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/source-identities-r1.json",
+  "source_identities_sha256": "22c37674b4f8617b90cceadddb2daa0992b501b9f627029ebc48dbda6515723c",
+  "source_sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+  "status": "prospective design frozen before QR7 actual-integration timing",
+  "tiger_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/tiger",
+  "tiger_binary_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+  "timed_samples_taken": false,
+  "timeout_s_per_process": 30,
+  "transport_off_interpretation": "export-gate placebo; current source does not disable transport computation",
+  "warmups_per_arm_per_workload_per_session": 1,
+  "williams_base_indices": [
+    0,
+    1,
+    13,
+    2,
+    12,
+    3,
+    11,
+    4,
+    10,
+    5,
+    9,
+    6,
+    8,
+    7
+  ],
+  "workloads": [
+    {
+      "acceptance_role": "primary runtime payoff",
+      "args": [
+        12,
+        12,
+        10000000
+      ],
+      "expected_stdout": "49999995000000\n",
+      "name": "hot-equal-key"
+    },
+    {
+      "acceptance_role": "reported neutral control; no speedup required",
+      "args": [
+        12,
+        12,
+        0
+      ],
+      "expected_stdout": "0\n",
+      "name": "neutral-zero-trip"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "full_matrix_rerun": false,
+  "r1_frozen_binary": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+    "sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+    "size": 61915472
+  },
+  "r2_rebuilt_binary": {
+    "path": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+    "sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+    "size": 61915472
+  },
+  "same_size": true,
+  "schema_version": 1,
+  "sha256_equal": false,
+  "status": "rebuilt-binary-differs-stop-gate-triggered",
+  "stop_reason": "The delegated validation required stopping after reporting when the r2 binary differs.",
+  "timing_rerun": false
+}

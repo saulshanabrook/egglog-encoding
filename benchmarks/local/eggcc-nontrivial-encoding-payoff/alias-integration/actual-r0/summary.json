@@ -1,0 +1,122 @@
+{
+  "status": "failed-conservative-import-admission",
+  "family": "A1-mask-live-cell",
+  "actual_compiler_integration_attempted": true,
+  "integration_accepted": false,
+  "terminal_within_prescribed_attempt_budget": true,
+  "semantic_law_refuted": false,
+  "terminal_reason": "Initial attempt rejects Alloc PointerT(IntT); single revision fixes that and links import/metadata/context checks but rejects admitted auxiliary Expr-valued TupleRemoveAt and to-hoist rows. No further functional revision permitted. This is a bounded implementation failure, not evidence of semantic impossibility or a substantial-redesign requirement.",
+  "functional_revision_count": 1,
+  "source_inputs_unchanged": true,
+  "initial_focused_tests": {
+    "passed": 4,
+    "failed": 1,
+    "registered": 5
+  },
+  "revised_focused_tests": {
+    "passed": 3,
+    "failed": 3,
+    "registered": 6
+  },
+  "full_host_lib_tests": {
+    "passed": 67,
+    "failed": 3,
+    "registered": 70
+  },
+  "required_validation_passed": false,
+  "full_make_check_executed": false,
+  "full_make_check_not_executed_reason": "The new focused A1 tests and complete host library test suite fail; no acceptance or timing is possible. Engine sources are byte-identical to admission.",
+  "positive_treatments": 18,
+  "positive_native_rows": 216,
+  "negative_arms": 13,
+  "negative_native_rows": 17,
+  "native_checks_total": 233,
+  "all_native_checks_passed": true,
+  "interpreter_arms": 31,
+  "all_original_result_interpreter_pairs_match": true,
+  "exports": 0,
+  "positive_query_receipts": 0,
+  "controls_interpretation": "All actual modes reject before private query/transport/bridge; no fixed-input knockout or rescue causality was established by actual host execution.",
+  "actual_binary_inspection": {
+    "status": "no-endpoint-opportunity-in-this-attempt",
+    "actual_binary_inspected": true,
+    "causal_code_difference": false,
+    "all_emitted_bril_identical": true,
+    "all_native_process_main_instructions_identical": true,
+    "all_keep_hot_loop_one_load_two_stores": true,
+    "timing_eligible": false,
+    "performance_samples_taken": false
+  },
+  "timing_taken": false,
+  "compiler_bug_claim": false,
+  "speedup_claim": false,
+  "command_count": 369,
+  "captured_failures": [
+    {
+      "label": "cli-help",
+      "exit_code": null,
+      "launch_error": "FileNotFoundError(2, 'No such file or directory')",
+      "timed_out": false
+    },
+    {
+      "label": "diagnose-certificate",
+      "exit_code": 101,
+      "launch_error": null,
+      "timed_out": false
+    },
+    {
+      "label": "diagnose-certificate-rerun",
+      "exit_code": 101,
+      "launch_error": null,
+      "timed_out": false
+    },
+    {
+      "label": "focused-initial",
+      "exit_code": 101,
+      "launch_error": null,
+      "timed_out": false
+    },
+    {
+      "label": "focused-revision-1",
+      "exit_code": 101,
+      "launch_error": null,
+      "timed_out": false
+    },
+    {
+      "label": "full-host-lib",
+      "exit_code": 101,
+      "launch_error": null,
+      "timed_out": false
+    }
+  ],
+  "timeouts": 0,
+  "memory_guard_absent": true,
+  "raytracing_executed": false,
+  "preservation": {
+    "u0_files_verified": 771,
+    "prior_initial_installation_files_unchanged_since_task_start": 3,
+    "historical_installation_manifest_drift": [
+      {
+        "path": "/private/tmp/eggcc-alias-candidate/dag_in_context/src/scoped_alias.rs",
+        "recorded_sha256": "9e453e82e491bde895e1a36cae5afea1f846681a69b7c621710592763559dad0",
+        "task_start_and_current_sha256": "25fd25d2a6560ae1a433bcf1912e0dd26af52b8ac8ff4b0c856500f0ac20dc4f"
+      }
+    ],
+    "immutable_input_files_verified": 8,
+    "engine_source_files_unchanged": 964,
+    "host_changes_from_admitted_actual_copy": [
+      {
+        "path": "dag_in_context/src/scoped_alias.rs",
+        "before": "25fd25d2a6560ae1a433bcf1912e0dd26af52b8ac8ff4b0c856500f0ac20dc4f",
+        "after": "dec6b745b8a36c1d7455387f31b705cc5c4a274bf0efbf089a820bd6a9e43b38"
+      }
+    ]
+  },
+  "frozen_source_archive": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-integration/actual-r0/final-source-r1.tar",
+    "sha256": "c7b27ddb366015630a438a2e6b844ee8377efac427fadb28094e15ef44b68d1a",
+    "files": 1740
+  },
+  "completed_utc": "2026-10-20T04:05:12.038379+00:00",
+  "command_count_includes_final_freeze_receipt": true
+}

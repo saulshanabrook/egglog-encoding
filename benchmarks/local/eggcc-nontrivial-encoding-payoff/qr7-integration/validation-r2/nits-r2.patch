@@ -1,0 +1,52 @@
+--- a/dag_in_context/src/scoped_qr7.rs
++++ b/dag_in_context/src/scoped_qr7.rs
+@@ -393,8 +393,8 @@
+             if base.get_ctx() != current.get_ctx() || index.get_ctx() != current.get_ctx() {
+                 return Err("ptradd-child-context");
+             }
+-            let offset = word(index, root, current.get_ctx(), loops, 0)
+-                .ok_or("unresolved-offset-word")?;
++            let offset =
++                word(index, root, current.get_ctx(), loops, 0).ok_or("unresolved-offset-word")?;
+             let mut base = base.clone();
+             for _ in 0..128 {
+                 if let Expr::Get(allocation, 0) = base.as_ref() {
+@@ -475,7 +475,8 @@
+ /// Independent least fixed point of congruence and marked injectivity on the
+ /// same finite rows, primitive fields, representation edges and dynamic seeds.
+ fn manual(marked: bool, identity: bool, rescue_x: bool, rescue_key: bool) -> [bool; 4] {
+-    let rows: Vec<(&str, Vec<usize>, Vec<i64>, usize, bool)> = vec![
++    type ManualRow = (&'static str, Vec<usize>, Vec<i64>, usize, bool);
++    let rows: Vec<ManualRow> = vec![
+         ("Q7", vec![0], vec![7], 2, false),
+         ("Q7", vec![1], vec![7], 3, false),
+         ("R7", vec![0], vec![7], 4, false),
+@@ -787,7 +788,18 @@
+                 if let Some(Value::Object(fields)) = address_diagnostics.first_mut() {
+                     fields.insert(
+                         "results".to_owned(),
+-                        json!([address_results.0.as_ref().map(|_| "ok").unwrap_or_else(|error| *error), address_results.1.as_ref().map(|_| "ok").unwrap_or_else(|error| *error)]),
++                        json!([
++                            address_results
++                                .0
++                                .as_ref()
++                                .map(|_| "ok")
++                                .unwrap_or_else(|error| *error),
++                            address_results
++                                .1
++                                .as_ref()
++                                .map(|_| "ok")
++                                .unwrap_or_else(|error| *error)
++                        ]),
+                     );
+                 }
+                 let (Ok(a), Ok(b)) = address_results else {
+@@ -936,7 +948,7 @@
+                 assert_eq!((x / 7, x % 7) == (y / 7, y % 7), x == y);
+             }
+         }
+-        assert_eq!((5 % 7, 12 % 7), (5, 5));
++        assert_eq!((5, 12 % 7), (5, 5));
+         assert_eq!((7 / 7, 8 / 7), (1, 1));
+         assert_eq!((8 / 7, 8 % 7), (9 / 8, 9 % 8));
+     }

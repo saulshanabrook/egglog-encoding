@@ -1,0 +1,52 @@
+--- a/egglog-experimental/src/disequality.rs
++++ b/egglog-experimental/src/disequality.rs
+@@ -190,7 +190,8 @@
+ /// Install syntax and its lowering pass before enabling term/proof encoding.
+ /// Call once on a fresh graph; the encoding is fixed for that graph.
+ pub(crate) fn add_disequality_support(egraph: &mut EGraph, encoding: DisequalityEncoding) {
+-    egraph.add_read_primitive(KnownDisequal(encoding), None);
++    egraph.add_read_primitive(KnownDisequal(encoding, true), None);
++    egraph.add_read_primitive(KnownDisequal(encoding, false), None);
+     egraph.parser.add_action_macro(Arc::new(Disequal));
+     egraph
+         .parser
+@@ -205,11 +206,11 @@
+ /// No validator is registered, so term/proof modes reject this predicate;
+ /// the separate assertion encodings retain their existing mode support.
+ #[derive(Clone)]
+-struct KnownDisequal(DisequalityEncoding);
++struct KnownDisequal(DisequalityEncoding, bool);
+ 
+ impl Primitive for KnownDisequal {
+     fn name(&self) -> &str {
+-        "known-disequal?"
++        if self.1 { "known-disequal?" } else { "known-disequal-forward-only?" }
+     }
+ 
+     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+@@ -245,7 +246,7 @@
+         let [lhs, rhs] = args else {
+             unreachable!("known-disequal? arity is checked before execution")
+         };
+-        match known_disequal(&state, self.0, *lhs, *rhs) {
++        match known_disequal(&state, self.0, *lhs, *rhs, self.1) {
+             Ok(true) => Some(state.base_to_value(())),
+             Ok(false) => None,
+             Err(error) => {
+@@ -266,6 +267,7 @@
+     encoding: DisequalityEncoding,
+     lhs: Value,
+     rhs: Value,
++    allow_reverse: bool,
+ ) -> Result<bool, Error> {
+     let mut sorts = BTreeSet::new();
+     // The common explicit-assertion case needs no structural search.
+@@ -303,7 +305,7 @@
+         let injective = marked.contains(name);
+         // Reverse congruence is independent of injectivity. Keep its first
+         // fragment scalar and independent of NE/EE representation tables.
+-        let reverse = !name.starts_with("@disequality-")
++        let reverse = allow_reverse && !name.starts_with("@disequality-")
+             && state.is_sort_unionable(schema.output()) == Some(true)
+             && schema.input.iter().any(|input| input.is_eq_sort())
+             && schema.input.iter().all(|input| {

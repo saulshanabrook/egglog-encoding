@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "/opt/homebrew/Cellar/python@3.14/3.14.8/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+    "benchmarks/local/eggcc-encoding-payoff/oracle/oracle.py",
+    "benchmarks/local/eggcc-encoding-payoff/oracle/run-01"
+  ],
+  "compiler_invocations": 0,
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "elapsed_seconds": 0.265017541940324,
+  "exhaustive_eight_bit_operation_comparisons": 131072,
+  "finished_utc": "2026-10-18T20:55:03.628083+00:00",
+  "fixed_seed": 3865889501,
+  "golden_case_rows": 12,
+  "i64_boundary_operation_comparisons": 242,
+  "matrix_sha256": "0bd80e89973c34b067cf014501dd2b0efb7397bdeafce4bfa609ce09710b5a6f",
+  "native_invocations": 0,
+  "pid": 34843,
+  "project_imports": 0,
+  "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+  "python_version": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "random_i64_operation_comparisons": 8192,
+  "random_i64_pairs": 4096,
+  "reached_print_rows": 8,
+  "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/oracle/oracle.py",
+  "script_sha256": "a27c49d729119067d175246a1d3e7910979c6dd6c57141b0349b3591a42528a0",
+  "skipped_present_empty_rows": 4,
+  "started_utc": "2026-10-18T20:55:03.362957+00:00",
+  "status": "passed",
+  "test_errors": 0,
+  "test_failures": 0,
+  "test_skips": 0,
+  "tests_run": 7
+}

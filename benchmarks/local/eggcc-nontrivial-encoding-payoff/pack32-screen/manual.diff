@@ -1,0 +1,11 @@
+--- source.bril
++++ manual.bril
+@@ -55,7 +55,7 @@
+   tc: int = add c seven;
+   td: int = add d seven;
+   target: bool = eq tc td;
+-  br target .unexpected .expected;
++  jmp .expected;
+ .unexpected:
+   score: int = const 99;
+   jmp .accumulate;

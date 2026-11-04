@@ -1,0 +1,46 @@
+{
+  "status": "manual-opportunity-pilot-complete",
+  "rounds": 6,
+  "warmups_per_arm": 2,
+  "by_arm_milliseconds": {
+    "baseline": {
+      "observations": [
+        3.090625,
+        3.223459,
+        3.123375,
+        3.193084,
+        3.19575,
+        2.988959
+      ],
+      "median": 3.1582295,
+      "min": 2.988959,
+      "max": 3.223459
+    },
+    "manual": {
+      "observations": [
+        1.818417,
+        1.885666,
+        1.948583,
+        1.815625,
+        1.992292,
+        1.824416
+      ],
+      "median": 1.855041,
+      "min": 1.815625,
+      "max": 1.992292
+    }
+  },
+  "paired_baseline_over_manual": [
+    1.6996239036480632,
+    1.7094538481364143,
+    1.6028955399898286,
+    1.7586693287435455,
+    1.604057035816035,
+    1.6383100126286987
+  ],
+  "median_paired_ratio": 1.6689669581383808,
+  "all_outputs_correct": true,
+  "encoding_implemented": false,
+  "goal_speedup_acceptance": "not established; manual comparator only, small pilot",
+  "design_freeze_sha256": "fbad2dafb522966b317879be38fe3a3ee55ac45cfc9e563e9bc19ca0519e8a63"
+}

@@ -1,0 +1,24 @@
+{
+  "status": "provisional source/log finding, not a rule-exclusion control",
+  "mechanism": "ablate_prologue maps target rules to never; ablate_schedule replaces target run with never, so targeted rules remain scheduled.",
+  "source": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/lib.rs:118-155",
+  "scope": "Observed attempted canon/interval-analysis ablations in frozen A/B/P-off; do not silently fix unrelated ablation implementation in this slice.",
+  "rows": [
+    {
+      "case": "max-ge-max",
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/max-ge-max/A-optimize-canon/receipt.json",
+      "stderr_sha256": "5e07c47ab3cece37f985b2cf10f890eca68900cf3e60e1b2fc40b8cdde1b6604",
+      "run_never_count": 3,
+      "rules_moved_to_never_count": 26,
+      "unablated_target_executions": 0
+    },
+    {
+      "case": "mul-minimal-max",
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize-interval-analysis/receipt.json",
+      "stderr_sha256": "8276814e3b5b843f3d6e1bef3d7e64ea646bc53d2daadff8d49cb12f8337025b",
+      "run_never_count": 35,
+      "rules_moved_to_never_count": 105,
+      "unablated_target_executions": 0
+    }
+  ]
+}

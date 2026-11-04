@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "cargo",
+    "metadata",
+    "--offline",
+    "--format-version",
+    "1"
+  ],
+  "cwd": "/private/tmp/eggcc-same-mask-candidate/dag_in_context",
+  "exit_code": 0,
+  "timeout_s": 180
+}

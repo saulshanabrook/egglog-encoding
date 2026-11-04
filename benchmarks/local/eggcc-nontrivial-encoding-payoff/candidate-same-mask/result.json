@@ -1,0 +1,89 @@
+{
+  "status": "completed bounded same-mask candidate experiment; parent owns goal qualification",
+  "new_compiler_bug": false,
+  "constructed_microbenchmark_runtime_gate_passed": true,
+  "full_eggcc_integration_gates_green": false,
+  "runtime_ratio": {
+    "cycles": [
+      0.9804048519606636,
+      0.9794264281446321,
+      0.9810011881141588,
+      0.9813653001236208,
+      0.9795318261616862,
+      0.9816411097855967,
+      0.9815605824043211,
+      0.9804441212169698,
+      0.9778617281543182,
+      0.9812796655794788,
+      0.9838425529138235,
+      0.9804687653914518,
+      0.9841905903145258,
+      0.9804339836755472,
+      0.9806757984703703,
+      0.9817807741430326,
+      0.981823903025899,
+      0.9799839765617934,
+      0.9783069247334002,
+      0.9823410118760939,
+      0.9806497335028476,
+      0.9768263781832421,
+      0.9992534462611691,
+      0.9829371798534272,
+      0.9794294759232998,
+      0.9840033366563763,
+      0.9787975449301161,
+      0.9780795847609544,
+      0.9815007193166002,
+      0.9709344311607903,
+      0.9830873910173814,
+      0.9853591700179397
+    ],
+    "median": 0.9808384932922646,
+    "bootstrap95": [
+      0.9804194178181054,
+      0.9816407467298164
+    ],
+    "by_order_row_median": [
+      0.9805272927317557,
+      0.9802089801186703,
+      0.98128088525924,
+      0.9815730371333267
+    ]
+  },
+  "compile_diagnostic_ratio_to_B1": {
+    "cycles": [
+      1.0289815451771038,
+      0.9863155204240119,
+      1.0235875251915731,
+      1.03841981929875,
+      0.9984298672709244,
+      1.037205154015052,
+      1.018288070971231,
+      0.9083893148166909,
+      0.9183898800068431,
+      1.0435468409252717
+    ],
+    "median": 1.020937798081402,
+    "bootstrap95": [
+      0.9584098736388837,
+      1.037205154015052
+    ]
+  },
+  "runtime_observations_per_arm": 32,
+  "compile_diagnostic_observations_per_arm": 10,
+  "selected_compiler_sha256": "5343e3352f74e4e7ec80082a1e47912019d2f37bc641f2ed62891267e465fb87",
+  "source_archive_sha256": "dcd00e61ca50f83cd97fa293264bc528e8f1cadb2c5fc91f0e543d1c411f1264",
+  "report": "report.md",
+  "causal_summary": "causal-summary.json",
+  "full_validation": "full-validation-results.json",
+  "limits": [
+    "single constructed Bril workload",
+    "no suite frequency or suite-wide speedup",
+    "specialized contextual law could reproduce this fixed chain",
+    "loop alignment uncontrolled",
+    "known dependency-retarget regression retained",
+    "three baseline Clippy sites plus hook formatting delta"
+  ],
+  "runtime_retimed_after_confirmation": false,
+  "commits_or_pushes": false
+}

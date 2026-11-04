@@ -1,5 +1,10 @@
 # Egglog encoding
 
+For the **EggCC injectivity and disequality study**, start with the
+[collaborator guide](goals/eggcc-encoding-payoff/README.md) and its
+[step-by-step explanation](goals/eggcc-encoding-payoff/report.md). This branch
+includes the experimental encoding, compiler patches, fixtures, and timing evidence.
+
 This repository is a workspace for iterating on proof and term encoding changes
 across `egglog` and `egglog-experimental`.
 

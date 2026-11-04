@@ -1,0 +1,1033 @@
+//! Bounded QR7 must-alias experiment. All value equalities remain private.
+use crate::schema::{
+    Assumption, BaseType, BinaryOp, Constant, Expr, RcExpr, TernaryOp, TreeProgram, Type,
+};
+use crate::typechecker::TypeCache;
+use egglog::{new_experimental_egraph_with_options, DisequalityEncoding, Error};
+use serde_json::{json, Value};
+use std::{
+    collections::BTreeSet,
+    path::Path,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Word {
+    Slot(usize),
+    Constant(i64),
+    Quotient(Box<Word>, i64),
+    Product(Box<Word>, Box<Word>),
+    Remainder(Box<Word>, i64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Transport {
+    Slot(usize),
+    Unknown,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Shape {
+    Scalar(Transport),
+    Tuple(Vec<Transport>),
+}
+
+struct LoopBinding {
+    node: RcExpr,
+    initial: RcExpr,
+    scope: Assumption,
+    unchanged: Vec<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Off,
+    SeedOnly,
+    PrimitiveOnly,
+    Encoding,
+    Manual,
+    CancellationOff,
+    IdentityOff,
+    XRescue,
+    KeyRescue,
+    QueryOff,
+    TransportOff,
+    BridgeOff,
+    ConsumerOff,
+}
+
+impl Mode {
+    fn from_env() -> Self {
+        match std::env::var("EGGCC_SCOPED_MODE")
+            .as_deref()
+            .unwrap_or("off")
+        {
+            "off" => Self::Off,
+            "seed-only" => Self::SeedOnly,
+            "primitive-only" => Self::PrimitiveOnly,
+            "encoding" => Self::Encoding,
+            "manual" => Self::Manual,
+            "cancellation-off" => Self::CancellationOff,
+            "identity-off" => Self::IdentityOff,
+            "x-rescue" => Self::XRescue,
+            "key-rescue" => Self::KeyRescue,
+            "query-off" => Self::QueryOff,
+            "transport-off" => Self::TransportOff,
+            "bridge-off" => Self::BridgeOff,
+            "consumer-off" => Self::ConsumerOff,
+            value => panic!("Unknown EGGCC_SCOPED_MODE: {value}"),
+        }
+    }
+}
+
+/// Constructor-only traversal never follows context parameters or analysis rows.
+fn expressions(root: &RcExpr) -> Vec<RcExpr> {
+    let mut stack = vec![root.clone()];
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    while let Some(expr) = stack.pop() {
+        if seen.insert(std::rc::Rc::as_ptr(&expr)) {
+            stack.extend(expr.children_exprs());
+            result.push(expr);
+        }
+    }
+    result
+}
+
+fn tuple_length(expr: &RcExpr) -> Option<usize> {
+    match expr.as_ref() {
+        Expr::Single(_) => Some(1),
+        Expr::Concat(a, b) => Some(tuple_length(a)? + tuple_length(b)?),
+        Expr::Empty(_, _) => Some(0),
+        Expr::Arg(Type::TupleT(fields), _) => Some(fields.len()),
+        _ => None,
+    }
+}
+
+/// A projection is expanded only through the actual declared tuple structure.
+fn project(expr: &RcExpr, index: usize) -> Option<RcExpr> {
+    match expr.as_ref() {
+        Expr::Single(value) if index == 0 => Some(value.clone()),
+        Expr::Concat(a, b) => {
+            let length = tuple_length(a)?;
+            if index < length {
+                project(a, index)
+            } else {
+                project(b, index - length)
+            }
+        }
+        Expr::Arg(Type::TupleT(fields), _) if index < fields.len() => {
+            Some(RcExpr::new(Expr::Get(expr.clone(), index)))
+        }
+        _ => None,
+    }
+}
+
+/// Unknown effect/arithmetic results retain their checked shape. In particular
+/// Load is a two-field unknown tuple, so its projections do not destroy the
+/// proof for unrelated passthrough pointer fields.
+fn transport(
+    expr: &RcExpr,
+    scope: &Assumption,
+    input: &[Transport],
+    types: &TypeCache,
+) -> Option<Shape> {
+    if expr.get_ctx() != scope {
+        return None;
+    }
+    match expr.as_ref() {
+        Expr::Arg(Type::TupleT(fields), ctx) if ctx == scope && fields.len() == input.len() => {
+            Some(Shape::Tuple(input.to_vec()))
+        }
+        Expr::Get(tuple, index) => {
+            let Shape::Tuple(values) = transport(tuple, scope, input, types)? else {
+                return None;
+            };
+            Some(Shape::Scalar(values.get(*index)?.clone()))
+        }
+        Expr::Single(value) => {
+            let Shape::Scalar(value) = transport(value, scope, input, types)? else {
+                return None;
+            };
+            Some(Shape::Tuple(vec![value]))
+        }
+        Expr::Concat(a, b) => {
+            let Shape::Tuple(mut values) = transport(a, scope, input, types)? else {
+                return None;
+            };
+            let Shape::Tuple(b) = transport(b, scope, input, types)? else {
+                return None;
+            };
+            values.extend(b);
+            Some(Shape::Tuple(values))
+        }
+        Expr::Empty(_, _) => Some(Shape::Tuple(Vec::new())),
+        Expr::If(pred, branch_input, yes, no) => {
+            let Shape::Tuple(values) = transport(branch_input, scope, input, types)? else {
+                return None;
+            };
+            let yes_ctx = Assumption::InIf(true, pred.clone(), branch_input.clone());
+            let no_ctx = Assumption::InIf(false, pred.clone(), branch_input.clone());
+            match (
+                transport(yes, &yes_ctx, &values, types)?,
+                transport(no, &no_ctx, &values, types)?,
+            ) {
+                (Shape::Tuple(a), Shape::Tuple(b)) if a.len() == b.len() => Some(Shape::Tuple(
+                    a.into_iter()
+                        .zip(b)
+                        .map(|(a, b)| if a == b { a } else { Transport::Unknown })
+                        .collect(),
+                )),
+                (Shape::Scalar(a), Shape::Scalar(b)) => {
+                    Some(Shape::Scalar(if a == b { a } else { Transport::Unknown }))
+                }
+                _ => None,
+            }
+        }
+        _ => match types.get(&std::rc::Rc::as_ptr(expr))? {
+            Type::Base(_) => Some(Shape::Scalar(Transport::Unknown)),
+            Type::TupleT(fields) => Some(Shape::Tuple(vec![Transport::Unknown; fields.len()])),
+            _ => None,
+        },
+    }
+}
+
+fn loop_bindings(nodes: &[RcExpr], types: &TypeCache) -> Vec<LoopBinding> {
+    let mut result = Vec::new();
+    for expr in nodes {
+        let Expr::DoWhile(initial, body) = expr.as_ref() else {
+            continue;
+        };
+        let Type::TupleT(fields) = body.get_arg_type() else {
+            continue;
+        };
+        let slots = (0..fields.len()).map(Transport::Slot).collect::<Vec<_>>();
+        let unchanged = match transport(body, body.get_ctx(), &slots, types) {
+            Some(Shape::Tuple(outputs)) if outputs.len() == fields.len() + 1 => (0..fields.len())
+                .map(|i| outputs[i + 1] == Transport::Slot(i))
+                .collect(),
+            _ => vec![false; fields.len()],
+        };
+        result.push(LoopBinding {
+            node: expr.clone(),
+            initial: initial.clone(),
+            scope: body.get_ctx().clone(),
+            unchanged,
+        });
+    }
+    result
+}
+
+/// Resolve a lexical argument through one checked If binding or an unchanged
+/// same-index loop slot. Placeholder loop names have no special interpretation.
+fn resolve_slot(expr: &RcExpr, loops: &[LoopBinding]) -> Option<RcExpr> {
+    let Expr::Get(arg, index) = expr.as_ref() else {
+        return None;
+    };
+    let Expr::Arg(Type::TupleT(fields), ctx) = arg.as_ref() else {
+        return None;
+    };
+    fields.get(*index)?;
+    if let Assumption::InIf(_, _, input) = ctx {
+        return project(input, *index);
+    }
+    let binding = loops.iter().find(|binding| binding.scope == *ctx)?;
+    if !*binding.unchanged.get(*index)? {
+        return None;
+    }
+    project(&binding.initial, *index)
+}
+
+fn literal(expr: &RcExpr, loops: &[LoopBinding]) -> Option<i64> {
+    let mut value = expr.clone();
+    for _ in 0..128 {
+        if let Expr::Const(Constant::Int(k), _, _) = value.as_ref() {
+            return Some(*k);
+        }
+        value = resolve_slot(&value, loops)?;
+    }
+    None
+}
+
+/// Only total pure integer shapes are translated, and every recursive binding
+/// checks its expected context before following the actual input expression.
+fn word(
+    expr: &RcExpr,
+    root: &Assumption,
+    expected: &Assumption,
+    loops: &[LoopBinding],
+    depth: usize,
+) -> Option<Word> {
+    if depth > 128 || expr.get_ctx() != expected {
+        return None;
+    }
+    if let Some(value) = literal(expr, loops) {
+        return Some(Word::Constant(value));
+    }
+    match expr.as_ref() {
+        Expr::Get(arg, index) => {
+            let Expr::Arg(Type::TupleT(fields), ctx) = arg.as_ref() else {
+                return None;
+            };
+            if fields.get(*index) != Some(&BaseType::IntT) {
+                return None;
+            }
+            if ctx == root {
+                return Some(Word::Slot(*index));
+            }
+            let value = resolve_slot(expr, loops)?;
+            word(&value, root, value.get_ctx(), loops, depth + 1)
+        }
+        Expr::Bop(BinaryOp::Div, a, b) => {
+            let divisor = literal(b, loops)?;
+            if b.get_ctx() != expected || divisor != 7 {
+                return None;
+            }
+            Some(Word::Quotient(
+                Box::new(word(a, root, expected, loops, depth + 1)?),
+                divisor,
+            ))
+        }
+        Expr::Bop(BinaryOp::Mul, a, b) => Some(Word::Product(
+            Box::new(word(a, root, expected, loops, depth + 1)?),
+            Box::new(word(b, root, expected, loops, depth + 1)?),
+        )),
+        Expr::Bop(BinaryOp::Sub, a, b) => {
+            let value = word(a, root, expected, loops, depth + 1)?;
+            let Word::Product(left, right) = word(b, root, expected, loops, depth + 1)? else {
+                return None;
+            };
+            let quotient = Word::Quotient(Box::new(value.clone()), 7);
+            if (*left == quotient && *right == Word::Constant(7))
+                || (*right == quotient && *left == Word::Constant(7))
+            {
+                Some(Word::Remainder(Box::new(value), 7))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn ancestry(scope: &Assumption, loops: &[LoopBinding]) -> Option<Vec<Assumption>> {
+    let mut result = Vec::new();
+    let mut current = scope.clone();
+    for _ in 0..128 {
+        result.push(current.clone());
+        if let Assumption::InIf(_, pred, _) = &current {
+            current = pred.get_ctx().clone();
+        } else if let Some(binding) = loops.iter().find(|binding| binding.scope == current) {
+            current = binding.initial.get_ctx().clone();
+        } else {
+            return Some(result);
+        }
+    }
+    None
+}
+
+fn bounded_guard(root: &Assumption, x: &RcExpr, y: &RcExpr, loops: &[LoopBinding]) -> bool {
+    let Assumption::InIf(true, guard, _) = root else {
+        return false;
+    };
+    let entry = guard.get_ctx();
+    let (Some(x), Some(y)) = (
+        word(x, entry, root, loops, 0),
+        word(y, entry, root, loops, 0),
+    ) else {
+        return false;
+    };
+    let mut pending = vec![guard.clone()];
+    let mut conditions = BTreeSet::new();
+    while let Some(expr) = pending.pop() {
+        match expr.as_ref() {
+            Expr::Bop(BinaryOp::And, a, b) if expr.get_ctx() == entry => {
+                pending.push(a.clone());
+                pending.push(b.clone());
+            }
+            Expr::Bop(op, a, b)
+                if matches!(
+                    op,
+                    BinaryOp::GreaterEq | BinaryOp::LessThan | BinaryOp::LessEq
+                ) =>
+            {
+                let (Some(a), Some(b)) = (
+                    word(a, entry, entry, loops, 0),
+                    word(b, entry, entry, loops, 0),
+                ) else {
+                    return false;
+                };
+                conditions.insert((op.clone(), a, b));
+            }
+            _ => return false,
+        }
+    }
+    for value in [x.clone(), y.clone()] {
+        if !conditions.contains(&(BinaryOp::GreaterEq, value.clone(), Word::Constant(0)))
+            || !conditions.contains(&(BinaryOp::LessThan, value, Word::Constant(64)))
+        {
+            return false;
+        }
+    }
+    conditions.iter().any(|(op, value, bound)| {
+        *op == BinaryOp::GreaterEq
+            && *bound == Word::Constant(0)
+            && *value != x
+            && *value != y
+            && conditions.contains(&(BinaryOp::LessEq, value.clone(), Word::Constant(10_000_000)))
+    })
+}
+
+struct Address {
+    allocation: RcExpr,
+    offset: Word,
+}
+
+fn address(
+    expr: &RcExpr,
+    root: &Assumption,
+    loops: &[LoopBinding],
+) -> Result<Address, &'static str> {
+    let mut current = expr.clone();
+    for _ in 0..128 {
+        if let Expr::Bop(BinaryOp::PtrAdd, base, index) = current.as_ref() {
+            if base.get_ctx() != current.get_ctx() || index.get_ctx() != current.get_ctx() {
+                return Err("ptradd-child-context");
+            }
+            let offset = word(index, root, current.get_ctx(), loops, 0)
+                .ok_or("unresolved-offset-word")?;
+            let mut base = base.clone();
+            for _ in 0..128 {
+                if let Expr::Get(allocation, 0) = base.as_ref() {
+                    if let Expr::Alloc(_, size, _, BaseType::PointerT(element)) =
+                        allocation.as_ref()
+                    {
+                        if element.as_ref() != &BaseType::IntT {
+                            return Err("allocation-element-not-i64");
+                        }
+                        if literal(size, loops).ok_or("unresolved-allocation-size")? != 64 {
+                            return Err("allocation-size-not-64");
+                        }
+                        return Ok(Address {
+                            allocation: allocation.clone(),
+                            offset,
+                        });
+                    }
+                }
+                base = resolve_slot(&base, loops).ok_or("unresolved-allocation-base")?;
+            }
+            return Err("allocation-base-depth");
+        }
+        current = resolve_slot(&current, loops).ok_or("unresolved-address-slot")?;
+    }
+    Err("address-depth")
+}
+
+/// Equality itself does not depend on memory contents. This bounded lifetime
+/// screen additionally keeps the fixture in the valid initialized-memory
+/// fragment: no call/escape/early free, one common allocation and a post-loop free.
+fn live_fragment(
+    nodes: &[RcExpr],
+    binding: &LoopBinding,
+    allocation: &RcExpr,
+    types: &TypeCache,
+) -> bool {
+    let body_nodes = match binding.node.as_ref() {
+        Expr::DoWhile(_, body) => expressions(body),
+        _ => return false,
+    };
+    if !expressions(&binding.initial)
+        .iter()
+        .any(|node| std::rc::Rc::ptr_eq(node, allocation))
+    {
+        return false;
+    }
+    let mut frees = 0;
+    for expr in nodes {
+        match expr.as_ref() {
+            Expr::Call(..) => return false,
+            Expr::Alloc(..) if !std::rc::Rc::ptr_eq(expr, allocation) => return false,
+            Expr::Top(TernaryOp::Write, _, value, _) => {
+                if matches!(
+                    types.get(&std::rc::Rc::as_ptr(value)),
+                    Some(Type::Base(BaseType::PointerT(_)))
+                ) {
+                    return false;
+                }
+            }
+            Expr::Bop(BinaryOp::Free, _, state) => {
+                if body_nodes
+                    .iter()
+                    .any(|node| std::rc::Rc::ptr_eq(node, expr))
+                    || !expressions(state)
+                        .iter()
+                        .any(|node| std::rc::Rc::ptr_eq(node, &binding.node))
+                {
+                    return false;
+                }
+                frees += 1;
+            }
+            _ => {}
+        }
+    }
+    frees == 1
+}
+
+/// Independent least fixed point of congruence and marked injectivity on the
+/// same finite rows, primitive fields, representation edges and dynamic seeds.
+fn manual(marked: bool, identity: bool, rescue_x: bool, rescue_key: bool) -> [bool; 4] {
+    let rows: Vec<(&str, Vec<usize>, Vec<i64>, usize, bool)> = vec![
+        ("Q7", vec![0], vec![7], 2, false),
+        ("Q7", vec![1], vec![7], 3, false),
+        ("R7", vec![0], vec![7], 4, false),
+        ("R7", vec![1], vec![7], 5, false),
+        ("K7", vec![0], vec![], 6, marked),
+        ("K7", vec![1], vec![], 7, marked),
+        ("Pair", vec![2, 4], vec![], 8, false),
+        ("Pair", vec![3, 5], vec![], 9, false),
+        ("Addr", vec![10, 0], vec![], 11, false),
+        ("Addr", vec![10, 1], vec![], 12, false),
+    ];
+    let mut equality = (0..13).collect::<Vec<_>>();
+    let mut seeds = vec![(2, 3), (4, 5)];
+    if identity {
+        seeds.extend([(6, 8), (7, 9)]);
+    }
+    if rescue_x {
+        seeds.push((0, 1));
+    }
+    if rescue_key {
+        seeds.push((6, 7));
+    }
+    for (a, b) in seeds {
+        let (old, new) = (equality[b], equality[a]);
+        for value in &mut equality {
+            if *value == old {
+                *value = new;
+            }
+        }
+    }
+    loop {
+        let before = equality.clone();
+        for (an, ac, ap, ao, marked) in &rows {
+            for (bn, bc, bp, bo, _) in &rows {
+                if an != bn || ap != bp {
+                    continue;
+                }
+                let mut merges = Vec::new();
+                if ac.iter().zip(bc).all(|(a, b)| equality[*a] == equality[*b]) {
+                    merges.push((*ao, *bo));
+                }
+                if *marked && equality[*ao] == equality[*bo] {
+                    merges.extend(ac.iter().copied().zip(bc.iter().copied()));
+                }
+                for (a, b) in merges {
+                    let (old, new) = (equality[b], equality[a]);
+                    for value in &mut equality {
+                        if *value == old {
+                            *value = new;
+                        }
+                    }
+                }
+            }
+        }
+        if equality == before {
+            break;
+        }
+    }
+    [(8, 9), (6, 7), (0, 1), (11, 12)].map(|(a, b)| equality[a] == equality[b])
+}
+
+fn prove(mode: Mode) -> Result<(bool, Value), Error> {
+    let marked = !matches!(mode, Mode::CancellationOff | Mode::XRescue);
+    let identity = !matches!(mode, Mode::IdentityOff | Mode::KeyRescue);
+    let seed_only = matches!(mode, Mode::SeedOnly | Mode::PrimitiveOnly);
+    let mut program = format!(
+        r#"(datatype Scope (ThisScope))
+(datatype Word)
+(datatype Key)
+(datatype Region (LocalRegion Scope))
+(datatype Pointer)
+(constructor X (Scope) Word)
+(constructor Y (Scope) Word)
+(constructor Q7 (Word i64) Word)
+(constructor R7 (Word i64) Word)
+(constructor K7 (Word) Key {})
+(constructor Pair (Word Word) Key)
+(constructor Addr (Region Word) Pointer)
+(let qr7-x (X (ThisScope)))
+(let qr7-y (Y (ThisScope)))
+(let qr7-qx (Q7 qr7-x 7))
+(let qr7-qy (Q7 qr7-y 7))
+(let qr7-rx (R7 qr7-x 7))
+(let qr7-ry (R7 qr7-y 7))
+(let qr7-kx (K7 qr7-x))
+(let qr7-ky (K7 qr7-y))
+(let qr7-pairx (Pair qr7-qx qr7-rx))
+(let qr7-pairy (Pair qr7-qy qr7-ry))
+(let qr7-region (LocalRegion (ThisScope)))
+(let qr7-addrx (Addr qr7-region qr7-x))
+(let qr7-addry (Addr qr7-region qr7-y))
+(union qr7-qx qr7-qy)
+(union qr7-rx qr7-ry)
+"#,
+        if marked { ":injective" } else { "" }
+    );
+    if identity {
+        program.push_str("(union qr7-kx qr7-pairx)\n(union qr7-ky qr7-pairy)\n");
+    }
+    if mode == Mode::XRescue {
+        program.push_str("(union qr7-x qr7-y)\n");
+    }
+    if mode == Mode::KeyRescue {
+        program.push_str("(union qr7-kx qr7-ky)\n");
+    }
+    let mut graph = new_experimental_egraph_with_options(false, DisequalityEncoding::Nee);
+    graph.parse_and_run_program(None, &program)?;
+    let mut before = [false; 4];
+    if !seed_only && mode != Mode::Manual {
+        for (i, (a, b)) in [
+            ("qr7-pairx", "qr7-pairy"),
+            ("qr7-kx", "qr7-ky"),
+            ("qr7-x", "qr7-y"),
+            ("qr7-addrx", "qr7-addry"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            before[i] = match graph.parse_and_run_program(None, &format!("(check (= {a} {b}))")) {
+                Ok(_) => true,
+                Err(Error::CheckError(..)) => false,
+                Err(error) => return Err(error),
+            };
+        }
+        graph.parse_and_run_program(None, "(run-schedule (saturate injectivity))")?;
+    }
+    let manual_result = if !seed_only {
+        Some(manual(
+            marked,
+            identity,
+            mode == Mode::XRescue,
+            mode == Mode::KeyRescue,
+        ))
+    } else {
+        None
+    };
+    let mut known = [false; 4];
+    let mut bottom = None;
+    if mode == Mode::Manual {
+        known = manual_result.unwrap();
+        bottom = Some(false);
+    } else if !seed_only {
+        bottom = Some(
+            match graph.parse_and_run_program(None, "(check-contradiction)") {
+                Ok(_) => true,
+                Err(Error::CheckError(..)) => false,
+                Err(error) => return Err(error),
+            },
+        );
+        if bottom == Some(false) {
+            for (i, (a, b)) in [
+                ("qr7-pairx", "qr7-pairy"),
+                ("qr7-kx", "qr7-ky"),
+                ("qr7-x", "qr7-y"),
+                ("qr7-addrx", "qr7-addry"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if i == 3 && mode == Mode::QueryOff {
+                    continue;
+                }
+                known[i] = match graph.parse_and_run_program(None, &format!("(check (= {a} {b}))"))
+                {
+                    Ok(_) => true,
+                    Err(Error::CheckError(..)) => false,
+                    Err(error) => return Err(error),
+                };
+            }
+        }
+    }
+    let export =
+        bottom == Some(false) && known[3] && !matches!(mode, Mode::BridgeOff | Mode::TransportOff);
+    Ok((
+        export,
+        json!({"mode":format!("{mode:?}"),"program":program,"encoding":"NEE",
+        "marked":marked,"representation_identity":identity,"quotient_seeded":true,"remainder_seeded":true,
+        "before":if seed_only || mode == Mode::Manual { None } else { Some(before) },
+        "pair_equal":if seed_only { None } else { Some(known[0]) },
+        "key_equal":if seed_only { None } else { Some(known[1]) },
+        "word_equal":if seed_only { None } else { Some(known[2]) },
+        "address_equal":if seed_only || mode == Mode::QueryOff { None } else { Some(known[3]) },
+        "bottom":bottom,"manual_receipts":manual_result,"export":export,
+        "injectivity_saturated":!seed_only && mode != Mode::Manual,
+        "engine_witness_queries_run":!seed_only && mode != Mode::Manual,
+        "primitive_metadata":{"divisor":7,"allocation_cells":64,"index_lower":0,"index_upper_exclusive":64},
+        "primitive_only_marked_fields":[],"primitive_only_conflict":false,
+        "transport_enabled":mode != Mode::TransportOff,"bridge_enabled":mode != Mode::BridgeOff,
+        "consumer_enabled":mode != Mode::ConsumerOff}),
+    ))
+}
+
+pub(crate) fn analyze(program: &TreeProgram) -> Vec<(RcExpr, RcExpr)> {
+    let mode = Mode::from_env();
+    if mode == Mode::Off {
+        return Vec::new();
+    }
+    static BOUNDARY: AtomicUsize = AtomicUsize::new(0);
+    let boundary = BOUNDARY.fetch_add(1, Ordering::Relaxed);
+    let types = program.typecheck();
+    let mut functions = vec![program.entry.clone()];
+    functions.extend(program.functions.clone());
+    let (mut exports, mut receipts) = (Vec::new(), Vec::new());
+    let mut stages = [0usize; 17];
+    let mut address_diagnostics = Vec::new();
+    for function in functions {
+        stages[0] += 1;
+        let nodes = expressions(&function);
+        stages[1] += nodes.len();
+        let loops = loop_bindings(&nodes, &types);
+        for load in &nodes {
+            let Expr::Bop(BinaryOp::Load, load_addr, write) = load.as_ref() else {
+                continue;
+            };
+            stages[2] += 1;
+            let Expr::Top(TernaryOp::Write, write_addr, _, _) = write.as_ref() else {
+                continue;
+            };
+            stages[3] += 1;
+            if load_addr.get_ctx() != write_addr.get_ctx() || load.get_ctx() != write.get_ctx() {
+                continue;
+            }
+            stages[4] += 1;
+            let Some(scopes) = ancestry(load.get_ctx(), &loops) else {
+                continue;
+            };
+            stages[5] += 1;
+            let Some(binding) = loops.iter().find(|binding| scopes.contains(&binding.scope)) else {
+                continue;
+            };
+            stages[6] += 1;
+            for (q_index, scope) in scopes.iter().enumerate() {
+                let Assumption::InIf(true, q_pred, _) = scope else {
+                    continue;
+                };
+                stages[7] += 1;
+                let Expr::Bop(BinaryOp::Eq, qa, qb) = q_pred.as_ref() else {
+                    continue;
+                };
+                stages[8] += 1;
+                let root = q_pred.get_ctx();
+                let (Some(Word::Quotient(x, 7)), Some(Word::Quotient(y, 7))) = (
+                    word(qa, root, root, &loops, 0),
+                    word(qb, root, root, &loops, 0),
+                ) else {
+                    continue;
+                };
+                stages[9] += 1;
+                if x == y
+                    || !matches!(x.as_ref(), Word::Slot(_))
+                    || !matches!(y.as_ref(), Word::Slot(_))
+                {
+                    continue;
+                }
+                stages[10] += 1;
+                let (Expr::Bop(BinaryOp::Div, x_expr, _), Expr::Bop(BinaryOp::Div, y_expr, _)) =
+                    (qa.as_ref(), qb.as_ref())
+                else {
+                    continue;
+                };
+                if !bounded_guard(root, x_expr, y_expr, &loops) {
+                    continue;
+                }
+                stages[11] += 1;
+                let expected = (Word::Remainder(x.clone(), 7), Word::Remainder(y.clone(), 7));
+                let r_pred = scopes[..q_index].iter().find_map(|scope| {
+                    let Assumption::InIf(true, pred, _) = scope else {
+                        return None;
+                    };
+                    let Expr::Bop(BinaryOp::Eq, a, b) = pred.as_ref() else {
+                        return None;
+                    };
+                    let pair = (
+                        word(a, root, pred.get_ctx(), &loops, 0)?,
+                        word(b, root, pred.get_ctx(), &loops, 0)?,
+                    );
+                    if pair == expected || pair == (expected.1.clone(), expected.0.clone()) {
+                        Some(pred)
+                    } else {
+                        None
+                    }
+                });
+                let Some(r_pred) = r_pred else {
+                    continue;
+                };
+                stages[12] += 1;
+                if address_diagnostics.is_empty() {
+                    for (name, expr) in [("write", write_addr), ("load", load_addr)] {
+                        let mut current = expr.clone();
+                        let mut trace = Vec::new();
+                        for _ in 0..16 {
+                            trace.push(current.to_string());
+                            if matches!(current.as_ref(), Expr::Bop(BinaryOp::PtrAdd, _, _)) {
+                                break;
+                            }
+                            let Some(next) = resolve_slot(&current, &loops) else {
+                                trace.push("<unresolved>".to_owned());
+                                break;
+                            };
+                            current = next;
+                        }
+                        address_diagnostics.push(json!({"name":name,"trace":trace,"root":root.to_string(),"loop_scope":binding.scope.to_string(),"unchanged":binding.unchanged}));
+                    }
+                }
+                let address_results = (
+                    address(write_addr, root, &loops),
+                    address(load_addr, root, &loops),
+                );
+                if let Some(Value::Object(fields)) = address_diagnostics.first_mut() {
+                    fields.insert(
+                        "results".to_owned(),
+                        json!([address_results.0.as_ref().map(|_| "ok").unwrap_or_else(|error| *error), address_results.1.as_ref().map(|_| "ok").unwrap_or_else(|error| *error)]),
+                    );
+                }
+                let (Ok(a), Ok(b)) = address_results else {
+                    continue;
+                };
+                stages[13] += 1;
+                if !std::rc::Rc::ptr_eq(&a.allocation, &b.allocation) {
+                    continue;
+                }
+                stages[14] += 1;
+                if !((a.offset == *x && b.offset == *y) || (a.offset == *y && b.offset == *x)) {
+                    continue;
+                }
+                stages[15] += 1;
+                if !live_fragment(&nodes, binding, &a.allocation, &types) {
+                    continue;
+                }
+                stages[16] += 1;
+                let (export, mut receipt) = match prove(mode) {
+                    Ok(result) => result,
+                    Err(error) => (
+                        false,
+                        json!({"analysis_error":format!("{error:?}"),"export":false}),
+                    ),
+                };
+                receipt["accepted"] = json!(true);
+                receipt["quotient_predicate"] = json!(q_pred.to_string());
+                receipt["remainder_predicate"] = json!(r_pred.to_string());
+                receipt["root_scope"] = json!(root.to_string());
+                receipt["local_scope"] = json!(load.get_ctx().to_string());
+                receipt["write_address"] = json!(write_addr.to_string());
+                receipt["load_address"] = json!(load_addr.to_string());
+                receipt["load"] = json!(load.to_string());
+                receipt["translated_offsets"] = json!(format!("{:?},{:?}", a.offset, b.offset));
+                receipt["loop_passthrough"] = json!(binding.unchanged);
+                receipt["loop_scope"] = json!(binding.scope.to_string());
+                receipt["bounds_checked"] = json!(true);
+                receipt["lifetime_checked"] = json!(true);
+                receipts.push(receipt);
+                if export {
+                    exports.push((write_addr.clone(), load_addr.clone()));
+                }
+                break;
+            }
+        }
+    }
+    if receipts.is_empty() {
+        receipts.push(json!({"accepted":false,"export":false,"diagnostic":"recognizer-stage-counts","functions":stages[0],"nodes":stages[1],"loads":stages[2],"immediate_write":stages[3],"matching_context":stages[4],"ancestry":stages[5],"loop_binding":stages[6],"true_if_scopes":stages[7],"eq_predicates":stages[8],"quotient_pairs":stages[9],"distinct_slot_pairs":stages[10],"bounded_pairs":stages[11],"remainder_pairs":stages[12],"addresses":stages[13],"same_allocation":stages[14],"matching_offsets":stages[15],"live_fragment":stages[16],"address_diagnostics":address_diagnostics}));
+    }
+    if let Ok(directory) = std::env::var("EGGCC_SCOPED_EVIDENCE") {
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = Path::new(&directory).join(format!("boundary-{boundary:04}.json"));
+        assert!(!path.exists(), "refusing to overwrite scoped evidence");
+        std::fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({"boundary":boundary,
+            "mode":format!("{mode:?}"),"queries":receipts,"exports":exports.len()}))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    exports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn qr7_finite_chain_and_fixed_input_controls() {
+        for mode in [
+            Mode::Encoding,
+            Mode::Manual,
+            Mode::CancellationOff,
+            Mode::IdentityOff,
+            Mode::XRescue,
+            Mode::KeyRescue,
+            Mode::QueryOff,
+            Mode::TransportOff,
+            Mode::BridgeOff,
+            Mode::ConsumerOff,
+            Mode::SeedOnly,
+            Mode::PrimitiveOnly,
+        ] {
+            let (export, receipt) = prove(mode).unwrap();
+            assert_eq!(
+                export,
+                matches!(
+                    mode,
+                    Mode::Encoding
+                        | Mode::Manual
+                        | Mode::XRescue
+                        | Mode::KeyRescue
+                        | Mode::ConsumerOff
+                ),
+                "{receipt}"
+            );
+            if mode == Mode::Encoding {
+                assert_eq!(receipt["before"], json!([true, true, false, false]));
+                assert_eq!(receipt["manual_receipts"], json!([true, true, true, true]));
+            }
+            if mode == Mode::CancellationOff {
+                assert_eq!(receipt["key_equal"], true);
+                assert_eq!(receipt["word_equal"], false);
+            }
+        }
+    }
+    #[test]
+    fn qr7_independent_manual_closure_needs_both_edges() {
+        assert_eq!(manual(true, true, false, false), [true; 4]);
+        assert_eq!(
+            manual(false, true, false, false),
+            [true, true, false, false]
+        );
+        assert_eq!(
+            manual(true, false, false, false),
+            [true, false, false, false]
+        );
+        assert_eq!(manual(false, true, true, false), [true; 4]);
+        assert_eq!(manual(true, false, false, true), [true; 4]);
+    }
+    #[test]
+    fn qr7_key_is_lossless_at_signed_boundaries() {
+        let values = [
+            i64::MIN,
+            i64::MIN + 1,
+            -8,
+            -7,
+            -6,
+            -1,
+            0,
+            1,
+            6,
+            7,
+            8,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        for x in values {
+            let q = x / 7;
+            let r = x - 7 * q;
+            assert_eq!(i128::from(x), 7 * i128::from(q) + i128::from(r));
+            assert!((-6..=6).contains(&r));
+        }
+        for x in 0..64 {
+            for y in 0..64 {
+                assert_eq!((x / 7, x % 7) == (y / 7, y % 7), x == y);
+            }
+        }
+        assert_eq!((5 % 7, 12 % 7), (5, 5));
+        assert_eq!((7 / 7, 8 / 7), (1, 1));
+        assert_eq!((8 / 7, 8 % 7), (9 / 8, 9 % 8));
+    }
+    #[test]
+    fn qr7_recognizer_rejects_wrong_divisor_operand_and_scope() {
+        let scope = Assumption::InFunc("root".into());
+        let ty = Type::TupleT(vec![BaseType::IntT, BaseType::IntT]);
+        let arg = RcExpr::new(Expr::Arg(ty.clone(), scope.clone()));
+        let x = RcExpr::new(Expr::Get(arg.clone(), 0));
+        let y = RcExpr::new(Expr::Get(arg, 1));
+        let seven = RcExpr::new(Expr::Const(Constant::Int(7), ty.clone(), scope.clone()));
+        let qx = RcExpr::new(Expr::Bop(BinaryOp::Div, x.clone(), seven.clone()));
+        let product = RcExpr::new(Expr::Bop(BinaryOp::Mul, qx.clone(), seven.clone()));
+        let remainder = RcExpr::new(Expr::Bop(BinaryOp::Sub, x.clone(), product.clone()));
+        assert_eq!(
+            word(&remainder, &scope, &scope, &[], 0),
+            Some(Word::Remainder(Box::new(Word::Slot(0)), 7))
+        );
+        let wrong_numerator = RcExpr::new(Expr::Bop(BinaryOp::Sub, y, product));
+        assert_eq!(word(&wrong_numerator, &scope, &scope, &[], 0), None);
+        for divisor in [0, -1, 8] {
+            let constant = RcExpr::new(Expr::Const(
+                Constant::Int(divisor),
+                ty.clone(),
+                scope.clone(),
+            ));
+            let quotient = RcExpr::new(Expr::Bop(BinaryOp::Div, x.clone(), constant));
+            assert_eq!(word(&quotient, &scope, &scope, &[], 0), None);
+        }
+        let foreign = Assumption::InFunc("unrelated".into());
+        assert_eq!(word(&qx, &scope, &foreign, &[], 0), None);
+    }
+    #[test]
+    fn qr7_tuple_load_keeps_unrelated_pointer_passthrough() {
+        let scope = Assumption::InFunc("loop-placeholder".into());
+        let fields = vec![
+            BaseType::PointerT(Box::new(BaseType::IntT)),
+            BaseType::PointerT(Box::new(BaseType::IntT)),
+            BaseType::StateT,
+        ];
+        let arg = RcExpr::new(Expr::Arg(Type::TupleT(fields), scope.clone()));
+        let a = RcExpr::new(Expr::Get(arg.clone(), 0));
+        let b = RcExpr::new(Expr::Get(arg.clone(), 1));
+        let state = RcExpr::new(Expr::Get(arg, 2));
+        let load = RcExpr::new(Expr::Bop(BinaryOp::Load, a.clone(), state));
+        let loaded_state = RcExpr::new(Expr::Get(load.clone(), 1));
+        let pair = RcExpr::new(Expr::Concat(
+            RcExpr::new(Expr::Single(a)),
+            RcExpr::new(Expr::Single(b)),
+        ));
+        let body = RcExpr::new(Expr::Concat(pair, RcExpr::new(Expr::Single(loaded_state))));
+        let mut types = TypeCache::new();
+        types.insert(
+            std::rc::Rc::as_ptr(&load),
+            Type::TupleT(vec![BaseType::IntT, BaseType::StateT]),
+        );
+        assert_eq!(
+            transport(
+                &body,
+                &scope,
+                &[Transport::Slot(0), Transport::Slot(1), Transport::Slot(2)],
+                &types
+            ),
+            Some(Shape::Tuple(vec![
+                Transport::Slot(0),
+                Transport::Slot(1),
+                Transport::Unknown
+            ]))
+        );
+    }
+    #[test]
+    fn qr7_if_transport_requires_both_same_index_arms() {
+        let scope = Assumption::InFunc("loop-placeholder".into());
+        let ty = Type::TupleT(vec![BaseType::IntT, BaseType::IntT]);
+        let input = RcExpr::new(Expr::Arg(ty.clone(), scope.clone()));
+        let pred = RcExpr::new(Expr::Const(Constant::Bool(true), ty.clone(), scope.clone()));
+        let yes_ctx = Assumption::InIf(true, pred.clone(), input.clone());
+        let no_ctx = Assumption::InIf(false, pred.clone(), input.clone());
+        let yes_arg = RcExpr::new(Expr::Arg(ty.clone(), yes_ctx));
+        let no_arg = RcExpr::new(Expr::Arg(ty, no_ctx));
+        let yes = RcExpr::new(Expr::Single(RcExpr::new(Expr::Get(yes_arg, 0))));
+        let no = RcExpr::new(Expr::Single(RcExpr::new(Expr::Get(no_arg, 1))));
+        let branch = RcExpr::new(Expr::If(pred, input, yes, no));
+        assert_eq!(
+            transport(
+                &branch,
+                &scope,
+                &[Transport::Slot(0), Transport::Slot(1)],
+                &TypeCache::new()
+            ),
+            Some(Shape::Tuple(vec![Transport::Unknown]))
+        );
+    }
+}

@@ -1,0 +1,104 @@
+{
+  "status": "sources-reconstructed-not-built",
+  "roots": [
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate",
+      "archive": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/eggcc-parts32-candidate.tar",
+      "archive_sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+      "revision": "a0bbec127f83249074a46af3fd6f6126c90fe0fb"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate",
+      "archive": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/encoding-parts32-candidate.tar",
+      "archive_sha256": "bf28b65f200123f5738326a069dad26d9d7004dd72ef89f9f4becd74f11cd82f",
+      "revision": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5"
+    }
+  ],
+  "u0_revision": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "overlays": [
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.lock",
+      "retained_member": "eggcc/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/Cargo.toml",
+      "retained_member": "eggcc/Cargo.toml",
+      "sha256": "9e2feb1df1f51599cdf562523a0feb08619f70571e15f9793f31239d09f1b3b7"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.lock",
+      "retained_member": "eggcc/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/Cargo.toml",
+      "retained_member": "eggcc/dag_in_context/Cargo.toml",
+      "sha256": "877eb54456871db04956fadefbd18df022c935f08c79e3a94cb3df2a7477e1e7"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/README.md",
+      "retained_member": "encoding/egglog-experimental/README.md",
+      "sha256": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/src/disequality.rs",
+      "retained_member": "encoding/egglog-experimental/src/disequality.rs",
+      "sha256": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "retained_member": "encoding/egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "sha256": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/tests/injectivity_disequality.rs",
+      "retained_member": "encoding/egglog-experimental/tests/injectivity_disequality.rs",
+      "sha256": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c"
+    },
+    {
+      "path": "/private/tmp/encoding-qr7-candidate/egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "retained_member": "encoding/egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "sha256": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/runtime/rt.bc",
+      "retained_member": "eggcc/runtime/rt.bc",
+      "sha256": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91"
+    },
+    {
+      "path": "/private/tmp/eggcc-qr7-candidate/runtime/rt.o",
+      "retained_member": "eggcc/runtime/rt.o",
+      "sha256": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/source.bril",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/source.bril",
+      "sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-quotient-v2.bril",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/omit-quotient-v2.bril",
+      "sha256": "dda036eb840fe629acce040a32eb5eec65ebf022d0eafc5d9cf68f00c5e22407"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/omit-remainder-v2.bril",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/omit-remainder-v2.bril",
+      "sha256": "1291d6c45d91c2fc954f1cc33ff2d022916db969b59712882f21c18131d90155"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/different-divisor.bril",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/different-divisor.bril",
+      "sha256": "bd293f158e17a40d8779556436c0738d59ea2ed22007f0e1591775c6f155a39e"
+    }
+  ],
+  "u0_source_files_verified": 771,
+  "source_manifest_sha256": "087c685463fc44ca7ab4d1a5aeec6732f95caa7c236dfa27a5285c024dd58893",
+  "setup_failures": [
+    "Initial git rev-parse rejected the extracted U0 archive because it has no .git. Admission now checks every file against the retained pinned source manifest. No destination was created by that failed attempt."
+  ],
+  "no_compiler_or_engine_executed": true,
+  "timing_taken": false
+}

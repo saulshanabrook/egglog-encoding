@@ -1,0 +1,339 @@
+{
+  "status": "completed with baseline/toolchain limitations; frozen feature artifacts unchanged",
+  "environment": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/gate-environment.json",
+  "official_make_test": {
+    "exit_code": 2,
+    "status": "pending 13 golden changes reproduced in engine-only B",
+    "root_test_execution": {
+      "library_passed": 31,
+      "cli_passed": 1,
+      "feature_native_passed": 2,
+      "file_trials_passed": 2421,
+      "failed": 0,
+      "doctests_ignored": 2
+    },
+    "snapshot_handling": "cargo insta test runs test bodies, leaves 13 candidates for review and exits nonzero; none accepted",
+    "dag_make_step": "not reached because root snapshot gate was nonzero; exact standalone Makefile command run separately",
+    "standalone_dag": {
+      "exit_code": 0,
+      "passed": 66,
+      "failed": 0,
+      "pending_snapshots": 0,
+      "unreferenced_snapshots": 0
+    },
+    "snapshot_classification": {
+      "trials": 13,
+      "exact_runs": 26,
+      "status": "all body hashes equal between P-off, engine-only B, and full gate",
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/snapshot-controls.json",
+      "harness_non_weakly_linear": false
+    },
+    "initial_failure": "missing runtime rt.bc and rt.o; 757 backend/benchmark file trials failed, 1664 passed; retained separately",
+    "runtime_setup": "make runtime emitted pinned-nightly LLVM18 bitcode, then failed no_main executable link on macOS; verified bitcode and completed copy and C object steps without source changes; full root execution then passed"
+  },
+  "official_make_nits": {
+    "exit_code": 2,
+    "status": "unchanged baseline Clippy1.91 unnecessary_unwrap at src/rvsdg/optimize_direct_jumps.rs:236",
+    "baseline_reproduction_exit_code": 101,
+    "prettier": "passed",
+    "separate_root_fmt": "passed",
+    "separate_dag_fmt": "passed",
+    "separate_strict_dag_clippy": "exit101; unchanged unnecessary_unwrap and cloned_ref_to_slice_refs",
+    "diagnostic_root_clippy": "passed with only clippy::unnecessary_unwrap allowed",
+    "diagnostic_dag_clippy": "passed with only clippy::unnecessary_unwrap and clippy::cloned_ref_to_slice_refs allowed",
+    "diagnostic_allowances_are_not_official_nits_success": true,
+    "unchanged_source_hashes": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/baseline-lint-source-identity.json"
+  },
+  "receipts": [
+    {
+      "name": "prototype-final-make-test",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "make",
+        "test"
+      ],
+      "returncode": 2,
+      "timed_out": false,
+      "wall_seconds": 101.73750779195689,
+      "timeout_seconds": 1800.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test.json": "a182a6d4818303b39d86287d611c4825eaa9cdbb7578350200e8c8ee9bb8e35f",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test.stdout": "c14d1d4353477a3e45616f0a8371a9dae36ac83dac33e1f17d8f36457a5cf92e",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test.stderr": "1ecce2fd875e6225999af0bb2213a440dfeb92bbd352e744a3d3d59a91c1c22c"
+      }
+    },
+    {
+      "name": "prototype-runtime-setup",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "make",
+        "runtime"
+      ],
+      "returncode": 2,
+      "timed_out": false,
+      "wall_seconds": 4.003428541007452,
+      "timeout_seconds": 600.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-setup.json": "39066d10c1486cd8ec65a7d19e94146376ba15b790d16012f5d4cdda219c9d57",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-setup.stdout": "f5d2398641b92dfa945e594d4b058d588e89cd8a4c31cdb7495f1895564f0099",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-setup.stderr": "c110702bc0a7ef288952383878d1b2668969544793492c226c88fa669c222d5c"
+      }
+    },
+    {
+      "name": "prototype-runtime-bitcode-verify",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/opt",
+        "-passes=verify",
+        "runtime/target/release/deps/runtime-7cef72cd08279f5b.bc",
+        "-disable-output"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 0.17952054098714143,
+      "timeout_seconds": 60.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-bitcode-verify.json": "a5e04ab9578799bc6184e49d1af37e2ca34cddf26ad7977b9473b99303ef5469",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-bitcode-verify.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-bitcode-verify.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "prototype-runtime-c-object",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget/runtime",
+      "argv": [
+        "cc",
+        "-c",
+        "rt.c",
+        "-o",
+        "rt.o"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 0.1889012500178069,
+      "timeout_seconds": 60.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-c-object.json": "5f9548d2fd27fbedb79c1da1d6aa5de6d9ed8554a753a0b9df80920bffb195af",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-c-object.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-runtime-c-object.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "prototype-final-make-test-runtime",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "make",
+        "test"
+      ],
+      "returncode": 2,
+      "timed_out": false,
+      "wall_seconds": 351.357099417015,
+      "timeout_seconds": 1800.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test-runtime.json": "00b29e5f48b5d5f64f9348c4f3eddd385a6c07306b7284b6a63b5e6f276648df",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test-runtime.stdout": "0e0e3c74fd078912ffee2d70cc403904b7836d2c0e7daada0d5ec59ad647238c",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-test-runtime.stderr": "249fa77034dcd56f5890bc97450cf42914e808e12f5d4cfc7fe569cca72a95fc"
+      }
+    },
+    {
+      "name": "prototype-final-dag-tests",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget/dag_in_context",
+      "argv": [
+        "cargo",
+        "insta",
+        "test",
+        "--release",
+        "--unreferenced=reject"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 6.30105695896782,
+      "timeout_seconds": 900.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-dag-tests.json": "573fb19b40ef629b461c87158c7d23de145067eafbc8db60d70c5acec3040b10",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-dag-tests.stdout": "45a6003ecfa509c50e41b2dcc5dacabdc6bf058da0b0e388ab177e7ba793062a",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-dag-tests.stderr": "2088de7774eb57ad5ec2fa69c63d536089e7fc2d0448fd2aa71e0d117af66d94"
+      }
+    },
+    {
+      "name": "prototype-final-make-nits",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "make",
+        "nits"
+      ],
+      "returncode": 2,
+      "timed_out": false,
+      "wall_seconds": 5.128195209021214,
+      "timeout_seconds": 900.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-nits.json": "4c053270092f29a79fcc6876f92990da6e498008a43422d4833f6ac3ee4f5caf",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-nits.stdout": "fd2cebd6de1bff2ace4c41d394f121034f2b94a41868fbd1a143a6bcc748ff3b",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-make-nits.stderr": "ddbab1e8b5bd7d3f7c025d9c0a727368446570aa91ce51dc668aba2c1b1fe298"
+      }
+    },
+    {
+      "name": "prototype-baseline-clippy",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-baseline",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 101,
+      "timed_out": false,
+      "wall_seconds": 6.393874166999012,
+      "timeout_seconds": 300.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-baseline-clippy.json": "99e3a34f21f22f1304e049533b16aaf213bc30ae05c20ae12ed7be4780674698",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-baseline-clippy.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-baseline-clippy.stderr": "199b4f2d216d84a460491b5d1007ca66b4ee68b2aefc9062089073dd2281707d"
+      }
+    },
+    {
+      "name": "prototype-root-fmt",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 0.3672804579837248,
+      "timeout_seconds": 60.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-root-fmt.json": "5806b2ed329c06e1bff8701e281ca144cad1baeeb4f8848da35e96fd25138b85",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-root-fmt.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-root-fmt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "prototype-dag-fmt",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--check"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 0.2513458330067806,
+      "timeout_seconds": 60.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-fmt.json": "5bd3096c1dab854593204b849dfd95e09a8e4a90ddf47cf7d46c65349614c2ef",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-fmt.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-fmt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "prototype-dag-clippy",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 101,
+      "timed_out": false,
+      "wall_seconds": 38.117397416965105,
+      "timeout_seconds": 300.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-clippy.json": "3d75d8db2ad72d288a84b7a24aeea0873b019fe03ff8e3456e12443debc15b30",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-clippy.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-dag-clippy.stderr": "eaf280dab5a3f2b96a5146d0701cf9a7ec00273b988d2b114c72b02616f2a766"
+      }
+    },
+    {
+      "name": "prototype-diagnostic-root-clippy-known-lint-allowed",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings",
+        "-A",
+        "clippy::unnecessary_unwrap"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 3.1881631250143982,
+      "timeout_seconds": 300.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-root-clippy-known-lint-allowed.json": "6a69ad676f4d2c359650310c68c0c7e75d36a4c1ada84ddf2d14d7524a7f3b92",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-root-clippy-known-lint-allowed.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-root-clippy-known-lint-allowed.stderr": "a071c05bd3bbdebdec4dbf10452c4a1a5a96227c8d3994104f4439c0e2a3aabf"
+      }
+    },
+    {
+      "name": "prototype-diagnostic-dag-clippy-known-lints-allowed",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--tests",
+        "--",
+        "-D",
+        "warnings",
+        "-A",
+        "clippy::unnecessary_unwrap",
+        "-A",
+        "clippy::cloned_ref_to_slice_refs"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 3.893458125006873,
+      "timeout_seconds": 300.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-dag-clippy-known-lints-allowed.json": "114d129db0f44e99b50baba6dc6ecca81d159ffb3f49db9f314ec8b60eff5dc2",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-dag-clippy-known-lints-allowed.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-diagnostic-dag-clippy-known-lints-allowed.stderr": "feadc25b8277c50d48c8b979d6dcb4dba0a82d4009da8e937c46d541519ab769"
+      }
+    },
+    {
+      "name": "prototype-snapshot-controls",
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-study-retarget",
+      "argv": [
+        "python3",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/compare-snapshot-controls.py"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "wall_seconds": 28.850548833957873,
+      "timeout_seconds": 900.0,
+      "files": {
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-snapshot-controls.json": "a24fcc2ac9e46575e9c7011a88653226d4ddb76f341188f071eef4ad6f142ad6",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-snapshot-controls.stdout": "cc33abe7cae45d09ef9c9deaa569a900dd7a6a5d6d291f6ff769c66636fa4d69",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-snapshot-controls.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "auxiliary_sha256": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/gate-environment.json": "524db607b2a301b03258c7ca6d9488e773524bc8b5f9179b01d90ca40e71fd82",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/runtime-artifacts.json": "bdb980553f21782b379c38c193a1d73bfcb3bf1e9ac714c46a58a2327549e5c9",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/runtime-bitcode-copy.json": "f52866afb215616e10baa2901ff0098ab6170db98f0619981e7996d9f91bd926",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/baseline-lint-source-identity.json": "8c2212f9d81bd8d5ecd1ef22febf1abeb99aee1f3b56021b158ffaf63965e503",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/snapshot-controls.json": "220d45b0b66493dee9da4b476f4c7e17ac43f132e22e47bc54b21bac21bff401",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/engine-control-source.json": "d1f4ec4a3ef010162f18b5edba3948f26e0f674a26bee61d4ec11ebdf645cfcb",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/post-gates-integrity.json": "c4d5e02f5e6d4351cafb35447ab7d8c9c5377e350ee5463cda7a92ce8a306510",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/diagnostic-row-counts.json": "8485b907d0a95ee2bbb2d572fcac2a87ca5ab6c0a59d312e05e286657b77cf3f"
+  },
+  "source_changed_during_gates": false,
+  "compiler_binaries_changed_during_gates": false,
+  "active_processes": [],
+  "performance_sampling": "none by this worker; parent may start after this checkpoint"
+}

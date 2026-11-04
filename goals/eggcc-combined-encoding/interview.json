@@ -1,0 +1,49 @@
+{
+  "stage": "interview",
+  "title": "Find a richer EggCC encoding case",
+  "goalSlug": "eggcc-combined-encoding",
+  "questions": [
+    {
+      "id": "positive-result",
+      "prompt": "What impact must a richer positive example demonstrate?",
+      "description": "We will prioritize a sound chain involving both injectivity and disequality, including equality-sort children or multiple arguments, and connect it to an actual EggCC check or optimization. An annotation or query with no consumer does not count. The open choice is whether that real integration is enough, or whether we must additionally find a new bug, optimization or measured speedup.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "A reproducible structural inference chain used by a real EggCC check or optimization is enough, even if an equivalent hand-written analysis exists and no new bug or speedup is established. Explain what the encoding contributes and compare both mechanisms.",
+      "recommendedOptionIds": [
+        "consumer"
+      ],
+      "options": [
+        {
+          "id": "consumer",
+          "label": "Validated real consumer; no new bug or speedup required"
+        },
+        {
+          "id": "new-impact",
+          "label": "Also require a new bug, newly enabled optimization or speedup"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "representation-scope",
+      "prompt": "How much adaptation may we make to obtain a sound example?",
+      "description": "Prior investigation ruled out marking general Expr/Concat or mutable interval/points-to records injective. A richer case may need an immutable key, a fixed-split tuple representation, or context-scoped analysis values rather than a flag on the current schema.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Allow bounded new immutable representations or scoped analysis values and small compiler/encoding changes tied to an actual consumer. Preserve the existing study and compare with direct/manual rules; avoid a wholesale IR redesign, new proof support or paper edits.",
+      "recommendedOptionIds": [
+        "bounded"
+      ],
+      "options": [
+        {
+          "id": "bounded",
+          "label": "Allow bounded representations and integration changes"
+        },
+        {
+          "id": "existing",
+          "label": "Use existing representations; keep adaptation minimal"
+        }
+      ],
+      "required": true
+    }
+  ]
+}

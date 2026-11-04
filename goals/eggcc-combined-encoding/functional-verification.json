@@ -1,0 +1,28 @@
+{
+  "scope": "Independent coordinator check of exact artifact hashes, source identity and machine-readable functional outcomes; no compiler/test rerun.",
+  "checkpointSha256": "227599b8ac493ecb60b012191d8d56b7ae90e602ad721992f8c00c8ec2a6b985",
+  "sourceSha256": "8165c4521d16ea4f5d1cffe66a08092962b55b8976f37c2b6a2553bfc5352738",
+  "sourceFilesVerified": 794,
+  "productionDeltaFromHostCli": [
+    "dag_in_context/src/structural_types/tests.rs"
+  ],
+  "witnessRowsVerified": 50,
+  "consumerOutcomesVerified": 10,
+  "independentOracleRowsVerified": 54,
+  "oracleEqualRows": 6,
+  "oracleMismatchRows": 48,
+  "primaryCliRunsVerified": 10,
+  "sourceAndOptimizedOutput": "7\n",
+  "nativePasses": [
+    0,
+    1,
+    2
+  ],
+  "unmodifiedPrintedReparseClaimed": false,
+  "newBugOptimizationSpeedupClaimed": false,
+  "factsSha256": "3dc28ac857ae943453bf257e208ae0df1746fe5461ace6b1fdf55d31cdec8c93",
+  "approvedPlanSha256": "943c66c5247dd7062bae02b5dcdd94dfc214562109fc93a9e4c382dc5e060fef",
+  "officialGatesAtFunctionalVerification": "pending",
+  "finalGateSummarySha256": "b116e66101b0cd69c25ea53e7725e4b356c3fca3074999ef42c046c1192f1b69",
+  "finalGateDisposition": "terminal-strict-official-failures-freshly-attributed-no-new-unmatched-failure"
+}

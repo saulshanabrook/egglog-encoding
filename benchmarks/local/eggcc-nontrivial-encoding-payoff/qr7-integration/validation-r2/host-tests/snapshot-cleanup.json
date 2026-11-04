@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "generated_utc": "2026-10-20T05:02:56.069305+00:00",
+  "status": "generated_pending_snapshots_retained_then_removed_from_isolated_source",
+  "removed": [
+    {
+      "relative": "tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__branch_duplicate_work-optimize-sequential.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__branch_duplicate_work-optimize.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__branch_duplicate_work-optimize.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap.new",
+      "sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__branch_hoisting-optimize-no-ctx.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__if_invariant_do_pull_out-optimize.snap.new",
+      "sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__if_invariant_do_pull_out-optimize.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__loop_strength_reduction-optimize.snap.new",
+      "sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__loop_strength_reduction-optimize.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__loop_with_mul_by_inv-optimize.snap.new",
+      "sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__loop_with_mul_by_inv-optimize.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__pull_out_small-optimize-sequential.snap.new",
+      "sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__pull_out_small-optimize-sequential.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__pull_out_small-optimize.snap.new",
+      "sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__pull_out_small-optimize.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__strong_loop-optimize-no-ctx.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__strong_loop-optimize-no-ctx.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__strong_loop-optimize-sequential.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__strong_loop-optimize-sequential.snap.new"
+    },
+    {
+      "relative": "tests/snapshots/files__strong_loop-optimize.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "retained_copy": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots/files__strong_loop-optimize.snap.new"
+    }
+  ],
+  "remaining_snap_new": [],
+  "snapshots_accepted": false,
+  "checked_in_snapshots_modified": false
+}

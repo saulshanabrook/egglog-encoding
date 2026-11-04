@@ -1,0 +1,121 @@
+{
+  "scope": "Primary and independent regeneration exact-byte comparison; Xpdf4.06 PPM rasterization converted losslessly to PNG for visual inspection.",
+  "cases": [
+    {
+      "case": "original-one",
+      "block": "block-05",
+      "files": {
+        "figure-data.json": {
+          "sha256": "f26a7be22fa330b3a648b87109b8530de2aa28a8e21949d9770a3591fb3235e5",
+          "byte_identical_regeneration": true
+        },
+        "table.md": {
+          "sha256": "dc236decea6d6aca909e3fa8456f620c8c6703722d6ea793b2f377b76561bcfc",
+          "byte_identical_regeneration": true
+        },
+        "original-one.svg": {
+          "sha256": "75029a85be5e00f83f787150045b0b58cfd2976f7ad4feeb490cb3c49fbd267b",
+          "byte_identical_regeneration": true
+        },
+        "original-one.pdf": {
+          "sha256": "18c05d3c31b6d8c81d7dc33928b4f9b4da933435b251f06887acd0f9c8312ec2",
+          "byte_identical_regeneration": true
+        }
+      },
+      "renders": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/pdftoppm",
+            "-r",
+            "120",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-05/figures/original-one.pdf",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/original-one-figures"
+          ],
+          "exit": 0,
+          "png": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/original-one-figures.png",
+          "png_sha256": "c96768d7931385dcbccfe6690eb50a7ec77d334d10d3d7550febac9e4b4ff3aa",
+          "pdfinfo": "Creator:        Matplotlib v3.10.7, https://matplotlib.org\nProducer:       Matplotlib pdf backend v3.10.7\nTagged:         no\nForm:           none\nPages:          1\nEncrypted:      no\nPage size:      720 x 223.2 pts (rotated 0 degrees)\nFile size:      19328 bytes\nOptimized:      no\nJavaScript:     no\nPDF version:    1.4\n"
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/pdftoppm",
+            "-r",
+            "120",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/original-one/block-05/figures-regenerated/original-one.pdf",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/original-one-figures-regenerated"
+          ],
+          "exit": 0,
+          "png": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/original-one-figures-regenerated.png",
+          "png_sha256": "c96768d7931385dcbccfe6690eb50a7ec77d334d10d3d7550febac9e4b4ff3aa",
+          "pdfinfo": "Creator:        Matplotlib v3.10.7, https://matplotlib.org\nProducer:       Matplotlib pdf backend v3.10.7\nTagged:         no\nForm:           none\nPages:          1\nEncrypted:      no\nPage size:      720 x 223.2 pts (rotated 0 degrees)\nFile size:      19328 bytes\nOptimized:      no\nJavaScript:     no\nPDF version:    1.4\n"
+        }
+      ]
+    },
+    {
+      "case": "corrected-max",
+      "block": "block-03",
+      "files": {
+        "figure-data.json": {
+          "sha256": "abcfd532955f17368a80bb6c2b89d7ad23515b68bf377fd24ca06bc6ae869dc1",
+          "byte_identical_regeneration": true
+        },
+        "table.md": {
+          "sha256": "6a6ceb037954c902a773b983b345442fc82535ddfe946a77ad495210e8ff7a19",
+          "byte_identical_regeneration": true
+        },
+        "corrected-max.svg": {
+          "sha256": "d5e1f8f2205d9236f024a234e4000f542e1adb5b6279faf983f253feb3029e6d",
+          "byte_identical_regeneration": true
+        },
+        "corrected-max.pdf": {
+          "sha256": "1f3f0d7841384b018bee65a5c81000de2e7433b035dd4ae3bdc55e405257ff86",
+          "byte_identical_regeneration": true
+        }
+      },
+      "renders": [
+        {
+          "argv": [
+            "/opt/homebrew/bin/pdftoppm",
+            "-r",
+            "120",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-03/figures/corrected-max.pdf",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/corrected-max-figures"
+          ],
+          "exit": 0,
+          "png": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/corrected-max-figures.png",
+          "png_sha256": "b136f2bfa6eef74f6e61b06b05a0b28a3f4ba330494a80c8d3ceeece7daa1e85",
+          "pdfinfo": "Creator:        Matplotlib v3.10.7, https://matplotlib.org\nProducer:       Matplotlib pdf backend v3.10.7\nTagged:         no\nForm:           none\nPages:          1\nEncrypted:      no\nPage size:      720 x 223.2 pts (rotated 0 degrees)\nFile size:      19932 bytes\nOptimized:      no\nJavaScript:     no\nPDF version:    1.4\n"
+        },
+        {
+          "argv": [
+            "/opt/homebrew/bin/pdftoppm",
+            "-r",
+            "120",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/corrected-max/block-03/figures-regenerated/corrected-max.pdf",
+            "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/corrected-max-figures-regenerated"
+          ],
+          "exit": 0,
+          "png": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/observations-cost/figures-qa/corrected-max-figures-regenerated.png",
+          "png_sha256": "b136f2bfa6eef74f6e61b06b05a0b28a3f4ba330494a80c8d3ceeece7daa1e85",
+          "pdfinfo": "Creator:        Matplotlib v3.10.7, https://matplotlib.org\nProducer:       Matplotlib pdf backend v3.10.7\nTagged:         no\nForm:           none\nPages:          1\nEncrypted:      no\nPage size:      720 x 223.2 pts (rotated 0 degrees)\nFile size:      19932 bytes\nOptimized:      no\nJavaScript:     no\nPDF version:    1.4\n"
+        }
+      ]
+    }
+  ]
+}

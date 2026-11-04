@@ -1,0 +1,174 @@
+[
+  {
+    "variant": "updated-loop-slot",
+    "steps": [
+      {
+        "i": 0,
+        "x": 0,
+        "y": 1,
+        "k": 7,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 3
+      },
+      {
+        "i": 1,
+        "x": 1,
+        "y": 12,
+        "k": 8,
+        "outer": false,
+        "target": false,
+        "delta": 8,
+        "sum": 11
+      },
+      {
+        "i": 2,
+        "x": 4,
+        "y": 68,
+        "k": 9,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 14
+      },
+      {
+        "i": 3,
+        "x": 13,
+        "y": 349,
+        "k": 10,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 17
+      },
+      {
+        "i": 4,
+        "x": 40,
+        "y": 1755,
+        "k": 11,
+        "outer": false,
+        "target": false,
+        "delta": 11,
+        "sum": 28
+      },
+      {
+        "i": 5,
+        "x": 121,
+        "y": 8786,
+        "k": 12,
+        "outer": false,
+        "target": false,
+        "delta": 12,
+        "sum": 40
+      },
+      {
+        "i": 6,
+        "x": 364,
+        "y": 43942,
+        "k": 13,
+        "outer": false,
+        "target": false,
+        "delta": 13,
+        "sum": 53
+      },
+      {
+        "i": 7,
+        "x": 1093,
+        "y": 219723,
+        "k": 14,
+        "outer": false,
+        "target": false,
+        "delta": 14,
+        "sum": 67
+      }
+    ],
+    "expected_stdout": "67\n"
+  },
+  {
+    "variant": "other-index-loop-slot",
+    "steps": [
+      {
+        "i": 0,
+        "x": 0,
+        "y": 1,
+        "k": 7,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 3
+      },
+      {
+        "i": 1,
+        "x": 1,
+        "y": 12,
+        "k": 5,
+        "outer": false,
+        "target": false,
+        "delta": 5,
+        "sum": 8
+      },
+      {
+        "i": 2,
+        "x": 4,
+        "y": 65,
+        "k": 5,
+        "outer": false,
+        "target": false,
+        "delta": 5,
+        "sum": 13
+      },
+      {
+        "i": 3,
+        "x": 13,
+        "y": 330,
+        "k": 5,
+        "outer": false,
+        "target": false,
+        "delta": 5,
+        "sum": 18
+      },
+      {
+        "i": 4,
+        "x": 40,
+        "y": 1655,
+        "k": 5,
+        "outer": false,
+        "target": false,
+        "delta": 5,
+        "sum": 23
+      },
+      {
+        "i": 5,
+        "x": 121,
+        "y": 8280,
+        "k": 5,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 26
+      },
+      {
+        "i": 6,
+        "x": 364,
+        "y": 41405,
+        "k": 5,
+        "outer": true,
+        "target": false,
+        "delta": 3,
+        "sum": 29
+      },
+      {
+        "i": 7,
+        "x": 1093,
+        "y": 207030,
+        "k": 5,
+        "outer": false,
+        "target": false,
+        "delta": 5,
+        "sum": 34
+      }
+    ],
+    "expected_stdout": "34\n"
+  }
+]

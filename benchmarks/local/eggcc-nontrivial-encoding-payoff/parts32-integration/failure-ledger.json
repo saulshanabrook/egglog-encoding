@@ -1,0 +1,72 @@
+[
+  {
+    "stage": "admission",
+    "error": "python executable absent",
+    "resolution": "used python3"
+  },
+  {
+    "stage": "admission",
+    "error": "untracked oracle parent absent from archive",
+    "resolution": "created parent; copied selected file"
+  },
+  {
+    "stage": "pretty invocation",
+    "error": "relative binary path was resolved inside candidate cwd",
+    "resolution": "reran exact absolute path as pretty-parts32-02"
+  },
+  {
+    "stage": "pilot",
+    "observation": "three rejected queries, no exports; correct native output",
+    "cause": "mask/divisor initial Get projections in an enclosing If were outside literal-only loop-constant support",
+    "revision": "one bounded revision follows exact enclosing If inputs before unchanged-slot induction",
+    "evidence": "pilot.json"
+  },
+  {
+    "stage": "pilot-r1",
+    "observation": "one accepted query; full chain; native 56",
+    "evidence": "pilot-r1.json"
+  },
+  {
+    "stage": "primitive-only control review",
+    "observation": "initial control removed dynamic seeds",
+    "disposition": "rejected fairness control; preserved prior captures",
+    "resolution": "final graph/identity/dynamic-seed population exactly matches Encoding before saturation; no saturation, Bottom probe, generic witness query or manual closure; marked primitive fields empty"
+  },
+  {
+    "stage": "EE diagnostic",
+    "error": "TypeError: global x expects @disequality-truth but has Word",
+    "baseline_reproduction": "selected-ee-original-name-failure",
+    "resolution": "alpha-rename diagnostic bindings only; selected-ee-alpha-positive and five final registered tests pass",
+    "qualifying_EggCC_bug": false
+  },
+  {
+    "stage": "engine make check",
+    "error": "UV cache temp write blocked by sandbox",
+    "resolution": "isolated local UV cache and Python 3.12"
+  },
+  {
+    "stage": "engine make check local cache",
+    "error": "ps denied in descendant-process timeout test; 232 other Python tests passed",
+    "resolution": "approved process-access retry; complete make check passed",
+    "auto_review_rejection": false
+  },
+  {
+    "stage": "clippy",
+    "new_issue": "manual row tuple type complexity",
+    "resolution": "named ApplicationRow type; final clippy contains only two pinned-U0 file warnings"
+  },
+  {
+    "stage": "root EggCC make test",
+    "outcome": "2421 functional tests pass; command rejects 13 pending snapshots",
+    "resolution": "all 13 match earlier same-mask captures byte for byte; retained without acceptance"
+  },
+  {
+    "stage": "final context driver invocation",
+    "error": "typo in evidence-root path prevented Python script opening",
+    "resolution": "reran correct path; no compiler ran in failed attempt"
+  },
+  {
+    "stage": "SeedOnly request",
+    "resolution": "added exact population-only mode before any samples; final 200-check replay and final source/binary re-frozen"
+  }
+]

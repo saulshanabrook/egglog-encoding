@@ -1,0 +1,303 @@
+{
+  "source_commit": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "reviews": [
+    {
+      "id": "csrmv-mod",
+      "source": "benchmarks/passing/bril/mem/csrmv.bril",
+      "sha256": "76cf4d2131c15eceab7e9ebd98240e781bb3b6fb3e5201090d6e617d3b8a32af",
+      "reviewed_ranges": [
+        {
+          "start": 66,
+          "end": 71,
+          "source": "@mod(x: int, m: int): int {\n    one: int = const 1;\n    q: int = div x m;\n    multiple: int = mul q m;\n    r: int = sub x multiple;\n    ret r;"
+        },
+        {
+          "start": 103,
+          "end": 113,
+          "source": "    colidx_incr: int = div cols degree;\n.loop_gen_cidx_cond:\n    cond:bool = lt i nnz;\n    br cond .loop_gen_cidx_body .loop_gen_cidx_exit;\n.loop_gen_cidx_body:\n    rid: int = div i degree;\n    v: int = mul i colidx_incr;\n    v: int = add v rid;\n    cid: int = call @mod v cols;\n    p: ptr<int> = ptradd csr_colidx i;\n    store p cid;"
+        },
+        {
+          "start": 128,
+          "end": 133,
+          "source": "    call @rand rng;\n    v: int = load rng;\n    v: int = call @mod v ten;\n    p: ptr<int> = ptradd csr_values i;\n    store p v;\n    i: int = add i one;"
+        },
+        {
+          "start": 154,
+          "end": 159,
+          "source": "    call @rand rng;\n    v: int = load rng;\n    v: int = call @mod v ten;\n    p: ptr<int> = ptradd data i;\n    store p v;\n    i: int = add i one;"
+        }
+      ],
+      "producer": "@mod has quotient/remainder arithmetic; its caller receives only r. CSR generator also computes i/degree, but cid is mod(v,cols), with different numerator/divisor.",
+      "scope_context": "Function @mod; gen_uniform_csr loop_gen_cidx/loop_gen_vals; gen_vec loop_body.",
+      "existing_consumer": "Memory store to csr_colidx+i or csr_values+i; neither is reached through equality of two complete decomposition keys.",
+      "missing_admission_premise": "Missing equal-key producer/consumer; quotient is not exported by @mod.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "csrmv-getbit",
+      "source": "benchmarks/passing/bril/mem/csrmv.bril",
+      "sha256": "76cf4d2131c15eceab7e9ebd98240e781bb3b6fb3e5201090d6e617d3b8a32af",
+      "reviewed_ranges": [
+        {
+          "start": 19,
+          "end": 37,
+          "source": "@getbit(x: int, position: int): bool {\n    one: int = const 1;\n    two: int = const 2;\n    # remove bits lower than position\n    i: int = const 0;\n.loop_cond:\n    cond: bool = lt i position;\n    br cond .loop_body .loop_exit;\n.loop_body:\n    x: int = div x two;\n    i: int = add i one;\n    jmp .loop_cond;\n.loop_exit:\n    # at this moment, if x == (x/2)*2, the bit is 0\n    halfx: int = div x two;\n    twohalfx: int = mul halfx two;\n    iszero: bool = eq twohalfx x;\n    res: bool = not iszero;\n    ret res;"
+        }
+      ],
+      "producer": "Repeated division by2 and parity test x==2*(x/2).",
+      "scope_context": "getbit loop_exit, called for four LFSR bit positions.",
+      "existing_consumer": "Boolean parity result consumed by xor/LFSR update.",
+      "missing_admission_premise": "A single-number parity observation, not matching quotient+remainder pairs for two values; no32-bit split.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "adler16-pack",
+      "source": "benchmarks/passing/bril/mem/adler32.bril",
+      "sha256": "e5e2225a71894310936568453a8247cb5ad4aed6c773270762b8b9ab7ef12043",
+      "reviewed_ranges": [
+        {
+          "start": 1,
+          "end": 8,
+          "source": "# ARGS: 13000\n@main(size : int) {\n  arr: ptr<int> = alloc size;\n  call @fill_array arr size;\n  checksum: int = call @adler32 arr size;\n  free arr;\n  print checksum;\n}"
+        },
+        {
+          "start": 61,
+          "end": 83,
+          "source": "# Function that calculates the Adler-32 checksum of an array\n@adler32(arr: ptr<int>, size:int): int {\n  a: int = const 1;\n  b: int = const 0;\n  one: int = const 1;\n  curr: int = const 0;\n  loc: ptr<int> = id arr;\n  adler: int = const 65521;\n  two_raised_to_16: int = const 65536;\n.loop:\n  val: int = load loc;\n  a: int = add a val;\n  b: int = add b a;\n  loc: ptr<int> = ptradd loc one;\n  curr: int = add curr one;\n  continue: bool = lt curr size;\n  br continue .loop .exit;\n.exit:\n  a: int = call @mod a adler;\n  b: int = call @mod b adler;\n  b: int = mul b two_raised_to_16;\n  result: int = call @bitwise_or b a;\n  ret result;"
+        }
+      ],
+      "producer": "a,b reduced modulo65521; high b multiplied by65536; combined via arithmetic bitwise_or.",
+      "scope_context": "adler32 exit after accumulation loop.",
+      "existing_consumer": "Checksum returned to main and printed.",
+      "missing_admission_premise": "Near16-bit packing, but no packed-key equality, component retest or address reuse downstream.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "adler-bit-decomposition",
+      "source": "benchmarks/passing/bril/mem/adler32.bril",
+      "sha256": "e5e2225a71894310936568453a8247cb5ad4aed6c773270762b8b9ab7ef12043",
+      "reviewed_ranges": [
+        {
+          "start": 34,
+          "end": 58,
+          "source": "@bitwise_or(x: int, y: int): int {\n  one: int = const 1;\n  two: int = const 2;\n  val: int = const 1;\n  zero: int = const 0;\n  result: int = const 0;\n.loop:\n  xmod2: int = call @mod x two;\n  ymod2: int = call @mod y two;\n  xodd: bool = eq xmod2 one;\n  yodd: bool = eq ymod2 one;\n  cond: bool = or xodd yodd;\n  br cond .true .false;\n.true:\n  result: int = add result val;\n.false:\n  x: int = div x two;\n  y: int = div y two;\n  xpos: bool = gt x zero;\n  ypos: bool = gt y zero;\n  val: int = mul val two;\n  continue: bool = or xpos ypos;\n  br continue .loop .exit;\n.exit:\n  ret result;"
+        }
+      ],
+      "producer": "Each x/y has mod2 and div2; remainder tests compare against1.",
+      "scope_context": "bitwise_or per-bit loop.",
+      "existing_consumer": "Accumulate output bits under xodd OR yodd.",
+      "missing_admission_premise": "No equality of both quotient and remainder for two original values; no original-value equality consumer.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "digit-splits",
+      "source": "benchmarks/passing/bril/core/reverse.bril",
+      "sha256": "c5a5b2e8f6880ba2168e633ca8bc6dfeec219432c2e212b4b64eaae4dc4be201",
+      "reviewed_ranges": [
+        {
+          "start": 13,
+          "end": 22,
+          "source": ".for.body.3:\n  v5: int = id n;\n  a: int = div v5 v1;\n  floor: int = mul a v1;\n  remainder: int = sub v5 floor;\n  result: int = mul result v1;\n  result: int = add result remainder;\n  n: int = id a;\n  comp1: bool = eq n v0;\n  br comp1 .if.body .for.incre;"
+        }
+      ],
+      "producer": "Quotient/remainder10 of one n; result reconstructed in reversed decimal order.",
+      "scope_context": "main for.body.3 across loop iterations.",
+      "existing_consumer": "Quotient drives termination; remainder updates result.",
+      "missing_admission_premise": "No equality of complete keys or memory endpoint.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "digital-root",
+      "source": "benchmarks/passing/bril/core/digital-root.bril",
+      "sha256": "003ba9262f42422c620d3c69b47f1435e821a6c487225b2fbb86d680755f6ee6",
+      "reviewed_ranges": [
+        {
+          "start": 11,
+          "end": 28,
+          "source": "    sum: int = const 0;\n .begin:\n    digit: int = call @peel_last_digit input;\n    input: int = div input ten;\n    result: int = add result digit;\n\n .check_result:\n    sum: int = add sum result;\n    processed: bool = call @is_single_digit result;\n    br processed .check_done .process_result;\n .process_result:\n    r0: int = call @peel_last_digit result;\n    result: int = div result ten;\n    result: int = add result r0;\n    jmp .check_result;\n\n .check_done:\n    done: bool = eq input zero;"
+        },
+        {
+          "start": 45,
+          "end": 50,
+          "source": "@peel_last_digit(input: int): int {\n    ten: int = const 10;\n    div_by_ten: int = div input ten;\n    mul_by_ten: int = mul div_by_ten ten;\n    last_digit: int = sub input mul_by_ten;\n    ret last_digit;"
+        }
+      ],
+      "producer": "peel_last_digit returns remainder10; caller also divides same input by10.",
+      "scope_context": "main begin/process_result loops; helper leaf.",
+      "existing_consumer": "Digit sums and termination test.",
+      "missing_admission_premise": "Both components consumed, but no second key comparison/cancellation demand.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "bit-sums",
+      "source": "benchmarks/passing/bril/core/sum-bits.bril",
+      "sha256": "6faf80f228e5d80e1868a9e84a7b73d8779d820aff67d5de5e43616f6111983b",
+      "reviewed_ranges": [
+        {
+          "start": 2,
+          "end": 23,
+          "source": "@main(input: int) {\n  sum : int = const 0;\n  two : int = const 2;\n  zero : int = const 0;\n.loop:\n  cond : bool = eq input zero;\n  br cond .done .body;\n.body:\n  bit : int = call @mod input two;\n  input : int = div input two;\n  sum : int = add sum bit;\n  jmp .loop;\n.done:\n  print sum;\n}\n\n@mod(dividend : int, divisor : int) : int {\n  quotient : int = div dividend divisor;\n  two : int = const 2;\n  prod : int = mul two quotient;\n  diff : int = sub dividend prod;\n  ret diff;"
+        }
+      ],
+      "producer": "Caller uses quotient2 plus @mod remainder. Helper multiplies by literal2 despite generic divisor parameter.",
+      "scope_context": "main body; @mod leaf.",
+      "existing_consumer": "Add bit to scalar sum; quotient advances loop.",
+      "missing_admission_premise": "Only caller specialization divisor2 justifies remainder law; no two-key equality. Generic helper summary deliberately not admitted.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "binary-recursion",
+      "source": "benchmarks/passing/bril/core/binary-fmt.bril",
+      "sha256": "f55a9b6a9ee727dd4ce5082d607ae89cd985ac1bb97301208d9386695213d443",
+      "reviewed_ranges": [
+        {
+          "start": 8,
+          "end": 26,
+          "source": "@printBinary(n: int, sum: int): int {\n\tzero: int = const 0;\n\tcond: bool = eq n zero;\n\tbr cond .end .rec;\n.rec:\n\ttwo: int = const 2;\n\tv0: int = call @mod n two;\n\tv1: int = div n two;\n\tsum: int = call @printBinary v1 sum;\n\tsum: int = add sum v0;\n.end:\n\tret sum;\n}\n\n@mod(a0: int, a1: int) : int {\n\tv0: int = div a0 a1;\n\tv1: int = mul v0 a1;\n\tv2: int = sub a0 v1;\n\tret v2;"
+        }
+      ],
+      "producer": "mod2 and quotient2 of same n.",
+      "scope_context": "printBinary recursive branch.",
+      "existing_consumer": "Quotient is recursive argument; remainder added after return.",
+      "missing_admission_premise": "No pair equality or memory reuse; recursion analysis alone is not this key encoding.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "divisor-pairs",
+      "source": "benchmarks/passing/bril/core/sum-divisors.bril",
+      "sha256": "31d42c1277f8990baa2561cddb34c41a94f1bb7bc3caf5e6db5086391b89f085",
+      "reviewed_ranges": [
+        {
+          "start": 17,
+          "end": 33,
+          "source": "  i    : int  = add i one;\n  isq  : int  = mul i i;\n  sqgt : bool = gt isq n;\n  br sqgt .end .check;\n.check:\n  m   : int  = call @mod n i;\n  eqz : bool = eq m zer;\n  br eqz .body .begin;\n.body:\n  sum: int = add sum i;\n  res  : int  = add res i;\n  d    : int  = div n i;\n  deqi : bool = eq d i;\n  br deqi .begin .then;\n.then:\n  sum: int = add sum d;\n  res : int = add res d;"
+        },
+        {
+          "start": 39,
+          "end": 43,
+          "source": "@mod(dividend: int, divisor: int) : int {\n  quot: int = div dividend divisor;\n  prod: int = mul divisor quot;\n  diff: int = sub dividend prod;\n  ret diff;"
+        }
+      ],
+      "producer": "Remainder(n,i)==0 followed by quotient(n,i)==i.",
+      "scope_context": "main check/body under varying loop divisor i.",
+      "existing_consumer": "Avoid double-counting square-root divisor.",
+      "missing_admission_premise": "Not two complete matching keys, and divisor varies; existing square test already directly consumes quotient.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "palindrome-mixed-fields",
+      "source": "benchmarks/passing/bril/core/palindrome.bril",
+      "sha256": "0b13c07fb6c368e7f04b305cc6d4f2bd574c635e7c3337883477ad4dab8b9c68",
+      "reviewed_ranges": [
+        {
+          "start": 59,
+          "end": 73,
+          "source": " .if.false.palindrome:\n  power: int = call @pow ten len;\n  left: int = div in power;\n  v1: int = div in ten;\n  v2: int = mul v1 ten;\n  right: int = sub in v2;\n  is_equal: bool = eq left right;\n  br is_equal .if.true.mirror .if.false.mirror;\n  .if.true.mirror:\n   temp: int = mul power left;\n   temp: int = sub in temp;\n   temp: int = sub temp right;\n   next_in: int = div temp ten;\n   next_len: int = sub len two;\n   is_palindrome: bool = call @palindrome next_in next_len;"
+        }
+      ],
+      "producer": "Leading digit in/power compared against in%10.",
+      "scope_context": "palindrome recursive true-length branch.",
+      "existing_consumer": "Choose recursion or false result.",
+      "missing_admission_premise": "Different divisors and only edge digits; loses middle digits, so the two-component map is not injective for longer numbers.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "bitshift-named-only",
+      "source": "benchmarks/passing/bril/core/bitshift.bril",
+      "sha256": "37d7f1ae4ae48946011b531bceb86e4c02624b2cefeb36c2c63bcb1cc963e18d",
+      "reviewed_ranges": [
+        {
+          "start": 12,
+          "end": 27,
+          "source": "  v5: int = id x;\n  v6: int = id n;\n  v7: int = const 2;\n  v8: int = div v6 v7;\n  half: int = call @pow v5 v8;\n  half: int = id half;\n  v9: int = id half;\n  v10: int = id half;\n  v11: int = mul v9 v10;\n  half2: int = id v11;\n  v13: int = id n;\n  v14: int = const 2;\n  v15: int = call @mod v13 v14;\n  v16: int = const 1;\n  v17: bool = eq v15 v16;\n  br v17 .then.12 .else.12;"
+        },
+        {
+          "start": 51,
+          "end": 80,
+          "source": "@LEFTSHIFT(x: int, step: int): int {\n  v0: int = const 2;\n  v1: int = id step;\n  p: int = call @pow v0 v1;\n  p: int = id p;\n  v2: int = id x;\n  v3: int = id p;\n  v4: int = mul v2 v3;\n  ret v4;\n}\n@RIGHTSHIFT(x: int, step: int): int {\n  v0: int = const 2;\n  v1: int = id step;\n  p: int = call @pow v0 v1;\n  p: int = id p;\n  v2: int = id x;\n  v3: int = id p;\n  v4: int = div v2 v3;\n  ret v4;\n}\n\n@main (a : int, b: int, c: int, d : int) {\n  v2: int = id a;\n  v3: int = id b;\n  ans1: int = call @LEFTSHIFT v2 v3;\n  v4: int = id c;\n  v5: int = id d;\n  ans2: int = call @RIGHTSHIFT v4 v5;\n  output: int = add ans1 ans2;\n  print output;"
+        }
+      ],
+      "producer": "Arithmetic power/multiply/divide implements variable shifts; exponent routine has quotient/remainder2.",
+      "scope_context": "pow recursion; LEFTSHIFT/RIGHTSHIFT functions, separate main inputs.",
+      "existing_consumer": "Return two separately shifted values and add them.",
+      "missing_admission_premise": "No constant32 split, complementary low field, paired key equality or component retest.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "row-major-address",
+      "source": "benchmarks/passing/bril/mem/adj2csr.bril",
+      "sha256": "59013758da9908aed3c762ebe5fd20ae1ef501e038af6cd907143b252509ac32",
+      "reviewed_ranges": [
+        {
+          "start": 98,
+          "end": 125,
+          "source": "@adj2csr(num_nodes: int, adjmat: ptr<int>, csr_offset: ptr<int>, csr_edges: ptr<int>) : int {\n  num_edges: int = const 0;\n  row: int = const 0;\n  one: int = const 1;\n.iter_row:\n  row_cond: bool = lt row num_nodes;\n  col: int = const 0;\n  br row_cond .iter_col .row_done;\n.iter_col:\n  col_cond: bool = lt col num_nodes;\n  br col_cond .col_body .col_done;\n.col_body:\n  row_tmp: int = mul row num_nodes;\n  node_idx: int = add row_tmp col;\n  node_loc: ptr<int> = ptradd adjmat node_idx;\n  node_val: int = load node_loc;\n  cond: bool = eq node_val one;\n  br cond .if_body .col_end;\n.if_body:\n  edge_loc: ptr<int> = ptradd csr_edges num_edges;\n  store edge_loc col;\n  num_edges: int = add num_edges one;\n.col_end:\n  col: int = add col one;\n  jmp .iter_col;\n.col_done:\n  offset_loc: ptr<int> = ptradd csr_offset row;\n  store offset_loc num_edges;"
+        }
+      ],
+      "producer": "row*num_nodes+col is a bounded row-major address construction.",
+      "scope_context": "adj2csr nested row/column loops.",
+      "existing_consumer": "Load adjmat cell, conditionally write separate csr_edges, then csr_offset.",
+      "missing_admission_premise": "Dynamic radix, not fixed32 packing; no same-key/component guard leading to new same-address endpoint.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "small-matrix-mod",
+      "source": "benchmarks/passing/bril/mixed/mat-inv.bril",
+      "sha256": "a44bdc9bee53daa5a639156ede626ce61a06f01e2cee85d6be2611001faf7d6d",
+      "reviewed_ranges": [
+        {
+          "start": 7,
+          "end": 24,
+          "source": "@matget(matrix :ptr<float>, r :int, c :int) :float\n{\n  three :int = const 3;\n  trip_r :int = mul three r;\n  index :int = add c trip_r;\n  ptr :ptr<float> = ptradd matrix index;\n  res :float = load ptr;\n  ret res;\n}\n\n## ok now we would like to take a determinant, but we're gonna need a\n## \"mod\" operator\n@mod(a :int, b :int) :int\n{\n  acc :int = div a b;\n  acc :int = mul b acc;\n  acc :int = sub a acc;\n  ret acc;"
+        },
+        {
+          "start": 35,
+          "end": 52,
+          "source": "  three :int = const 3;\n\n.loop:\n  to_add :float = call @matget matrix zero i;\n  to_sub :float = id to_add; ## mat[0][i]\n  col :int = add i one;\n  col :int = call @mod col three; ## (i + 1) % 3\n  tmp :float = call @matget matrix one col;\n  to_add :float = fmul to_add tmp;\n  tmp :float = call @matget matrix two col;\n  to_sub :float = fmul to_sub tmp;\n\n  col :int = add i two;\n  col :int = call @mod col three; ## (i + 2) % 3;\n  tmp :float = call @matget matrix two col;\n  to_add :float = fmul to_add tmp;\n  tmp :float = call @matget matrix one col;\n  to_sub :float = fmul to_sub tmp;"
+        }
+      ],
+      "producer": "@mod3 chooses columns; matget constructs row*3+col.",
+      "scope_context": "determinant loop and helper call contexts.",
+      "existing_consumer": "Float loads and arithmetic; inverse later stores a different result array.",
+      "missing_admission_premise": "Remainder-only column selection, no complete quotient/remainder equality or blocked same-live-cell forwarding.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    },
+    {
+      "id": "rng-remainders",
+      "source": "benchmarks/passing/bril/mem/mat-mul.bril",
+      "sha256": "c17a0761b639544ad5ae31dbd7cc404c3ac0e5f02ce898c99ea5051185de990d",
+      "reviewed_ranges": [
+        {
+          "start": 5,
+          "end": 19,
+          "source": "@rand(seq: ptr<int>, max: int) : int {\n  a: int = const 25214903917;\n  c: int = const 11;\n  m: int = const 281474976710656;\n  x: int = load seq;\n  ax: int = mul a x;\n  axpc: int = add ax c;\n  next: int = div axpc m;\n  next: int = mul next m;\n  next: int = sub axpc next;\n  store seq next;\n  val: int = div next max;\n  val: int = mul val max;\n  val: int = sub next val;\n  ret val;"
+        }
+      ],
+      "producer": "Modulo2^48 and modulo max from div/mul/sub. Same helper copied to adj2csr/vsmul.",
+      "scope_context": "rand update under sequence state.",
+      "existing_consumer": "Store RNG state and return bounded generated value.",
+      "missing_admission_premise": "Quotient is temporary remainder implementation; no paired-key equality or coordinate-reuse consumer.",
+      "u0_or_llvm_removal_status": "not tested: no qualifying endpoint identified; source absence is not backend-removal evidence",
+      "disposition": "near_miss_no_exact_trigger"
+    }
+  ],
+  "exact_valid_triggers_identified": 0,
+  "compiler_invocations": 0,
+  "native_invocations": 0,
+  "timing_invocations": 0,
+  "lowered_graph_coverage": "none in this source-shape census; no global claim about generated egraph-only triggers",
+  "other_numeric_helpers_review": "euclid/lcm/mod_inv/orders/relative-primes/perfect/factors/primes-between/totient use remainder/divisibility/GCD/primality results rather than matching full keys; inventory retained in census.json"
+}

@@ -1,0 +1,20 @@
+{
+  "reviewedDraftSha256": "8e8d1c886cfcb97282b28b1599143511a093c714c489c46c39eec501bd733798",
+  "reviews": [
+    {
+      "agent": "study_semantics",
+      "result": "Consent, no semantic blockers; implementation watchpoint: query ablation must remove a reasoning step, not only the final action."
+    },
+    {
+      "agent": "combined_consumers",
+      "result": "Consent, no compiler-consumer blocker; baseline equivalence and internal-input limits explicit."
+    },
+    {
+      "agent": "study_harness",
+      "result": "Consent, no verification/reconstruction/control blocker."
+    }
+  ],
+  "integration": "Root added one sentence making the query-ablation watchpoint explicit; no semantic path, outcome requirement or command changed.",
+  "currentPlanSha256": "943c66c5247dd7062bae02b5dcdd94dfc214562109fc93a9e4c382dc5e060fef",
+  "scope": "Read-only setup review; no implementation or experiments."
+}

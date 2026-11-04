@@ -1,0 +1,13 @@
+{
+  "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-report.py",
+  "script_sha256": "fc43dc3344f3541dcabd8b1f20ca5004ddbbf3a434dd6345b6984b7f6c8c7cb8",
+  "exit": 1,
+  "failure": "global quiescence assertion encountered unrelated Cargo7143; no experimental/source failure",
+  "unrelated_process": {
+    "pid": 7143,
+    "parent": 7141,
+    "cwd": "/Users/saul/p/wt/egglog-python/proto-ir-multiset",
+    "argv": "cargo +1.96.0 test --offline --locked --config /Users/saul/p/egglog-experimental/goals/proto-ir-schema-validation/local.toml --lib -- --test-threads=1"
+  },
+  "action": "preserved; no interruption or workload restart"
+}

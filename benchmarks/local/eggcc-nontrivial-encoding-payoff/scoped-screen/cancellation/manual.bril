@@ -1,0 +1,33 @@
+# ARGS: 0 0 1
+@main(x: int, y: int, z: int) {
+  one: int = const 1;
+  seven: int = const 7;
+  tx: int = add x one;
+  ty: int = add y one;
+  outer: bool = eq tx ty;
+  br outer .same .other;
+.same:
+  base_equal: bool = eq x z;
+  br base_equal .equal .different;
+.different:
+  uy: int = add y seven;
+  uz: int = add z seven;
+  target: bool = eq uy uz;
+  jmp .expected;
+.unexpected:
+  bad: int = const 99;
+  print bad;
+  jmp .done;
+.expected:
+  good: int = const 7;
+  print good;
+  jmp .done;
+.equal:
+  equal_result: int = const 5;
+  print equal_result;
+  jmp .done;
+.other:
+  other_result: int = const 3;
+  print other_result;
+.done:
+}

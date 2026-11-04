@@ -1,0 +1,11 @@
+{
+  "evidence_audit_passed": true,
+  "new_compiler_or_native_executions": 0,
+  "selected_sources_and_binary_unchanged": true,
+  "causal_controls_verified": true,
+  "confirmation_complete_cycles": 32,
+  "compile_diagnostic_measurements_per_arm": 10,
+  "runtime_microbenchmark_gate_passed": true,
+  "full_eggcc_integration_gates_green": false,
+  "qualification_and_goal_completion": "parent-owned; no new bug and no suite-wide claim"
+}

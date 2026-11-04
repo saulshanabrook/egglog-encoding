@@ -1,0 +1,145 @@
+[
+  {
+    "args": [
+      0,
+      4294967296,
+      8
+    ],
+    "expected_stdout": "56\n",
+    "actual": {
+      "source": "56\n",
+      "optimized": "56\n",
+      "manual": "56\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      0,
+      8
+    ],
+    "expected_stdout": "54\n",
+    "actual": {
+      "source": "54\n",
+      "optimized": "54\n",
+      "manual": "54\n"
+    }
+  },
+  {
+    "args": [
+      4294967296,
+      0,
+      8
+    ],
+    "expected_stdout": "54\n",
+    "actual": {
+      "source": "54\n",
+      "optimized": "54\n",
+      "manual": "54\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      1,
+      8
+    ],
+    "expected_stdout": "24\n",
+    "actual": {
+      "source": "24\n",
+      "optimized": "24\n",
+      "manual": "24\n"
+    }
+  },
+  {
+    "args": [
+      -9223372036854775808,
+      -9223372032559808512,
+      8
+    ],
+    "expected_stdout": "56\n",
+    "actual": {
+      "source": "56\n",
+      "optimized": "56\n",
+      "manual": "56\n"
+    }
+  },
+  {
+    "args": [
+      9223372036854775807,
+      9223372032559808511,
+      8
+    ],
+    "expected_stdout": "54\n",
+    "actual": {
+      "source": "54\n",
+      "optimized": "54\n",
+      "manual": "54\n"
+    }
+  },
+  {
+    "args": [
+      -1,
+      4294967295,
+      8
+    ],
+    "expected_stdout": "56\n",
+    "actual": {
+      "source": "56\n",
+      "optimized": "56\n",
+      "manual": "56\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      4294967296,
+      0
+    ],
+    "expected_stdout": "0\n",
+    "actual": {
+      "source": "0\n",
+      "optimized": "0\n",
+      "manual": "0\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      4294967296,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      4294967296,
+      1024
+    ],
+    "expected_stdout": "7168\n",
+    "actual": {
+      "source": "7168\n",
+      "optimized": "7168\n",
+      "manual": "7168\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      4294967296,
+      -1
+    ],
+    "expected_stdout": "-2\n",
+    "actual": {
+      "source": "-2\n",
+      "optimized": "-2\n",
+      "manual": "-2\n"
+    }
+  }
+]

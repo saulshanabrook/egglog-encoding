@@ -1,0 +1,104 @@
+{
+  "frozen_utc": "2026-10-19T16:54:03.350206+00:00",
+  "status": "prospective design; report to parent before any timing",
+  "timed_samples_taken": false,
+  "source_sha256": "d1fe5b6ace306fff529d1ed7bac03609066624cf750fc0238cb71fcbee583ae0",
+  "compiler_source_snapshot": "candidate-revision1-source.tar",
+  "native_backend": "untouched admitted U0 with LLVM 18 O3_O3; emitted Bril lowered with optimize-egglog=false",
+  "endpoint": "end-to-end generated-program process execution; compilation excluded",
+  "workloads": [
+    {
+      "name": "equal-low-positive",
+      "args": [
+        0,
+        4294967296,
+        1000000
+      ],
+      "expected_stdout": "7000000\n"
+    },
+    {
+      "name": "signed-min-boundary",
+      "args": [
+        -9223372036854775808,
+        -9223372032559808512,
+        1000000
+      ],
+      "expected_stdout": "7000000\n"
+    },
+    {
+      "name": "signed-max-crossing",
+      "args": [
+        9223372036854775807,
+        9223372032559808511,
+        1000000
+      ],
+      "expected_stdout": "6999998\n"
+    }
+  ],
+  "arms": {
+    "U0": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix/positive/u0/native/program",
+      "binary_sha256": "2d60b73ca18d8df4482077639b6905478ee0de34b62d51b7e1a330ca4503da1d",
+      "emitted_sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb",
+      "main_assembly_sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb"
+    },
+    "B1": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix/positive/off/native/program",
+      "binary_sha256": "af852b0d71475394ebdab95238ab925ef2c868edbc90e5303fc2653689ac70c3",
+      "emitted_sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb",
+      "main_assembly_sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb"
+    },
+    "Manual": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix/positive/manual/native/program",
+      "binary_sha256": "bb6e6227d529e95b27cd0f6f7bc313638ae8eb6c3980251f3e9a715cb22299ee",
+      "emitted_sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9",
+      "main_assembly_sha256": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19"
+    },
+    "Encoding": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix/positive/encoding/native/program",
+      "binary_sha256": "50668df9f491aff21bddd55fa050017b193a7616a280a2310dbff3822b5b89a8",
+      "emitted_sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9",
+      "main_assembly_sha256": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19"
+    }
+  },
+  "observations_per_arm_per_workload_per_session": 32,
+  "independent_sessions": 2,
+  "invocations_per_observation": 32,
+  "warmups_per_arm_per_workload": 3,
+  "order_rows": [
+    [
+      "U0",
+      "B1",
+      "Encoding",
+      "Manual"
+    ],
+    [
+      "B1",
+      "Manual",
+      "U0",
+      "Encoding"
+    ],
+    [
+      "Manual",
+      "Encoding",
+      "B1",
+      "U0"
+    ],
+    [
+      "Encoding",
+      "U0",
+      "Manual",
+      "B1"
+    ]
+  ],
+  "order_rule": "cycle modulo 4 selects row; rotate workload order by cycle; complete each four-arm cycle",
+  "timer": "perf_counter_ns immediately around batch of 32 sequential subprocess.run calls; validate every stdout/exit/timeout, then write artifacts outside measured boundary",
+  "timeout_s_per_process": 30,
+  "estimator": "per-workload median cycle-matched Encoding/U0 ratios; report B1/U0 and Manual/U0 as separate comparisons",
+  "uncertainty": "10000 resamples of whole cycles per workload; percentile 95% interval; fixed seed 20261019",
+  "acceptance": "each reported speedup requires upper 95% paired interval below 0.99 in both independent sessions, exact outputs, Encoding=Manual code and B1=U0 code; no pooled overall number",
+  "cpu_isolation": false,
+  "memory_pressure_blocking": false,
+  "compile_time_claim": false,
+  "validation_status": "all 182 positive/negative native executions and code/causal gates passed; full engine Makefile check running separately after formatting; no timing until results are reported"
+}

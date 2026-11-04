@@ -1,0 +1,120 @@
+{
+  "status": "confirmed",
+  "interpretation": "Post-schedule pass0 graph contains product lower bound 1 and the product<0 expression in the same class as branch-context Bool false; this is diagnostic data, not proof provenance.",
+  "rows": [
+    {
+      "arm": "A",
+      "pass": 0,
+      "graph": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/A-optimize/egraphs/tiger_egraph_0001.json",
+      "graph_sha256": "8b2c9457596e56883607031c34e9ab9072d885ef0cf5c80f03e276303e3e8811",
+      "witnesses": [
+        {
+          "product": "function-1-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        },
+        {
+          "product": "function-4-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "B",
+      "pass": 0,
+      "graph": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/B-optimize/egraphs/tiger_egraph_0001.json",
+      "graph_sha256": "c1b07ba8fbe4dc5ffd07bc0183703d5a596f4d1dc81e8de91be944db9233d03d",
+      "witnesses": [
+        {
+          "product": "function-1-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        },
+        {
+          "product": "function-4-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "arm": "P-off",
+      "pass": 0,
+      "graph": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/arithmetic-screen/localization/runs/mul-minimal-max/P-off-optimize/egraphs/tiger_egraph_0001.json",
+      "graph_sha256": "c1b07ba8fbe4dc5ffd07bc0183703d5a596f4d1dc81e8de91be944db9233d03d",
+      "witnesses": [
+        {
+          "product": "function-1-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        },
+        {
+          "product": "function-4-Bop",
+          "product_eclass": "Expr-159",
+          "comparison": "function-2-Bop",
+          "comparison_eclass": "Expr-161",
+          "same_class_false_constants": [
+            "function-6-Const"
+          ],
+          "product_lower_bounds": [
+            {
+              "bound_node": "function-7-lo-bound",
+              "serialized_value": "1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

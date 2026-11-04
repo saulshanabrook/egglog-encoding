@@ -1,0 +1,157 @@
+{
+  "scope": "Goal-package links, anchors, accepted-fact fidelity, approved-plan identity and shell syntax only; no experiment commands executed.",
+  "planDecision": "approved",
+  "acceptedFactCount": 12,
+  "records": [
+    {
+      "path": "goal.md",
+      "sha256": "d81ef4424abb61086097f532f56bfa95fc983f4e41f5d875555c3b231eff893d",
+      "localLinks": [
+        "facts.md",
+        "plan.md"
+      ],
+      "shellSyntaxOnly": []
+    },
+    {
+      "path": "facts.md",
+      "sha256": "3dc28ac857ae943453bf257e208ae0df1746fe5461ace6b1fdf55d31cdec8c93",
+      "localLinks": [],
+      "shellSyntaxOnly": []
+    },
+    {
+      "path": "plan.md",
+      "sha256": "943c66c5247dd7062bae02b5dcdd94dfc214562109fc93a9e4c382dc5e060fef",
+      "localLinks": [
+        "facts.md",
+        "planning/consumers.md",
+        "planning/encoding.md",
+        "planning/verification.md",
+        "planning/verification.md#compatible-frozen-starting-point",
+        "planning/consumers.md#1-c6-structural-type-disequality-in-the-existing-mismatch-check",
+        "planning/verification.md"
+      ],
+      "shellSyntaxOnly": [
+        {
+          "block": 1,
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "path": "STATUS.md",
+      "sha256": "772c74fc082582e6a615604dadaf84b644ee4aa95e26ded3ca1a5a6147e17e14",
+      "localLinks": [
+        "goal.md"
+      ],
+      "shellSyntaxOnly": []
+    },
+    {
+      "path": "planning/consumers.md",
+      "sha256": "40be1e13be3a73be120831877efb1e9a8bd6f3c40b5d8e9415492c452bd234b2",
+      "localLinks": [
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/type_analysis.egg:31",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/type_analysis.egg:565",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/schedule.rs:20",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/type_analysis.egg:552",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/typechecker.rs:153",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/lib.rs:1095",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/schema.egg:13",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/schema.rs:10",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/type_analysis.egg:4",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/canonicalize.egg:122",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/schema.egg:30",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/subst.egg:48",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/schema.rs:24",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/to_egglog.rs:102",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/terms.egg:9",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/optimizations/conditional_invariant_code_motion.egg:7",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/term-subst.egg:33",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/interpreter.rs:400",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/canonicalize.egg:41",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/optimizations/passthrough.egg:5",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/util.egg:58",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/utility/canonicalize.egg:98",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/interval_analysis.egg:379",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/interval_analysis.egg:254",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/interpreter.rs:239",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/optimizations/mem_simple.egg:20",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/optimizations/mem_simple.egg:71",
+        "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/src/interpreter.rs:390"
+      ],
+      "shellSyntaxOnly": []
+    },
+    {
+      "path": "planning/encoding.md",
+      "sha256": "9526dbb9fee45c36f8114a93f883e857178e45259bb63f794d4b60fb445bc9a5",
+      "localLinks": [
+        "../facts.md",
+        "prior-constraints.md",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/injectivity.rs:114",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/injectivity.rs:222",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:203",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:361",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:298",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:384",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:270",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:413",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/lib.rs:150",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/tests/injectivity_disequality.rs:143",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog/src/exec_state.rs:64",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/disequality.rs:491",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/scheduling.rs:268",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/tests/injectivity_disequality.rs:249",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/tests/injectivity_disequality.rs:464",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/src/lib.rs:42",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/tests/injectivity_disequality/oracle.rs:21",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/Makefile:21"
+      ],
+      "shellSyntaxOnly": [
+        {
+          "block": 1,
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "path": "planning/verification.md",
+      "sha256": "382ddf59b16ae4de88d15ebcec60d80c7f260b26f6ab9b3f6f16c66434d3d7e0",
+      "localLinks": [
+        "../facts.md"
+      ],
+      "shellSyntaxOnly": [
+        {
+          "block": 1,
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "path": "planning/prior-constraints.md",
+      "sha256": "31feeff5cc3237ffb6e282be7755821d861ce2ee6304238814cf39c389e96da0",
+      "localLinks": [
+        "../../eggcc-encoding-impact/report.md#contribution-and-limits",
+        "../../eggcc-encoding-impact/report.md#separate-encoding-exercise-querying-before-the-bad-merge",
+        "../../eggcc-encoding-impact/findings/encoding.md#law-and-supported-fragment",
+        "../../eggcc-encoding-impact/candidate-map.md",
+        "../../eggcc-encoding-impact/candidate-map.md#c2-screening-verdict-and-selected-next-mechanism",
+        "../../eggcc-encoding-impact/planning/encoding.md#laws-separate-congruence-from-injectivity",
+        "../../eggcc-encoding-impact/planning/consumers.md#2-active-noalias-storage-versus-consumption-first-encoding-led-screen",
+        "../../eggcc-encoding-impact/planning/consumers.md#6-immutable-metadata-reserve-explicit-no-go-cases",
+        "../../eggcc-encoding-impact/planning/consumers.md#5-remaining-child-reverse-congruence-valid-gap-compiler-bridge-pending",
+        "../../eggcc-encoding-impact/planning/consumers.md#2-active-noalias-storage-versus-consumption-first-encoding-led-screen",
+        "../../eggcc-encoding-impact/planning/consumers.md#3-fresh-region-call-certificates-and-loop-memory-consumers",
+        "../../eggcc-encoding-impact/planning/consumers.md#4-fixed-split-tuple-cancellation-a-new-conditional-law",
+        "../../eggcc-encoding-impact/planning/consumers.md#5-remaining-child-reverse-congruence-valid-gap-compiler-bridge-pending",
+        "../../eggcc-encoding-impact/planning/consumers.md#6-immutable-metadata-reserve-explicit-no-go-cases",
+        "../../eggcc-encoding-impact/reference.md#the-read-only-known-disequal-query",
+        "../../eggcc-encoding-impact/planning/encoding.md#query-closure-storage-and-schedules",
+        "../../eggcc-encoding-impact/findings/encoding.md#verification",
+        "../../eggcc-encoding-impact/planning/encoding.md#automated-acceptance-matrix-proposed-for-execution",
+        "../../eggcc-encoding-impact/planning/consumers.md#proposed-first-vertical-slice-and-stop-rules",
+        "../../eggcc-encoding-impact/candidate-map.md"
+      ],
+      "shellSyntaxOnly": []
+    }
+  ],
+  "missingOrUnresolvedAnchors": []
+}

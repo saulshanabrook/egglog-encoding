@@ -1,0 +1,72 @@
+{
+  "arms": {
+    "baseline": {
+      "actual_entry_llvm": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/main.ll",
+      "sha256": "c7878ac2874b31fe967648a825470a539f83d47b70bc4e5636b020f3314d16b4",
+      "calls_exported_bril_main": false,
+      "load_i64": 0,
+      "store_i64": 0,
+      "vector_integer_adds": 11,
+      "textual_backedges": [
+        {
+          "from": "b31_.i",
+          "to": "common.ret.sink.split.i"
+        },
+        {
+          "from": "vector.body",
+          "to": "vector.body"
+        },
+        {
+          "from": "middle.block",
+          "to": "common.ret.sink.split.i"
+        },
+        {
+          "from": "b55_.i",
+          "to": "common.ret.sink.split.i"
+        },
+        {
+          "from": "b55_.i",
+          "to": "b55_.i"
+        }
+      ],
+      "cyclic_basic_block_components": [
+        [
+          "b55_.i"
+        ],
+        [
+          "vector.body"
+        ]
+      ],
+      "actual_entry_assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/_main.asm",
+      "exported_bril_function_llvm": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/_main.ll",
+      "exported_bril_function_assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/__main.asm"
+    },
+    "manual": {
+      "actual_entry_llvm": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/main.ll",
+      "sha256": "2d73d3e301db7c8a343684a9631b0bca19f08ad3ce8756fa26e20954458c8de7",
+      "calls_exported_bril_main": false,
+      "load_i64": 0,
+      "store_i64": 0,
+      "vector_integer_adds": 0,
+      "textual_backedges": [
+        {
+          "from": "b31_.i",
+          "to": "common.ret.sink.split.i"
+        },
+        {
+          "from": "b53_.preheader.i",
+          "to": "common.ret.sink.split.i"
+        }
+      ],
+      "cyclic_basic_block_components": [],
+      "actual_entry_assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/_main.asm",
+      "exported_bril_function_llvm": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/_main.ll",
+      "exported_bril_function_assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/__main.asm"
+    }
+  },
+  "direct_target_load_on_actual_entry": "already removed by LLVM in baseline; direct native memory-load prediction falsified",
+  "remaining_endpoint_difference": "baseline has vectorized reduction loop; earlier manual forwarding enables closed arithmetic sum",
+  "retained_question": "Can encoding-derived same-address equality trigger forwarding early enough to reproduce the manual phase-ordering benefit?",
+  "qualifying_encoding_speedup": false,
+  "inspection_scope_correction": "inspection.json records both functions but its exported _main load count must not be presented as the executed C main load count"
+}

@@ -1,0 +1,8 @@
+{
+  "functional_revision": 1,
+  "reason": "initial positive retained certificate rejects Alloc PointerT(IntT); independent review requires linked import, real primitive comparisons and exact context/effect joins",
+  "initial_test": "commands/focused-initial/receipt.json",
+  "initial_installed_sha256": "25fd25d2a6560ae1a433bcf1912e0dd26af52b8ac8ff4b0c856500f0ac20dc4f",
+  "revision_sha256": "dec6b745b8a36c1d7455387f31b705cc5c4a274bf0efbf089a820bd6a9e43b38",
+  "further_functional_revisions_allowed": 0
+}

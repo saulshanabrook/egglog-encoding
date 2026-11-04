@@ -1,0 +1,40 @@
+# Setup source map
+
+These are read-only setup observations, not experimental results. Refresh the revisions and tool availability when execution starts. The accepted [facts](facts.md) determine scope.
+
+## Checkouts and integration
+
+| Checkout | Setup revision and state | Role |
+| --- | --- | --- |
+| `/Users/saul/p/eggcc` | `15ee7cbabe70d3b2e72d796bcf81cc2604626e7b`, `codex/remove-merge-constructors`; existing untracked `.serena/`, `.tmp/`, `experiments/`, `reports/` | Initial compiler baseline; record its differences from upstream before making upstream bug claims. |
+| `/Users/saul/p/wt/egglog-encoding/injectivity` | `392b6d6b48b5bc307a5b9c981c957fc0a09e23e5`, clean; [PR #119](https://github.com/saulshanabrook/egglog-encoding/pull/119) open | Starting implementation of the encodings. |
+| `/Users/saul/p/egglog-encoding` | `fdd4eac12c1318c578badbf5d1299e0e3eb4e6c0`, substantial unrelated local work | Goal package and existing benchmark tooling; preserve unrelated files. |
+
+Both eggcc manifests alias package `egglog-experimental` as `egglog`: [root Cargo.toml](/Users/saul/p/eggcc/Cargo.toml:12) and [DAG Cargo.toml](/Users/saul/p/eggcc/dag_in_context/Cargo.toml:10). There is no shared Cargo workspace. Root `Cargo.lock` selects experimental `19ed8666` / core `9b5ce111`; standalone DAG `Cargo.lock` selects experimental `6b37b6b3` / core `07650bed`. Root and standalone DAG baselines must be identified separately.
+
+Retarget both manifests to the same isolated encoding checkout, preserving `package = "egglog-experimental"`. Its root workspace supplies its core crates. The visible host API calls remain present, but builds and runtime compatibility were not tested during setup. The important boundary is [optimization](/Users/saul/p/eggcc/dag_in_context/src/lib.rs:891), [serialization](/Users/saul/p/eggcc/dag_in_context/src/lib.rs:326), [Tiger extraction/reconstruction](/Users/saul/p/eggcc/dag_in_context/src/lib.rs:653), and [function extraction](/Users/saul/p/eggcc/dag_in_context/src/lib.rs:533).
+
+Eggcc pins Rust 1.88.0; the encoding checkout pins 1.91.0. A read-only tool audit found both toolchains, LLVM 18, C++, Graphviz, CBC, cargo-insta, uv, and npx. Gurobi and the checked eggcc `target/release/tiger` and `runtime/rt.bc` were absent. The [DAG build script](/Users/saul/p/eggcc/dag_in_context/build.rs:41) builds Tiger even for `cargo check`. `--no-default-features` removes LLVM test configurations, but does not remove the unconditional LLVM-related dependency. Start with ordinary interpreted Bril and greedy extraction.
+
+## Semantic leads
+
+- **Tuple constructors:** [schema](/Users/saul/p/eggcc/dag_in_context/src/schema.egg:155) and [canonicalization](/Users/saul/p/eggcc/dag_in_context/src/utility/canonicalize.egg:41). `Concat(Concat(a,b),c) = Concat(a,Concat(b,c))` and empty identities invalidate unconditional binary injectivity. `Single` has a [left inverse already](/Users/saul/p/eggcc/dag_in_context/src/utility/util.egg:58), so added equality power may be redundant. Conditional cancellation would be a different, explicitly justified feature.
+- **Constants and contexts:** the existing [constant-merge check](/Users/saul/p/eggcc/dag_in_context/src/type_analysis.egg:41) is guarded by `InFunc`. [Dead-code bounds](/Users/saul/p/eggcc/dag_in_context/src/interval_analysis.egg:5) permit arbitrary values in unreachable contexts. `Const` includes context and type fields: global injectivity must not export vacuous contextual equalities into shared literal data. Literal `Int`/`Bool` wrappers are separate candidates. These are obligations to test, not observed bugs.
+- **Active alias analysis:** [mem_simple.egg](/Users/saul/p/eggcc/dag_in_context/src/optimizations/mem_simple.egg:8) derives `NoAlias` using nonzero offset bounds, propagates it into branches, and enables write/load commuting. [Default schedules](/Users/saul/p/eggcc/dag_in_context/src/schedule.rs:95) run this analysis.
+- **Optional alias analysis:** [memory.egg](/Users/saul/p/eggcc/dag_in_context/src/optimizations/memory.egg:369) derives `DontAlias` from disjoint possible-address sets; default schedules omit it. [Its test wrapper](/Users/saul/p/eggcc/dag_in_context/src/optimizations/memory.rs:373) enables it explicitly. Activating it is a separate treatment.
+- **Nonalias semantics:** raw equality-sort `!=` only compares current e-class IDs; it is not a disequality constraint. Even a sound disequality witness under the chosen axioms does not alone establish universal runtime nonalias: unequal expression functions can return the same pointer for some input, and `p` and `ptradd(p,i)` alias when `i = 0`. Unequal overlapping address sets are not disjoint. Static allocation IDs are [per-function tags](/Users/saul/p/eggcc/src/rvsdg/to_dag.rs:272), while the [interpreter](/Users/saul/p/eggcc/dag_in_context/src/interpreter.rs:390) allocates fresh runtime regions. Any bridge must justify context, repeated allocations, offsets/overflow, lifetime, calls, and unknown addresses for the cases it covers.
+- **Other analysis-record lead:** the optional [loop points-to continuation](/Users/saul/p/eggcc/dag_in_context/src/optimizations/memory.egg:339) waits for resolved values before `!=`. Structural witnesses might detect a changed analysis record sooner; this is not pointer nonaliasing and requires its own normalization/disjointness audit.
+
+## Controls and verification details
+
+Useful small fixtures are `constant_fold_simple.bril`, `if_constant_fold.bril`, `if_dead_code_nested.bril`, `mem_simple_store_forwarding.bril`, `mem_simple_redundant_load.bril`, and `mem_loop_store_forwarding.bril` under eggcc `tests/passing/small/`. The optional DAG test `optimizations::memory::load_after_write_without_alias` supplies a two-allocation example. Checked-in snapshots show the simple forwarding case already optimized and retained loads in the latter memory cases; reproduce these observations before calling them opportunities.
+
+The [file harness](/Users/saul/p/eggcc/tests/files.rs:23) compares original and optimized interpreter outputs only for interpreted trials. The default optimize trial is interpreted; sequential/no-context variants are not, so a passing filter is not enough to establish their semantic correctness. Exact small-fixture trial names end in `_snapshot`; require a nonzero test count. The [CLI](/Users/saul/p/eggcc/src/main.rs:17) `--interp` only records both outputs; compare non-null `original_interpreted` and `result_interpreted` explicitly. Inputs come from retained `# ARGS:` fixture variants; the parsed trailing CLI argument field is not consumed. CLI and test context/`non_weakly_linear` defaults differ. Preserve the actual configuration in each comparison.
+
+Time built binaries without `--interp`: its interpretation work enters the CLI compile-time measurement. `--run-mode egglog --stop-after-n-passes 1` exports a selected pass, not a faithful complete multipass compiler run. Existing capture tooling in `scripts/eggcc_churchroad_complete.py` may help with diagnostics, but preserve Tiger selection, reconstruction, and all executed passes for compiler claims.
+
+## Encoding limits
+
+[Injectivity](/Users/saul/p/wt/egglog-encoding/injectivity/egglog-experimental/src/injectivity.rs:1) unions equality-sort fields and panics on unequal primitive fields when its ruleset is scheduled. Container arguments are unsupported. [The query](/Users/saul/p/wt/egglog-encoding/injectivity/egglog-experimental/src/disequality.rs:31) supports ordinary execution and `:naive` rule bodies; it has no term/proof validator. Any unequal corresponding argument proves unequal results for a marked constructor; reverse reasoning is implemented only for marked unary constructors. Unknown is not equality; distinct constructor names alone provide no disequality. There is no persistent derived-pair cache.
+
+The paper is `/Users/saul/p/extended-egglog-paper`; setup found relevant introduction/overview placeholders. The accepted scope is evidence only, so that repository is not an execution target.

@@ -1,0 +1,50 @@
+[
+  {
+    "kind": "missing-bound",
+    "args": [
+      4294967296,
+      0,
+      0,
+      0,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "different-width",
+    "args": [
+      0,
+      65537,
+      1,
+      1,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "unresolved-fields",
+    "args": [
+      1,
+      0,
+      0,
+      0,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  }
+]

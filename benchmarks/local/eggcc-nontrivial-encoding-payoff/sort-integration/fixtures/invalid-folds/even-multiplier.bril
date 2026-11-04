@@ -1,0 +1,49 @@
+# ARGS: 1 2 1 2 0 -9223372036854775808
+@main(a: int, b: int, c: int, d: int, z: int, w: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  two: int = const 2;
+  three: int = const 3;
+  uab: int = smin a b;
+  vab: int = smax a b;
+  pab: bool = lt a b;
+  tab: int = select pab one zero;
+  ucd: int = smin c d;
+  vcd: int = smax c d;
+  pcd: bool = lt c d;
+  tcd: int = select pcd one zero;
+  key0: bool = eq uab ucd;
+  br key0 .key0_ok .different_key;
+.key0_ok:
+  key1: bool = eq vab vcd;
+  br key1 .key1_ok .different_key;
+.key1_ok:
+  key2: bool = eq tab tcd;
+  br key2 .key2_ok .different_key;
+.key2_ok:
+  cz: int = add c z;
+  aw: int = add a w;
+  mixed_same: bool = eq cz aw;
+  br mixed_same .equal_sum .different_sum;
+.different_sum:
+  tz: int = mul z two;
+  tw: int = mul w two;
+  target: bool = eq tz tw;
+  jmp .expected;
+.unexpected:
+  score: int = const 99;
+  print score;
+  ret;
+.expected:
+  score: int = const 7;
+  print score;
+  ret;
+.equal_sum:
+  score: int = const 5;
+  print score;
+  ret;
+.different_key:
+  score: int = const 3;
+  print score;
+  ret;
+}

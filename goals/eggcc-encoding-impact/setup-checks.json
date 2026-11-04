@@ -1,0 +1,27 @@
+{
+  "stage": "goal_package_complete",
+  "acceptedFacts": 14,
+  "automatedFactIds": [
+    "preservation",
+    "encoding-gaps",
+    "correctness",
+    "bugs",
+    "speedup",
+    "comparison",
+    "measurement",
+    "reproduction"
+  ],
+  "planLocalLinksValid": true,
+  "planSha256": "ea1ab25f0970a4ce6ed20e47fa3117ee16172f52b4935dc9f7796a387083b712",
+  "reviews": [
+    "planning/encoding-review.md",
+    "planning/measurement-review.md",
+    "planning/consumer-review.md"
+  ],
+  "reviewIntegration": "No blockers; added measurement isolation and interrupted-block/outlier rules from the measurement reviewer.",
+  "setupExecutionBoundary": "Only goal-package files authored. No builds, tests, benchmarks, compiler experiments or previous-study evidence edits.",
+  "approvalVerified": true,
+  "goalLocalLinksValid": true,
+  "goalSha256": "84cb306ffc786ba40d70022f75e2c36912a1b24c6c8ef4c119d021311851b4e2",
+  "researchExecutionStarted": false
+}

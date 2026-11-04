@@ -1,0 +1,124 @@
+{
+  "status": "official make test blocked by 13 pending snapshots; post-capture adapter assertion preserved",
+  "root_tests_passed": 36,
+  "integration_tests_passed": 2421,
+  "failed_test_cases": 0,
+  "ignored_doc_tests": 2,
+  "unreferenced_snapshots": 0,
+  "DAG_tests_reached": false,
+  "actual_child_returncode": null,
+  "child_returncode_missing_reason": "Initial driver asserted generated .snap.new paths absent before recording child exit; stderr records Make Error 1 but raw Make exit not retained.",
+  "capture_adapter_exit_code": 1,
+  "initial_driver_sha256": "362356a852af44f366911b6427cc2d143fbc8d29bf768e77f31f9c80ac88d24f",
+  "corrected_driver_sha256": "476d73b44fb6a19de0b59a046de6237b611b8861c0064660c4f96119e5f2ee10",
+  "raw_stdout_sha256": "dd2e2e4204ce0afc7773788ac5f42f2cf2bd35af851bc78ef6bdceebb83a28de",
+  "raw_stderr_sha256": "07e1c3aac438232922968a17d45ddf01d38ddfd05b36f0b0c8253b2ca3f87ac6",
+  "pending_snapshots": [
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__branch_duplicate_work-optimize-sequential.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "copy_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "existing_snapshot_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+      "diff_sha256": "7c0023f960e731d47ab701d12b70fade53d2b457b3e31e8912d75fde0525cc91"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__branch_duplicate_work-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__branch_duplicate_work-optimize.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "copy_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "existing_snapshot_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+      "diff_sha256": "ba0983711cf26375fa9f621d550f8a554650b9c80d026ec9b2eaee83f0b29229"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__branch_hoisting-optimize-no-ctx.snap.new",
+      "sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "copy_sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "existing_snapshot_sha256": "b1177c8bfe4024cfdd8fa18c39a6721331c34013c94614e2e82e4dba8bfbd030",
+      "diff_sha256": "eb75c99139f7680076f539b3e4afcd854a3f58d21d7569d926d1579c5438f3bd"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "copy_sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "existing_snapshot_sha256": "fd4484b99ec0befeb37959e283474a261890fdee9ba41a7a06434229d9b282a5",
+      "diff_sha256": "f028211a5b4ab892fe4f061f82d5824a4d9265bd53ec5fa10007e636b6c3bf52"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__if_invariant_do_pull_out-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__if_invariant_do_pull_out-optimize.snap.new",
+      "sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "copy_sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "existing_snapshot_sha256": "9dc45304bedad90887b42e5b03538388df436ed3336d0632c5c61dc0bd87a9b4",
+      "diff_sha256": "d669aa83392f298152b2d2a357b36f97e2b4122ecccc43d717918f4cf7c7007d"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "copy_sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "existing_snapshot_sha256": "12335d968bca66e10fab2a85ec25645d12ea011ccd2007008014460c835056ab",
+      "diff_sha256": "01ee44913144dae04f94029e06950bb389427a9d788d38771a3b5950a5417805"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__loop_strength_reduction-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__loop_strength_reduction-optimize.snap.new",
+      "sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "copy_sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "existing_snapshot_sha256": "56a4f0f8f305e82fd38bab1b825b57048eb0f046140569d9df60e5593406e353",
+      "diff_sha256": "f81dbf2f5996ead13c5720378034b47a6b9c310d7a767e86c06738b8ff921185"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__loop_with_mul_by_inv-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__loop_with_mul_by_inv-optimize.snap.new",
+      "sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "copy_sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "existing_snapshot_sha256": "8df08197ccd207c2c3db3af8c3f4e1c1f7418f40632b79ac0bb04f79827053c8",
+      "diff_sha256": "b73c218454d802b6539bd20dc939248db6cbcd2fdfa2fa4f229cf7bd8fd91c48"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__pull_out_small-optimize-sequential.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__pull_out_small-optimize-sequential.snap.new",
+      "sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "copy_sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "existing_snapshot_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+      "diff_sha256": "c96d5b96b9b145c2028d54891b8979ac76dc83ee8b9b345efdbfedc7b6051a89"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__pull_out_small-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__pull_out_small-optimize.snap.new",
+      "sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "copy_sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "existing_snapshot_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+      "diff_sha256": "1ea4d061c75825b4da1b543e66b2d59273d61d237d690a2f480aa6e6137d3e01"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__strong_loop-optimize-no-ctx.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__strong_loop-optimize-no-ctx.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "copy_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "existing_snapshot_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "diff_sha256": "2deb6b0279a7e1ed6f0783d649456137a9ebde1ea030ae268d554dd33514f98b"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__strong_loop-optimize-sequential.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__strong_loop-optimize-sequential.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "copy_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "existing_snapshot_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "diff_sha256": "0c84a7c5aad0b1c3d3134faf37db8455fd57e381b9204561c5baaf6c95cb15bf"
+    },
+    {
+      "source": "/Users/saul/p/wt/eggcc/encoding-payoff/tests/snapshots/files__strong_loop-optimize.snap.new",
+      "copy": "benchmarks/local/eggcc-encoding-payoff/compiler/final-gates/commands/make-test/pending-snapshots/files__strong_loop-optimize.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "copy_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "existing_snapshot_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "diff_sha256": "a5c22f6a82bafa69ff06f311216fd62e5d0dc25c11d1790e1d538a61d035c11d"
+    }
+  ],
+  "snapshot_acceptance": false,
+  "source_changes": false
+}

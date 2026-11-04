@@ -1,0 +1,39 @@
+{
+  "argv": [
+    "/opt/homebrew/bin/claude",
+    "--print",
+    "--model",
+    "fable",
+    "--effort",
+    "max",
+    "--restricted",
+    "--safe-mode",
+    "--disable-slash-commands",
+    "--allowedTools",
+    "Read,Grep,Glob",
+    "--permission-mode",
+    "dontAsk",
+    "--permission-prompts",
+    "none",
+    "--no-session-persistence",
+    "--output-format",
+    "text",
+    "--add-dir",
+    "/private/tmp/eggcc-nontrivial-encoding-payoff-u0"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "started_utc": "2026-10-20T03:49:48.615664Z",
+  "finished_utc": "2026-10-20T04:06:19.896645Z",
+  "timeout_s": 1800,
+  "timed_out": false,
+  "exit_code": 0,
+  "prompt_sha256": "b74b5ff7f05c7ecf6226ffc3e61053ac3c330dc222592b9944337129c8e51106",
+  "stdout_sha256": "53f9fd25680fc09982515daeb4870550fb358667b97339e152a658d34c2bb307",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "allowed_tools": [
+    "Read",
+    "Grep",
+    "Glob"
+  ],
+  "read_only": true
+}

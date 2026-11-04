@@ -1,0 +1,75 @@
+{
+  "disposition": "closed at direct-Shr IR gate; no emitted/native comparison",
+  "original_crash_path": "/var/folders/x4/rfvvhxcd53lft2b9844dw1lr0000gn/T/tiger-crash-7PJvpD.json",
+  "crash_sha256": "4ef55b6fee079bc59d165793776d04023c30dafb2534f5070e5bcc056d2bea7d",
+  "graph_nodes": 12330,
+  "shift_rows": [
+    {
+      "id": "function-8-Bop",
+      "op": "Bop",
+      "children": [
+        "function-0-Shr",
+        "function-224-Get",
+        "function-226-Get"
+      ],
+      "eclass": "Expr-371",
+      "cost": 1.0,
+      "subsumed": false,
+      "has_type": false,
+      "operand_types": [
+        true,
+        true
+      ]
+    },
+    {
+      "id": "function-9-Bop",
+      "op": "Bop",
+      "children": [
+        "function-0-Shr",
+        "function-222-Get",
+        "function-429-Get"
+      ],
+      "eclass": "Expr-373",
+      "cost": 1.0,
+      "subsumed": false,
+      "has_type": false,
+      "operand_types": [
+        true,
+        true
+      ]
+    }
+  ],
+  "affected_function_body": "Expr-720",
+  "affected_body_has_type": false,
+  "shift_bop_type_fact_in_source": false,
+  "sources": [
+    {
+      "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/dag_in_context/src/type_analysis.egg",
+      "sha256": "0e39deb52dd5b3c46378f4b2e4f5a241dfc6bda3342795b0be167d4b32f0008e"
+    },
+    {
+      "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/src/rvsdg/to_dag.rs",
+      "sha256": "264651498cb510fca4f798fedfa38c9c96c99b74740e29349de6108b505ef79e"
+    },
+    {
+      "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/src/rvsdg/from_dag.rs",
+      "sha256": "a1a297af8e0baf6e938997005430ad3ed2844d84fc18080e75b351fdf451f1bf"
+    },
+    {
+      "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/dag_in_context/src/interpreter.rs",
+      "sha256": "dd991459c2baa77f52ba03a0533147c4b134a2da0ed343f105cb049e415f0491"
+    },
+    {
+      "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/dag_in_context/src/schema.egg",
+      "sha256": "cbf82f3ddb22f60f364ee59e9ecf15ff2bd468f1d561ccb48e93e65a1fd0144b"
+    }
+  ],
+  "commands": {
+    "count": 3,
+    "successes": 2,
+    "failed_optimizer": 1,
+    "native": 0,
+    "timeouts": 0
+  },
+  "negative_fixtures": "retained, oracle validated, not compiler executed"
+}

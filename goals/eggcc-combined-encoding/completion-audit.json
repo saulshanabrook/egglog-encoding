@@ -1,0 +1,110 @@
+{
+  "status": "complete-richer-joint-integration",
+  "goal": "goals/eggcc-combined-encoding/goal.md",
+  "factsSha256": "3dc28ac857ae943453bf257e208ae0df1746fe5461ace6b1fdf55d31cdec8c93",
+  "approvedPlanSha256": "943c66c5247dd7062bae02b5dcdd94dfc214562109fc93a9e4c382dc5e060fef",
+  "sourceSha256": "8165c4521d16ea4f5d1cffe66a08092962b55b8976f37c2b6a2553bfc5352738",
+  "functionalCheckpointSha256": "227599b8ac493ecb60b012191d8d56b7ae90e602ad721992f8c00c8ec2a6b985",
+  "finalGateSummarySha256": "b116e66101b0cd69c25ea53e7725e4b356c3fca3074999ef42c046c1192f1b69",
+  "officialTestAndNitsPassed": false,
+  "freshlyMatchedSnapshotCases": 13,
+  "freshlyMatchedStrictLintSites": 3,
+  "unmatchedNewFailures": 0,
+  "protectedOldChanges": 0,
+  "newBugClaimed": false,
+  "optimizationClaimed": false,
+  "speedupClaimed": false,
+  "facts": [
+    {
+      "id": "joint-case",
+      "text": "Prioritize a real EggCC case where injectivity and disequality affect the same check or optimization; show the role of each mechanism rather than an unrelated optional query.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "richer-reasoning",
+      "text": "A claimed richer positive case exercises equality-sort cancellation, multiple arguments, structural propagation, or a comparably substantive interaction beyond the existing unary Boolean-wrapper primitive mismatch.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "impact",
+      "text": "A new genuine compiler bug, newly enabled optimization or measured speedup is preferred, but a validated richer integration can qualify without those additional outcomes.",
+      "automatedVerification": false,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "comparison",
+      "text": "Compare each implemented case with existing EggCC checks and an equivalent direct or hand-written mechanism, explaining what the encoding adds without requiring that it be impossible to hand-code.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "soundness",
+      "text": "Every constructor law and disequality inference has an explicit semantic justification, including relevant context, feasibility, effects and refinement; previously rejected global Expr/Concat or mutable-analysis annotations are not reused without a new justification.",
+      "automatedVerification": false,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "implementation",
+      "text": "Allow bounded immutable representations, scoped analysis values, compiler integration and encoding improvements needed by a concrete case; avoid a wholesale IR redesign, new proof support, Lean work or paper edits.",
+      "automatedVerification": false,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "correctness",
+      "text": "Implemented cases have automated positive, negative and feature-contribution checks through actual EggCC consumers, including source-versus-optimized execution where supported; illustrative graphs, new workloads and replay-only results are labeled separately.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "claims",
+      "text": "Any claimed baseline bug has a valid minimized reproducer and a sound violated invariant; any claimed speedup has matched controls, validated outputs and repeated per-workload measurements with explicit time and memory boundaries.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "preservation",
+      "text": "Preserve the completed case studies, frozen evidence and existing author changes; use isolated source changes and retain exact inputs, revisions, patches, commands, configurations and machine-readable experiment results.",
+      "automatedVerification": true,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "explanation",
+      "text": "Deliver a collaborator-readable explanation and compact reference showing one connected inference path, the actual rules before and after, existing/manual behavior, observed results and encoding limits, with reproduction instructions kept separately.",
+      "automatedVerification": false,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "negative-result",
+      "text": "A documented negative for the investigated joint-encoding scope is acceptable after targeted experiments and an independent review explain the disposition of the promising candidates; retain richer single-feature findings as secondary results and do not claim universal impossibility.",
+      "automatedVerification": false,
+      "status": "conditional-negative-path-not-taken",
+      "audit": "completion-audit.md"
+    },
+    {
+      "id": "prior-example",
+      "text": "The existing Boolean observation checker remains a valid small fallback, but repeating it alone does not establish the richer joint-encoding result sought by this goal.",
+      "automatedVerification": false,
+      "status": "satisfied-on-positive-path",
+      "audit": "completion-audit.md"
+    }
+  ],
+  "reviewFiles": [
+    "findings/type-review.md",
+    "findings/document-review.md",
+    "findings/gates.md"
+  ],
+  "remainingRequiredWork": [],
+  "continuation": "Other candidate directions remain unexhausted leads; no universal negative claim."
+}

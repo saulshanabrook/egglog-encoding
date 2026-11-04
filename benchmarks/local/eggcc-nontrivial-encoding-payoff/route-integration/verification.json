@@ -1,0 +1,6060 @@
+{
+  "laws": {
+    "exhaustive_tagged_inputs": 174752,
+    "i64_pairs": 4121,
+    "selector_outcomes": 2,
+    "untagged_counterexample": {
+      "left": [
+        true,
+        0,
+        1
+      ],
+      "right": [
+        false,
+        1,
+        0
+      ],
+      "payload_output": [
+        0,
+        1
+      ]
+    },
+    "mul2_counterexample": [
+      0,
+      -9223372036854775808
+    ]
+  },
+  "interpretations": [
+    {
+      "label": "positive-source-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-application-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-bridge-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-cancellation-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-disequality-rescue-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-encoding-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-equality-rescue-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-forward-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-identity-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-manual-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-primitive-only-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-query-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-reverse-off-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-seed-only-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-u0-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-source-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-application-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-bridge-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-cancellation-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-disequality-rescue-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-encoding-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-equality-rescue-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-forward-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-identity-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-manual-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-primitive-only-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-query-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-reverse-off-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-seed-only-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-u0-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive-source-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-application-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-bridge-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-cancellation-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-disequality-rescue-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-encoding-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-equality-rescue-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-forward-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-identity-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-manual-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-primitive-only-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-query-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-reverse-off-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-seed-only-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-u0-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive-source-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-source-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-application-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-bridge-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-cancellation-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-disequality-rescue-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-encoding-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-equality-rescue-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-forward-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-identity-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-manual-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-primitive-only-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-query-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-reverse-off-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-seed-only-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive-u0-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "omitted-first-output-source-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-encoding-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-manual-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-off-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-primitive-only-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-seed-only-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-first-output-u0-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-source-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-encoding-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-manual-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-off-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-primitive-only-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-seed-only-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "omitted-second-output-u0-00",
+      "args": [
+        0,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-source-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-encoding-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-manual-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-off-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-primitive-only-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-seed-only-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "selector-tag-mismatch-u0-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-source-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-encoding-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-manual-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-off-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-primitive-only-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-seed-only-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "swapped-payload-tag-omitted-u0-00",
+      "args": [
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-source-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-encoding-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-manual-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-primitive-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-seed-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "even-multiplier-u0-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-source-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-encoding-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-manual-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-off-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-primitive-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-seed-only-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "wrong-branch-u0-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "no-context-encoding-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "no-context-encoding-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "no-context-encoding-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-encoding-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-encoding-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-01",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-02",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        0,
+        1
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "no-context-u0-03",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        0
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "no-context-u0-04",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-05",
+      "args": [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-06",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-07",
+      "args": [
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-08",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-09",
+      "args": [
+        0,
+        2,
+        3,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "no-context-u0-10",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-11",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        9223372036854775807,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-12",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-13",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-14",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-15",
+      "args": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        -9223372036854775808,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-16",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-17",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        -3,
+        4,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-18",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "no-context-u0-19",
+      "args": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    }
+  ],
+  "count": 402
+}

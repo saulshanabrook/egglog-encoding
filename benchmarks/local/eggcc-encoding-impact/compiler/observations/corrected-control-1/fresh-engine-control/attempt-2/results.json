@@ -1,0 +1,439 @@
+{
+  "status": "matched",
+  "rows": [
+    {
+      "trial": "branch_duplicate_work-optimize-sequential_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_duplicate_work-optimize-sequential_snapshot.json",
+      "command_receipt_sha256": "d91fd7d3a8c7bb22307608c078dc742a548dd71328a9ee5b69bdb2a1d6571fdd",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__branch_duplicate_work-optimize-sequential.snap.new",
+      "primary_candidate_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "baseline_expected_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_duplicate_work-optimize-sequential_snapshot.snap.new",
+      "baseline_candidate_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "primary_body_sha256": "2a2048b7295851b275be4613dff5f1a82b0045efcabca62ef47d13e990f0136c",
+      "baseline_body_sha256": "2a2048b7295851b275be4613dff5f1a82b0045efcabca62ef47d13e990f0136c",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/branch_duplicate_work.bril": {
+          "baseline_sha256": "ba577c9d55220f38912dd042f245ca17a642078d5de54220a15b8e7e3b59aad4",
+          "primary_sha256": "ba577c9d55220f38912dd042f245ca17a642078d5de54220a15b8e7e3b59aad4"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap": {
+          "baseline_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+          "primary_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893"
+        }
+      }
+    },
+    {
+      "trial": "branch_duplicate_work-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_duplicate_work-optimize_snapshot.json",
+      "command_receipt_sha256": "9512449ca95272bf6f7ff1fc254dee2a2fab6fbe626ed366827ebe8231f75776",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__branch_duplicate_work-optimize.snap.new",
+      "primary_candidate_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "baseline_expected_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_duplicate_work-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "primary_body_sha256": "2a2048b7295851b275be4613dff5f1a82b0045efcabca62ef47d13e990f0136c",
+      "baseline_body_sha256": "2a2048b7295851b275be4613dff5f1a82b0045efcabca62ef47d13e990f0136c",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/branch_duplicate_work.bril": {
+          "baseline_sha256": "ba577c9d55220f38912dd042f245ca17a642078d5de54220a15b8e7e3b59aad4",
+          "primary_sha256": "ba577c9d55220f38912dd042f245ca17a642078d5de54220a15b8e7e3b59aad4"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__branch_duplicate_work-optimize.snap": {
+          "baseline_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893",
+          "primary_sha256": "7c6d973acc12ce05fe5e6eba20a6d849e3d490edd1ba7c0d723b13cf6eaa6893"
+        }
+      }
+    },
+    {
+      "trial": "branch_hoisting-optimize-no-ctx_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_hoisting-optimize-no-ctx_snapshot.json",
+      "command_receipt_sha256": "25e0d047480b88cc468d0b8dd8182340a95dd4268841cd21b3ac85f2bd450d14",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__branch_hoisting-optimize-no-ctx.snap.new",
+      "primary_candidate_sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "baseline_expected_sha256": "b1177c8bfe4024cfdd8fa18c39a6721331c34013c94614e2e82e4dba8bfbd030",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-branch_hoisting-optimize-no-ctx_snapshot.snap.new",
+      "baseline_candidate_sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "primary_body_sha256": "a88e75fff624209611db8fb9e03a0b5d53cf6d7fe7ddc9ccf8fd0e529bb07fa0",
+      "baseline_body_sha256": "a88e75fff624209611db8fb9e03a0b5d53cf6d7fe7ddc9ccf8fd0e529bb07fa0",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/peggy_comparison/branch_hoisting.bril": {
+          "baseline_sha256": "13e36dcdd09b50220448fe5dfd546e82413fbe2214bb56122f947f6290091493",
+          "primary_sha256": "13e36dcdd09b50220448fe5dfd546e82413fbe2214bb56122f947f6290091493"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap": {
+          "baseline_sha256": "b1177c8bfe4024cfdd8fa18c39a6721331c34013c94614e2e82e4dba8bfbd030",
+          "primary_sha256": "b1177c8bfe4024cfdd8fa18c39a6721331c34013c94614e2e82e4dba8bfbd030"
+        }
+      }
+    },
+    {
+      "trial": "if_invariant_do_pull_out-optimize-sequential_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_do_pull_out-optimize-sequential_snapshot.json",
+      "command_receipt_sha256": "ca77f7d1624d4e99e856f2c05ab6bbb58bcd45fb34b7f05e1b88c4ce44ee1228",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "primary_candidate_sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "baseline_expected_sha256": "fd4484b99ec0befeb37959e283474a261890fdee9ba41a7a06434229d9b282a5",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_do_pull_out-optimize-sequential_snapshot.snap.new",
+      "baseline_candidate_sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "primary_body_sha256": "4ef12a7f0a3c64dfbbd9aee0327b75bee14ffd391d7d0b0a2303f5dd90cc958c",
+      "baseline_body_sha256": "4ef12a7f0a3c64dfbbd9aee0327b75bee14ffd391d7d0b0a2303f5dd90cc958c",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/if_invariant_do_pull_out.rs": {
+          "baseline_sha256": "1da0e290e8f043ccd9683dc0122166ec22c02d1fa58b11e1ac956e7456263c04",
+          "primary_sha256": "1da0e290e8f043ccd9683dc0122166ec22c02d1fa58b11e1ac956e7456263c04"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap": {
+          "baseline_sha256": "fd4484b99ec0befeb37959e283474a261890fdee9ba41a7a06434229d9b282a5",
+          "primary_sha256": "fd4484b99ec0befeb37959e283474a261890fdee9ba41a7a06434229d9b282a5"
+        }
+      }
+    },
+    {
+      "trial": "if_invariant_do_pull_out-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_do_pull_out-optimize_snapshot.json",
+      "command_receipt_sha256": "2bcc8154094929cf3f44c142bef0fb8a1ce44a332c32bb9cad2ce68a31c72e7f",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__if_invariant_do_pull_out-optimize.snap.new",
+      "primary_candidate_sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "baseline_expected_sha256": "9dc45304bedad90887b42e5b03538388df436ed3336d0632c5c61dc0bd87a9b4",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_do_pull_out-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "primary_body_sha256": "df4f08d7f2d663d482935f76ec8083d0eaedd1ab20187e9e5d744f5f61953a99",
+      "baseline_body_sha256": "df4f08d7f2d663d482935f76ec8083d0eaedd1ab20187e9e5d744f5f61953a99",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/if_invariant_do_pull_out.rs": {
+          "baseline_sha256": "1da0e290e8f043ccd9683dc0122166ec22c02d1fa58b11e1ac956e7456263c04",
+          "primary_sha256": "1da0e290e8f043ccd9683dc0122166ec22c02d1fa58b11e1ac956e7456263c04"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__if_invariant_do_pull_out-optimize.snap": {
+          "baseline_sha256": "9dc45304bedad90887b42e5b03538388df436ed3336d0632c5c61dc0bd87a9b4",
+          "primary_sha256": "9dc45304bedad90887b42e5b03538388df436ed3336d0632c5c61dc0bd87a9b4"
+        }
+      }
+    },
+    {
+      "trial": "if_invariant_dont_pull_out-optimize-sequential_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_dont_pull_out-optimize-sequential_snapshot.json",
+      "command_receipt_sha256": "06a3f580010530bc7353210c90cec129f4bc44fd28c47c0ce24ca74a77859a48",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "primary_candidate_sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "baseline_expected_sha256": "12335d968bca66e10fab2a85ec25645d12ea011ccd2007008014460c835056ab",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-if_invariant_dont_pull_out-optimize-sequential_snapshot.snap.new",
+      "baseline_candidate_sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "primary_body_sha256": "77691807e6e2bceb628a22cf8f5eb96c1c28e85a07beb39a1b8e9bd7a837a219",
+      "baseline_body_sha256": "77691807e6e2bceb628a22cf8f5eb96c1c28e85a07beb39a1b8e9bd7a837a219",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/if_invariant_dont_pull_out.rs": {
+          "baseline_sha256": "bc0d2fb143449bb1ccd3b706ef1823430f7260691a35ae763f31fc2f8154d5ba",
+          "primary_sha256": "bc0d2fb143449bb1ccd3b706ef1823430f7260691a35ae763f31fc2f8154d5ba"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap": {
+          "baseline_sha256": "12335d968bca66e10fab2a85ec25645d12ea011ccd2007008014460c835056ab",
+          "primary_sha256": "12335d968bca66e10fab2a85ec25645d12ea011ccd2007008014460c835056ab"
+        }
+      }
+    },
+    {
+      "trial": "loop_strength_reduction-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-loop_strength_reduction-optimize_snapshot.json",
+      "command_receipt_sha256": "10cd4cafb90b87288863a05be6e00844c4ac9a5a08a1d442b2473adc60dc540f",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__loop_strength_reduction-optimize.snap.new",
+      "primary_candidate_sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "baseline_expected_sha256": "56a4f0f8f305e82fd38bab1b825b57048eb0f046140569d9df60e5593406e353",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-loop_strength_reduction-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "primary_body_sha256": "f77a7c407562d333bc1fb36c3b1a3ce84e790c754eeede2386ad748c893fe0cd",
+      "baseline_body_sha256": "f77a7c407562d333bc1fb36c3b1a3ce84e790c754eeede2386ad748c893fe0cd",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/peggy_comparison/loop_strength_reduction.bril": {
+          "baseline_sha256": "a3d99a7afb2568a931ac37464f78ab61ddb26db5b6e68d889eef353c34cb2740",
+          "primary_sha256": "a3d99a7afb2568a931ac37464f78ab61ddb26db5b6e68d889eef353c34cb2740"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__loop_strength_reduction-optimize.snap": {
+          "baseline_sha256": "56a4f0f8f305e82fd38bab1b825b57048eb0f046140569d9df60e5593406e353",
+          "primary_sha256": "56a4f0f8f305e82fd38bab1b825b57048eb0f046140569d9df60e5593406e353"
+        }
+      }
+    },
+    {
+      "trial": "loop_with_mul_by_inv-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-loop_with_mul_by_inv-optimize_snapshot.json",
+      "command_receipt_sha256": "ca9c9cefc7d50ec40274e97813b4a6946cebde4c9d9360807d6b59cdf0d21415",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__loop_with_mul_by_inv-optimize.snap.new",
+      "primary_candidate_sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "baseline_expected_sha256": "8df08197ccd207c2c3db3af8c3f4e1c1f7418f40632b79ac0bb04f79827053c8",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-loop_with_mul_by_inv-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "primary_body_sha256": "73afdbd2bfec6c97d2926427ae4c7b7e983351b8aac4cf6443022622ec9d072a",
+      "baseline_body_sha256": "73afdbd2bfec6c97d2926427ae4c7b7e983351b8aac4cf6443022622ec9d072a",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/loop_with_mul_by_inv.bril": {
+          "baseline_sha256": "db3f10bc47b3d13916efd21433d896367d2ef3d833499c5e72fc31488612246b",
+          "primary_sha256": "db3f10bc47b3d13916efd21433d896367d2ef3d833499c5e72fc31488612246b"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__loop_with_mul_by_inv-optimize.snap": {
+          "baseline_sha256": "8df08197ccd207c2c3db3af8c3f4e1c1f7418f40632b79ac0bb04f79827053c8",
+          "primary_sha256": "8df08197ccd207c2c3db3af8c3f4e1c1f7418f40632b79ac0bb04f79827053c8"
+        }
+      }
+    },
+    {
+      "trial": "pull_out_small-optimize-sequential_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-pull_out_small-optimize-sequential_snapshot.json",
+      "command_receipt_sha256": "572f13a4c31b257eb6cddab46adb674a7d5321fe737671d3a33e8f8e12a1f3a1",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__pull_out_small-optimize-sequential.snap.new",
+      "primary_candidate_sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "baseline_expected_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-pull_out_small-optimize-sequential_snapshot.snap.new",
+      "baseline_candidate_sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "primary_body_sha256": "3964a645a8d1abf3e7236c71063c3a66b4f195bb9c78e6f8df3132ab3e255849",
+      "baseline_body_sha256": "3964a645a8d1abf3e7236c71063c3a66b4f195bb9c78e6f8df3132ab3e255849",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/pull_out_small.rs": {
+          "baseline_sha256": "17af452930a7a5b775138be7b532be78548730b5a93dde214ad9b7e9e5935503",
+          "primary_sha256": "17af452930a7a5b775138be7b532be78548730b5a93dde214ad9b7e9e5935503"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__pull_out_small-optimize-sequential.snap": {
+          "baseline_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+          "primary_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab"
+        }
+      }
+    },
+    {
+      "trial": "pull_out_small-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-pull_out_small-optimize_snapshot.json",
+      "command_receipt_sha256": "a7781487e5ed493171726419331a3963aae09498a2150dcfef536d85e0e5fd7c",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__pull_out_small-optimize.snap.new",
+      "primary_candidate_sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "baseline_expected_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-pull_out_small-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "primary_body_sha256": "d393adf06bcc37364773742e44a09876ef6f07369829ede4a0c4bcb243de0ec9",
+      "baseline_body_sha256": "d393adf06bcc37364773742e44a09876ef6f07369829ede4a0c4bcb243de0ec9",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/pull_out_small.rs": {
+          "baseline_sha256": "17af452930a7a5b775138be7b532be78548730b5a93dde214ad9b7e9e5935503",
+          "primary_sha256": "17af452930a7a5b775138be7b532be78548730b5a93dde214ad9b7e9e5935503"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__pull_out_small-optimize.snap": {
+          "baseline_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab",
+          "primary_sha256": "73ae9b23df1ecf7f1a4148dad762cb1a169a4f9b5fb7c36740f9cec87f76cfab"
+        }
+      }
+    },
+    {
+      "trial": "strong_loop-optimize-no-ctx_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize-no-ctx_snapshot.json",
+      "command_receipt_sha256": "1ad9fa4c79cb7774db0513f3fe1b2c785b5b99d87d09cdcd1fe1ec7857bd3a81",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__strong_loop-optimize-no-ctx.snap.new",
+      "primary_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "baseline_expected_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize-no-ctx_snapshot.snap.new",
+      "baseline_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "primary_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "baseline_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/strong_loop.bril": {
+          "baseline_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122",
+          "primary_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__strong_loop-optimize-no-ctx.snap": {
+          "baseline_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+          "primary_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe"
+        }
+      }
+    },
+    {
+      "trial": "strong_loop-optimize-sequential_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize-sequential_snapshot.json",
+      "command_receipt_sha256": "c4ebaf568670afab05b656bce5f9e397e5397fa65793d51ac22dd4347592f079",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__strong_loop-optimize-sequential.snap.new",
+      "primary_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "baseline_expected_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize-sequential_snapshot.snap.new",
+      "baseline_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "primary_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "baseline_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/strong_loop.bril": {
+          "baseline_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122",
+          "primary_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__strong_loop-optimize-sequential.snap": {
+          "baseline_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+          "primary_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe"
+        }
+      }
+    },
+    {
+      "trial": "strong_loop-optimize_snapshot",
+      "selected_tests": 1,
+      "exit": 101,
+      "command_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize_snapshot.json",
+      "command_receipt_sha256": "3fa71c2da2232fed9f15d23d7c707b3ad0310e0030c9f996077fa8dc46e1aec3",
+      "primary_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshots/files__strong_loop-optimize.snap.new",
+      "primary_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "baseline_expected_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+      "baseline_candidate": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/trial-strong_loop-optimize_snapshot.snap.new",
+      "baseline_candidate_sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "primary_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "baseline_body_sha256": "003fb991ccbbf12b6337e6169c2b1f48cb86a38a0adeefb98bf2b1c58a23a965",
+      "identical_actual_snapshot_bodies": true,
+      "classification": "same-snapshot-mismatch",
+      "identical_input_harness_expected": {
+        "tests/passing/small/strong_loop.bril": {
+          "baseline_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122",
+          "primary_sha256": "5f8a71d790f98cb683e09ed26356ccd4b4c1c7c14e7168a45a3cfce9c38f1122"
+        },
+        "tests/files.rs": {
+          "baseline_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431",
+          "primary_sha256": "f2e2d6e3e820744e99f6d2eef116459163a24c57ccd2189f50ff845c74b90431"
+        },
+        "tests/snapshots/files__strong_loop-optimize.snap": {
+          "baseline_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe",
+          "primary_sha256": "5b4999892383c6545a7694ccfebda56accb5ce6023563331cf2cc80acacf5bbe"
+        }
+      }
+    }
+  ],
+  "source_manifest": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/source.json",
+  "source_manifest_sha256": "e417c5a4a2855511867d1dbdc752aebd21104a79ece01c191b18232d46a3488d",
+  "controller_sha256": "cd6e3df0701a7722be3021db67196cfd045a00db150cffd9f0a5b8bd3e3f4cd0",
+  "executables": {
+    "actual_test_binary": "/Users/saul/p/wt/eggcc/encoding-impact/target/release/deps/files-86f9f3f5cd4b4e16",
+    "retained_test_binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/bin/files",
+    "test_binary_sha256": "8594a3b5f96fc038742b0eeb208a0b8a8402382ad86ae9f27d16e27f45cca795",
+    "actual_tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/source/target/release/tiger",
+    "retained_tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/bin/tiger",
+    "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+    "native_lookup": "compiled test executable parent has no Tiger; baseline manifest-root target/release/tiger is next lookup"
+  },
+  "lint_control": {
+    "exit": 101,
+    "same_unnecessary_unwrap": true,
+    "source_sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7",
+    "primary_source_sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7"
+  },
+  "dag_lint_control": {
+    "exit": 101,
+    "same_two_warnings": true
+  },
+  "unchanged_lint_source_identities": {
+    "src/rvsdg/optimize_direct_jumps.rs": {
+      "baseline_sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7",
+      "primary_sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7"
+    },
+    "dag_in_context/src/extractiongymfastergreedydag.rs": {
+      "baseline_sha256": "2f8406cd070d52f054ff74e2863270510a68e1296560ebe64b818cf4feb9c365",
+      "primary_sha256": "2f8406cd070d52f054ff74e2863270510a68e1296560ebe64b818cf4feb9c365"
+    },
+    "dag_in_context/src/fastercbcextractor.rs": {
+      "baseline_sha256": "cb0c10f5ce03e6b7ac42c70a978a40a9184cd219ca9d54f051f7b9b27ca15052",
+      "primary_sha256": "cb0c10f5ce03e6b7ac42c70a978a40a9184cd219ca9d54f051f7b9b27ca15052"
+    }
+  },
+  "engine_source_sha256": {
+    "egglog-experimental/src/disequality.rs": "8d56d53d87d0c21595b765f3aa6a9f7e3bc4752b4f87dfbcc651c108fe11bb3c",
+    "egglog-experimental/tests/injectivity_disequality.rs": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c",
+    "egglog-experimental/tests/injectivity_disequality/oracle.rs": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec",
+    "egglog-experimental/README.md": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318",
+    "egglog-experimental/tests/injectivity/injectivity-disequality.egg": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee"
+  },
+  "configuration": "same E1 dependency/lock graphs, Rust1.91, Rayon1, exact source-unmodified integration trials, harness nwl=false; only workspace boundary bookkeeping differs"
+}

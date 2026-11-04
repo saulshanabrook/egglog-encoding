@@ -1,0 +1,67 @@
+{
+  "status": "passed",
+  "command": [
+    "make",
+    "check"
+  ],
+  "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+  "make_exit_code": 0,
+  "source_unchanged": true,
+  "source_matches_reviewable_1": true,
+  "stage_commands": {
+    "uv lock --check": "passed",
+    "uv run --locked ruff format --check .": "passed",
+    "uv run --locked ruff check .": "passed",
+    "uv run --locked mypy .": "passed",
+    "cargo fmt --all -- --check": "passed",
+    "cargo clippy --workspace --all-targets -- -D warnings": "passed",
+    "RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --document-private-items --workspace": "passed",
+    "uv run --locked pytest -q": "passed",
+    "cargo test --workspace": "passed"
+  },
+  "python_passed": 233,
+  "python_snapshots_passed": 2,
+  "rust_summary_count": 60,
+  "rust_passed": 1804,
+  "rust_failed": 0,
+  "rust_ignored": 6,
+  "rust_measured": 0,
+  "rust_filtered": 0,
+  "log_sha256": {
+    "stdout": "99317eb98d76896eb48845beb866c8279874151b1627d110a19bd801775ac744",
+    "stderr": "093eaa9cd49afdc5be420268a6314158a7c495347d2364799f3154dcd725ec1c"
+  },
+  "build_input_sha256": {
+    "Makefile": "9e4397f2daf925d466cd1f41f9ad307534e27055022b1d3914a2d1995a90f921",
+    "Cargo.toml": "1fa84ca387e3010b97faeb1e118d027120a139b58ca998c1fbb0049662a4d0ca",
+    "Cargo.lock": "21b43bf8ea25396ab097718be9f42956189c2473122e12930875f58a149b4c48",
+    "rust-toolchain.toml": "c0b53420d53223d297315c9ccb33d9395b84a886a87028784c6d9baea059919b",
+    "pyproject.toml": "f2f381e00a13cb245bc0261dab7cf0d7b67524efb52ae9a9585187440437aafb",
+    "uv.lock": "4e9ffe6a8e6a2db8df431ae9978d9c06687af47ed52d081c1b670f150692817d"
+  },
+  "explicit_and_inherited_build_environment": {
+    "PATH": "/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0Acvxay:/Users/saul/.codex/tmp/arg0/codex-arg06zkSLr:/Users/saul/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0koUR7b:/Users/saul/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg02WeeWf:/Users/saul/.codex/packages/standalone/releases/0.161.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0UKoOEk:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/1112_1791436627170/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "RUSTC_WRAPPER": null,
+    "RUSTC_WORKSPACE_WRAPPER": null,
+    "RUSTFLAGS": null,
+    "RUSTDOCFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_TARGET_DIR": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/target",
+    "CARGO_INCREMENTAL": null,
+    "UV_PYTHON": "/Users/saul/.local/share/uv/python/cpython-3.13-macos-aarch64-none/bin/python3.13",
+    "UV_PROJECT_ENVIRONMENT": null,
+    "INSTA_UPDATE": null,
+    "MAKEFLAGS": null,
+    "MACOSX_DEPLOYMENT_TARGET": null,
+    "CC": null,
+    "CXX": null,
+    "CFLAGS": null,
+    "CXXFLAGS": null
+  },
+  "diagnostic_note": "One65-byte LLVM StorageFull line replayed from attempt1 fingerprint output (mtime before retry); retained diagnostic copy/mtime/hash/df9.1GiB in attempt-2-diagnostic.json. No new syscall storage failure; all commands/test processes and make completed successfully. Prior resource-failed attempt preserved.",
+  "patch_sha256": "b21d12ce1fd58453275d001609d12583439a295c8899d4ed058bd1ba070c1ee0",
+  "new_source_fixes": "none",
+  "proof_subset_rerun": false
+}

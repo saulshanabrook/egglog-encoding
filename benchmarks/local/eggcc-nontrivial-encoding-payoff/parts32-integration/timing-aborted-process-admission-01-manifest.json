@@ -1,0 +1,66 @@
+{
+  "archived_preflight": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing-preflight-aborted-process-admission-01.json",
+  "archived_preflight_sha256": "cd7691e1feec57a02093cab4b4bd9890c892f6c38073ea019c069d56846fc1a3",
+  "archived_session_root": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing-aborted-process-admission-01",
+  "competitors": [
+    {
+      "comm": "/Users/saul/.rustup/toolchains/1.96.0-aarch64-apple-darwin/bin/cargo",
+      "cpu_percent": 12.9,
+      "memory_percent": 0.4,
+      "pid": 35998,
+      "ppid": 35436,
+      "reasons": [
+        "known_compiler_or_benchmark"
+      ]
+    },
+    {
+      "comm": "/Users/saul/.rustup/toolchains/1.96.0-aarch64-apple-darwin/bin/rustc",
+      "cpu_percent": 18.8,
+      "memory_percent": 0.5,
+      "pid": 36260,
+      "ppid": 35998,
+      "reasons": [
+        "known_compiler_or_benchmark"
+      ]
+    }
+  ],
+  "created_wall_time_ns": 1792441673310662000,
+  "elapsed_sample_values_inspected_before_restart_decision": false,
+  "failed_checkpoint": {
+    "checkpoint_index": 4,
+    "completed_cycles": 60,
+    "completed_invocations": 28845,
+    "persisted_raw_rows": 900,
+    "phase": "joint_block_boundary",
+    "session": 1,
+    "snapshot_sha256": "24f769b08acd839ed40db22ad842e40ad85bae5944a94ccf68de00f268ac7b2f"
+  },
+  "files": {
+    "timing-aborted-process-admission-01/session-01/events.jsonl": "726b00f750531dd5e7b3e433ee7b1de543fec80220d372aa54b43386aace4b19",
+    "timing-aborted-process-admission-01/session-01/process-checks.jsonl": "5948bf8a4dec18b6d85bdc7efee23c446ab9d6e0b04000b4d7fa922e495ec3c6",
+    "timing-aborted-process-admission-01/session-01/samples.jsonl": "23672b788f404dfc927abf7ecd3d621155eb5db38750fc1823a00fa0a19420ca",
+    "timing-aborted-process-admission-01/session-01/warmups.jsonl": "ee469ee5f4357da7f9bae5f414336c8762c45869436ddabf555b6d9eec023a08"
+  },
+  "frozen_bindings": {
+    "compiler_binary_sha256": "d712e8347bf6eea231de829174a9436f411a3cedfd210daf8e7c4614c2371d2f",
+    "compiler_source_archive_sha256": "ba2f65df7091573a594b7c51ec68a8b3665b5c85f279fe4415ca0f6e08565873",
+    "design_sha256": "c646d77e41334fd252a4e951245068f771afbbb41e44cd828e30edd58b0f6367",
+    "preparer_sha256": "57c3d7a9195e7d28e9563936effe26585dd1a9953cc59af31922ab7063861577",
+    "producer_sha256": "ba93aedaf6d64115c6beaeb022de5367d6f3469e247444eff3f20679ab47364a",
+    "verifier_sha256": "2e01190ac2d09f8d9b368d049498e1c30f5c0041ad3f848f05860b6313e77749"
+  },
+  "independent_verification_absent": true,
+  "line_counts": {
+    "timing-aborted-process-admission-01/session-01/events.jsonl": 7,
+    "timing-aborted-process-admission-01/session-01/process-checks.jsonl": 5,
+    "timing-aborted-process-admission-01/session-01/samples.jsonl": 900,
+    "timing-aborted-process-admission-01/session-01/warmups.jsonl": 45
+  },
+  "ratios_or_estimates_computed_before_restart_decision": false,
+  "reason": "fixed cycle-60 process checkpoint rejected unrelated Cargo and Rust compiler jobs",
+  "schema_version": 1,
+  "screen_transcript": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/timing-session-01-aborted-process-admission-screenlog.txt",
+  "screen_transcript_sha256": "1aed44d9beb92efdf3785da0c96c46954ef12a70d8e9ff56100727ba47420ee7",
+  "status": "archived_incomplete_session_excluded_from_all_statistics",
+  "summary_absent": true
+}

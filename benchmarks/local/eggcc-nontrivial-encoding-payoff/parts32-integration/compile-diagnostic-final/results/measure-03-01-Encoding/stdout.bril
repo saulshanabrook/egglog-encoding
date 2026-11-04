@@ -1,0 +1,155 @@
+# ARGS: 0 4294967296 8
+@main(v0: int, v1: int, v2: int) {
+  c3_: int = const -1;
+  v4_: bool = lt c3_ v2;
+  c5_: int = const 1000000;
+  v6_: bool = le v2 c5_;
+  v7_: bool = and v4_ v6_;
+  c8_: int = const 1;
+  c9_: int = const 8589934593;
+  c10_: int = const 4294967297;
+  c11_: int = const 4294967296;
+  c12_: int = const 4294967295;
+  br v7_ .b13_ .b14_;
+.b13_:
+  c15_: int = const 0;
+  v16_: bool = lt c15_ v2;
+  v17_: int = id c15_;
+  v18_: int = id c15_;
+  v19_: int = id c8_;
+  v20_: int = id v1;
+  v21_: int = id c9_;
+  v22_: int = id v0;
+  v23_: int = id c10_;
+  v24_: int = id c11_;
+  v25_: int = id c12_;
+  v26_: int = id v2;
+  br v16_ .b27_ .b28_;
+.b27_:
+  v29_: int = id c15_;
+  v30_: int = id c15_;
+  v31_: int = id c8_;
+  v32_: int = id v1;
+  v33_: int = id c9_;
+  v34_: int = id v0;
+  v35_: int = id c10_;
+  v36_: int = id c11_;
+  v37_: int = id c12_;
+  v38_: int = id v2;
+.b39_:
+  v40_: bool = eq v32_ v34_;
+  c41_: int = const 5;
+  v42_: int = id v29_;
+  v43_: int = id v30_;
+  v44_: int = id v31_;
+  v45_: int = id v32_;
+  v46_: int = id v33_;
+  v47_: int = id v34_;
+  v48_: int = id v35_;
+  v49_: int = id c41_;
+  v50_: int = id v36_;
+  v51_: int = id v37_;
+  v52_: int = id v38_;
+  br v40_ .b53_ .b54_;
+.b54_:
+  v55_: int = bitand v34_ v37_;
+  v56_: int = bitand v32_ v37_;
+  v57_: bool = eq v55_ v56_;
+  c58_: int = const 3;
+  v59_: int = id v29_;
+  v60_: int = id v30_;
+  v61_: int = id v31_;
+  v62_: int = id v32_;
+  v63_: int = id v33_;
+  v64_: int = id v34_;
+  v65_: int = id v35_;
+  v66_: int = id c58_;
+  v67_: int = id v36_;
+  v68_: int = id v37_;
+  v69_: int = id v38_;
+  br v57_ .b70_ .b71_;
+.b70_:
+  c72_: int = const 7;
+  v59_: int = id v29_;
+  v60_: int = id v30_;
+  v61_: int = id v31_;
+  v62_: int = id v32_;
+  v63_: int = id v33_;
+  v64_: int = id v34_;
+  v65_: int = id v35_;
+  v66_: int = id c72_;
+  v67_: int = id v36_;
+  v68_: int = id v37_;
+  v69_: int = id v38_;
+  v42_: int = id v59_;
+  v43_: int = id v60_;
+  v44_: int = id v61_;
+  v45_: int = id v62_;
+  v46_: int = id v63_;
+  v47_: int = id v64_;
+  v48_: int = id v65_;
+  v49_: int = id v66_;
+  v50_: int = id v67_;
+  v51_: int = id v68_;
+  v52_: int = id v69_;
+.b53_:
+  v73_: int = add v29_ v49_;
+  v74_: int = add v30_ v31_;
+  v75_: int = add v32_ v33_;
+  v76_: int = add v34_ v35_;
+  v77_: bool = lt v74_ v38_;
+  v29_: int = id v73_;
+  v30_: int = id v74_;
+  v78_: int = id v31_;
+  v32_: int = id v75_;
+  v79_: int = id v33_;
+  v34_: int = id v76_;
+  v80_: int = id v35_;
+  v81_: int = id v36_;
+  v82_: int = id v37_;
+  v83_: int = id v38_;
+  v31_: int = id v78_;
+  v33_: int = id v79_;
+  v35_: int = id v80_;
+  v36_: int = id v81_;
+  v37_: int = id v82_;
+  v38_: int = id v83_;
+  br v77_ .b39_ .b84_;
+.b84_:
+  v17_: int = id v29_;
+  v18_: int = id v30_;
+  v19_: int = id v31_;
+  v20_: int = id v32_;
+  v21_: int = id v33_;
+  v22_: int = id v34_;
+  v23_: int = id v35_;
+  v24_: int = id v36_;
+  v25_: int = id v37_;
+  v26_: int = id v38_;
+  print v17_;
+  ret;
+  jmp .b85_;
+.b71_:
+  v42_: int = id v59_;
+  v43_: int = id v60_;
+  v44_: int = id v61_;
+  v45_: int = id v62_;
+  v46_: int = id v63_;
+  v47_: int = id v64_;
+  v48_: int = id v65_;
+  v49_: int = id v66_;
+  v50_: int = id v67_;
+  v51_: int = id v68_;
+  v52_: int = id v69_;
+  jmp .b53_;
+.b28_:
+  print v17_;
+  ret;
+  jmp .b85_;
+.b14_:
+  c86_: int = const -2;
+  print c86_;
+  ret;
+.b85_:
+}
+

@@ -1,0 +1,21 @@
+# Bounded report semantic-claims review
+
+No soundness or experiment-scope blocker in the reviewed law/storage/schedule/query claims. Two narrow wording corrections below would prevent implementation/result misreadings. This is read-only prose review against already accepted encoding, observer, replay, and corrected-control evidence; no code, test, build, workload, or project import was executed. `Validation and remaining gates`, costs, and the whole dossier are outside this consent.
+
+1. In **Encoding-linked experiment in progress**, `EvalBoolAt(Expr, ObservationPoint)` reads as an implemented sort signature. The actual second argument is a native `i64` point token; no `ObservationPoint` sort is introduced. For example, retained original-release/manual initialization line 5422 declares `(constructor EvalBoolAt (Expr i64) ObservationValue)`. Use “unmarked `EvalBoolAt(Expr, i64)` indexed by fresh observation-point tokens,” or explicitly label ObservationPoint as conceptual notation. This also makes the equal native sibling used by E1 precise.
+2. In **Baseline bug and its attribution**, “Twenty-four nearby controls also pass” can be read as 24 successful compilations immediately after the full-native MAX sentence. Actual evidence is **21 nearby full-native output matches and three expected selected-unsupported rejections before seeding**. Name those counts explicitly. The later observer section correctly distinguishes rejection classes; this is not evidence failure.
+
+Otherwise the reviewed text correctly separates remaining-child reverse congruence from marked-only forward disequality and equal-parent cancellation; requires every other sibling equal; preserves unknown/undefined, primitive-sibling versus equality-sort operand handling, and no persistent derived pairs or graph growth; and limits completeness to the implemented finite witness fragment. The repeated-child disjunction counterexample and transient-index cost warning agree with `findings/encoding.md` and the independent encoding source review. The `:naive` consumer, committed-state rerun and explicitly scheduled injectivity requirements are retained, with no claim that contradiction checking supplies a general joint closure.
+
+The observation/query text also correctly separates a one-feasible-input counterexample to contextual expression equivalence from universal runtime-value inequality or nonaliasing. It does not export asserted Expr disequality. It distinguishes the actual new-host pre-schedule diagnostic from byte-matched old/E1 initialization-only replays, retains fresh x=1 unknown and separate fail-wrapped different-point negatives, and attributes the later conflict rejection to the preexisting wrapper cancellation rather than E1. It acknowledges the equivalent manual checker, synthetic oracle versus actual-host scope, strict unsupported handling, exact diagnostic two-rule correction, restoration, and pending final gates without a general fix/speedup claim.
+
+Text identity is UTF-8 SHA-256 of the section heading through the byte immediately before the next `## ` heading, including intervening blank lines. The third section includes its `### What the new query adds` subsection. These exact section texts matched at the start and end of review; changes only outside them do not stale this bounded semantic assessment.
+
+| Reviewed text | UTF-8 bytes | SHA-256 |
+| --- | ---: | --- |
+| `## Remaining-child reasoning` | 1,925 | `ba2f5e23ca1f98c3fbfa7a126b24782eea3a732ca5c0b0d355dc4771e91c94c2` |
+| `## Baseline bug and its attribution` | 2,072 | `050ad25624a0cd93801c19fed7768efc2e1c3e49581588a4277ba932ffe285f9` |
+| `## Encoding-linked experiment in progress` through its query subsection | 5,665 | `c3d82fc7e3bb00b40ac0ffaf645532332a20a8b589e5bf2b1cbfbea4aeff8c12` |
+| `### What the new query adds` alone, ending before Validation | 1,920 | `72fabd5d9fe0eb7fa0170e5b281a8df850fbecc50e838ebfdc9a7b4f3c8a7d10` |
+
+The whole report at review time was SHA `7ef0770ed13d01e499769c83adccd8bf72731863d3d0a23fdc602111129c765b`; this hash is orientation only, not the consent boundary. Replacing the two sentences as described requires only a bounded text/hash delta check; substantive new law, storage, schedule, input-domain, detection-power or correction claims need renewed review.

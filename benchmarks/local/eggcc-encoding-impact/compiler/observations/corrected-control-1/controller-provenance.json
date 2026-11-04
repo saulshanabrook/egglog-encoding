@@ -1,0 +1,8 @@
+{
+  "executed_controller": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/controller.py",
+  "executed_sha256": "f32bbb8f5bbadf2c2e5953dcac993cc3690312178b6ee255e259ff98ffff4984",
+  "executed_bindings": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/bindings.json",
+  "unused_metadata_draft": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/controller-v2.py",
+  "unused_draft_executed": false,
+  "note": "Consented v1 executed unchanged. Corrected source snapshot inherits preparation mutation_status metadata; actual variant, source_sha256 interval entry, independently predicted bytes and control-result.json identify the applied two-rule control and restoration."
+}

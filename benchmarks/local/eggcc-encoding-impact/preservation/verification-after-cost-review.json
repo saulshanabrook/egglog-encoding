@@ -1,0 +1,104 @@
+{
+  "status": "source-and-frozen-evidence-preserved-with-metadata-drift",
+  "checkedUtc": "2026-10-18T00:25:06.914340+00:00",
+  "strictReceipt": "benchmarks/local/eggcc-encoding-impact/preservation/verification-after-cost-strict.json",
+  "strictReceiptSha256": "7c3ee345828ac15cf7956ddcce8d32676df8a21f9848f3277afe670fba1e7577",
+  "strictStatus": "changed",
+  "checkedSourceRoots": 6,
+  "checkedOriginalFileStates": 11109,
+  "frozenFiles": 1536,
+  "metadataDrift": [
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": ".DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "1c3bb2ec0f62c76d297524b601f6f12f48f18fb6eb142c9652e24e1a82e77d98"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "benchmarking/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "3d2c1dfe01941f8aa5dac5dc3bd5b7ed0e2c9a2efa9eff8157ea321d844fda78"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "benchmarks/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "3e622bfd876ae52e62341895f5076a3d78ddc64c91c2bacd6438e37414252c5d"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "figures/.DS_Store",
+      "before": {
+        "sha256": "44ed668c42ff2ff9be8169b98696d1a7793537ae2d8eee380fd77001f226f558"
+      },
+      "observed_at_classification": {
+        "sha256": "6543d6c017d5b2c9b11ae3bd93b494085eb90d872eecce06773900d421dad08d"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "goals/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "ec0b091b4141fdf8ce17b8d43de44d5f03940227568cf2cc9966502e286b8eb8"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "scripts/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "b25a4e4d2832dc15ee32c6d46aaef746a64368e94df30c03c94b653d17f465ef"
+      }
+    },
+    {
+      "root": "/Users/saul/p/egglog-encoding",
+      "path": "tests/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "ae69fc391bac70ed32f20d4262c9b1a0f69e0ec23d1b459802addf58d7802aed"
+      }
+    },
+    {
+      "root": "/Users/saul/p/wt/egglog-encoding/injectivity",
+      "path": ".DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "28f44c3e4e41c3f6a06a6713ce56f89140823ee432c5b187d380338e3c2389b9"
+      }
+    },
+    {
+      "root": "/Users/saul/p/wt/egglog-encoding/injectivity",
+      "path": "benchmarking/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "f55e6c57cfd09ad750fb09a6fb88ce7881594989e2150457431e43207c7a9db3"
+      }
+    },
+    {
+      "root": "/Users/saul/p/wt/egglog-encoding/injectivity",
+      "path": "benchmarks/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "48dfcff2d8874265c2c3390bbb91fee8befc9afd3d23430fc413db56196dc5c2"
+      }
+    },
+    {
+      "root": "/Users/saul/p/wt/egglog-encoding/injectivity",
+      "path": "tests/.DS_Store",
+      "before": null,
+      "observed_at_classification": {
+        "sha256": "73caf0dc107443d5d8ca703754066a4122f9ea6433a49e5abf2fc0c80e99c938"
+      }
+    }
+  ],
+  "unexpectedChanges": [],
+  "note": "Strict failure retained. Only exact .DS_Store paths are classified as metadata; no file is restored, removed or adopted into the baseline. Metadata hashes here are observed at classification time."
+}

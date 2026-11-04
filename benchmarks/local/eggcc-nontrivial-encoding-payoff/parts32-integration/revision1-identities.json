@@ -1,0 +1,59 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/Cargo.toml",
+      "sha256": "9f966e66dd5deb21b6a67ceb255770b3d4fa689851591c6bd0ccc0d83e1d2dd4"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/Cargo.toml",
+      "sha256": "d85e1d65d1be19eeb55347186ee90d279adef91debf8fbcde0948b9882f00c0b"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/src/lib.rs",
+      "sha256": "71dea52ed083facffed7fa4211ef694d853b45052001651f6c952f5aa6d54d03"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/src/scoped_reasoning.rs",
+      "sha256": "fe3058ddf9ff9628f8f589fd26cdb5ec701ea9906862d6e56061f5c35943fb3b"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/src/disequality.rs",
+      "sha256": "87d8ef716f2889fc9594180dff59d176561dd068aacfe89a7111e4cf660c6993"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin/eggcc",
+      "sha256": "56e279231886963330279d0e688faaa20d41854e1632c815109cb57cfaa2484f"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin/tiger",
+      "sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/run.py",
+      "sha256": "9b7d3e2f29f853c6d7bbbe6c6eef8f53399c955e0522ed2d5c7b3e1bfd462ba0"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix.py",
+      "sha256": "40dd5c41fe109712282a0fc05eb2610e702cc96ad2ab6104d3eba009d4558cd5"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/runtime/rt.bc",
+      "sha256": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/runtime/rt.o",
+      "sha256": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+    }
+  ],
+  "machine": "macOS-26.6-arm64-arm-64bit-Mach-O",
+  "timing_campaign": false,
+  "cargo_target_note": "APFS clone of compatible selected same-mask target, isolated destination; source-path crates rebuilt"
+}

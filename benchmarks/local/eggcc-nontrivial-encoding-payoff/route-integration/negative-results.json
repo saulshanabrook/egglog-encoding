@@ -1,0 +1,1202 @@
+[
+  {
+    "family": "omitted-first-output",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-first-output",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-first-output",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-first-output",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-first-output",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-first-output",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-first-output.bril",
+    "source_sha256": "079d1dc884261945c37283b14534a5b98c4ab66f6c50a1bcb57f52f4c36e3145",
+    "emitted_sha256": "1a5979d68ebb49229908e95f4f7ef1b7b451b6159d5cfa12a45314eacc52cbd8",
+    "main_sha256": "dd5627e184553dcb29a45c56bae63ebe9d12853291fbaec69cd5e7a6dc51582c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-second-output",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/omitted-second-output.bril",
+    "source_sha256": "1080080d564fb7439528c63702ad33e5ff418394bbfc32eb88dee97e09fc5f5e",
+    "emitted_sha256": "8a26955331950249c51de62705b888a706df8d68da8c0ff98a04825e818299f5",
+    "main_sha256": "4838f85d2580dd56a81de94c3d3dc732e955f47f8d6c90b3e43325a206f4b785",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "selector-tag-mismatch",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/selector-tag-mismatch.bril",
+    "source_sha256": "b53fd6e3620c3396792c9991d7d5bd27fc8d90b9ece90d54672c5098af3a4a29",
+    "emitted_sha256": "5f2f8a7108298f44e9d27c6c3569d7359ce4fcec2fbf082727c30cf6f16fb824",
+    "main_sha256": "08866683219dd1599dfe7d671f6951a083d05cdd1efcd5719a9b03a8d396c2df",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(7), Slot(6)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "swapped-payload-tag-omitted",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/swapped-payload-tag-omitted.bril",
+    "source_sha256": "902b23e5faf3a234ee735db88b023d813ec74c2c9e0fd47f84e6ea24eeba0f30",
+    "emitted_sha256": "8440fdaeb0a60b8b98bba2e6b88bb1d244f8924acb5b7c511dbe5ad1bec2e8b5",
+    "main_sha256": "47984424d324769a7c5331f57934bab23941117bc0a7c5716577c79f3e9a1c38",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), None)",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "da4d65b7c036db6c4797566ccde6ca529f8c6b184d40d2a454a5abc027d9a12f",
+    "emitted_sha256": "645eb54c1dfc3f6590fb0897f7c24dc3405f262e4462d8c274ce3eb03fa7c5ea",
+    "main_sha256": "ca206635f79c876aa4044a61db39e60e5c06a8b83b2c99210a353d7a302a0c87",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact paired routing, common tag, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(0), Slot(1))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(2), Slot(3))))",
+        "second": "(Some(Select(LessThan(Slot(6), Slot(7)), Slot(1), Slot(0))), Some(Select(LessThan(Slot(6), Slot(7)), Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-branch",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/route-integration/fixtures/wrong-branch.bril",
+    "source_sha256": "4c70e682f678a864057fc08faec6833e6435fdabbaf5812d098d075e90f19f61",
+    "emitted_sha256": "702f8bfadddfd356641249fcd464745cc43bad9f2373e8a16892c9cda13bb8b1",
+    "main_sha256": "52aefdf7180dd84ff30af7cf7136e52b850f253a6005fb5b627b643d81b783b0",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0,
+          0,
+          1
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  }
+]

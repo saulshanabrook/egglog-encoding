@@ -1,0 +1,35 @@
+[package]
+name = "dag_in_context"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
+smallvec = "1.11.1"
+strum = "0.25"
+strum_macros = "0.25"
+main_error = "0.1.2"
+thiserror = "1.0"
+egraph-serialize = "0.3.0"
+bril-rs = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+indexmap = "2.0.0"
+rustc-hash = "1.1.0"
+ordered-float = "5"
+graphviz-rust = "0.8.0"
+dot-structures = "0.1.1"
+symbol_table = { version = "0.3.0", features = ["global"] }
+rpds = "1.1.0"
+log = "0.4"
+env_logger = "0.11.3"
+insta = { version = "1.31.0", features = ["yaml"] }
+coin_cbc = "0.1.8"
+serde_json = "1.0.103"
+serde = "1.0.217"
+
+
+clap = { version = "4.4.7", features = ["derive"] }
+tempfile = "3.10"
+libc = "0.2"
+rayon = "1"

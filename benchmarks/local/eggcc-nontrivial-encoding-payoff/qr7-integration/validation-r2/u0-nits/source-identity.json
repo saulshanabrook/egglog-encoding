@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "repository": "/Users/saul/p/eggcc",
+  "revision": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "tree": "66f7a1c5654616cf0e9b557e064e73b9c3b1ad18",
+  "commit_object_sha256": "9c6175c5d1f18cb1d97ebd54bc07e5e77371e7ae4369eea90072856a74e46812",
+  "archive": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/eggcc-a0bbec127f83249074a46af3fd6f6126c90fe0fb.tar",
+  "archive_size_bytes": 3000320,
+  "archive_sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+  "source_root": "/private/tmp/eggcc-qr7-u0-nits-r2",
+  "tracked_entries": 771,
+  "tracked_blob_entries": 771,
+  "source_manifest_before_sha256": "8d1a2e9624626785d9796002b9d02a45a87390b3a4391c5c38d0a94f0bb87cc0",
+  "source_manifest_after_sha256": "8d1a2e9624626785d9796002b9d02a45a87390b3a4391c5c38d0a94f0bb87cc0",
+  "source_unchanged_by_commands": true,
+  "toolchain": {
+    "requested": "1.91.0",
+    "rustc": "rustc 1.91.0 (f8297e351 2025-10-28)\nbinary: rustc\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\ncommit-date: 2025-10-28\nhost: aarch64-apple-darwin\nrelease: 1.91.0\nLLVM version: 21.1.2\n",
+    "cargo": "cargo 1.91.0 (ea2d97820 2025-10-10)\nrelease: 1.91.0\ncommit-hash: ea2d97820c16195b0ca3fadb4319fe512c199a43\ncommit-date: 2025-10-10\nhost: aarch64-apple-darwin\nlibgit2: 1.9.1 (sys:0.20.2 vendored)\nlibcurl: 8.7.1 (sys:0.4.83+curl-8.15.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.5.2 5 Aug 2025\nos: Mac OS 26.6.0 [64-bit]\n",
+    "rustfmt": "rustfmt 1.8.0-stable (f8297e351a 2025-10-28)\n",
+    "clippy": "clippy 0.1.91 (f8297e351a 2025-10-28)\n"
+  },
+  "commands": [
+    {
+      "schema_version": 1,
+      "name": "root-fmt",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2",
+      "timeout_seconds": 3600,
+      "started_utc": "2026-10-20T04:44:54.035416+00:00",
+      "finished_utc": "2026-10-20T04:44:54.168674+00:00",
+      "elapsed_seconds": 0.13312208299976191,
+      "exit_code": 0,
+      "timed_out": false,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-root-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "schema_version": 1,
+      "name": "dag-fmt",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context",
+      "timeout_seconds": 3600,
+      "started_utc": "2026-10-20T04:44:54.169187+00:00",
+      "finished_utc": "2026-10-20T04:44:54.350552+00:00",
+      "elapsed_seconds": 0.18148608399860677,
+      "exit_code": 0,
+      "timed_out": false,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-dag-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "schema_version": 1,
+      "name": "root-clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2",
+      "timeout_seconds": 3600,
+      "started_utc": "2026-10-20T04:44:54.351168+00:00",
+      "finished_utc": "2026-10-20T04:45:14.428967+00:00",
+      "elapsed_seconds": 20.077329083000222,
+      "exit_code": 101,
+      "timed_out": false,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-root-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "02bfd3ec70557d459084eed0f0ee7c0246b55aa3e176e4652a0908ca450d4595"
+    },
+    {
+      "schema_version": 1,
+      "name": "dag-clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context",
+      "timeout_seconds": 3600,
+      "started_utc": "2026-10-20T04:45:14.429576+00:00",
+      "finished_utc": "2026-10-20T04:45:22.377674+00:00",
+      "elapsed_seconds": 7.941713791999064,
+      "exit_code": 101,
+      "timed_out": false,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-dag-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057"
+    }
+  ],
+  "tests_or_benchmarks_run": false,
+  "raytracing_run": false
+}

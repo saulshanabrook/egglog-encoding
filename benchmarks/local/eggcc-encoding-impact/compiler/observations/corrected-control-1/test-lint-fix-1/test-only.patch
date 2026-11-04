@@ -1,0 +1,11 @@
+--- a/dag_in_context/src/observations/tests.rs
++++ b/dag_in_context/src/observations/tests.rs
+@@ -454,7 +454,7 @@
+         functions: vec![],
+     };
+     let input = Value::Tuple(vec![Value::Const(Constant::Int(7)), Value::StateV]);
+-    let collected = collect(&program, &["main".into()], &[input.clone()], 0).unwrap();
++    let collected = collect(&program, &["main".into()], std::slice::from_ref(&input), 0).unwrap();
+     assert_eq!(collected.points.len(), 2);
+     assert_eq!(
+         collected.points[1].input,

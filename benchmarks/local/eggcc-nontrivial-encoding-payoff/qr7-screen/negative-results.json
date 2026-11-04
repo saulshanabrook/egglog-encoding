@@ -1,0 +1,71 @@
+[
+  {
+    "variant": "omit-quotient-v2",
+    "args": [
+      5,
+      12,
+      8
+    ],
+    "expected": "-24\n",
+    "interpretation": {
+      "parse": [
+        "-24\n",
+        "-24\n"
+      ],
+      "optimize": [
+        "-24\n",
+        "-24\n"
+      ]
+    },
+    "native": {
+      "omit-quotient-v2": "-24\n",
+      "omit-quotient-v2-optimized": "-24\n"
+    }
+  },
+  {
+    "variant": "omit-remainder-v2",
+    "args": [
+      7,
+      8,
+      8
+    ],
+    "expected": "-24\n",
+    "interpretation": {
+      "parse": [
+        "-24\n",
+        "-24\n"
+      ],
+      "optimize": [
+        "-24\n",
+        "-24\n"
+      ]
+    },
+    "native": {
+      "omit-remainder-v2": "-24\n",
+      "omit-remainder-v2-optimized": "-24\n"
+    }
+  },
+  {
+    "variant": "different-divisor",
+    "args": [
+      8,
+      9,
+      8
+    ],
+    "expected": "-24\n",
+    "interpretation": {
+      "parse": [
+        "-24\n",
+        "-24\n"
+      ],
+      "optimize": [
+        "-24\n",
+        "-24\n"
+      ]
+    },
+    "native": {
+      "different-divisor": "-24\n",
+      "different-divisor-optimized": "-24\n"
+    }
+  }
+]

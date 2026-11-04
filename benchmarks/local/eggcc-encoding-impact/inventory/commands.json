@@ -1,0 +1,1073 @@
+{
+  "kind": "current-infrastructure-inventory-not-measurements",
+  "recordedUtc": "2026-10-17T20:43:28.046024+00:00",
+  "selectedEnvironment": {
+    "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0Acvxay:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg06zkSLr:/Users/saul/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0koUR7b:/Users/saul/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg02WeeWf:/Users/saul/.codex/packages/standalone/releases/0.161.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0/codex-arg0UKoOEk:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/1112_1791436627170/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+    "RUSTUP_TOOLCHAIN": null,
+    "CARGO_HOME": null,
+    "CARGO_TARGET_DIR": null,
+    "CARGO_BUILD_JOBS": null,
+    "RUST_TEST_THREADS": null,
+    "RAYON_NUM_THREADS": null,
+    "RUST_LOG": null,
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "PKG_CONFIG_PATH": "/usr/local/opt/cbc/lib/pkgconfig",
+    "CC": null,
+    "CXX": null,
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "DYLD_LIBRARY_PATH": null,
+    "EGGCC_ROOT": null,
+    "EGGLOG_BENCH_MEMORY_GUARD": null,
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "C.UTF-8"
+  },
+  "resolvedCommands": {
+    "rustup": "/opt/homebrew/bin/rustup",
+    "rustc": "/Users/saul/.cargo/bin/rustc",
+    "cargo": "/Users/saul/.cargo/bin/cargo",
+    "uv": "/opt/homebrew/bin/uv",
+    "python3": "/opt/homebrew/bin/python3",
+    "opt-18": null,
+    "opt": "/opt/homebrew/opt/llvm@18/bin/opt",
+    "clang-18": "/opt/homebrew/opt/llvm@18/bin/clang-18",
+    "clang": "/usr/bin/clang",
+    "llvm-dis": "/opt/homebrew/opt/llvm@18/bin/llvm-dis",
+    "llvm-objdump": "/opt/homebrew/opt/llvm@18/bin/llvm-objdump",
+    "llvm-config": "/opt/homebrew/opt/llvm@18/bin/llvm-config",
+    "cc": "/usr/bin/cc",
+    "c++": "/usr/bin/c++",
+    "pkg-config": "/opt/homebrew/bin/pkg-config",
+    "cbc": "/opt/homebrew/bin/cbc",
+    "otool": "/usr/bin/otool",
+    "file": "/usr/bin/file"
+  },
+  "manifestSha256Before": {
+    "/Users/saul/p/wt/eggcc/encoding-impact/Cargo.toml": "f8f7358cd6655b100d7ea2afc99644270712044ee4ff6da2ba6c98e8eeef5c39",
+    "/Users/saul/p/wt/eggcc/encoding-impact/Cargo.lock": "607402d488d68dc5b8607de929d89dc2678ccf69f3c2d9701f3e3a0cf4efea0d",
+    "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.toml": "bb66c1e599218738e74829d54f8ba12b26d186a9bd7d2da68b379e9ee5331fd5",
+    "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.lock": "ae2fe27d2c7d9d34f702f52ad6c40d6e90252879078f55ab1a1bc5c4a50569a5",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/Cargo.toml": "1fa84ca387e3010b97faeb1e118d027120a139b58ca998c1fbb0049662a4d0ca",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/Cargo.lock": "21b43bf8ea25396ab097718be9f42956189c2473122e12930875f58a149b4c48",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/Cargo.toml": "9f47f7e5325d6bc97a67ce0cc3af3db04752bbdb9f28fc80fd68698c540f8b16",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/rust-toolchain.toml": "c0b53420d53223d297315c9ccb33d9395b84a886a87028784c6d9baea059919b",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/pyproject.toml": "f2f381e00a13cb245bc0261dab7cf0d7b67524efb52ae9a9585187440437aafb",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/uv.lock": "4e9ffe6a8e6a2db8df431ae9978d9c06687af47ed52d081c1b670f150692817d"
+  },
+  "manifestSha256After": {
+    "/Users/saul/p/wt/eggcc/encoding-impact/Cargo.toml": "f8f7358cd6655b100d7ea2afc99644270712044ee4ff6da2ba6c98e8eeef5c39",
+    "/Users/saul/p/wt/eggcc/encoding-impact/Cargo.lock": "607402d488d68dc5b8607de929d89dc2678ccf69f3c2d9701f3e3a0cf4efea0d",
+    "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.toml": "bb66c1e599218738e74829d54f8ba12b26d186a9bd7d2da68b379e9ee5331fd5",
+    "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context/Cargo.lock": "ae2fe27d2c7d9d34f702f52ad6c40d6e90252879078f55ab1a1bc5c4a50569a5",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/Cargo.toml": "1fa84ca387e3010b97faeb1e118d027120a139b58ca998c1fbb0049662a4d0ca",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/Cargo.lock": "21b43bf8ea25396ab097718be9f42956189c2473122e12930875f58a149b4c48",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/egglog-experimental/Cargo.toml": "9f47f7e5325d6bc97a67ce0cc3af3db04752bbdb9f28fc80fd68698c540f8b16",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/rust-toolchain.toml": "c0b53420d53223d297315c9ccb33d9395b84a886a87028784c6d9baea059919b",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/pyproject.toml": "f2f381e00a13cb245bc0261dab7cf0d7b67524efb52ae9a9585187440437aafb",
+    "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/uv.lock": "4e9ffe6a8e6a2db8df431ae9978d9c06687af47ed52d081c1b670f150692817d"
+  },
+  "manifestsUnchanged": true,
+  "commands": [
+    {
+      "name": "rustc-1.91",
+      "argv": [
+        "rustc",
+        "+1.91.0",
+        "--version",
+        "--verbose"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.396581+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rustc-1.91.stdout",
+        "sha256": "28dd064782d116a8e5eea8ae5e3326c561e8617b79f1fc2c928f7a2a5e04bdde",
+        "bytes": 192
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rustc-1.91.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.581936+00:00"
+    },
+    {
+      "name": "cargo-1.91",
+      "argv": [
+        "cargo",
+        "+1.91.0",
+        "--version",
+        "--verbose"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.396740+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cargo-1.91.stdout",
+        "sha256": "ce5d8e5e73fe453207ee3e2b5458e22f887827d9adbec3bc9f1e578bdd8d7abd",
+        "bytes": 335
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cargo-1.91.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.469177+00:00"
+    },
+    {
+      "name": "rustc-runtime-nightly",
+      "argv": [
+        "rustc",
+        "+nightly-2024-05-01",
+        "--version",
+        "--verbose"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.398530+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rustc-runtime-nightly.stdout",
+        "sha256": "eea7c9c97d4fe56afda1323bf1b8855f3e225f3525de27948c54c0edf5326f85",
+        "bytes": 208
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rustc-runtime-nightly.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.600308+00:00"
+    },
+    {
+      "name": "toolchains",
+      "argv": [
+        "rustup",
+        "toolchain",
+        "list"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.399960+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/toolchains.stdout",
+        "sha256": "9e0b6b20a00eef4bfb6f326042523551e84ae96a02bf45ab78d00b2f449d3a01",
+        "bytes": 448
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/toolchains.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.446108+00:00"
+    },
+    {
+      "name": "uv",
+      "argv": [
+        "uv",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.446149+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/uv.stdout",
+        "sha256": "442e7e7123e1a4426e42637e821d1ece6d4d9abc51fed11c0d2b47779c72cba9",
+        "bytes": 53
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/uv.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.452618+00:00"
+    },
+    {
+      "name": "python-installed",
+      "argv": [
+        "uv",
+        "python",
+        "list",
+        "--only-installed"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.452648+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-installed.stdout",
+        "sha256": "bae2cc08ceffc581888a083667bae7cb7be0e41eca57a18819c4f8418a0e0607",
+        "bytes": 1344
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-installed.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.636716+00:00"
+    },
+    {
+      "name": "python-ambient",
+      "argv": [
+        "python3",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.469210+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-ambient.stdout",
+        "sha256": "f615dc9512de8b165e2b595e5cdc608a3ba7927ae92f959c5b42ec3d58e2ffa8",
+        "bytes": 14
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-ambient.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.478461+00:00"
+    },
+    {
+      "name": "python-3.13",
+      "argv": [
+        "/Users/saul/.local/share/uv/python/cpython-3.13-macos-aarch64-none/bin/python3.13",
+        "-I",
+        "-B",
+        "-c",
+        "import json,platform,sys; print(json.dumps({\"executable\":sys.executable,\"version\":sys.version,\"platform\":platform.platform(),\"machine\":platform.machine()}))"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.478494+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-3.13.stdout",
+        "sha256": "871775e403626907e7dabdb9d96ae0e9b514b80c18efaaad5270eb537c7c96a1",
+        "bytes": 237
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/python-3.13.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.624275+00:00"
+    },
+    {
+      "name": "llvm-opt",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/opt",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.582034+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-opt.stdout",
+        "sha256": "3dafbf977bef1a77841388165033f7d962f84987dce63279109dbfdda0e7cb24",
+        "bytes": 112
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-opt.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.715714+00:00"
+    },
+    {
+      "name": "llvm-clang",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/clang-18",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.600358+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-clang.stdout",
+        "sha256": "dc260375955f5ebaa47cdeabb808c8094060dd968cba672a4b38803bd4731bdc",
+        "bytes": 127
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-clang.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.715845+00:00"
+    },
+    {
+      "name": "llvm-config",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/llvm-config",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.624345+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-config.stdout",
+        "sha256": "be9dc5ce956678e5c2ceb953961e75881785713e3bb2a2666aa7b03bf4bf599f",
+        "bytes": 7
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-config.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.661841+00:00"
+    },
+    {
+      "name": "llvm-config-paths",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/llvm-config",
+        "--prefix",
+        "--libdir",
+        "--targets-built"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.636762+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-config-paths.stdout",
+        "sha256": "b3608723957e06e2ff5a34144611dfbd81460ab9724bac4804b1a57bdf452f69",
+        "bytes": 198
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-config-paths.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.661911+00:00"
+    },
+    {
+      "name": "llvm-dis",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/llvm-dis",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.661875+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-dis.stdout",
+        "sha256": "d0ce5eaf47dab0874a5aa354260192ae262e27b58625b905b83b76fc5bf1ad9e",
+        "bytes": 48
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-dis.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.953699+00:00"
+    },
+    {
+      "name": "llvm-objdump",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/llvm-objdump",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.661920+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-objdump.stdout",
+        "sha256": "768a39876acf0fe8b4276701a03dfc12e31483e343c5376b708e605dd386e99c",
+        "bytes": 1547
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/llvm-objdump.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.715801+00:00"
+    },
+    {
+      "name": "apple-clang",
+      "argv": [
+        "/usr/bin/clang",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.715756+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/apple-clang.stdout",
+        "sha256": "55f7662ee66d47566d9f08f35a12158ac9588e4852f788eed57fa3bf625c9a5d",
+        "bytes": 159
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/apple-clang.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.733929+00:00"
+    },
+    {
+      "name": "uname",
+      "argv": [
+        "uname",
+        "-a"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.715812+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/uname.stdout",
+        "sha256": "c4adb8c788b56d9cc5f1e498d0b21f0a16d3c0dc44bee3766e10c72ab258873b",
+        "bytes": 148
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/uname.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.719758+00:00"
+    },
+    {
+      "name": "macos",
+      "argv": [
+        "sw_vers"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.715851+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/macos.stdout",
+        "sha256": "46c87c2b8fd5d25040390e531128cd533d199bde1b50a51790375ab5984c99bb",
+        "bytes": 63
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/macos.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.724807+00:00"
+    },
+    {
+      "name": "hardware",
+      "argv": [
+        "sysctl",
+        "-n",
+        "machdep.cpu.brand_string",
+        "hw.model",
+        "hw.memsize",
+        "hw.ncpu"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "startedUtc": "2026-10-17T20:43:25.719791+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/hardware.stdout",
+        "sha256": "81f2a311068e949257bcc5d61437680ab8793a9d6a7807806078d1306fbb3ea6",
+        "bytes": 32
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/hardware.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:25.723043+00:00"
+    },
+    {
+      "name": "compiler-root-metadata",
+      "argv": [
+        "cargo",
+        "+1.91.0",
+        "metadata",
+        "--locked",
+        "--offline",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "startedUtc": "2026-10-17T20:43:25.723076+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-root-metadata.stdout",
+        "sha256": "74f54dd27520adbac8734740df29e54f2964ad88e521e23dae5f63ea48c5438e",
+        "bytes": 1180510
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-root-metadata.stderr",
+        "sha256": "e237bf68452f394ffe54e018832419d40907390b5a98d44e8939943ca20bf452",
+        "bytes": 104
+      },
+      "completedUtc": "2026-10-17T20:43:27.990869+00:00"
+    },
+    {
+      "name": "compiler-dag-metadata",
+      "argv": [
+        "cargo",
+        "+1.91.0",
+        "metadata",
+        "--locked",
+        "--offline",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact/dag_in_context",
+      "startedUtc": "2026-10-17T20:43:25.724887+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-dag-metadata.stdout",
+        "sha256": "8531da243f4c17b82d3e7d00f7b889d0c715656eb1a72092d4f2d4c78655f55d",
+        "bytes": 759585
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-dag-metadata.stderr",
+        "sha256": "11fca5a9ed41b89c9405e220a9fd6b471fdc9e7641b3d830bfafc04e615ae753",
+        "bytes": 156
+      },
+      "completedUtc": "2026-10-17T20:43:28.045398+00:00"
+    },
+    {
+      "name": "encoding-metadata",
+      "argv": [
+        "cargo",
+        "+1.91.0",
+        "metadata",
+        "--locked",
+        "--offline",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "startedUtc": "2026-10-17T20:43:25.733962+00:00",
+      "kind": "identity-or-metadata-not-benchmark",
+      "timeoutSeconds": 180,
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-metadata.stdout",
+        "sha256": "f94e94cc5b4996277023288db1b1632fafd1b33b744390eec615ab4791b8bff2",
+        "bytes": 1055793
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-metadata.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "completedUtc": "2026-10-17T20:43:26.371224+00:00"
+    },
+    {
+      "name": "file-A",
+      "argv": [
+        "file",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-A.stdout",
+        "sha256": "6b921d50845ceac1a90a52a1726024d7d05d0420f406a27ad3991cd9bfc91568",
+        "bytes": 126
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-A.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "linked-libraries-A",
+      "argv": [
+        "otool",
+        "-L",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-A.stdout",
+        "sha256": "35e5c8837c2cf20ddcecfb87f2afef50386841cf722e5478ca9cc72d59129794",
+        "bytes": 1855
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-A.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "file-B",
+      "argv": [
+        "file",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-B.stdout",
+        "sha256": "e36229cc2bb77864b16d642010ea988e3a54c2b950af6d3bb68c9f147cfb36c1",
+        "bytes": 126
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-B.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "linked-libraries-B",
+      "argv": [
+        "otool",
+        "-L",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-B.stdout",
+        "sha256": "818f78316a86c2185c12d21b3b1410ebc3a5919ee1a9e5688669828368cc19b5",
+        "bytes": 1855
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-B.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "file-prototype",
+      "argv": [
+        "file",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-prototype.stdout",
+        "sha256": "a851b6ce333a863c6653e18c2723cb45002bcb38de208479c2b878bb82d107d6",
+        "bytes": 140
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-prototype.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "linked-libraries-prototype",
+      "argv": [
+        "otool",
+        "-L",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-prototype.stdout",
+        "sha256": "062b0f33dca8c014203200d30418497d36eee049fafdebca5d3746410eb553a5",
+        "bytes": 1869
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-prototype.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "file-tiger",
+      "argv": [
+        "file",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-tiger.stdout",
+        "sha256": "c4ca99fc46fed466c9b2d5a47b3b4e8d0093f188e36e56dda0377c2cb3e9b515",
+        "bytes": 126
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/file-tiger.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "linked-libraries-tiger",
+      "argv": [
+        "otool",
+        "-L",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-tiger.stdout",
+        "sha256": "1b40250c6b2c7e16775c56d64e89c74db1b871e3a88a566256c225a4839ded10",
+        "bytes": 261
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/linked-libraries-tiger.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "runner-guard-diff",
+      "argv": [
+        "git",
+        "diff",
+        "--no-index",
+        "--",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding/benchmarking/processes.py",
+        "/Users/saul/p/egglog-encoding/benchmarking/processes.py"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 1,
+      "timedOut": false,
+      "kind": "binary-or-source-inspection-not-execution",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/runner-guard-diff.stdout",
+        "sha256": "ae7d62c674fdbeab1a1862f81be147edc0b26b2f44fc4190506ae6cc06ec9683",
+        "bytes": 7865
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/runner-guard-diff.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "rust-components",
+      "argv": [
+        "rustup",
+        "component",
+        "list",
+        "--installed",
+        "--toolchain",
+        "1.91.0"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rust-components.stdout",
+        "sha256": "5324398f7c5cb07505a67b95ed70af18a0873b0fe9d4b11deb2d32b7191c0fb6",
+        "bytes": 217
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/rust-components.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "cargo-insta",
+      "argv": [
+        "cargo",
+        "+1.91.0",
+        "insta",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cargo-insta.stdout",
+        "sha256": "3feeb21a3b2977b01a921dd343c198a5e8fbb73a91757852a202fc871f4824de",
+        "bytes": 19
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cargo-insta.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "pkg-config",
+      "argv": [
+        "pkg-config",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/pkg-config.stdout",
+        "sha256": "2a612f3f9494fa52305039d3474f9448e4eadcdbca3517a767df080009a393e9",
+        "bytes": 6
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/pkg-config.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "cbc-version",
+      "argv": [
+        "pkg-config",
+        "--modversion",
+        "cbc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-version.stdout",
+        "sha256": "ba0f134432a46e36fa0fbf4bc9e453c37b0094cea5dd9cf61c3556fcb194c072",
+        "bytes": 8
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-version.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "cbc-pcdir",
+      "argv": [
+        "pkg-config",
+        "--variable=pcfiledir",
+        "cbc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-pcdir.stdout",
+        "sha256": "0c0d5937219a7cafdddd48fca9de656a93c16a84ba5d6eb292177a95384f3493",
+        "bytes": 67
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-pcdir.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "cbc-link-flags",
+      "argv": [
+        "pkg-config",
+        "--libs",
+        "cbc"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "tool-or-link-configuration-identity-not-build",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-link-flags.stdout",
+        "sha256": "26e2abca3d7398c1b8b9056150cac70ede916eb2a9ebecae2faa6ed1ea666a57",
+        "bytes": 339
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/cbc-link-flags.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "compiler-head",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-head.stdout",
+        "sha256": "a4ed404eaee8c7884b94f16988840235197718f3440e203c58ff069ec5afb2f5",
+        "bytes": 41
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-head.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "compiler-branch",
+      "argv": [
+        "git",
+        "branch",
+        "--show-current"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-branch.stdout",
+        "sha256": "60cdc782eb31ad80371c5f6f4f7d2cb03c2c1eb8008e2f4a6b481cfc0b9bbe3f",
+        "bytes": 22
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-branch.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "compiler-status",
+      "argv": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-status.stdout",
+        "sha256": "163bce6af49b6dd78b72c4f004b3ea514872553d5fa2d1e7287305da5195dc73",
+        "bytes": 26
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/compiler-status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "encoding-head",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-head.stdout",
+        "sha256": "c2f5383ea99ebcd8b1c1e513680de4041650e52e78fc7fa95cefcabb0008095c",
+        "bytes": 41
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-head.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "encoding-branch",
+      "argv": [
+        "git",
+        "branch",
+        "--show-current"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-branch.stdout",
+        "sha256": "41923c8b5384c5674c16ac11372a68b37e20379ca88d55883687bb3b59a0d36e",
+        "bytes": 28
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-branch.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "name": "encoding-status",
+      "argv": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "exitCode": 0,
+      "timedOut": false,
+      "kind": "worktree-identity-during-concurrent-owned-work",
+      "stdout": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-status.stdout",
+        "sha256": "50c3c5deddf1b8ce2292f6353ca4538de8d80f0998b1b2717fc8037f0ce3f80c",
+        "bytes": 98
+      },
+      "stderr": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/inventory/encoding-status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "family": "pilot",
+  "mode": "u0",
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/source.bril",
+  "source_sha256": "e1848eef382dd1ffd8df8d42283d470121e5fa286d3fb9a0b6324a2edab97f10",
+  "emitted_sha256": "49bb519da15c42b3603352da153315da2647b1f990d3ae610119445b4b435f1f",
+  "main_sha256": "a2a1235accca3369a82a4bbddb30c4479b11983cbd6a24f10fc66b828a15dcb1",
+  "outputs": [
+    {
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "stdout": "7\n"
+    }
+  ],
+  "queries": []
+}

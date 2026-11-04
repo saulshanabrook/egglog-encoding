@@ -1,0 +1,21 @@
+{
+  "declared_utc": "2026-10-18T00:12:58.225865+00:00",
+  "supersedes": "user-memory-policy-amendment.json disabling value0 and prior normal-pressure/group-RSS/reserve guard conditions only. Approved plan no-overlapping-build/test/collector rule remains in effect.",
+  "authority": "Explicit user instruction removes memory-pressure blocking for these already-minimized cases. It does not change the approved plan no-overlapping-build/test/collector requirement.",
+  "guard_correction": "Frozen MemoryGuard.from_environment accepts only unset/empty or1. The public disabling API is to unset the variable. The0 attempt failed before EggCC Popen; no measured rows are salvaged.",
+  "actual_common_argv_prefix": [
+    "/usr/bin/env",
+    "-u",
+    "EGGLOG_BENCH_MEMORY_GUARD",
+    "RAYON_NUM_THREADS=1",
+    "RUST_LOG=error"
+  ],
+  "scope": "Two complete small-case cost cohorts with normal desktop/UI load disclosed; active build/test/collector jobs remain excluded. Report12rawvalues/median/min/max/sampleSD per arm/workload and recorded CPU/memory/power context.",
+  "unchanged": "Cases/source/endpoints/3arms/modeflags/probeoff/42totalcallspercase/12balancedmeasurementsperarm/300stimeout/correctnessandfullpipelinechecks/normalreceipts/evidencearchive/wallandwait4RSSboundary.",
+  "host_monitoring": "Retain full before/during/after argv/CPU/CWD/power observations. Memory-pressure warnings alone no longer block. Normal OS/UI activity is disclosed. Active build/test/collector interference still stops and invalidates the whole affected block per approved plan70. No unrelated process is paused or killed.",
+  "failure_rules": "Compiler nonzero/timeout/OOM/missingreceipt/provenanceorcorrectnessfailure or active build/test/collector interference stops and retains the whole block; no outliertrim, selective retry, hiddensampledrop or cohortexpansion.",
+  "inference_limits": "No speedup, statistical significance, isolated audit/component cost, production-workload benefit or cross-source treatment comparison. Positive impact remains independently proven baselinebug, not these cost numbers.",
+  "prospective": "Declared before any actual compiler workload in the selected final cohorts. Original block04 will be freshly declared; corrected MAX remains unexecuted block02. Oldguarded/invalid/failedattempts are excludedinfull, not pooled/reclassified.",
+  "paper_scope": "Costs are transparent descriptive illustrations on two new minimal Bril fixtures. All limits must be in the dossier and regenerated figures/data provenance.",
+  "draft_scope_correction": "Pre-execution draft considered ambient-job costs; rejected before any actual compiler run after checking approved plan70. Only the explicit user memory override is applied."
+}

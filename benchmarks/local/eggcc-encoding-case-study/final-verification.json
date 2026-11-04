@@ -1,0 +1,70 @@
+{
+  "status": "success",
+  "checks": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "label": "verify-engine-control",
+        "command": "uv run --no-project --python 3.13 python scripts/eggcc_encoding_case_study.py verify /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/study.json /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/results.json",
+        "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-study",
+        "chunk_id": "c0fb02",
+        "wall_time_seconds": 0.149077542,
+        "exit_code": 0,
+        "original_token_count": 30,
+        "output": "verify: verified /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/results.json\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "label": "verify-feature-control",
+        "command": "uv run --no-project --python 3.13 python scripts/eggcc_encoding_case_study.py verify /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/feature-control/study.json /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/feature-control/results.json",
+        "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-study",
+        "chunk_id": "521aa4",
+        "wall_time_seconds": 0.633573166,
+        "exit_code": 0,
+        "original_token_count": 30,
+        "output": "verify: verified /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/feature-control/results.json\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "label": "verify-reproduction",
+        "command": "uv run --no-project --python 3.13 python scripts/eggcc_encoding_case_study.py verify /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/study.json /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/results.json",
+        "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-study",
+        "chunk_id": "0487ac",
+        "wall_time_seconds": 0.619753959,
+        "exit_code": 0,
+        "original_token_count": 29,
+        "output": "verify: verified /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/results.json\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "label": "preservation",
+        "command": "python3 benchmarks/local/eggcc-encoding-case-study/preservation/verify.py",
+        "cwd": "/Users/saul/p/egglog-encoding",
+        "chunk_id": "d0589d",
+        "wall_time_seconds": 2.703561792,
+        "exit_code": 0,
+        "original_token_count": 262,
+        "output": "{\n  \"status\": \"success\",\n  \"rows\": [\n    {\n      \"snapshot\": \"encoding-primary.json\",\n      \"root\": \"/Users/saul/p/egglog-encoding\",\n      \"files_checked\": 1151,\n      \"head_equal\": true,\n      \"branch_equal\": true,\n      \"status_equal\": true,\n      \"authorized_status_exclusion\": \"goals/eggcc-encoding-case-study/\",\n      \"passed\": true,\n      \"changed_files\": 0\n    },\n    {\n      \"snapshot\": \"eggcc-primary.json\",\n      \"root\": \"/Users/saul/p/eggcc\",\n      \"files_checked\": 6251,\n      \"head_equal\": true,\n      \"branch_equal\": true,\n      \"status_equal\": true,\n      \"authorized_status_exclusion\": \"goals/eggcc-encoding-case-study/\",\n      \"passed\": true,\n      \"changed_files\": 0\n    },\n    {\n      \"snapshot\": \"injectivity-start.json\",\n      \"root\": \"/Users/saul/p/wt/egglog-encoding/injectivity\",\n      \"files_checked\": 963,\n      \"head_equal\": true,\n      \"branch_equal\": true,\n      \"status_equal\": true,\n      \"authorized_status_exclusion\": \"goals/eggcc-encoding-case-study/\",\n      \"passed\": true,\n      \"changed_files\": 0\n    }\n  ]\n}\n"
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "label": "source-and-qa",
+        "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nraw=Path('benchmarks/local/eggcc-encoding-case-study').resolve()\ne=json.loads((raw/'encoding-study/checkpoint.json').read_text()); count=0\nfor row in e['files']:\n assert hashlib.sha256((Path(e['worktree'])/row['path']).read_bytes()).hexdigest()==row['sha256']\n assert hashlib.sha256(Path(row['archive']).read_bytes()).hexdigest()==row['sha256']; count+=1\nassert hashlib.sha256(subprocess.check_output(['git','diff','--cached','--binary'],cwd=e['worktree'])).hexdigest()==e['patch_sha256']\nc=json.loads((raw/'retarget/prototype/final/checkpoint.json').read_text())\nfor relative,expected in c['source_files_sha256'].items():\n assert hashlib.sha256((Path(c['worktree'])/relative).read_bytes()).hexdigest()==expected\n assert hashlib.sha256((raw/'retarget/prototype/final/source'/relative).read_bytes()).hexdigest()==expected; count+=1\nfor name in ['engine-control','feature-control','reproduction']:\n q=json.loads((raw/name/'figure-qa/receipt.json').read_text()); assert q['status'] in ['passed','success'],(name,q['status'])\nfor name,expected in [('engine-control',48),('feature-control',144),('reproduction',48)]:\n j=json.loads((raw/name/'results.json').read_text()); assert j['status']=='complete' and len(j['rows'])==expected\nassert (raw/'reproduction/transformations/receipt.json').is_file()\nprint(json.dumps({'status':'success','unchanged_source_files':count,'figure_qa_receipts':3,'complete_datasets':3,'fresh_transformation_receipt':True}))\nPY",
+        "cwd": "/Users/saul/p/egglog-encoding",
+        "chunk_id": "5ff39f",
+        "wall_time_seconds": 0.00000625,
+        "exit_code": 0,
+        "original_token_count": 35,
+        "output": "{\"status\": \"success\", \"unchanged_source_files\": 46, \"figure_qa_receipts\": 3, \"complete_datasets\": 3, \"fresh_transformation_receipt\": true}\n"
+      }
+    }
+  ]
+}

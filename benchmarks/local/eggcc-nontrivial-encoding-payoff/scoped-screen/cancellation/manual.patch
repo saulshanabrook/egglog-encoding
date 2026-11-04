@@ -1,0 +1,11 @@
+--- source.bril
++++ manual.bril
+@@ -13,7 +13,7 @@
+   uy: int = add y seven;
+   uz: int = add z seven;
+   target: bool = eq uy uz;
+-  br target .unexpected .expected;
++  jmp .expected;
+ .unexpected:
+   bad: int = const 99;
+   print bad;

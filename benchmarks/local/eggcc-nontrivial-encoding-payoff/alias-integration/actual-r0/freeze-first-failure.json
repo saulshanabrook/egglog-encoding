@@ -1,0 +1,11 @@
+{
+  "command": [
+    "python3",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-integration/actual-r0/freeze.py"
+  ],
+  "error": "AssertionError at historical installation-manifest assertion: old scoped_alias.rs differs from old installation.json, but matches current-task-start admission and preserved initial-installed source. This historical mismatch is now reported explicitly.",
+  "old_module_recorded_sha256": "9e453e82e491bde895e1a36cae5afea1f846681a69b7c621710592763559dad0",
+  "old_module_task_start_and_current_sha256": "25fd25d2a6560ae1a433bcf1912e0dd26af52b8ac8ff4b0c856500f0ac20dc4f",
+  "additional_setup_issue": "A local script named inspect.py shadowed Python inspect during tarfile import and reran deterministic derived binary inspection. Renamed to inspect-binaries.py; compiler sources and measured evidence were unchanged.",
+  "compiler_functional_revision": false
+}

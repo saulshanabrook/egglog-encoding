@@ -1,0 +1,50 @@
+[
+  {
+    "case": "max",
+    "arm": "old-unary",
+    "kind": "exported-initialization-only-replay; not full compiler endpoint",
+    "file": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/max.egg",
+    "file_sha256": "e3cdcebb142d0f16aa7714a82b6c8e742b69e71e737d396e8e21969b820e3337",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/bin/egglog-experimental-392b6d6b-debug",
+    "binary_sha256": "46f898796589e8585ecaf1499a9b9d7ee98d31fc45f64d2061c103795d62ecf2",
+    "exit": 1,
+    "expected_known": false,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/max-old-unary.json"
+  },
+  {
+    "case": "max",
+    "arm": "E1",
+    "kind": "exported-initialization-only-replay; not full compiler endpoint",
+    "file": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/max.egg",
+    "file_sha256": "e3cdcebb142d0f16aa7714a82b6c8e742b69e71e737d396e8e21969b820e3337",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/encoding/bin/known-disequal-debug",
+    "binary_sha256": "c5d2b867415eb5d68cb0e84898bd596c68f255238a05b433fdc4d339b0bb1d4a",
+    "exit": 0,
+    "expected_known": true,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/max-E1.json"
+  },
+  {
+    "case": "one",
+    "arm": "old-unary",
+    "kind": "exported-initialization-only-replay; not full compiler endpoint",
+    "file": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/one.egg",
+    "file_sha256": "6c36f7643851b6f2ce6aeb2c4e999a352ddea731078d534ec17ff725be405608",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/bin/egglog-experimental-392b6d6b-debug",
+    "binary_sha256": "46f898796589e8585ecaf1499a9b9d7ee98d31fc45f64d2061c103795d62ecf2",
+    "exit": 1,
+    "expected_known": false,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/one-old-unary.json"
+  },
+  {
+    "case": "one",
+    "arm": "E1",
+    "kind": "exported-initialization-only-replay; not full compiler endpoint",
+    "file": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/one.egg",
+    "file_sha256": "6c36f7643851b6f2ce6aeb2c4e999a352ddea731078d534ec17ff725be405608",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/encoding/bin/known-disequal-debug",
+    "binary_sha256": "c5d2b867415eb5d68cb0e84898bd596c68f255238a05b433fdc4d339b0bb1d4a",
+    "exit": 1,
+    "expected_known": false,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/initialized-replay/one-E1.json"
+  }
+]

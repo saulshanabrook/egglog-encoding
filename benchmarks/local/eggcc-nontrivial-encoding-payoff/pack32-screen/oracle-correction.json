@@ -1,0 +1,24 @@
+{
+  "reason": "Initial different-width oracle row used a right high field outside the 16-bit domain; replace with a counterexample satisfying both widths domains. Executed different-width native fixture was already valid and is unchanged.",
+  "initial_oracle_sha256": "9403b16235fc0e0705ae3f9d7f2c1e27add10b06c08620ceb0fe708448f9cc17",
+  "initial_driver_sha256": "a9095b7155b1965eba899ddb583a90ff782ea61d3483f2b499b8ac7b6ea49e64",
+  "corrected_driver_sha256": "5ac7e0e3c422b42c3407b2b86c10f1bfb90b6de139afd7129da86d79037be5a5",
+  "corrected_counterexample": {
+    "left": [
+      0,
+      65536
+    ],
+    "right": [
+      1,
+      0
+    ],
+    "widths": [
+      32,
+      16
+    ],
+    "left_word": 65536,
+    "right_word": 65536,
+    "both_domains_satisfied": true
+  },
+  "checks_passed": true
+}

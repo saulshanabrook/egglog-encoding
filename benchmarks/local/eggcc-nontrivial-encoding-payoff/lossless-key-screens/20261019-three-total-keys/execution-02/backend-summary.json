@@ -1,0 +1,440 @@
+{
+  "status": "three initial screens survive; no timing or integration",
+  "families": [
+    {
+      "family": "affine",
+      "backend_gate": "survives",
+      "mechanism_eligibility": "nonprimitive dynamic-key cancellation, common-sibling reverse disequality, odd-multiplier forward propagation",
+      "actual_encoding_mechanism": "not implemented or claimed by this screen",
+      "positive_cases": 10,
+      "negative_cases": 5,
+      "native": {
+        "source": {
+          "application_instructions": 26,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "b3ddc97d931cf30d1892b0bce2b4fa5bb36d2a17c7636b19ddc2f0d8f611b77a"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "9988ed5d617361338516432684ae1c411d6b7e965ce6730c8d3c2690a59ad32e"
+        },
+        "u0": {
+          "application_instructions": 25,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 3,
+            "selects": 1,
+            "sha256": "ca98cf22e00977c5013baae8de19276682b71402795b1e5a909db9e35e5b76d6"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "ead4e8508087abc409befeaacb99fb13884ebb419b9ce1e991ef720aabcbf5ce"
+        },
+        "manual": {
+          "application_instructions": 22,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 2,
+            "sha256": "c03511bf999952cb308edc4079d14ddfd00f3ac10c5c2808769c3e646b52a1fb"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "0275456e404ec1993ae3d8984429e7f9285b9c349bfa2aa17e597be3a8164814"
+        },
+        "manual_u0": {
+          "application_instructions": 22,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "dff343552eeeba2d5bf92434a2f964aadeadf1ea428aa15c80f9f51d1f4cf982"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "f127fea0b183e59bcddfb26768e0f620c049aeeaeb92ee3a7d2fe66d7bfbee33"
+        }
+      }
+    },
+    {
+      "family": "routing",
+      "backend_gate": "survives",
+      "mechanism_eligibility": "nonprimitive dynamic-key cancellation, common-sibling reverse disequality, odd-multiplier forward propagation",
+      "actual_encoding_mechanism": "not implemented or claimed by this screen",
+      "positive_cases": 20,
+      "negative_cases": 5,
+      "native": {
+        "source": {
+          "application_instructions": 22,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 6,
+            "sha256": "a017f10c38be76503401ce50ea5ddc246dfdc3bab671ff35506f18ca8bbd2e5c"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "d042c4ba8c86c813252c7eaabce78660dc9e6eaae70aacd65fbbdd33b74fed8f"
+        },
+        "u0": {
+          "application_instructions": 22,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 6,
+            "sha256": "c0a228b4bef775c3c37192a7c17c58fd97ec8295c7fc89c770528a5780449311"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "f5fc5651da31d50782de6f45a001cef5771646d88e530f3cd1fa30c9e599d446"
+        },
+        "manual": {
+          "application_instructions": 19,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 7,
+            "sha256": "9923bf443a11d896e3660f3e050d040fb172dcac0099fe525b7a218fbe168edb"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "fee994a4cac02048d3422fcb1196eefc0a1808d91776094f37c3a8295ccc4b43"
+        },
+        "manual_u0": {
+          "application_instructions": 19,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 7,
+            "sha256": "f7329c20f3f655a45f988b48acde199fad06cd2483b5b671189864bcff58839f"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "50d63780a12bcfa3b2b4918b9086878b3b9f13659f9e728cffad583fe0b064b2"
+        }
+      }
+    },
+    {
+      "family": "sorting",
+      "backend_gate": "survives",
+      "mechanism_eligibility": "nonprimitive dynamic-key cancellation, common-sibling reverse disequality, odd-multiplier forward propagation",
+      "actual_encoding_mechanism": "not implemented or claimed by this screen",
+      "positive_cases": 10,
+      "negative_cases": 5,
+      "native": {
+        "source": {
+          "application_instructions": 29,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 3,
+            "sha256": "0a451787fa801ed47ce698ede1e5914ca3a1e25a308b880174fb10bf11f42ef8"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "9cad3bfcab53dc0afcdf638369191ee36055b7c427fc3e35e324376584c89870"
+        },
+        "u0": {
+          "application_instructions": 29,
+          "retains_target_compare": true,
+          "retains_score99": true,
+          "executable_main_retains_score99": true,
+          "llvm": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 3,
+            "sha256": "a85c15a02723fa15f8136fb674258d4652c3555283f0ed09e05c2fdb82b7f137"
+          },
+          "llvm_target_compare": true,
+          "application_assembly_sha256": "eed28a856e52e2de5a3e826454b75506d9718461eaf418ac8fdeaa4aee8b08af"
+        },
+        "manual": {
+          "application_instructions": 25,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 4,
+            "sha256": "1b24ca971cdcb99c388eb5a8fdf4be31a74f018719df72faa81b3adba05661c5"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "fc464caca544596114f2e9ae3b0f3edc93015f8cc189f70de643f39698d88bec"
+        },
+        "manual_u0": {
+          "application_instructions": 25,
+          "retains_target_compare": false,
+          "retains_score99": false,
+          "executable_main_retains_score99": false,
+          "llvm": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 4,
+            "sha256": "3299218137e9b8d9fb1aba0f40d0823bbc1ddd35b7f08d3930b8164e2ec4ca09"
+          },
+          "llvm_target_compare": false,
+          "application_assembly_sha256": "39fa1d7c8917b2323460a50874e76cb7050c4cb1c6113eb387e16a2d596c03d8"
+        }
+      }
+    }
+  ],
+  "completed": {
+    "status": "screens completed",
+    "positive_cases": 40,
+    "positive_interpretations": 160,
+    "positive_native_runs": 160,
+    "negative_cases": 15,
+    "negative_interpretations": 45,
+    "negative_native_runs": 45,
+    "commands": 549,
+    "timeouts": 0,
+    "compiler_changes": false,
+    "generic_integration": false,
+    "timing_campaign": false,
+    "inspections": {
+      "affine": {
+        "source": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "b3ddc97d931cf30d1892b0bce2b4fa5bb36d2a17c7636b19ddc2f0d8f611b77a"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "dc9196b8b069a67e9ac4954154a5ed6ea91909cbf357d034f9de902ac844bb59"
+          }
+        },
+        "u0": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 3,
+            "selects": 1,
+            "sha256": "ca98cf22e00977c5013baae8de19276682b71402795b1e5a909db9e35e5b76d6"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 3,
+            "selects": 1,
+            "sha256": "953b05b8b6c1293b458fb0638bb31b9dfc6b7a49491d0d6eca87eeda1a38e190"
+          }
+        },
+        "manual": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 2,
+            "sha256": "c03511bf999952cb308edc4079d14ddfd00f3ac10c5c2808769c3e646b52a1fb"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 2,
+            "sha256": "5cd9ac524d42787637bbf6332406a553236d30d5010adccfa37f4b27b1a42847"
+          }
+        },
+        "manual_u0": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "dff343552eeeba2d5bf92434a2f964aadeadf1ea428aa15c80f9f51d1f4cf982"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "5fc396ba94ecc15e7e75aa69e0e9b6e83b480f7622097b8b850c4130e8ee0599"
+          }
+        }
+      },
+      "routing": {
+        "source": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 6,
+            "sha256": "a017f10c38be76503401ce50ea5ddc246dfdc3bab671ff35506f18ca8bbd2e5c"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 5,
+            "sha256": "dee6621f807857adf87462343a98f24144e8421958655a652f3eb6d76841977e"
+          }
+        },
+        "u0": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 6,
+            "sha256": "c0a228b4bef775c3c37192a7c17c58fd97ec8295c7fc89c770528a5780449311"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 5,
+            "sha256": "744455f18c2bbd83027e912b690b629fd6399f9517d5b9e9aa6d963ea2692335"
+          }
+        },
+        "manual": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 7,
+            "sha256": "9923bf443a11d896e3660f3e050d040fb172dcac0099fe525b7a218fbe168edb"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 6,
+            "sha256": "c5ea349ed05e6ebb6b70f94214b9342ac9f3ab43aedc5e3610eb1c6ed703b902"
+          }
+        },
+        "manual_u0": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 7,
+            "sha256": "f7329c20f3f655a45f988b48acde199fad06cd2483b5b671189864bcff58839f"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 6,
+            "sha256": "dd6c85584b3d2c7864e072bcdccac160b6c86f05c2662c6f4ee25b9928d8901b"
+          }
+        }
+      },
+      "sorting": {
+        "source": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 3,
+            "sha256": "0a451787fa801ed47ce698ede1e5914ca3a1e25a308b880174fb10bf11f42ef8"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "b34076738c926f51969aea18e24ed0bad6fd5b51a4715bb44e5534ba162621f7"
+          }
+        },
+        "u0": {
+          "_main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 3,
+            "sha256": "a85c15a02723fa15f8136fb674258d4652c3555283f0ed09e05c2fdb82b7f137"
+          },
+          "main": {
+            "score99": true,
+            "integer_equalities": 4,
+            "conditional_branches": 2,
+            "selects": 1,
+            "sha256": "ebe0f1bf544a62521019ed10f19c3044a1dc43e5e51ece27b8cc39e23693f240"
+          }
+        },
+        "manual": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 4,
+            "sha256": "1b24ca971cdcb99c388eb5a8fdf4be31a74f018719df72faa81b3adba05661c5"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 2,
+            "sha256": "41ff84ff6d5776b95e5f3f8ca6a490721c7d87385f92451af7373f060ecaac38"
+          }
+        },
+        "manual_u0": {
+          "_main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 4,
+            "sha256": "3299218137e9b8d9fb1aba0f40d0823bbc1ddd35b7f08d3930b8164e2ec4ca09"
+          },
+          "main": {
+            "score99": false,
+            "integer_equalities": 3,
+            "conditional_branches": 0,
+            "selects": 2,
+            "sha256": "9bee15d394d91105f98ece7db2ed67d1ebdcbd619ec8629c09b164f787e2f253"
+          }
+        }
+      }
+    }
+  },
+  "source_files_unchanged": 771,
+  "source_and_binary_identities_unchanged": true,
+  "command_successes": 549,
+  "timeouts": 0,
+  "initial_attempt": "Interpreter argument harness assumption corrected; preserve attempt-01-driver.py and commands outside execution-02",
+  "hypothesis_revisions": 0,
+  "limitations": [
+    "constructed acyclic triggers, not corpus applications",
+    "no generic reasoning bridge, causal knockout/rescue matrix, or performance measurement",
+    "ARM64 backend if-converts these entries; LLVM branch counts are not machine branch counts"
+  ]
+}

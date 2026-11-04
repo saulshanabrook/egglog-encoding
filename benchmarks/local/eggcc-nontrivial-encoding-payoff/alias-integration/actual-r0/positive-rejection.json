@@ -1,0 +1,27 @@
+{
+  "reason": "strict Expr-row whitelist rejects admitted auxiliary expression-valued analysis rows",
+  "rows": [
+    {
+      "node": "function-0-TupleRemoveAt",
+      "op": "TupleRemoveAt",
+      "eclass": "Expr-4703"
+    },
+    {
+      "node": "function-1-TupleRemoveAt",
+      "op": "TupleRemoveAt",
+      "eclass": "Expr-328"
+    },
+    {
+      "node": "function-2-TupleRemoveAt",
+      "op": "TupleRemoveAt",
+      "eclass": "Expr-387"
+    },
+    {
+      "node": "function-0-to-hoist",
+      "op": "to-hoist",
+      "eclass": "Expr-267"
+    }
+  ],
+  "consequence": "certificate returns None before private proof, transport or export",
+  "timing_eligible": false
+}

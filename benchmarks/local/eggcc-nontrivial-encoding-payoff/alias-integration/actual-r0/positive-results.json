@@ -1,0 +1,2332 @@
+[
+  {
+    "family": "positive",
+    "mode": "u0",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "11d32d04afa83dd26938bf0c959d3efabc568a41577ae8e41977a1e6f367d0d6",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "52d53558043a55fe326ab30f615e0d4e0325ad9c6b34ac1c98e163cdc1eb25dd",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Off",
+        "pass": 0,
+        "status": "off",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "seed-only",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "ec919497d17759aad9cbdf5bc781542cbbb0d792f5317b0398596dd6803796fb",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "SeedOnly",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "seed-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "dd18bde5dc4bab2386f4ca250ab22368021e1045713c2879296176d62f7e224a",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "SeedOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "primitive-only",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "7819feacb0b0b097ea37a25816ee8524bf0d39155e3fe10a1a5fa71feb98f821",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "PrimitiveOnly",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "encoding",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "b48f31c665c9a6f6647942d629d86b677117c75abce1ac38cfdf4c954143c8e7",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Encoding",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "manual",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "4ef07a428b5e6d8130c4f1ddae325f21f0de315040f10302105f584bacb31e58",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "Manual",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "reverse-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "81ad3c83928470cf4fd50c9cc064eee2f7d85058ef748afb6168c23e57e27ca7",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "ReverseOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "shift-forward-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "ec243f26f1b82ae433aa37282a9f919e57be389d33a308f014ccfd9ffd15075a",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "ShiftOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "cell-forward-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "15d69dac23003bc5bb5517bf277a50ef2ad9a965b68191f3cef13519f315af7f",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "CellOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "query-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "faadb4b3e0ac28079912186a85d5c80164fdf895277ba375dab285b1f8f2058d",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "QueryOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "transport-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "38c561ca771153e05ecee44dedd595bd7a838d3aa3f136993f8f76b54065d99c",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "TransportOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "bridge-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "3f79445d8197bf1adff448ee05e17bd0f2a36579315e3e05e9572cabc6f619bc",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "BridgeOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "consumer-off",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "11849e5794e494a829a8e87b875139df6c181edc0694246764b0902a3150486d",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "ConsumerOff",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "index-rescue",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "808d9af3964cf7171eb9bfbc2b6257ea2ea0aa2838f39edf596e8721d09e3260",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "IndexRescue",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "shift-rescue",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "141de8e3fca808daa56ae00dd2a13852fa98d5dec972f528e67be9f8a5384f12",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "ShiftRescue",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "cell-rescue",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "aaa4bdde309c716d2e6233a9dfc88b1c1f87ccc5143443e7be61c05f79cc299d",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "CellRescue",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  },
+  {
+    "family": "positive",
+    "mode": "branch-alias-rescue",
+    "context": true,
+    "source_sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2",
+    "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+    "binary_sha256": "6a88d2d7ddac568f55f514307f268e73fbd695bdcd2dc895887d3015dc91d988",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          8
+        ],
+        "expected_stdout": "28\n",
+        "stdout": "28\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          0
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected_stdout": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1024
+        ],
+        "expected_stdout": "523776\n",
+        "stdout": "523776\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000000
+        ],
+        "expected_stdout": "499999500000\n",
+        "stdout": "499999500000\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          1,
+          1,
+          8
+        ],
+        "expected_stdout": "-1\n",
+        "stdout": "-1\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          2,
+          0,
+          8
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          -1
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          1000001
+        ],
+        "expected_stdout": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "evidence": [
+      {
+        "mode": "BranchRescue",
+        "pass": 0,
+        "status": "unsupported-or-ambiguous-profile",
+        "queries": [],
+        "exports": 0,
+        "token_after": 0,
+        "consumer_kind": "new demand-scoped copy of existing commute action; existing store-forward rule"
+      }
+    ],
+    "timing_taken": false
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "output_and_causal_assertions_passed": true,
+  "same_source_manual_matched": true,
+  "primitive_null": true,
+  "consumer_isolated": true,
+  "actual_entry_loop_eliminated": true,
+  "timing_collected": false
+}

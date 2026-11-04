@@ -1,0 +1,72 @@
+{
+  "status": "passed",
+  "fixed_divisor": 7,
+  "law_proof": "For equal ordered pairs (q,r), exact reconstruction x=7q+r=y proves injectivity. Quotient truncates toward zero. For divisor 7, q*7 and r remain representable.",
+  "sampled_signed_i64_values": 10013,
+  "sampling_is_not_exhaustive": true,
+  "exhaustive_workload_domain_pairs": 4096,
+  "guard_counterexamples": [
+    {
+      "variant": "omit-quotient",
+      "args": [
+        5,
+        12,
+        8
+      ],
+      "expected": "-24\n",
+      "reason": "remainders equal, quotients differ"
+    },
+    {
+      "variant": "omit-remainder",
+      "args": [
+        7,
+        8,
+        8
+      ],
+      "expected": "-24\n",
+      "reason": "quotients equal, remainders differ"
+    },
+    {
+      "variant": "different-divisor",
+      "args": [
+        8,
+        9,
+        8
+      ],
+      "expected": "-24\n",
+      "reason": "QR7(8)=QR8(9)=(1,1), but 8!=9"
+    }
+  ],
+  "unsafe_divisors": [
+    {
+      "divisor": 0,
+      "status": "rejected-before-evaluation",
+      "reason": "first fragment requires a fixed positive divisor"
+    },
+    {
+      "divisor": -1,
+      "status": "rejected-before-evaluation",
+      "reason": "first fragment requires a fixed positive divisor"
+    }
+  ],
+  "variable_or_mixed_divisor_admission": "unsupported; matching fixed divisor identity required",
+  "negative_divisor_note": "-1 is excluded from the first portable native fragment; LLVM signed division has the MIN/-1 exceptional case. No unsafe native operation is executed.",
+  "nonmatching_source_paths": [
+    {
+      "args": [
+        5,
+        12,
+        8
+      ],
+      "expected": "-1\n"
+    },
+    {
+      "args": [
+        12,
+        13,
+        8
+      ],
+      "expected": "-2\n"
+    }
+  ]
+}

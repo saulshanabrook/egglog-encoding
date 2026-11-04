@@ -1,0 +1,22 @@
+{
+  "family": "changed-pointer",
+  "mode": "u0",
+  "context": true,
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/final-r1/fixtures/changed-pointer.bril",
+  "source_sha256": "f7dc4abe7e82224ee524d0a3f82ce2c62726b2d7468ed79e32fbe9b478247e58",
+  "emitted_sha256": "4a40963b747de0fa3e2d290071f5e6e760302c6712bfcb2645a202da87d72fd9",
+  "binary_sha256": "71622241118931dc4d2fd5ce368c9fc14e1130591dc3d4005eba5e25d6a2d6c5",
+  "outputs": [
+    {
+      "args": [
+        12,
+        12,
+        8
+      ],
+      "expected_stdout": "-24\n",
+      "stdout": "-24\n"
+    }
+  ],
+  "queries": [],
+  "performance_samples": false
+}

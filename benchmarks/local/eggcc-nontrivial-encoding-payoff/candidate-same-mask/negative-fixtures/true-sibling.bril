@@ -1,0 +1,25 @@
+# ARGS: 0 0 1
+@main(x: int, y: int, m: int) {
+  seven: int = const 7;
+  mx: int = bitand x m;
+  my: int = bitand y m;
+  outer: bool = eq mx my;
+  br outer .different .other;
+.different:
+  ux: int = add x seven;
+  uy: int = add y seven;
+  target: bool = eq ux uy;
+  br target .unexpected .expected;
+.unexpected:
+  bad: int = const 99;
+  print bad;
+  jmp .done;
+.expected:
+  good: int = const 7;
+  print good;
+  jmp .done;
+.other:
+  other_result: int = const 3;
+  print other_result;
+.done:
+}

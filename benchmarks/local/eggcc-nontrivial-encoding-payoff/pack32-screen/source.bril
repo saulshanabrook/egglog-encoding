@@ -1,0 +1,86 @@
+# ARGS: 1 2 1 2 8
+# Four 32-bit fields, packed using only Bril mul/add and wrapping i64 words.
+@main(a: int, b: int, c: int, d: int, n: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  three: int = const 3;
+  seven: int = const 7;
+  base: int = const 4294967296;
+  mask: int = const 4294967295;
+  limit: int = const 1000000;
+  a_lo: bool = ge a zero;
+  a_hi: bool = lt a base;
+  b_lo: bool = ge b zero;
+  b_hi: bool = lt b base;
+  c_lo: bool = ge c zero;
+  c_hi: bool = lt c base;
+  d_lo: bool = ge d zero;
+  d_hi: bool = lt d base;
+  n_lo: bool = ge n zero;
+  n_hi: bool = le n limit;
+  a_ok: bool = and a_lo a_hi;
+  b_ok: bool = and b_lo b_hi;
+  c_ok: bool = and c_lo c_hi;
+  d_ok: bool = and d_lo d_hi;
+  n_ok: bool = and n_lo n_hi;
+  ab_ok: bool = and a_ok b_ok;
+  cd_ok: bool = and c_ok d_ok;
+  fields_ok: bool = and ab_ok cd_ok;
+  valid: bool = and fields_ok n_ok;
+  br valid .start .invalid;
+.invalid:
+  invalid_result: int = const -2;
+  print invalid_result;
+  ret;
+.start:
+  count: int = const 0;
+  sum: int = const 0;
+  jmp .header;
+.header:
+  more: bool = lt count n;
+  br more .body .done;
+.body:
+  pa_hi: int = mul a base;
+  pab: int = add pa_hi b;
+  pc_hi: int = mul c base;
+  pcd: int = add pc_hi d;
+  same_key: bool = eq pab pcd;
+  br same_key .equal_key .different_key;
+.equal_key:
+  pca_hi: int = mul c base;
+  pca: int = add pca_hi a;
+  second_same: bool = eq pca pab;
+  br second_same .same_fields .different_fields;
+.different_fields:
+  tc: int = add c seven;
+  td: int = add d seven;
+  target: bool = eq tc td;
+  br target .unexpected .expected;
+.unexpected:
+  score: int = const 99;
+  jmp .accumulate;
+.expected:
+  score: int = const 7;
+  jmp .accumulate;
+.same_fields:
+  score: int = const 5;
+  jmp .accumulate;
+.different_key:
+  score: int = const 3;
+  jmp .accumulate;
+.accumulate:
+  sum: int = add sum score;
+  aa: int = add a one;
+  bb: int = add b three;
+  cc: int = add c one;
+  dd: int = add d three;
+  a: int = bitand aa mask;
+  b: int = bitand bb mask;
+  c: int = bitand cc mask;
+  d: int = bitand dd mask;
+  count: int = add count one;
+  jmp .header;
+.done:
+  print sum;
+  ret;
+}

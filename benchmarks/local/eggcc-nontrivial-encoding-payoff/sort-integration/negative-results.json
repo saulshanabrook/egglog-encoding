@@ -1,0 +1,1626 @@
+[
+  {
+    "family": "omitted-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "main_sha256": "954a288233a1867bd04bace05b878c1e7fd5dfb1e15ce0db42fe8f3b4b1d4316",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-tag",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-tag.bril",
+    "source_sha256": "6b193aa202b79e398a894d76931e7becac84a5c1c16967654daa932739af15b6",
+    "emitted_sha256": "8e87caeb811bfa28226c79f50bd131ab6bf6d713b155e7045d2d731ae2bf077f",
+    "main_sha256": "76896d69689f8076ba27d3c95985cb9438fbf517b39629dfcaabd57193aa23c5",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "main_sha256": "8695d03dced22fff710564b923cf693997b0c603ff4bbfde538810387a0545af",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-min",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-min.bril",
+    "source_sha256": "b78ccde392deb61ee0e51fd27b9587f61cadb13bbe872ff667ede37f095c5a8c",
+    "emitted_sha256": "10130344d177010686ecb6a1512d345bcdce4dd5bb500dd1cd7f60e24a202c35",
+    "main_sha256": "d1c5a83ce66e66781fe6cee4351f01da094bd16b8a58b11daffdcdffcbe5b2ab",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "main_sha256": "87b1ed7b77e79c9b27f43fd2e7c29cd2baf4fd6c8fdcad39a6c8812ec2ef4091",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "omitted-max",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/omitted-max.bril",
+    "source_sha256": "3162a4139152692df2e2eb229dee3e1b7240af57839585677c38bc5d4b860d92",
+    "emitted_sha256": "aab68d23777bf6354101425d9a6d7b6d09b43afdf75398f940c75c62148ce2e4",
+    "main_sha256": "ea4880df57383ab21841dc1cca0c3d24af495ee921a6f0c7c014cb54662ae1b8",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "main_sha256": "d9a4fc05f60b96a3a7a37e294f975073a49ca912623971e7a7fb674681678b33",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "reversed-right-tag",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/reversed-right-tag.bril",
+    "source_sha256": "ac31200743a2e26d91d72b595e1a2b96a9f7e540eef09f747643d64cdc54a632",
+    "emitted_sha256": "5f07901a6f8a5a0e87ff051c5e07efe089e1a5abed752f2c993ffbc198faa4a8",
+    "main_sha256": "f75157ecbe2a4ffad99ed77a29c45ab75217e04282e8f5ac881dbe0d776d7a74",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(3), Slot(2))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "main_sha256": "ae7933f84bfcfa68eef3f84ac0601e5d7d5501443687989382de53eb4fa3933c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "changed-right-tag",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/changed-right-tag.bril",
+    "source_sha256": "b4bab6295f21769f1a915cc15e12a968d78be1ea6a030cfd9b585e78d7067f35",
+    "emitted_sha256": "4dc649008582ed3587733d21d247ff29202ee89fc28090cc8940e80dea1e496b",
+    "main_sha256": "dda136c02e1bba5bc988169b61d69bf67551e3d55eb41683c9d07278bdc2c2d2",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), None)",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 3)), Some(Scale(Slot(5), 3)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "main_sha256": "1489d99664dfc3d585cd56235aa446cc0e9ac3690f9dbaab85268f2e32d30929",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "even-multiplier",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/even-multiplier.bril",
+    "source_sha256": "bb706330916b2933afc3f1ad87d38eba6f1a12bc91eb0362e56d6c0e69041f0c",
+    "emitted_sha256": "caace1a4f6a86cb919fb0f8de03b383b08addb9808ec34dbda2bf5bfc5be6798",
+    "main_sha256": "69307e26db620dd00f85c4ead9519e5585d669fcab3531ad03a175845d52d8da",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": [
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      },
+      {
+        "accepted": false,
+        "reason": "exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
+        "first": "(Some(Min(Slot(0), Slot(1))), Some(Min(Slot(2), Slot(3))))",
+        "second": "(Some(Max(Slot(0), Slot(1))), Some(Max(Slot(2), Slot(3))))",
+        "third": "(Some(Tag(Slot(0), Slot(1))), Some(Tag(Slot(2), Slot(3))))",
+        "mixed": "(Some(Add(Slot(2), Slot(4))), Some(Add(Slot(0), Slot(5))))",
+        "target": "(Some(Scale(Slot(4), 2)), Some(Scale(Slot(5), 2)))"
+      }
+    ]
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "main_sha256": "c6f570182896f9556513e654d09cd8584e650b3e1c9362c4c5f7e59f038c2143",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "wrong-mixed-branch",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/wrong-mixed-branch.bril",
+    "source_sha256": "06e4e42dcf65b5ce341e334a84ae2a2f8a122f4f95e420bb29864ab7be36ecb5",
+    "emitted_sha256": "89c8b3d3741092e9810be0342691e47ffdd821fa966db049fa1922f71fd19876",
+    "main_sha256": "c6acc0c0445faf199aa9cde65035702fed97ac1a64731d66c6e2f6eb31a0887c",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "u0",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "off",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "seed-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "primitive-only",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "manual",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "no-key-context",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/no-key-context.bril",
+    "source_sha256": "90f49af5726fe573159d8543401943c845f59c4f7ca53f692172a2a28391215c",
+    "emitted_sha256": "beee34c28095da0a2084e171248add7c764d94a7ff80ce77cb0537212625e3db",
+    "main_sha256": "9e61f4c0a2f41232e80474ec4f928bf15753a399a10d8378238320dbdce3242a",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      }
+    ],
+    "queries": []
+  }
+]

@@ -1,0 +1,213 @@
+{
+  "llvm": {
+    "source": {
+      "_main": {
+        "start_line": 7758,
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "2def0bcb61870020b11ff1b8e8d2ca96d971969c086fed4bdd6a455203128cf2"
+      },
+      "main": {
+        "start_line": 7803,
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f1997561106be9a96f91037480b5ae58daa080ba43386a7e52d3f7d37d891e77"
+      }
+    },
+    "optimized": {
+      "_main": {
+        "start_line": 7758,
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      },
+      "main": {
+        "start_line": 7803,
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      }
+    },
+    "manual": {
+      "_main": {
+        "start_line": 7758,
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "7260af6bd8b5c34192a931548344359afdc4425fb6b8e874630a914c6fe890a7"
+      },
+      "main": {
+        "start_line": 7874,
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "548cd78287f70ef8fb1d80d80432ee19126aebdf338ddc8091ca8e0d32fe3c8d"
+      }
+    }
+  },
+  "graphs": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-arithmetic-screen/egraphs/tiger_egraph_0001.json",
+      "sha256": "44e7f99273e2ac77c8c29d8384adb51e16ccf11d61f290ceadfc9c0e25c68ac3",
+      "nodes": 19496,
+      "InIf": 16,
+      "InLoop": 1,
+      "division_classes": [
+        "Expr-13146",
+        "Expr-13147",
+        "Expr-381",
+        "Expr-385"
+      ],
+      "high_equalities": [
+        {
+          "id": "function-12-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-9-Bop",
+            "function-11-Bop"
+          ],
+          "eclass": "Expr-386",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-381",
+          "right_class": "Expr-385"
+        },
+        {
+          "id": "function-17-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-11-Bop",
+            "function-9-Bop"
+          ],
+          "eclass": "Expr-386",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-385",
+          "right_class": "Expr-381"
+        },
+        {
+          "id": "function-29-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-186-DropAtInternal",
+            "function-134-DropAtInternal"
+          ],
+          "eclass": "Expr-13138",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-13146",
+          "right_class": "Expr-13147"
+        },
+        {
+          "id": "function-30-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-31-Bop",
+            "function-32-Bop"
+          ],
+          "eclass": "Expr-13138",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-13147",
+          "right_class": "Expr-13146"
+        }
+      ]
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-arithmetic-screen/egraphs/tiger_egraph_0002.json",
+      "sha256": "539835b30c48eff3ff43ebc9890f074ce9342af59c172d7ebabd4567a0982e0c",
+      "nodes": 19794,
+      "InIf": 12,
+      "InLoop": 2,
+      "division_classes": [
+        "Expr-346",
+        "Expr-350"
+      ],
+      "high_equalities": [
+        {
+          "id": "function-12-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-9-Bop",
+            "function-11-Bop"
+          ],
+          "eclass": "Expr-351",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-346",
+          "right_class": "Expr-350"
+        },
+        {
+          "id": "function-25-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-11-Bop",
+            "function-9-Bop"
+          ],
+          "eclass": "Expr-351",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-350",
+          "right_class": "Expr-346"
+        }
+      ]
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-arithmetic-screen/egraphs/tiger_egraph_0003.json",
+      "sha256": "ea51abc65c668d1a48b4348b0de8b7e2b68fd6eba0168939aa63fef7af99d0b8",
+      "nodes": 18361,
+      "InIf": 18,
+      "InLoop": 1,
+      "division_classes": [
+        "Expr-346",
+        "Expr-350"
+      ],
+      "high_equalities": [
+        {
+          "id": "function-14-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-11-Bop",
+            "function-13-Bop"
+          ],
+          "eclass": "Expr-351",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-346",
+          "right_class": "Expr-350"
+        },
+        {
+          "id": "function-26-Bop",
+          "op": "Bop",
+          "children": [
+            "function-0-Eq",
+            "function-121-AddContext",
+            "function-120-AddContext"
+          ],
+          "eclass": "Expr-351",
+          "cost": 1.0,
+          "subsumed": false,
+          "left_class": "Expr-350",
+          "right_class": "Expr-346"
+        }
+      ]
+    }
+  ],
+  "commands": {
+    "count": 78,
+    "successes": 78,
+    "timeouts": 0,
+    "elapsed_times_are_performance_evidence": false
+  }
+}

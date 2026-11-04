@@ -1,0 +1,26 @@
+positive-u0-interp: exit=0 timeout=False
+positive-u0-emit: exit=0 timeout=False
+positive-u0-lower: exit=0 timeout=False
+positive-u0-disassemble: exit=0 timeout=False
+positive-u0-native-000: exit=0 timeout=False
+positive-u0-native-001: exit=0 timeout=False
+positive-u0-native-002: exit=0 timeout=False
+positive-u0-native-003: exit=0 timeout=False
+positive-u0-native-004: exit=0 timeout=False
+positive-u0-native-005: exit=0 timeout=False
+positive-u0-native-006: exit=0 timeout=False
+positive-u0-native-007: exit=0 timeout=False
+positive-u0-native-008: exit=0 timeout=False
+positive-u0-native-009: exit=0 timeout=False
+positive-u0-native-010: exit=0 timeout=False
+positive-off-interp: exit=101 timeout=False
+Traceback (most recent call last):
+  File "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py", line 114, in <module>
+    main()
+  File "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py", line 84, in main
+    rows.append(case('positive', mode, BASE / 'fixtures/source.bril', expected))
+  File "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/matrix.py", line 35, in case
+    capture.run(f'{family}-{mode}-interp', [*argv, '--interp',
+  File "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/run.py", line 77, in run
+    raise RuntimeError(f'{label} failed; see {folder}')
+RuntimeError: positive-off-interp failed; see /Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/commands/positive-off-interp

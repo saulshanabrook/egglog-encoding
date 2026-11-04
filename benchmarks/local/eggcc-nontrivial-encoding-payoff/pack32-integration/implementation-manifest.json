@@ -1,0 +1,98 @@
+{
+  "status": "source-only implementation staged; no compilation, test, compiler/native execution or timing",
+  "static_checks": {
+    "python_ast_parse": "five scripts passed",
+    "rustfmt_1_91_parse_and_format": "sidecar and isolated lib.rs passed",
+    "registered_pack32_test_count": 8
+  },
+  "files": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/admit.py",
+      "sha256": "735b4ee709e87eb232f2333391230b4bdab3fe4dbf747e619175e0badb711a00"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/design.md",
+      "sha256": "ae6268256eca32059358415062210fb4368b29f45c529638daa8b9f00c509818"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/handoff.md",
+      "sha256": "77711999429bc8a34b8d20c84eedf6c9b52ef728af506dc522e89b8af0fb673e"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/inspect.py",
+      "sha256": "52332d4c46bd7a7a96ba9a7c92b9d9e63c92ec14434a6b92992cd0fadda432d0"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/matrix.py",
+      "sha256": "64d11bae406ddc435de104989762f60dfd315158db416893093b02214cd63bd8"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/pack32-versus-parts32.patch",
+      "sha256": "616cfe1de4e136cdd7cc9a51d26339a31b782223ff9cce6c1e5d71f3dae5d171"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/run.py",
+      "sha256": "6a87e42e1e9c2138c0b10f6e8baaad6b506b9ffb23c4c506d4189985a88d8545"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/scoped_reasoning.rs",
+      "sha256": "2f1d10dda8f9210f2be9f13fdbaf3dcb05820765c51547e5847c438a8611c590"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/source-admission.json",
+      "sha256": "db110c8a7eb3cd6b3fdd4da494a1e1a966d9818fd2887df57b55e95ce6eee4f8"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/stage.py",
+      "sha256": "fdec12fa8d3ede1df0e3f8690690c089c3bc1740def950ca1710799bb3f6993e"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/pack32-integration/staged-source-identities.json",
+      "sha256": "050800cb4dc5c5a8ab2fbcb24f8fc4669a762fd6e2a6750334c372a7978ce5dc"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/Cargo.toml",
+      "sha256": "af7ea30ef560bc0833c0123cfaa98794543a05cbbb56f1bb45f2b9fd20325f37"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/Cargo.toml",
+      "sha256": "e22706d2d5dc0227d602d96c6f2d30731f2277a07bec3bdfee87463d70939262"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/src/lib.rs",
+      "sha256": "4a5db6345ff03809f7e70c7b7ef97475e64ff9abc3d725d6807bc4cf064813d2"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/src/scoped_reasoning.rs",
+      "sha256": "2f1d10dda8f9210f2be9f13fdbaf3dcb05820765c51547e5847c438a8611c590"
+    },
+    {
+      "path": "/private/tmp/encoding-pack32-candidate/egglog-experimental/README.md",
+      "sha256": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318"
+    },
+    {
+      "path": "/private/tmp/encoding-pack32-candidate/egglog-experimental/src/disequality.rs",
+      "sha256": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277"
+    },
+    {
+      "path": "/private/tmp/encoding-pack32-candidate/egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "sha256": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee"
+    },
+    {
+      "path": "/private/tmp/encoding-pack32-candidate/egglog-experimental/tests/injectivity_disequality.rs",
+      "sha256": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c"
+    },
+    {
+      "path": "/private/tmp/encoding-pack32-candidate/egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "sha256": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec"
+    }
+  ]
+}

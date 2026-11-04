@@ -1,0 +1,205 @@
+{
+  "accepted_preflight_absent": true,
+  "all_frozen_design_bindings_match": {
+    "B1/binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/off/native/program",
+      "sha256": "bcab16fe955e1ecbb1b62c5e040e662d5b65a266146da36a33d236c6e3c683aa"
+    },
+    "B1/bril_main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/off/native/__main.asm",
+      "sha256": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771"
+    },
+    "B1/emitted": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/off/optimized.bril",
+      "sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb"
+    },
+    "B1/main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/off/native/main.asm",
+      "sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb"
+    },
+    "Encoding/binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/encoding/native/program",
+      "sha256": "b4159d556b2f9bcb6407f0e24b7bd79296c9b1554073a173a5b5a2bb5ff372d2"
+    },
+    "Encoding/bril_main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/encoding/native/__main.asm",
+      "sha256": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707"
+    },
+    "Encoding/emitted": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/encoding/optimized.bril",
+      "sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9"
+    },
+    "Encoding/main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/encoding/native/main.asm",
+      "sha256": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19"
+    },
+    "Manual/binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/manual/native/program",
+      "sha256": "7cf36403f071dfd4cf734bd7353843042814d016de473766c485e385ea6ffb2c"
+    },
+    "Manual/bril_main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/manual/native/__main.asm",
+      "sha256": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707"
+    },
+    "Manual/emitted": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/manual/optimized.bril",
+      "sha256": "d33e62b14d01c645ba016ac6b134a29f284be9a1b781abdae2579d60079687b9"
+    },
+    "Manual/main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/manual/native/main.asm",
+      "sha256": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19"
+    },
+    "SeedOnly/binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/seed-only/native/program",
+      "sha256": "0092b47bb94281266da5f7586569c2e396b0b38f3f9d88d401ede6ad4f78ef46"
+    },
+    "SeedOnly/bril_main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/seed-only/native/__main.asm",
+      "sha256": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771"
+    },
+    "SeedOnly/emitted": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/seed-only/optimized.bril",
+      "sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb"
+    },
+    "SeedOnly/main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/seed-only/native/main.asm",
+      "sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb"
+    },
+    "U0/binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/u0/native/program",
+      "sha256": "0225044fd41b38a39e7281908ed6a90da5702da64736d34056c6d72ff0197bbb"
+    },
+    "U0/bril_main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/u0/native/__main.asm",
+      "sha256": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771"
+    },
+    "U0/emitted": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/u0/optimized.bril",
+      "sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb"
+    },
+    "U0/main_assembly": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/matrix/positive/u0/native/main.asm",
+      "sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb"
+    },
+    "compiler_binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin-reviewed-final/eggcc",
+      "sha256": "d712e8347bf6eea231de829174a9436f411a3cedfd210daf8e7c4614c2371d2f"
+    },
+    "compiler_source_snapshot": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-source.tar",
+      "sha256": "ba2f65df7091573a594b7c51ec68a8b3665b5c85f279fe4415ca0f6e08565873"
+    },
+    "source": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/fixtures/source.bril",
+      "sha256": "d1fe5b6ace306fff529d1ed7bac03609066624cf750fc0238cb71fcbee583ae0"
+    }
+  },
+  "frozen_design_sha256": "c646d77e41334fd252a4e951245068f771afbbb41e44cd828e30edd58b0f6367",
+  "initial_check_import_incident": {
+    "cause": "local inspect.py shadowed stdlib inspect during unittest.mock import",
+    "compilations": 0,
+    "correction": "remove script directory from sys.path before unittest.mock import and run with Python -I",
+    "derived_files_bound_in_artifact_identity_manifest": false,
+    "derived_files_rewritten_count": 65,
+    "frozen_design_artifacts_match_preexisting_bindings": true,
+    "native_executions": 0,
+    "post_incident_sha256": {
+      "inspection.json": "9d9d2f81d4f4e70565586c5891b7940df564aec9959fa08165fa413b8b5d50e3",
+      "manual-encoding-__main.asm.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "manual-encoding-_main.asm.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "manual-encoding-_main.ll.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "manual-encoding-main.ll.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matrix/positive/bridge-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/bridge-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/bridge-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/bridge-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/consumer-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/consumer-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/consumer-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/consumer-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/encoding/native/__main.asm": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707",
+      "matrix/positive/encoding/native/_main.asm": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19",
+      "matrix/positive/encoding/native/_main.ll": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9",
+      "matrix/positive/encoding/native/main.ll": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e",
+      "matrix/positive/forward-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/forward-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/forward-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/forward-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/high-rescue/native/__main.asm": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707",
+      "matrix/positive/high-rescue/native/_main.asm": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19",
+      "matrix/positive/high-rescue/native/_main.ll": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9",
+      "matrix/positive/high-rescue/native/main.ll": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e",
+      "matrix/positive/identity-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/identity-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/identity-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/identity-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/if-consumer-off/native/__main.asm": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707",
+      "matrix/positive/if-consumer-off/native/_main.asm": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19",
+      "matrix/positive/if-consumer-off/native/_main.ll": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9",
+      "matrix/positive/if-consumer-off/native/main.ll": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e",
+      "matrix/positive/manual/native/__main.asm": "b7bf23ef4d6418e3694797b1140e5097fec1ea391bffe48b46c06fcfceeed707",
+      "matrix/positive/manual/native/_main.asm": "b1333575136a7098ab66939781f8b2c8141cd254b3ea0b8b41218e6a33e46d19",
+      "matrix/positive/manual/native/_main.ll": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9",
+      "matrix/positive/manual/native/main.ll": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e",
+      "matrix/positive/off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/primitive-only/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/primitive-only/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/primitive-only/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/primitive-only/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/query-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/query-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/query-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/query-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/reverse-off/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/reverse-off/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/reverse-off/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/reverse-off/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "matrix/positive/u0/native/__main.asm": "592a2990a2fc56179e571139882dadedc7c3a9f8c6f6e88eb3a771c2313cc771",
+      "matrix/positive/u0/native/_main.asm": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+      "matrix/positive/u0/native/_main.ll": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829",
+      "matrix/positive/u0/native/main.ll": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379",
+      "u0-encoding-__main.asm.diff": "409b35ddf11b51d7f030f964b42056363ec3a14df9f27cebac3acca0f10ad391",
+      "u0-encoding-_main.asm.diff": "26ba694e6e4d2ddc3289a73b6d0ab6b56807277381b18a7701fa0df90c02e0d2",
+      "u0-encoding-_main.ll.diff": "7a6ce79d250b1580e63f286a9a8b9fcb1f0d73324ba37d11db1a9af5759d18ab",
+      "u0-encoding-main.ll.diff": "4088b5e69e434ecca93a20a1d060ae02c677411b173b2cc07ed5d63b3521e552",
+      "u0-off-__main.asm.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "u0-off-_main.asm.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "u0-off-_main.ll.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "u0-off-main.ll.diff": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "pre_import_hashes_available": false,
+    "preflight_or_timing_executions": 0
+  },
+  "material_cpu_percent": 75.0,
+  "policy_version": 2,
+  "retained_rejection_sha256": "2f07377c98d30c53197682d0c1ef8feccefe4eaf117d936f6279f5461519841e",
+  "scope": "static and synthetic only; no host process inventory, preflight, compilation, native execution, or timing sampling",
+  "script_sha256": {
+    "check-process-policy.py": "251394f693723bfd1aa156883fe3430db1922104219d421b5c4a443ad0789c3a",
+    "prepare-timing.py": "57c3d7a9195e7d28e9563936effe26585dd1a9953cc59af31922ab7063861577",
+    "timing.py": "bf71a082ce5afccc1a61f15f5c9162747808831c264133f62689dc43345ddb3f",
+    "verify-timing.py": "2e01190ac2d09f8d9b368d049498e1c30f5c0041ad3f848f05860b6313e77749"
+  },
+  "source_identity_manifest_file_count_verified": 17,
+  "syntax_passed": [
+    "timing.py",
+    "verify-timing.py",
+    "prepare-timing.py",
+    "check-process-policy.py"
+  ],
+  "synthetic_command": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "-I",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/check-process-policy.py"
+  ],
+  "synthetic_result": {
+    "cases_passed": 41,
+    "material_cpu_percent": 75.0,
+    "policy_version": 2,
+    "synthetic_only": true
+  },
+  "timing_outputs_absent": true
+}

@@ -1,0 +1,252 @@
+{
+  "actual_exit_codes": {
+    "dag-clippy": 101,
+    "dag-fmt": 0,
+    "dag-full-tests-no-raytracewithscreen": 0,
+    "qr7-focused-tests": 0,
+    "release-eggcc": 0,
+    "root-fmt": 0
+  },
+  "commands": {
+    "dag-clippy": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 13.901822374999028,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 101,
+      "finished_utc": "2026-10-20T04:45:07.229608Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:44:53.327631Z",
+      "stderr_sha256": "7038dd3db918f8959cea2efa72bab27a7cb6a2878c062c31a97ad1a091e8579d",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 1800
+    },
+    "dag-fmt": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 0.12347208400024101,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:44:53.318369Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:44:53.194875Z",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 1800
+    },
+    "dag-full-tests-no-raytracewithscreen": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "insta",
+        "test",
+        "--release",
+        "--unreferenced=reject",
+        "--",
+        "--skip",
+        "raytracewithscreen"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 3.1823948329983978,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:46:13.373611Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:46:10.191035Z",
+      "stderr_sha256": "c21c194f35eb38986aab0930c639f03ba145564f2b21a612cf38fd86e809a663",
+      "stdout_sha256": "5e67a2e7f7e8c2799af19ebd093dfbbc625406da960886ca7ea8b0799145a076",
+      "timed_out": false,
+      "timeout_s": 1800
+    },
+    "qr7-focused-tests": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "test",
+        "--release",
+        "qr7_"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 62.918616667000606,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:46:10.175099Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:45:07.239920Z",
+      "stderr_sha256": "f336b202e24442103ab1135a6f1b36394edf75d56af8617d0653ab1c7240b5a1",
+      "stdout_sha256": "edaf32c7cf5ea9790409d0699f892ace877700c6e4ef82e51f5389ec1723c2c9",
+      "timed_out": false,
+      "timeout_s": 1800
+    },
+    "release-eggcc": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--release",
+        "--bin",
+        "eggcc"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 73.79457641599947,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:47:27.181185Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:46:13.385153Z",
+      "stderr_sha256": "9634ec5078446cff19e890da5801ad7c72a89fcd3edde5166e82393ba1810cc0",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 1800
+    },
+    "root-fmt": {
+      "absent_environment": [
+        "EGGLOG_BENCH_MEMORY_GUARD",
+        "INSTA_UPDATE",
+        "INSTA_FORCE_PASS"
+      ],
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_s_diagnostic": 0.12993262500094716,
+      "environment": {
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+        "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "RAYON_NUM_THREADS": "1",
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "RUST_TEST_THREADS": "4"
+      },
+      "executable": "/Users/saul/.cargo/bin/cargo",
+      "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+      "exit_code": 0,
+      "finished_utc": "2026-10-20T04:44:53.183446Z",
+      "raytracing_requested": false,
+      "started_utc": "2026-10-20T04:44:53.053366Z",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "timed_out": false,
+      "timeout_s": 1800
+    }
+  },
+  "expected_exit_codes": {
+    "dag-clippy": 101,
+    "dag-fmt": 0,
+    "dag-full-tests-no-raytracewithscreen": 0,
+    "qr7-focused-tests": 0,
+    "release-eggcc": 0,
+    "root-fmt": 0
+  },
+  "expected_exit_codes_match": true,
+  "schema_version": 1,
+  "status": "commands-complete"
+}

@@ -1,0 +1,2825 @@
+diff --git a/benchmarks/eggcc-encoding/FAILFAST.md b/benchmarks/eggcc-encoding/FAILFAST.md
+new file mode 100644
+index 00000000..d587cf32
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/FAILFAST.md
+@@ -0,0 +1,97 @@
++# Exact-key fail-fast extension
++
++This is a separate extension to the original eight-fixture, 16-outcome semantic
++checkpoint. The original `.egg` inputs and `semantic/runs.json` are unchanged.
++The new extension has seven fixtures, tested with NEE and EE in ordinary mode:
++**14/14 expected outcomes pass**.
++
++The original CLI has been copied independently to
++`/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/bin/egglog-experimental-392b6d6b-debug`.
++Its SHA-256 remains
++`46f898796589e8585ecaf1499a9b9d7ee98d31fc45f64d2061c103795d62ecf2`.
++`semantic/bin/manifest.json` records the source and copy. This frozen path is
++used by the new receipts, so a later encoding build can replace the original
++target binary without invalidating the retained bytes.
++
++## Audited protocol
++
++The tested query schedule is stored verbatim in
++[source/exact-local-audited-query-schedule.egg](source/exact-local-audited-query-schedule.egg):
++
++```lisp
++(run-schedule
++  (saturate
++    (saturate exact-addresses injectivity exact-audit)
++    peepholes
++    interval-analysis
++    mem-simple
++    (saturate exact-addresses injectivity exact-audit)
++    exact-query
++    exact-audit))
++```
++
++Every `exact-addresses` item performs one propagation step. The direct audit
++must occur **inside** its saturation loop. Saturating ordinal propagation first
++and checking afterward can keep generating counts when a state has been merged
++with its allocation successor. The initial audited closure catches preexisting
++faults before source consumers; the second catches invariants exposed by source
++normalization before the proposed query consumer. The final audit checks unions
++made by that consumer. The manual control substitutes
++`exact-manual-pairs`, `exact-manual-consumer` for `exact-query` with otherwise
++the same order.
++
++[source/exact-local-audit.egg](source/exact-local-audit.egg) inspects the current
++tables directly and rejects:
++
++- One pointer e-class with two known-different address keys:
++  `exact-address rejection: pointer has incompatible keys`.
++- One state/function pair with unequal ordinal counts:
++  `exact-address rejection: state has unequal ordinal counts`.
++
++It does not wait for the older `ConflictingKey` / `ConflictingOrdinal` marker
++rules to run on a later propagation step. The key audit uses `:naive` because
++its `known-disequal?` read follows constructor witnesses. Scheduled `injectivity`
++also rejects a seeded union of incompatible primitive `LocalCell` payloads.
++
++The proposed rule snapshot
++[source/exact-local-analysis.egg](source/exact-local-analysis.egg) comes from the
++original fixture's declarations/rules. Its manifest records the one additional
++root guard: `FunctionHasType` must state the exact sole-`StateT` input type,
++matching the approved compiler prototype contract. Setup and consumers otherwise
++retain the restricted local-address/state/liveness analysis.
++
++Unsupported nodes have no **direct transfer rule**. This is not an absolute
++barrier against all e-class propagation: production load-output-state equality,
++for example, can legitimately expose the same supported input prefix after
++source rewriting. The original fixture already checks store-forwarded load-state
++equality. All ordinals and keys must be audited after such equalities.
++
++## Executable rejection controls
++
++| Fixture | Expected exit | What must happen |
++| --- | --- | --- |
++| `exact-key-failfast-controls.egg` | 0 | Audited query and manual schedules forward 17 past 99, preserve absence of self-nonalias/conflicts, and reject undeclared or non-state-only input roots. |
++| `exact-key-reject-pointer.egg` | 1 | A seeded merge of two fresh pointer results is rejected within four propagation/audit rounds. |
++| `exact-key-reject-key.egg` | 1 | A seeded merge of incompatible immutable key payloads causes the `LocalCell` injectivity diagnostic. |
++| `exact-key-reject-state-count.egg` | 1 | Terminal states from separate length-one and length-two chains are merged; unequal counts are rejected. These terminal states are not ancestors of each other. |
++| `exact-key-reject-cycle.egg` | 1 | A seeded state/allocation-successor equality is rejected within four propagation/audit rounds. |
++| `exact-key-reject-cycle-saturate.egg` | 1 | The same cyclic equality is rejected under the actual audited fixed-point schedule, without timing out. |
++| `exact-key-cycle-growth-control.egg` | 0 | With audit deliberately omitted for exactly four steps, counts 0,1,2,3 and conflict markers appear; no consumer runs. This bounded diagnostic explains the audit placement. |
++
++Each rejection file installs an unconditional consumer sentinel with a different
++panic message. The receipt requires the invariant-specific error and forbids
++`consumer reached before invariant rejection`. Thus an arbitrary error, timeout,
++or accidentally running the consumer is not a passing rejection.
++
++For every fixture and encoding, the command was the frozen CLI followed by
++`--disequality-encoding nee|ee FIXTURE`, run from this directory with a
++three-second subprocess timeout. Exact commands, hashes, expected statuses and
++diagnostics, and stdout/stderr are in
++`benchmarks/local/eggcc-encoding-case-study/semantic/failfast/runs.json` under the
++primary checkout. All ten expected rejections completed without timeout; the
++largest observed one-shot diagnostic wall time was about 0.031 seconds. These
++times establish prompt rejection in this probe, not a performance result.
++
++All faults here are deliberately seeded controls. They establish executable
++rejection and scheduling behavior; they do not identify a baseline compiler bug
++or validate the full compiler prototype.
+diff --git a/benchmarks/eggcc-encoding/README.md b/benchmarks/eggcc-encoding/README.md
+new file mode 100644
+index 00000000..a1ff514b
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/README.md
+@@ -0,0 +1,139 @@
++# Eggcc semantic eligibility fixtures
++
++These fixtures audit candidate laws before compiler changes. They run the actual
++injectivity/disequality implementation in ordinary mode under NEE and EE. They
++are reduced source-derived replays and proposed analyses, not captured complete
++compiler runs. No existing eggcc bug, optimized-program result, or speedup is
++claimed here.
++
++The source checkout was eggcc
++`15ee7cbabe70d3b2e72d796bcf81cc2604626e7b`, branch
++`codex/remove-merge-constructors`; conclusions are specific to that source.
++The encoding source was `392b6d6b48b5bc307a5b9c981c957fc0a09e23e5`.
++The reused debug CLI SHA-256 was
++`46f898796589e8585ecaf1499a9b9d7ee98d31fc45f64d2061c103795d62ecf2`.
++The semantic worker did not build the compiler or runtime.
++
++`source/` contains unmodified full schema/mem-simple copies and exact source
++excerpts. [Its manifest](source/manifest.json) identifies source revisions,
++whole-file hashes, excerpt ranges, and copy hashes. Inline rules in the other
++fixtures name their source ranges; proposed rules and seeded faults are labeled.
++
++## Run
++
++From this directory, use an existing feature CLI:
++
++```sh
++EGGLOG_EXPERIMENTAL=/Users/saul/p/wt/egglog-encoding/injectivity/target/debug/egglog-experimental
++"$EGGLOG_EXPERIMENTAL" --disequality-encoding nee exact-local-address-keys.egg
++"$EGGLOG_EXPERIMENTAL" --disequality-encoding ee exact-local-address-keys.egg
++```
++
++Run each fixture with both `nee` and `ee`. Five files should exit 0:
++`constructor-laws.egg`, `constant-guard-controls.egg`,
++`active-noalias-controls.egg`, `analysis-record-refinement.egg`, and
++`exact-local-address-keys.egg`. Three files should exit 1 with the stated error:
++
++| Fixture | Required error substring |
++| --- | --- |
++| `literal-conflict.egg` | `injectivity violation in constructor ` followed by the constructor name `Int` |
++| `constant-guard-conflict.egg` | `Unsoundness detected: const values differ at top level` |
++| `analysis-record-refinement-cancel.egg` | `injectivity violation in constructor ` followed by the constructor name `I` |
++
++An arbitrary process failure is not a passing negative test. The final recorded
++run checks both status and error substring. There are 16 expected process
++outcomes across the eight fixtures and two encodings. Do not enable term/proof
++mode: `known-disequal?` does not support those modes.
++
++Raw receipts are under the primary checkout's ignored
++`benchmarks/local/eggcc-encoding-case-study/semantic/`: `runs.json` records the
++exact commands, transitive input hashes, binary hash, statuses, expected errors,
++and stdout/stderr paths. `provenance.json` and `source-snippets.txt` retain the
++audit sources. One-shot elapsed times are diagnostics, not performance evidence.
++
++## What is established
++
++| Candidate | Executable observation | Assessment |
++| --- | --- | --- |
++| Arbitrary `Concat` | Associativity and empty identities equate results with unequal corresponding arguments. | Reject blanket injectivity. |
++| Generic `Bop` / `Top` | Addition commutativity and `Select(pred,x,x)=x` erase different fields. | Reject blanket injectivity. |
++| `Single` | Equal wrappers already cancel through the existing `Get(Single(x),0)=x` rule. | Equality power is redundant. |
++| Literal `Int` / `Bool` | Primitive mismatches supply witnesses; seeded unequal literal merging panics when injectivity runs. | Sound data wrappers, no incremental compiler benefit established. |
++| Global `Const` | A seeded vacuous equality in an unreachable `InIf` context leaves shared literal data unequal; the existing guard rejects a seeded top-level merge. | Preserve the context guard; reject global cancellation. |
++| Active `NoAlias` | Positive/negative nonzero offsets commute; zero, symbolic zero, same pointer and unknown pointer pairs do not. | Current active contract reproduced. |
++| Mutable points-to records | Bound refinement makes distinct resolved records equal through the same analysis application. | Reject the proposed structural annotation chain. |
++| Exact local address keys | Restricted query/manual arms both forward 17 past a store of 99 to a separate fresh allocation; baseline active rules do not. | Promising compiler prototype, currently replay-only. |
++
++Unknown query results remain undefined. Distinct current e-class IDs are not
++asserted disequalities. The fixtures require no constructor-disjointness or
++multiargument reverse inference; query rules use `:naive`, and equality
++injectivity is explicitly scheduled.
++
++## Mutable-record falsifier
++
++The real `PointsToCells(PtrAdd(p,i), aps)` rule reads `lo-bound` and `hi-bound`,
++then unions its output with the resulting points-to record. The bound tables
++merge by maximum/minimum. In `analysis-record-refinement.egg`, changing the
++offset range from `[1,2]` to `[1,1]` legitimately yields a second representation
++of the same analysis output. The resolved wide and narrow maps become equal.
++
++The deliberately proposed record annotations would first find a structural
++inequality witness. Recording that hypothetical constraint then reports a
++contradiction after refinement; scheduling cancellation panics at primitive
++`I(1)` versus `I(2)`. This rejects the annotations, not the baseline compiler.
++The same fixture shows why dropping `Resolved-Pointees` looked attractive: a
++known differing field can give a witness before an unrelated tail resolves.
++That power does not make mutable analysis records immutable identities.
++
++The source interval intersection rules also show that `[1,2]` and `[1,1]`
++overlap. Unequal record representations do not establish disjoint possible
++addresses. The optional production `DontAlias` rule uses empty intersection,
++not record inequality; it is outside the default schedule.
++
++## Exact-key prototype boundary
++
++`exact-local-address-keys.egg` adds a new immutable data sort
++`LocalCell(function, ordinal, offset)` and relations over a restricted state
++prefix. It does not annotate existing expression or points-to constructors.
++The rules enforce:
++
++- A sole `StateT` input in an `InFunc` context starts the prefix.
++- Direct positive constant-sized allocations extend it and increase the
++  ordinal. Static `Alloc` IDs are ignored. Inherited `LiveAllocation` facts
++  connect each pointer's allocation origin to the exact consumer state.
++- Only stores of constant integer values to already-live exact addresses
++  preserve the prefix. Calls, frees, branches, loops, and unknown effects have
++  no transfer rule.
++- Constant pointer offsets are accepted only when the resulting offset stays
++  in `[0,size)`. The guards establish representable arithmetic before addition.
++- A consumer compares keys only for origins live in that same state and
++  function. It uses the existing write/load commuting consequence and existing
++  store forwarding.
++
++Within that grammar, induction on the prefix gives distinct fresh regions for
++distinct ordinals, and distinct valid cells for different offsets within one
++region. Key equality is not used as a runtime-alias assertion. Key inequality
++outside the consumer's guarded domain has no nonalias meaning.
++
++The fixture deliberately repeats static allocation ID 0. Both query and
++equivalent materialized-pair arms still succeed. Negative checks exclude
++zero/symbolic-zero offsets, unknown pointers, symbolic sizes, zero-sized
++allocations, invalid/huge offsets, cross-context offsets, and allocations after
++calls/frees or in branches/loops. Source pointer-add reassociation, integer
++folding, duplicate/shadowed writes, and load-state equality run before and
++during the comparison. No pointer acquires conflicting keys, no state acquires
++different ordinal counts, and no self-`NoAlias` is derived.
++
++The state-prefix/ordinal invariant must survive every equality rule enabled by
++an eventual full compiler treatment, including context reconstruction and
++inlining. The replay checks the applicable local normalization rules; it does
++not complete that whole-compiler obligation. `LiveAllocation` may cost more
++than the old pair relation. No compactness, speedup, or broad alias-analysis
++replacement claim follows.
++
++[fresh-allocations.bril](fresh-allocations.bril) is the next proposed compiler
++input, based on the real optional two-allocation DAG test. Full baseline and
++feature compiler runs must validate interpreter equality, actual forwarding,
++and a comparison against the same new key analysis with manual pair storage.
++The optional memory analysis already supports this operation sequence, so its
++activation must remain a separate treatment.
+diff --git a/benchmarks/eggcc-encoding/active-noalias-controls.egg b/benchmarks/eggcc-encoding/active-noalias-controls.egg
+new file mode 100644
+index 00000000..b76dc728
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/active-noalias-controls.egg
+@@ -0,0 +1,78 @@
++; Full unmodified schema/mem_simple rules plus reduced source-derived inputs.
++; This checks available inference and forbidden rewrites, not runtime execution.
++(include "source/schema.egg")
++(include "source/interval-bounds.egg")
++(include "source/mem_simple.egg")
++(relation HasArgType (Expr Type))
++(relation ContextOf (Expr Assumption))
++(ruleset peepholes)
++; Exact source: peepholes.egg:23-30.
++(rule ((= expr (Bop (Sub) x x))
++       (HasArgType expr ty)
++       (ContextOf expr ctx))
++      ((union expr (Const (Int 0) ty ctx))) :ruleset peepholes)
++
++(let ty (TupleT (TCons (PointerT (IntT))
++                 (TCons (PointerT (IntT))
++                   (TCons (IntT) (TCons (StateT) (TCons (PointerT (IntT)) (TNil))))))))
++(let ctx (InFunc "main"))
++(let args (Arg ty ctx))
++(let p (Get args 0))
++(let q (Get args 1))
++(let x (Get args 2))
++(let state (Get args 3))
++(let zero (Const (Int 0) ty ctx))
++(let two (Const (Int 2) ty ctx))
++(let minus-two (Const (Int -2) ty ctx))
++(let sym-zero (Bop (Sub) x x))
++(HasArgType sym-zero ty)
++(ContextOf sym-zero ctx)
++(let p0 (Bop (PtrAdd) p zero))
++(let p2 (Bop (PtrAdd) p two))
++(let pm2 (Bop (PtrAdd) p minus-two))
++(let ps0 (Bop (PtrAdd) p sym-zero))
++(let px (Bop (PtrAdd) p x))
++
++; Distinguishable stored values ensure that forwarding cannot pass by accident.
++(let old (Const (Int 17) ty ctx))
++(let new (Const (Int 99) ty ctx))
++(let write (Top (Write) p new state))
++(let load-positive (Bop (Load) p2 write))
++(let load-zero (Bop (Load) p0 write))
++(let load-sym-zero (Bop (Load) ps0 write))
++(let load-unknown (Bop (Load) q write))
++(let load-self (Bop (Load) p write))
++(run-schedule (saturate peepholes interval-analysis mem-simple))
++(check (NoAlias p p2))
++(check (NoAlias p pm2))
++(check (NoAlias p2 p))
++(check (= (Get load-positive 0) (Get (Bop (Load) p2 state) 0)))
++(check (DidMemOptimization "commute write then load"))
++(check (= (Get load-self 0) new))
++(fail (check (= (Get load-self 0) old)))
++(check (= sym-zero zero))
++(fail (check (NoAlias p p)))
++(fail (check (NoAlias p p0)))
++(fail (check (NoAlias p ps0)))
++(fail (check (NoAlias p px)))
++(fail (check (NoAlias p q)))
++(fail (check (= (Get load-zero 0) (Get (Bop (Load) p0 state) 0))))
++(fail (check (= (Get load-sym-zero 0) (Get (Bop (Load) ps0 state) 0))))
++(fail (check (= (Get load-unknown 0) (Get (Bop (Load) q state) 0))))
++; Distinct current IDs are not disequality or universal runtime nonalias.
++(check (!= p q))
++(check (!= p p0))
++(fail (check (known-disequal? p q)))
++(fail (check (known-disequal? p p0)))
++(fail (check (known-disequal? p px)))
++
++; Source branch propagation preserves the same restricted contract.
++(let pred (Const (Bool true) ty ctx))
++(let branch-args (Arg ty (InIf true pred args)))
++(let branch-unknown (Arg ty (InIf false pred args)))
++(If pred args (Single (Get branch-args 0)) (Single (Get branch-unknown 0)))
++(Get args 4) (Get branch-args 4)
++(NoAlias (Get args 0) (Get args 4))
++(run-schedule (saturate mem-simple))
++(check (NoAlias (Get branch-args 0) (Get branch-args 4)))
++(fail (check (NoAlias (Get branch-args 0) (Get branch-args 1))))
+diff --git a/benchmarks/eggcc-encoding/analysis-record-refinement-cancel.egg b/benchmarks/eggcc-encoding/analysis-record-refinement-cancel.egg
+new file mode 100644
+index 00000000..d8cf1da1
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/analysis-record-refinement-cancel.egg
+@@ -0,0 +1,4 @@
++; Expected process failure after a legitimate source-derived refinement.
++; These are deliberately rejected annotations, not a compiler fault.
++(include "analysis-record-refinement.egg")
++(run-schedule (saturate injectivity))
+diff --git a/benchmarks/eggcc-encoding/analysis-record-refinement.egg b/benchmarks/eggcc-encoding/analysis-record-refinement.egg
+new file mode 100644
+index 00000000..89984ce7
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/analysis-record-refinement.egg
+@@ -0,0 +1,133 @@
++; Source-derived falsifier for injective mutable points-to records.
++; The proposed annotations below are deliberately invalid in this analysis.
++; Expected contradiction is a rejected axiom, not a discovered eggcc bug.
++(include "source/schema.egg")
++(include "source/interval-bounds.egg")
++(datatype IntOrInfinity (Infinity) (NegInfinity) (I i64 :injective))
++(datatype IntInterval (MkIntInterval IntOrInfinity IntOrInfinity :injective))
++(datatype List<i64+IntInterval>
++  (Nil-List<i64+IntInterval>)
++  (Cons-List<i64+IntInterval> i64 IntInterval List<i64+IntInterval> :injective))
++(datatype PtrPointees (PointsTo List<i64+IntInterval> :injective) (PointsAnywhere))
++(datatype List<PtrPointees>
++  (Nil-List<PtrPointees>)
++  (Cons-List<PtrPointees> PtrPointees List<PtrPointees> :injective))
++(datatype Pointees
++  (TuplePointsTo List<PtrPointees> :injective)
++  (PtrPointsTo PtrPointees :injective))
++(include "source/resolved.egg")
++(relation HasType (Expr Type))
++(relation PointerishType (Type))
++
++; Exact source: memory.egg:38-41,212,272-275,289-296.
++(constructor UnwrapPtrPointsTo (Pointees) PtrPointees)
++(rewrite (UnwrapPtrPointsTo (PtrPointsTo x)) x :ruleset memory-helpers)
++(constructor PointsToCells (Expr Pointees) Pointees :unextractable)
++(rewrite (PointsToCells (Arg ty_ ctx) aps)
++         aps
++         :when ((HasType (Arg ty_ ctx) ty) (PointerishType ty))
++         :ruleset memory-helpers)
++
++; Exact finite arithmetic/list rules from memory.rs:119,126,140-144,279-301.
++(constructor AddIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
++(rewrite (AddIntOrInfinity (I x) (I y)) (I (+ x y)) :ruleset always-run)
++(constructor AddIntInterval (IntInterval IntInterval) IntInterval)
++(rewrite (AddIntInterval (MkIntInterval lo1 hi1) (MkIntInterval lo2 hi2))
++         (MkIntInterval (AddIntOrInfinity lo1 lo2)
++                        (AddIntOrInfinity hi1 hi2)) :ruleset always-run)
++(constructor AddIntIntervalToAll (IntInterval List<i64+IntInterval>) List<i64+IntInterval>)
++(rewrite (AddIntIntervalToAll _ (Nil-List<i64+IntInterval>))
++         (Nil-List<i64+IntInterval>) :ruleset always-run)
++(rewrite (AddIntIntervalToAll x (Cons-List<i64+IntInterval> allocid offset tl))
++         (Cons-List<i64+IntInterval> allocid (AddIntInterval x offset)
++           (AddIntIntervalToAll x tl)) :ruleset always-run)
++(constructor AddIntIntervalToPtrPointees (IntInterval PtrPointees) PtrPointees)
++(rewrite (AddIntIntervalToPtrPointees interval (PointsAnywhere))
++         (PointsAnywhere) :ruleset always-run)
++(rewrite (AddIntIntervalToPtrPointees interval (PointsTo l))
++         (PointsTo (AddIntIntervalToAll interval l)) :ruleset always-run)
++
++; Exact finite intersection/validity rules: memory.rs:110,117,135-138,239-246.
++; They witness that unequal interval records can overlap.
++(constructor MaxIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
++(rewrite (MaxIntOrInfinity (I x) (I y)) (I (max x y)) :ruleset always-run)
++(constructor MinIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
++(rewrite (MinIntOrInfinity (I x) (I y)) (I (min x y)) :ruleset always-run)
++(constructor IntersectIntInterval (IntInterval IntInterval) IntInterval)
++(rewrite (IntersectIntInterval (MkIntInterval lo1 hi1) (MkIntInterval lo2 hi2))
++         (MkIntInterval (MaxIntOrInfinity lo1 lo2) (MinIntOrInfinity hi1 hi2))
++         :ruleset always-run)
++(datatype MyBool (MyTrue) (MyFalse))
++(constructor IntIntervalValid (IntInterval) MyBool)
++(rewrite (IntIntervalValid (MkIntInterval (I lo) (I hi)))
++         (MyTrue) :when ((<= lo hi)) :ruleset always-run)
++(rewrite (IntIntervalValid (MkIntInterval (I lo) (I hi)))
++         (MyFalse) :when ((> lo hi)) :ruleset always-run)
++
++(rewrite (PointsToCells (Bop (PtrAdd) x e) aps)
++         (PtrPointsTo
++           (AddIntIntervalToPtrPointees
++             (MkIntInterval (I lo) (I hi))
++             (UnwrapPtrPointsTo (PointsToCells x aps))))
++         :when ((= lo (either-unwrap-left (maybe-unwrap (lo-bound e))))
++                (= hi (either-unwrap-left (maybe-unwrap (hi-bound e)))))
++         :ruleset memory-helpers)
++
++(let ctx (InFunc "main"))
++(let ptrty (Base (PointerT (IntT))))
++(let p (Arg ptrty ctx))
++(let i (Arg (Base (IntT)) ctx))
++(HasType p ptrty)
++(PointerishType ptrty)
++(let aps (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0))
++    (Nil-List<i64+IntInterval>)))))
++(let shifted (Bop (PtrAdd) p i))
++(let result (PointsToCells shifted aps))
++(let wide (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 1) (I 2))
++    (Nil-List<i64+IntInterval>)))))
++(let narrow (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 1) (I 1))
++    (Nil-List<i64+IntInterval>)))))
++(set (lo-bound i) (maybe-some (either-left 1)))
++(set (hi-bound i) (maybe-some (either-left 2)))
++(run-schedule (saturate always-run memory-helpers))
++(check (= result wide))
++(check (Resolved-Pointees wide))
++(check (Resolved-Pointees narrow))
++(check (known-disequal? wide narrow))
++(let overlap (IntersectIntInterval (MkIntInterval (I 1) (I 2))
++                                   (MkIntInterval (I 1) (I 1))))
++(IntIntervalValid overlap)
++(run-schedule (saturate always-run))
++(check (= overlap (MkIntInterval (I 1) (I 1))))
++(check (= (IntIntervalValid overlap) (MyTrue)))
++
++; A witness from a known differing field would even bypass unresolved tails.
++; This shows the potential attraction, not semantic approval of the annotations.
++(constructor PendingTail () List<i64+IntInterval>)
++(let partial0 (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0)) (PendingTail)))))
++(let partial1 (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 1)) (PendingTail)))))
++(check (known-disequal? partial0 partial1))
++(fail (check (Resolved-Pointees partial0)))
++(fail (check (Resolved-Pointees partial1)))
++(constructor OtherPendingTail () List<i64+IntInterval>)
++(let unknown (PtrPointsTo (PointsTo
++  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0)) (OtherPendingTail)))))
++(fail (check (known-disequal? partial0 unknown)))
++
++; Materialize the hypothetical structural witness to expose its conflict.
++(disequal wide narrow)
++(fail (check-contradiction))
++; A legitimate source bound refinement uses the existing min merge.
++(set (hi-bound i) (maybe-some (either-left 1)))
++(run-schedule (saturate always-run memory-helpers))
++(check (= (hi-bound i) (maybe-some (either-left 1))))
++(check (= result narrow))
++(check (= wide narrow))
++(check-contradiction)
++; The companion analysis-record-refinement-cancel.egg schedules cancellation
++; and must fail: it forces 1 = 2 at a primitive field.
+diff --git a/benchmarks/eggcc-encoding/constant-guard-conflict.egg b/benchmarks/eggcc-encoding/constant-guard-conflict.egg
+new file mode 100644
+index 00000000..deac3a4e
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/constant-guard-conflict.egg
+@@ -0,0 +1,4 @@
++; Expected process failure from the actual baseline source guard.
++(include "constant-guard-controls.egg")
++(union (Const (Int 17) ty top) (Const (Int 99) ty top))
++(run-schedule (saturate error-checking))
+diff --git a/benchmarks/eggcc-encoding/constant-guard-controls.egg b/benchmarks/eggcc-encoding/constant-guard-controls.egg
+new file mode 100644
+index 00000000..48134469
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/constant-guard-controls.egg
+@@ -0,0 +1,15 @@
++; Baseline source guard preserves its contextual restriction.
++(include "source/schema.egg")
++(include "source/constant-guard.egg")
++(let ty (TupleT (TNil)))
++(let top (InFunc "main"))
++(let inputs (Empty ty top))
++(let predicate (Const (Bool true) ty top))
++(let unreachable (InIf false predicate inputs))
++; Seeded vacuous branch equality, not a captured compiler fault.
++(union (Const (Int 17) ty unreachable) (Const (Int 99) ty unreachable))
++(run-schedule (saturate error-checking))
++(check (= (Const (Int 17) ty unreachable) (Const (Int 99) ty unreachable)))
++(fail (check (= (Int 17) (Int 99))))
++(fail (check (= (Const (Int 17) ty top) (Const (Int 99) ty top))))
++(fail (check (known-disequal? (Const (Int 17) ty top) (Const (Int 99) ty top))))
+diff --git a/benchmarks/eggcc-encoding/constructor-laws.egg b/benchmarks/eggcc-encoding/constructor-laws.egg
+new file mode 100644
+index 00000000..317a26b8
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/constructor-laws.egg
+@@ -0,0 +1,88 @@
++; Reduced source-derived law audit, not a compiler capture.
++; Origin: eggcc 15ee7cbabe70d3b2e72d796bcf81cc2604626e7b.
++; Declarations: schema.egg:13-77,140-172; Int/Bool alone gain :injective.
++(datatype Constant (Int i64 :injective) (Bool bool :injective))
++(datatype Type (IntType))
++(datatype Assumption (InFunc String) (DeadBranch))
++(datatype Expr)
++(constructor Const (Constant Type Assumption) Expr)
++(constructor Empty (Type Assumption) Expr)
++(constructor Single (Expr) Expr)
++(constructor Concat (Expr Expr) Expr)
++(constructor Get (Expr i64) Expr)
++(datatype BinaryOp (Add) (Mul))
++(constructor Bop (BinaryOp Expr Expr) Expr)
++(datatype TernaryOp (Select))
++(constructor Top (TernaryOp Expr Expr Expr) Expr)
++(ruleset always-run)
++(ruleset canon)
++(ruleset peepholes)
++
++; Exact laws: canonicalize.egg:4-5,42-51; util.egg:59;
++; peepholes.egg:47. They already refute blanket constructor injectivity.
++(rewrite (Bop (Add) x y) (Bop (Add) y x) :ruleset canon)
++(rewrite (Bop (Mul) x y) (Bop (Mul) y x) :ruleset canon)
++(rewrite (Concat (Concat a b) c)
++         (Concat a (Concat b c)) :ruleset always-run)
++(rewrite (Concat (Empty ty ctx) x) x :ruleset always-run)
++(rewrite (Concat x (Empty ty ctx)) x :ruleset always-run)
++(rule ((Single expr))
++      ((union (Get (Single expr) 0) expr)) :ruleset always-run)
++(rewrite (Top (Select) pred x x) x :ruleset peepholes)
++
++(let ty (IntType))
++(let ctx (InFunc "main"))
++(let one (Const (Int 1) ty ctx))
++(let two (Const (Int 2) ty ctx))
++(let three (Const (Int 3) ty ctx))
++(let true-pred (Const (Bool true) ty ctx))
++(let false-pred (Const (Bool false) ty ctx))
++(let a (Single one))
++(let b (Single two))
++(let c (Single three))
++(let empty (Empty ty ctx))
++(Concat (Concat a b) c)
++(Concat empty a) (Concat a empty)
++(Bop (Add) one two) (Bop (Add) two one)
++(Top (Select) true-pred three three) (Top (Select) false-pred three three)
++(run-schedule (saturate always-run canon peepholes))
++(check (= (Concat (Concat a b) c) (Concat a (Concat b c))))
++(fail (check (= (Concat a b) a)))
++(fail (check (= c (Concat b c))))
++(check (= (Concat empty a) (Concat a empty)))
++(fail (check (= empty a)))
++(check (= (Bop (Add) one two) (Bop (Add) two one)))
++(fail (check (= one two)))
++(check (= (Top (Select) true-pred three three) (Top (Select) false-pred three three)))
++(fail (check (= true-pred false-pred)))
++
++; Single equality already cancels using the existing Get left inverse.
++(union (Single one) (Single two))
++(run-schedule (saturate always-run))
++(check (= one two))
++; Unmarked Const does not export that seeded equality to literal data.
++(fail (check (= (Int 1) (Int 2))))
++
++; Literal wrappers have a sound value interpretation and primitive witnesses.
++(Int 1) (Int 2) (Bool true) (Bool false)
++(check (known-disequal? (Int 1) (Int 2)))
++(check (known-disequal? (Bool true) (Bool false)))
++; Different constructor names provide no disjointness in this query.
++(fail (check (known-disequal? (Int 1) (Bool true))))
++(disequal (Int 1) (Int 2))
++(fail (check-contradiction))
++
++; Hypothetical unsound global Const cancellation must not cross dead contexts.
++; This union models permitted vacuous equality in an unreachable branch;
++; it is not a discovered compiler fault or a production-origin capture.
++(union (Const (Int 1) ty (DeadBranch)) (Const (Int 2) ty (DeadBranch)))
++(run-schedule (saturate injectivity))
++(fail (check (= (Int 1) (Int 2))))
++(fail (check-contradiction))
++
++; Injectivity is scheduled, not performed by queries. Seeded literal corruption
++; is rejected only when equality propagation runs.
++(push)
++(union (Int 1) (Int 2))
++(check-contradiction)
++(pop)
+diff --git a/benchmarks/eggcc-encoding/exact-key-cycle-growth-control.egg b/benchmarks/eggcc-encoding/exact-key-cycle-growth-control.egg
+new file mode 100644
+index 00000000..3740d232
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-cycle-growth-control.egg
+@@ -0,0 +1,13 @@
++; Bounded diagnostic control, intentionally omitting the audit and consumers.
++; It demonstrates why ordinal propagation must not saturate before auditing.
++(include "source/exact-local-rejection-setup.egg")
++(union $initial (Get $a0 1))
++(run-schedule (repeat 4 exact-addresses))
++(check (FreshState $initial "main" 0))
++(check (FreshState $initial "main" 1))
++(check (FreshState $initial "main" 2))
++(check (FreshState $initial "main" 3))
++(fail (check (FreshState $initial "main" 4)))
++(check (ConflictingOrdinal $initial))
++(check (ConflictingKey $p))
++(fail (check (DidExactOptimization mode)))
+diff --git a/benchmarks/eggcc-encoding/exact-key-failfast-controls.egg b/benchmarks/eggcc-encoding/exact-key-failfast-controls.egg
+new file mode 100644
+index 00000000..1850d245
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-failfast-controls.egg
+@@ -0,0 +1,44 @@
++; Positive control for the new audited schedule, separate from the preserved
++; original 16-process-outcome semantic checkpoint.
++(include "source/exact-local-rejection-setup.egg")
++(let $undeclared-state (Get (Arg $ty (InFunc "undeclared")) 0))
++(let $undeclared-alloc (Alloc 99 (Const (Int 4) $ty (InFunc "undeclared"))
++                            $undeclared-state (PointerT (IntT))))
++(let $multi-type (TupleT (TCons (StateT) (TCons (IntT) (TNil)))))
++(FunctionHasType "multi" $multi-type (Base (StateT)))
++(let $multi-state (Get (Arg $multi-type (InFunc "multi")) 0))
++(let $multi-alloc (Alloc 100 (Const (Int 4) $multi-type (InFunc "multi"))
++                       $multi-state (PointerT (IntT))))
++(fail (check (= (Get $load 0) $old)))
++(push)
++(include "source/exact-local-audited-query-schedule.egg")
++(check (DidExactOptimization "query"))
++(check (= (Get $load 0) $old))
++(fail (check (= (Get $load 0) $new)))
++(fail (check (NoAlias $p $p)))
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal conflicting-state)))
++(fail (check (FreshState $undeclared-state name count)))
++(fail (check (FreshState $multi-state name count)))
++(fail (check (ExactLocalAddress (Get $undeclared-alloc 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get $multi-alloc 0) origin key capacity)))
++(pop)
++(push)
++(run-schedule
++  (saturate
++    (saturate exact-addresses injectivity exact-audit)
++    peepholes
++    interval-analysis
++    mem-simple
++    (saturate exact-addresses injectivity exact-audit)
++    exact-manual-pairs
++    exact-manual-consumer
++    exact-audit))
++(check (DidExactOptimization "manual"))
++(check (= (Get $load 0) $old))
++(fail (check (= (Get $load 0) $new)))
++(fail (check (ManualNoAlias $p $p $state)))
++(fail (check (NoAlias $p $p)))
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal conflicting-state)))
++(pop)
+diff --git a/benchmarks/eggcc-encoding/exact-key-reject-cycle-saturate.egg b/benchmarks/eggcc-encoding/exact-key-reject-cycle-saturate.egg
+new file mode 100644
+index 00000000..f0ad2de9
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-reject-cycle-saturate.egg
+@@ -0,0 +1,6 @@
++; The same cyclic fault under the actual unbounded-but-audited fixed-point
++; schedule. It must panic promptly, not reach a timeout or the consumer sentinel.
++(include "source/exact-local-rejection-setup.egg")
++(union $initial (Get $a0 1))
++(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
++(include "source/exact-local-audited-query-schedule.egg")
+diff --git a/benchmarks/eggcc-encoding/exact-key-reject-cycle.egg b/benchmarks/eggcc-encoding/exact-key-reject-cycle.egg
+new file mode 100644
+index 00000000..050481a7
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-reject-cycle.egg
+@@ -0,0 +1,8 @@
++; Seeded state = allocation-successor equality. Unaudited ordinal saturation
++; can keep discovering larger counts. Interleave audit after each step instead.
++(include "source/exact-local-rejection-setup.egg")
++(union $initial (Get $a0 1))
++(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
++(run-schedule
++  (repeat 4 exact-addresses injectivity exact-audit)
++  exact-query)
+diff --git a/benchmarks/eggcc-encoding/exact-key-reject-key.egg b/benchmarks/eggcc-encoding/exact-key-reject-key.egg
+new file mode 100644
+index 00000000..883d252c
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-reject-key.egg
+@@ -0,0 +1,8 @@
++; Seeded corruption of immutable key data. Equality injectivity must reject it
++; before a consumer can exploit the incompatible primitive payloads.
++(include "source/exact-local-rejection-setup.egg")
++(union (LocalCell "main" 0 0) (LocalCell "main" 1 0))
++(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
++(run-schedule
++  (repeat 4 exact-addresses injectivity exact-audit)
++  exact-query)
+diff --git a/benchmarks/eggcc-encoding/exact-key-reject-pointer.egg b/benchmarks/eggcc-encoding/exact-key-reject-pointer.egg
+new file mode 100644
+index 00000000..e994077c
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-reject-pointer.egg
+@@ -0,0 +1,8 @@
++; Seeded invalid pointer equality. Audit must reject it within four single-step
++; propagation rounds and before any consumer executes.
++(include "source/exact-local-rejection-setup.egg")
++(union $p $q)
++(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
++(run-schedule
++  (repeat 4 exact-addresses injectivity exact-audit)
++  exact-query)
+diff --git a/benchmarks/eggcc-encoding/exact-key-reject-state-count.egg b/benchmarks/eggcc-encoding/exact-key-reject-state-count.egg
+new file mode 100644
+index 00000000..8334929a
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-key-reject-state-count.egg
+@@ -0,0 +1,12 @@
++; Seeded equality between terminal states of separate length-one and length-two
++; allocation chains. Neither terminal is an ancestor of the other: this is an
++; acyclic unequal-count merge, not merely the cyclic control below.
++(include "source/exact-local-rejection-setup.egg")
++(let $short (Alloc 10 $size $initial (PointerT (IntT))))
++(let $long0 (Alloc 20 $size $initial (PointerT (IntT))))
++(let $long1 (Alloc 21 $size (Get $long0 1) (PointerT (IntT))))
++(union (Get $short 1) (Get $long1 1))
++(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
++(run-schedule
++  (repeat 4 exact-addresses injectivity exact-audit)
++  exact-query)
+diff --git a/benchmarks/eggcc-encoding/exact-local-address-keys.egg b/benchmarks/eggcc-encoding/exact-local-address-keys.egg
+new file mode 100644
+index 00000000..becb7694
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/exact-local-address-keys.egg
+@@ -0,0 +1,248 @@
++; Proposed restricted analysis over real eggcc constructors and memory rules.
++; Input pattern derives from memory.rs:439-469 (two allocations/two stores/load).
++; This is a replay, not yet an actual compiler optimization result.
++(include "source/schema.egg")
++(include "source/interval-bounds.egg")
++(include "source/mem_simple.egg")
++
++; New immutable structural data. No annotation is placed on Expr or mutable
++; analysis records. Static Alloc ids are intentionally absent from these keys.
++(datatype AddressKey (LocalCell String i64 i64 :injective))
++(relation FreshState (Expr String i64))
++(relation LocalAllocation (Expr String i64 i64))
++(relation LiveAllocation (Expr Expr String i64))
++(relation ExactLocalAddress (Expr Expr AddressKey i64))
++(relation ConflictingKey (Expr))
++(relation ConflictingOrdinal (Expr))
++(ruleset exact-addresses)
++(ruleset exact-query)
++(ruleset exact-manual-pairs)
++(ruleset exact-manual-consumer)
++(relation DidExactOptimization (String))
++(relation ManualNoAlias (Expr Expr Expr))
++(relation HasArgType (Expr Type))
++(relation ContextOf (Expr Assumption))
++(ruleset peepholes)
++; Exact source normalization: peepholes.egg:12-13,23-30,55-57.
++(rewrite (Bop (Add) (Const (Int j) ty ctx) (Const (Int i) ty ctx))
++         (Const (Int (+ i j)) ty ctx) :ruleset peepholes)
++(rule ((= expr (Bop (Sub) x x)) (HasArgType expr ty) (ContextOf expr ctx))
++      ((union expr (Const (Int 0) ty ctx))) :ruleset peepholes)
++(rewrite (Bop (PtrAdd) (Bop (PtrAdd) p x) y)
++         (Bop (PtrAdd) p (Bop (Add) x y)) :ruleset peepholes)
++
++; Enforced domain: one function input state, direct positive constant-sized
++; allocations, and constant-integer stores. All other effect nodes stop it.
++(rule ((= state (Get (Arg (TupleT (TCons (StateT) (TNil))) (InFunc name)) 0)))
++      ((FreshState state name 0)) :ruleset exact-addresses)
++(rule ((FreshState state name ordinal)
++       (= allocation (Alloc id (Const (Int size) ty (InFunc name)) state pointerty))
++       (> size 0)
++       (< ordinal 9223372036854775807))
++      ((FreshState (Get allocation 1) name (+ ordinal 1))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation (Get allocation 1) allocation name ordinal)
++       (ExactLocalAddress (Get allocation 0) allocation (LocalCell name ordinal 0) size))
++      :ruleset exact-addresses)
++(rule ((= allocation (Alloc id amount state pointerty))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation state previous name previous-ordinal))
++      ((LiveAllocation (Get allocation 1) previous name previous-ordinal))
++      :ruleset exact-addresses)
++(rule ((FreshState state name next)
++       (= pointer-key (LocalCell name ordinal offset))
++       (ExactLocalAddress pointer origin pointer-key size)
++       (LiveAllocation state origin name ordinal)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state)))
++      ((FreshState write name next)) :ruleset exact-addresses)
++(rule ((FreshState write name next)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state))
++       (LiveAllocation state origin name ordinal))
++      ((LiveAllocation write origin name ordinal)) :ruleset exact-addresses)
++
++; These guards establish 0 <= offset+delta < size before the action adds.
++; Thus addition is representable, and no host/runtime wraparound is assumed.
++(rule ((ExactLocalAddress pointer origin (LocalCell name ordinal offset) size)
++       (= shifted (Bop (PtrAdd) pointer (Const (Int delta) ty (InFunc name))))
++       (>= delta (- 0 offset))
++       (< delta (- size offset)))
++      ((ExactLocalAddress shifted origin (LocalCell name ordinal (+ offset delta)) size))
++      :ruleset exact-addresses)
++
++; Audit consistency after source transformations. These checks do not conceal
++; conflicting keys by filtering raw pointer e-class IDs in the consumer.
++(rule ((ExactLocalAddress pointer origin key1 size1)
++       (ExactLocalAddress pointer origin2 key2 size2)
++       (known-disequal? key1 key2))
++      ((ConflictingKey pointer)) :ruleset exact-addresses :naive)
++(rule ((FreshState state name i) (FreshState state name j) (!= i j))
++      ((ConflictingOrdinal state)) :ruleset exact-addresses)
++
++; Query consumer: source mem_simple.egg:71-81 with the NoAlias premise replaced
++; by exact live-key premises. The graph read requires :naive.
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ExactLocalAddress write-addr write-origin write-key write-size)
++       (ExactLocalAddress load-addr load-origin load-key load-size)
++       (= write-key (LocalCell name write-ordinal write-offset))
++       (= load-key (LocalCell name load-ordinal load-offset))
++       (LiveAllocation state write-origin name write-ordinal)
++       (LiveAllocation state load-origin name load-ordinal)
++       (known-disequal? write-key load-key))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "query")) :ruleset exact-query :naive)
++
++; Equivalent manual comparison uses exactly the same key/liveness domain.
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= pi qi))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= po qo))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ManualNoAlias write-addr load-addr state))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "manual")) :ruleset exact-manual-consumer)
++
++(let ty (TupleT (TCons (StateT) (TNil))))
++(let ctx (InFunc "main"))
++(let initial (Get (Arg ty ctx) 0))
++(let size (Const (Int 4) ty ctx))
++(let old (Const (Int 17) ty ctx))
++(let new (Const (Int 99) ty ctx))
++(let zero (Const (Int 0) ty ctx))
++(let one (Const (Int 1) ty ctx))
++(let a0 (Alloc 0 size initial (PointerT (IntT))))
++(let p (Get a0 0))
++; Repeated static id is deliberate: freshness follows serial state, not id.
++(let a1 (Alloc 0 size (Get a0 1) (PointerT (IntT))))
++(let q (Get a1 0))
++(let state (Get a1 1))
++(let w0 (Top (Write) p old state))
++(let w1 (Top (Write) q new w0))
++(let load (Bop (Load) p w1))
++(let p0 (Bop (PtrAdd) p zero))
++(let p1 (Bop (PtrAdd) p one))
++(let nested-zero (Bop (PtrAdd) p1 (Const (Int -1) ty ctx)))
++(let duplicate (Top (Write) p old (Top (Write) p old state)))
++(let shadowed (Top (Write) p new (Top (Write) p old state)))
++(let load-state (Get (Bop (Load) p w0) 1))
++(let a2 (Alloc 0 size load-state (PointerT (IntT))))
++
++; Baseline active analysis cannot commute stores across separate allocations.
++(run-schedule (saturate interval-analysis mem-simple))
++(fail (check (NoAlias p q)))
++(fail (check (= (Get load 0) old)))
++(fail (check (= (Get load 0) new)))
++
++; Negative-domain fixtures: none may create a usable local address or state.
++(let unknown-ptr (Arg (Base (PointerT (IntT))) ctx))
++(let unknown-size (Arg (Base (IntT)) ctx))
++(let symbolic (Bop (PtrAdd) p unknown-size))
++(let symbolic-zero (Bop (Sub) unknown-size unknown-size))
++(HasArgType symbolic-zero ty)
++(ContextOf symbolic-zero ctx)
++(let p-symbolic-zero (Bop (PtrAdd) p symbolic-zero))
++(let zero-sized (Alloc 3 zero state (PointerT (IntT))))
++(let variable-sized (Alloc 4 unknown-size state (PointerT (IntT))))
++(let after-free (Bop (Free) p state))
++(let freed-alloc (Alloc 5 size after-free (PointerT (IntT))))
++(let after-call (Call "unknown-effect" state))
++(let called-alloc (Alloc 6 size after-call (PointerT (IntT))))
++(let branch (InIf true (Const (Bool true) ty ctx) (Single state)))
++(let branch-alloc (Alloc 7 (Const (Int 4) ty branch) (Arg (Base (StateT)) branch) (PointerT (IntT))))
++(let loop-ctx (InLoop (Single state) (Single state)))
++(let loop-alloc (Alloc 8 (Const (Int 4) ty loop-ctx) (Arg (Base (StateT)) loop-ctx) (PointerT (IntT))))
++(let before-start (Bop (PtrAdd) p (Const (Int -1) ty ctx)))
++(let at-end (Bop (PtrAdd) p size))
++(let huge (Bop (PtrAdd) p (Const (Int 9223372036854775807) ty ctx)))
++(let cross-context (Bop (PtrAdd) p (Const (Int 1) ty (InFunc "other"))))
++(let unsupported-load (Bop (Load) unknown-ptr w1))
++(let zero-load (Bop (Load) p0 w0))
++
++(run-schedule (saturate peepholes interval-analysis mem-simple exact-addresses))
++(check (= nested-zero p0))
++(check (= symbolic-zero zero))
++(check (= duplicate w0))
++(check (= shadowed (Top (Write) p new state)))
++(check (= load-state w0))
++(check (ExactLocalAddress p a0 (LocalCell "main" 0 0) 4))
++(check (ExactLocalAddress q a1 (LocalCell "main" 1 0) 4))
++(check (ExactLocalAddress p0 a0 (LocalCell "main" 0 0) 4))
++(check (ExactLocalAddress p1 a0 (LocalCell "main" 0 1) 4))
++(check (ExactLocalAddress nested-zero a0 (LocalCell "main" 0 0) 4))
++(check (ExactLocalAddress p-symbolic-zero a0 (LocalCell "main" 0 0) 4))
++(check (ExactLocalAddress (Get a2 0) a2 (LocalCell "main" 2 0) 4))
++(check (LiveAllocation (Get a2 1) a0 "main" 0))
++(check (LiveAllocation (Get a2 1) a1 "main" 1))
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal value)))
++(fail (check (NoAlias p p)))
++(check (known-disequal? (LocalCell "main" 0 0) (LocalCell "main" 1 0)))
++(check (known-disequal? (LocalCell "main" 0 0) (LocalCell "main" 0 1)))
++(fail (check (known-disequal? (LocalCell "main" 0 0) (LocalCell "main" 0 0))))
++(fail (check (ExactLocalAddress unknown-ptr origin key capacity)))
++(fail (check (ExactLocalAddress symbolic origin key capacity)))
++(fail (check (ExactLocalAddress (Get zero-sized 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get variable-sized 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get freed-alloc 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get called-alloc 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get branch-alloc 0) origin key capacity)))
++(fail (check (ExactLocalAddress (Get loop-alloc 0) origin key capacity)))
++(fail (check (ExactLocalAddress before-start origin key capacity)))
++(fail (check (ExactLocalAddress at-end origin key capacity)))
++(fail (check (ExactLocalAddress huge origin key capacity)))
++(fail (check (ExactLocalAddress cross-context origin key capacity)))
++(fail (check (FreshState after-free name next)))
++(fail (check (FreshState after-call name next)))
++
++; Exercise assertion storage in both NEE and EE without relying on it to supply
++; the structural witnesses checked above.
++(disequal (LocalCell "main" 0 0) (LocalCell "main" 1 0))
++(disequal (LocalCell "main" 0 0) (LocalCell "main" 0 1))
++(fail (check-contradiction))
++(run-schedule (saturate injectivity))
++
++(push)
++(run-schedule (saturate peepholes interval-analysis exact-addresses exact-query mem-simple))
++(check (DidExactOptimization "query"))
++(check (= (Get load 0) old))
++(fail (check (= (Get load 0) new)))
++(fail (check (= (Get unsupported-load 0) old)))
++(fail (check (= (Get zero-load 0) (Get (Bop (Load) p0 state) 0))))
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal value)))
++(fail (check (NoAlias p p)))
++(fail (check-contradiction))
++(pop)
++
++(push)
++(run-schedule (saturate peepholes interval-analysis exact-addresses exact-manual-pairs exact-manual-consumer mem-simple))
++(check (ManualNoAlias p q state))
++(check (ManualNoAlias p p1 state))
++(fail (check (ManualNoAlias p p0 state)))
++(fail (check (ManualNoAlias p p-symbolic-zero state)))
++(fail (check (ManualNoAlias p p state)))
++(check (DidExactOptimization "manual"))
++(check (= (Get load 0) old))
++(fail (check (= (Get load 0) new)))
++(fail (check (= (Get unsupported-load 0) old)))
++(fail (check (= (Get zero-load 0) (Get (Bop (Load) p0 state) 0))))
++(fail (check (ConflictingKey pointer)))
++(fail (check (ConflictingOrdinal value)))
++(fail (check (NoAlias p p)))
++(fail (check-contradiction))
++(pop)
+diff --git a/benchmarks/eggcc-encoding/fresh-allocations.bril b/benchmarks/eggcc-encoding/fresh-allocations.bril
+new file mode 100644
+index 00000000..d02d8b17
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/fresh-allocations.bril
+@@ -0,0 +1,16 @@
++# Proposed real-compiler input, derived from the operation sequence in
++# dag_in_context/src/optimizations/memory.rs:439-469, not a captured compiler run.
++@main() {
++    one: int = const 1;
++    old: int = const 17;
++    new: int = const 99;
++    p: ptr<int> = alloc one;
++    q: ptr<int> = alloc one;
++    store p old;
++    store q new;
++    value: int = load p;
++    print value;
++    free q;
++    free p;
++    ret;
++}
+diff --git a/benchmarks/eggcc-encoding/literal-conflict.egg b/benchmarks/eggcc-encoding/literal-conflict.egg
+new file mode 100644
+index 00000000..f4bdfba8
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/literal-conflict.egg
+@@ -0,0 +1,4 @@
++; Expected process failure: seeded corruption, not a production bug.
++(datatype Constant (Int i64 :injective))
++(union (Int 1) (Int 2))
++(run-schedule (saturate injectivity))
+diff --git a/benchmarks/eggcc-encoding/source/constant-guard.egg b/benchmarks/eggcc-encoding/source/constant-guard.egg
+new file mode 100644
+index 00000000..3b89e460
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/constant-guard.egg
+@@ -0,0 +1,6 @@
++; Exact source range: type_analysis.egg:41-45.
++(rule ((= (Const c1 ty1 ctx1) (Const c2 ty2 ctx2))
++       (= ctx1 (InFunc name))
++       (!= c1 c2))
++      ((panic "Unsoundness detected: const values differ at top level"))
++      :ruleset error-checking)
+diff --git a/benchmarks/eggcc-encoding/source/exact-local-analysis-manifest.json b/benchmarks/eggcc-encoding/source/exact-local-analysis-manifest.json
+new file mode 100644
+index 00000000..9671847f
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/exact-local-analysis-manifest.json
+@@ -0,0 +1,8 @@
++{
++  "origin_fixture": "exact-local-address-keys.egg",
++  "origin_sha256": "6201e363a637ca21097dedeaf56146a2f2fde60f5b8d22a0096010954a881e3e",
++  "selection": "prefix before top-level (let ty ...), preserving declaration/rule text",
++  "copy": "source/exact-local-analysis.egg",
++  "copy_sha256": "f543addb14514ae81803ca7be4338a045d0370382c0d3ced0efa677d4f50375a",
++  "modification": "Add FunctionHasType exact state-only input guard to the root-seeding rule, matching the approved compiler prototype contract."
++}
+diff --git a/benchmarks/eggcc-encoding/source/exact-local-analysis.egg b/benchmarks/eggcc-encoding/source/exact-local-analysis.egg
+new file mode 100644
+index 00000000..8df629c9
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/exact-local-analysis.egg
+@@ -0,0 +1,121 @@
++; Proposed analysis declaration/rule snapshot, not production eggcc source.
++; Proposed restricted analysis over real eggcc constructors and memory rules.
++; Input pattern derives from memory.rs:439-469 (two allocations/two stores/load).
++; This is a replay, not yet an actual compiler optimization result.
++(include "source/schema.egg")
++(include "source/interval-bounds.egg")
++(include "source/mem_simple.egg")
++
++; New immutable structural data. No annotation is placed on Expr or mutable
++; analysis records. Static Alloc ids are intentionally absent from these keys.
++(datatype AddressKey (LocalCell String i64 i64 :injective))
++(relation FreshState (Expr String i64))
++(relation LocalAllocation (Expr String i64 i64))
++(relation LiveAllocation (Expr Expr String i64))
++(relation ExactLocalAddress (Expr Expr AddressKey i64))
++(relation ConflictingKey (Expr))
++(relation ConflictingOrdinal (Expr))
++(ruleset exact-addresses)
++(ruleset exact-query)
++(ruleset exact-manual-pairs)
++(ruleset exact-manual-consumer)
++(relation DidExactOptimization (String))
++(relation ManualNoAlias (Expr Expr Expr))
++(relation HasArgType (Expr Type))
++(relation ContextOf (Expr Assumption))
++(ruleset peepholes)
++; Exact source normalization: peepholes.egg:12-13,23-30,55-57.
++(rewrite (Bop (Add) (Const (Int j) ty ctx) (Const (Int i) ty ctx))
++         (Const (Int (+ i j)) ty ctx) :ruleset peepholes)
++(rule ((= expr (Bop (Sub) x x)) (HasArgType expr ty) (ContextOf expr ctx))
++      ((union expr (Const (Int 0) ty ctx))) :ruleset peepholes)
++(rewrite (Bop (PtrAdd) (Bop (PtrAdd) p x) y)
++         (Bop (PtrAdd) p (Bop (Add) x y)) :ruleset peepholes)
++
++; Enforced domain: one function input state, direct positive constant-sized
++; allocations, and constant-integer stores. All other effect nodes stop it.
++(rule ((FunctionHasType name (TupleT (TCons (StateT) (TNil))) output-type)
++       (= state (Get (Arg (TupleT (TCons (StateT) (TNil))) (InFunc name)) 0)))
++      ((FreshState state name 0)) :ruleset exact-addresses)
++(rule ((FreshState state name ordinal)
++       (= allocation (Alloc id (Const (Int size) ty (InFunc name)) state pointerty))
++       (> size 0)
++       (< ordinal 9223372036854775807))
++      ((FreshState (Get allocation 1) name (+ ordinal 1))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation (Get allocation 1) allocation name ordinal)
++       (ExactLocalAddress (Get allocation 0) allocation (LocalCell name ordinal 0) size))
++      :ruleset exact-addresses)
++(rule ((= allocation (Alloc id amount state pointerty))
++       (LocalAllocation allocation name ordinal size)
++       (LiveAllocation state previous name previous-ordinal))
++      ((LiveAllocation (Get allocation 1) previous name previous-ordinal))
++      :ruleset exact-addresses)
++(rule ((FreshState state name next)
++       (= pointer-key (LocalCell name ordinal offset))
++       (ExactLocalAddress pointer origin pointer-key size)
++       (LiveAllocation state origin name ordinal)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state)))
++      ((FreshState write name next)) :ruleset exact-addresses)
++(rule ((FreshState write name next)
++       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state))
++       (LiveAllocation state origin name ordinal))
++      ((LiveAllocation write origin name ordinal)) :ruleset exact-addresses)
++
++; These guards establish 0 <= offset+delta < size before the action adds.
++; Thus addition is representable, and no host/runtime wraparound is assumed.
++(rule ((ExactLocalAddress pointer origin (LocalCell name ordinal offset) size)
++       (= shifted (Bop (PtrAdd) pointer (Const (Int delta) ty (InFunc name))))
++       (>= delta (- 0 offset))
++       (< delta (- size offset)))
++      ((ExactLocalAddress shifted origin (LocalCell name ordinal (+ offset delta)) size))
++      :ruleset exact-addresses)
++
++; Audit consistency after source transformations. These checks do not conceal
++; conflicting keys by filtering raw pointer e-class IDs in the consumer.
++(rule ((ExactLocalAddress pointer origin key1 size1)
++       (ExactLocalAddress pointer origin2 key2 size2)
++       (known-disequal? key1 key2))
++      ((ConflictingKey pointer)) :ruleset exact-addresses :naive)
++(rule ((FreshState state name i) (FreshState state name j) (!= i j))
++      ((ConflictingOrdinal state)) :ruleset exact-addresses)
++
++; Query consumer: source mem_simple.egg:71-81 with the NoAlias premise replaced
++; by exact live-key premises. The graph read requires :naive.
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ExactLocalAddress write-addr write-origin write-key write-size)
++       (ExactLocalAddress load-addr load-origin load-key load-size)
++       (= write-key (LocalCell name write-ordinal write-offset))
++       (= load-key (LocalCell name load-ordinal load-offset))
++       (LiveAllocation state write-origin name write-ordinal)
++       (LiveAllocation state load-origin name load-ordinal)
++       (known-disequal? write-key load-key))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "query")) :ruleset exact-query :naive)
++
++; Equivalent manual comparison uses exactly the same key/liveness domain.
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= pi qi))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((FreshState state name next)
++       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
++       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
++       (LiveAllocation state p-origin name pi)
++       (LiveAllocation state q-origin name qi) (!= po qo))
++      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
++(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
++       (= load (Bop (Load) load-addr write))
++       (FreshState state name next)
++       (ManualNoAlias write-addr load-addr state))
++      ((let new-load (Bop (Load) load-addr state))
++       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidExactOptimization "manual")) :ruleset exact-manual-consumer)
++
+diff --git a/benchmarks/eggcc-encoding/source/exact-local-audit.egg b/benchmarks/eggcc-encoding/source/exact-local-audit.egg
+new file mode 100644
+index 00000000..a34825a8
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/exact-local-audit.egg
+@@ -0,0 +1,13 @@
++; Fail-fast assertions for the proposed restricted exact-local analysis.
++; They inspect the just-updated tables directly; no one-round marker delay.
++(ruleset exact-audit)
++(rule ((ExactLocalAddress pointer origin key1 size1)
++       (ExactLocalAddress pointer origin2 key2 size2)
++       (known-disequal? key1 key2))
++      ((panic "exact-address rejection: pointer has incompatible keys"))
++      :ruleset exact-audit :naive)
++(rule ((FreshState state name i)
++       (FreshState state name j)
++       (!= i j))
++      ((panic "exact-address rejection: state has unequal ordinal counts"))
++      :ruleset exact-audit)
+diff --git a/benchmarks/eggcc-encoding/source/exact-local-audited-query-schedule.egg b/benchmarks/eggcc-encoding/source/exact-local-audited-query-schedule.egg
+new file mode 100644
+index 00000000..8f9e375b
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/exact-local-audited-query-schedule.egg
+@@ -0,0 +1,12 @@
++; Each exact-addresses item is ONE propagation step. Audits must occur INSIDE
++; its saturation loop so a cyclic state cannot indefinitely add ordinals.
++; Consumers run only after this audited propagation reaches a fixed point.
++(run-schedule
++  (saturate
++    (saturate exact-addresses injectivity exact-audit)
++    peepholes
++    interval-analysis
++    mem-simple
++    (saturate exact-addresses injectivity exact-audit)
++    exact-query
++    exact-audit))
+diff --git a/benchmarks/eggcc-encoding/source/exact-local-rejection-setup.egg b/benchmarks/eggcc-encoding/source/exact-local-rejection-setup.egg
+new file mode 100644
+index 00000000..e9761b77
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/exact-local-rejection-setup.egg
+@@ -0,0 +1,18 @@
++; No analysis or consumer is run by this setup.
++(include "source/exact-local-analysis.egg")
++(include "source/exact-local-audit.egg")
++(let $ty (TupleT (TCons (StateT) (TNil))))
++(let $ctx (InFunc "main"))
++(FunctionHasType "main" $ty (Base (StateT)))
++(let $initial (Get (Arg $ty $ctx) 0))
++(let $size (Const (Int 4) $ty $ctx))
++(let $old (Const (Int 17) $ty $ctx))
++(let $new (Const (Int 99) $ty $ctx))
++(let $a0 (Alloc 0 $size $initial (PointerT (IntT))))
++(let $p (Get $a0 0))
++(let $a1 (Alloc 0 $size (Get $a0 1) (PointerT (IntT))))
++(let $q (Get $a1 0))
++(let $state (Get $a1 1))
++(let $w0 (Top (Write) $p $old $state))
++(let $w1 (Top (Write) $q $new $w0))
++(let $load (Bop (Load) $p $w1))
+diff --git a/benchmarks/eggcc-encoding/source/interval-bounds.egg b/benchmarks/eggcc-encoding/source/interval-bounds.egg
+new file mode 100644
+index 00000000..1731d2b6
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/interval-bounds.egg
+@@ -0,0 +1,24 @@
++; Exact source ranges: interval_analysis.egg:1-10,34-46.
++(ruleset interval-analysis)
++(ruleset interval-rewrite)
++
++(sort IntOrBool (Either i64 bool))
++;; A none bound is dead code, so any value can be chosen.
++(sort Bound (Maybe IntOrBool))
++
++; bound tables
++(function lo-bound (Expr) Bound :merge (maybe-either-i64-bool-max old new))
++(function hi-bound (Expr) Bound :merge (maybe-either-i64-bool-min old new))
++(rule ((= lhs (Const (Int x) ty ctx)))
++      (
++        (set (lo-bound lhs) (maybe-some (either-left x)))
++        (set (hi-bound lhs) (maybe-some (either-left x)))
++      )
++      :ruleset interval-analysis)
++
++(rule ((= lhs (Const (Bool x) ty ctx)))
++      (
++        (set (lo-bound lhs) (maybe-some (either-right x)))
++        (set (hi-bound lhs) (maybe-some (either-right x)))
++      )
++      :ruleset interval-analysis)
+diff --git a/benchmarks/eggcc-encoding/source/manifest.json b/benchmarks/eggcc-encoding/source/manifest.json
+new file mode 100644
+index 00000000..1badf427
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/manifest.json
+@@ -0,0 +1,70 @@
++{
++  "origin": "https://github.com/egraphs-good/eggcc",
++  "revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++  "copies": [
++    {
++      "fixture_path": "source/schema.egg",
++      "fixture_sha256": "cbf82f3ddb22f60f364ee59e9ecf15ff2bd468f1d561ccb48e93e65a1fd0144b",
++      "origin": "dag_in_context/src/schema.egg",
++      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++      "origin_sha256": "cbf82f3ddb22f60f364ee59e9ecf15ff2bd468f1d561ccb48e93e65a1fd0144b",
++      "ranges": null,
++      "modification": "none"
++    },
++    {
++      "fixture_path": "source/mem_simple.egg",
++      "fixture_sha256": "0940158a93383a76733b29512645453e5052d92e899f8130ec284ab7460e98fb",
++      "origin": "dag_in_context/src/optimizations/mem_simple.egg",
++      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++      "origin_sha256": "0940158a93383a76733b29512645453e5052d92e899f8130ec284ab7460e98fb",
++      "ranges": null,
++      "modification": "none"
++    },
++    {
++      "fixture_path": "source/interval-bounds.egg",
++      "fixture_sha256": "9c560ad4eeb5c45888d5a15e8c6012c19386a96e7c5f6b91e37fef8563e51420",
++      "origin": "dag_in_context/src/interval_analysis.egg",
++      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++      "origin_sha256": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647",
++      "ranges": [
++        [
++          1,
++          10
++        ],
++        [
++          34,
++          46
++        ]
++      ],
++      "modification": "source ranges concatenated with one provenance comment"
++    },
++    {
++      "fixture_path": "source/resolved.egg",
++      "fixture_sha256": "52a4787f288c57e3eccfe200404751d84fb786691ecae17dba7dd08842be6a1a",
++      "origin": "dag_in_context/src/optimizations/memory.egg",
++      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++      "origin_sha256": "64261a909deffc8843acf71a901e013894b0db83d44e90dc31201bf964129c9e",
++      "ranges": [
++        [
++          88,
++          145
++        ]
++      ],
++      "modification": "source ranges concatenated with one provenance comment"
++    },
++    {
++      "fixture_path": "source/constant-guard.egg",
++      "fixture_sha256": "2ad03cae392a3d65ba7c98df76320cda35de54a52832add6007d5be16aa1af42",
++      "origin": "dag_in_context/src/type_analysis.egg",
++      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
++      "origin_sha256": "9924928fa7927189c36f0b65b1cd68d5914850b7fc9e6cfe00f118e39a7c81de",
++      "ranges": [
++        [
++          41,
++          45
++        ]
++      ],
++      "modification": "source ranges concatenated with one provenance comment"
++    }
++  ]
++}
+diff --git a/benchmarks/eggcc-encoding/source/mem_simple.egg b/benchmarks/eggcc-encoding/source/mem_simple.egg
+new file mode 100644
+index 00000000..83a6add4
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/mem_simple.egg
+@@ -0,0 +1,137 @@
++
++(ruleset mem-simple)
++
++; ============================
++; NoAlias analysis
++; ============================
++
++(relation NoAlias (Expr Expr))
++
++; Push NoAlias into if
++(rule ((= if (If pred inputs thn els))
++       (= (Get inputs i) inputs-i)
++       (= (Get inputs j) inputs-j)
++       (NoAlias inputs-i inputs-j)
++       (= arg-i (Get (Arg ty (InIf which pred inputs)) i))
++       (= arg-j (Get (Arg ty (InIf which pred inputs)) j)))
++      ((NoAlias arg-i arg-j))
++      :ruleset mem-simple)
++
++(rule ((Bop (PtrAdd) e i)
++       (= lo (either-unwrap-left (maybe-unwrap (lo-bound i))))
++       (> lo 0))
++      ((NoAlias e (Bop (PtrAdd) e i)))
++      :ruleset mem-simple)
++
++(rule ((Bop (PtrAdd) e i)
++       (= hi (either-unwrap-left (maybe-unwrap (hi-bound i))))
++       (< hi 0))
++      ((NoAlias e (Bop (PtrAdd) e i)))
++      :ruleset mem-simple)
++
++(rule ((= p1 (Bop (PtrAdd) p i))
++       (= p2 (Bop (PtrAdd) p (Bop (Add) i diff)))
++       (= lo (either-unwrap-left (maybe-unwrap (lo-bound diff))))
++       (> lo 0))
++      ((NoAlias p1 p2))
++      :ruleset mem-simple)
++
++(rule ((= p1 (Bop (PtrAdd) p i))
++       (= p2 (Bop (PtrAdd) p (Bop (Add) i diff)))
++       (= hi (either-unwrap-left (maybe-unwrap (hi-bound diff))))
++       (< hi 0))
++      ((NoAlias p1 p2))
++      :ruleset mem-simple)
++
++(rule ((= p1 (Bop (PtrAdd) p i))
++       (= p2 (Bop (PtrAdd) p (Bop (Sub) i diff)))
++       (= lo (either-unwrap-left (maybe-unwrap (lo-bound diff))))
++       (> lo 0))
++      ((NoAlias p1 p2))
++      :ruleset mem-simple)
++
++(rule ((= p1 (Bop (PtrAdd) p i))
++       (= p2 (Bop (PtrAdd) p (Bop (Sub) i diff)))
++       (= hi (either-unwrap-left (maybe-unwrap (hi-bound diff))))
++       (< hi 0))
++      ((NoAlias p1 p2))
++      :ruleset mem-simple)
++
++(rule ((NoAlias x y))
++      ((NoAlias y x))
++      :ruleset mem-simple)
++
++; ============================
++; Memory optimizations
++; ============================
++
++(relation DidMemOptimization (String))
++
++; A write then a load to different addresses can be swapped
++(rule ((NoAlias write-addr load-addr)
++       (= write (Top (Write) write-addr write-val state))
++       (= load (Bop (Load) load-addr write)))
++      ((let new-load (Bop (Load) load-addr state))
++       (union
++          (Get load 1)
++          (Top (Write) write-addr write-val (Get new-load 1)))
++       (union (Get load 0) (Get new-load 0))
++       (DidMemOptimization "commute write then load")
++      )
++      :ruleset mem-simple)
++
++; A load then a write to different addresses can be swapped
++; Actually, does this break WeaklyLinear if the stored value depends on the
++; loaded value? Commenting this out for now.
++; (rule ((NoAlias load-addr write-addr)
++;        (= load (Bop (Load) load-addr state))
++;        (= write (Top (Write) write-addr write-val (Get load 1))))
++;       ((let new-write (Top (Write) write-addr write-val state))
++;        (let new-load (Bop (Load) load-addr new-write))
++;        (union write (Get new-load 1))
++;        (union (Get load 0) (Get new-load 0))
++;        (DidMemOptimization "commute load then write")
++;        )
++;       :ruleset mem-simple)
++
++; Two loads to the same address can be compressed
++(rule ((= first-load (Bop (Load) addr state))
++       (= second-load (Bop (Load) addr first-load)))
++      ((union (Get first-load 0) (Get second-load 0))
++       (union (Get first-load 1) (Get second-load 1))
++       (DidMemOptimization "duplicate load")
++       )
++      :ruleset mem-simple)
++
++; A write and a load to the same address can be forwarded
++(rule ((= write (Top (Write) addr write-val state))
++       (= load (Bop (Load) addr write)))
++      ((union (Get load 0) write-val)
++       (union (Get load 1) write)
++       (DidMemOptimization "store forward")
++       )
++      :ruleset mem-simple)
++
++; Two writes of the same value to the same address can be compressed
++(rule ((= first-write (Top (Write) addr write-val state))
++       (= second-write (Top (Write) addr write-val first-write)))
++      ((union first-write second-write)
++       (DidMemOptimization "duplicate write"))
++      :ruleset mem-simple)
++
++; A write shadows a previous write to the same address
++(rule ((= first-write (Top (Write) addr shadowed-val state))
++       (= second-write (Top (Write) addr write-val first-write)))
++      ((union second-write (Top (Write) addr write-val state))
++       (DidMemOptimization "shadowed write"))
++      :ruleset mem-simple)
++
++; A load doesn't change the state
++; TODO: why does this break weaklylinear?
++; (rule ((= load (Bop (Load) addr state)))
++;       ((union (Get load 1) state))
++;       :ruleset mem-simple)
++
++; (rule ((DidMemOptimization _))
++;       ((panic "DidMemOptimization"))
++;       :ruleset mem-simple)
+diff --git a/benchmarks/eggcc-encoding/source/resolved.egg b/benchmarks/eggcc-encoding/source/resolved.egg
+new file mode 100644
+index 00000000..7f01bd28
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/resolved.egg
+@@ -0,0 +1,59 @@
++; Exact source range: optimizations/memory.egg:88-145.
++; Resolved checks if an e-class contains a term containing only constructors and
++; primitives; i.e. whether equality is decideable
++(relation Resolved-IntOrInfinity (IntOrInfinity))
++(rule ((= f (I _)))
++      ((Resolved-IntOrInfinity f))
++      :ruleset memory-helpers)
++(rule ((= f (Infinity)))
++      ((Resolved-IntOrInfinity f))
++      :ruleset memory-helpers)
++(rule ((= f (NegInfinity)))
++      ((Resolved-IntOrInfinity f))
++      :ruleset memory-helpers)
++
++(relation Resolved-IntInterval (IntInterval))
++(rule ((= f (MkIntInterval lo hi))
++       (Resolved-IntOrInfinity lo)
++       (Resolved-IntOrInfinity hi))
++      ((Resolved-IntInterval f))
++      :ruleset memory-helpers)
++
++(relation Resolved-List<i64+IntInterval> (List<i64+IntInterval>))
++(rule ((= f (Nil-List<i64+IntInterval>)))
++      ((Resolved-List<i64+IntInterval> f))
++      :ruleset memory-helpers)
++(rule ((= f (Cons-List<i64+IntInterval> allocid offsets tl))
++       (Resolved-List<i64+IntInterval> tl)
++       (Resolved-IntInterval offsets))
++      ((Resolved-List<i64+IntInterval> f))
++      :ruleset memory-helpers)
++
++(relation Resolved-PtrPointees (PtrPointees))
++(rule ((= f (PointsAnywhere)))
++      ((Resolved-PtrPointees f))
++      :ruleset memory-helpers)
++(rule ((= f (PointsTo x))
++       (Resolved-List<i64+IntInterval> x))
++      ((Resolved-PtrPointees f))
++      :ruleset memory-helpers)
++
++(relation Resolved-List<PtrPointees> (List<PtrPointees>))
++(rule ((= f (Nil-List<PtrPointees>)))
++      ((Resolved-List<PtrPointees> f))
++      :ruleset memory-helpers)
++(rule ((= f (Cons-List<PtrPointees> hd tl))
++       (Resolved-List<PtrPointees> tl)
++       (Resolved-PtrPointees hd))
++      ((Resolved-List<PtrPointees> f))
++      :ruleset memory-helpers)
++
++(relation Resolved-Pointees (Pointees))
++(rule ((= f (TuplePointsTo x))
++       (Resolved-List<PtrPointees> x))
++      ((Resolved-Pointees f))
++      :ruleset memory-helpers)
++(rule ((= f (PtrPointsTo x))
++       (Resolved-PtrPointees x))
++      ((Resolved-Pointees f))
++      :ruleset memory-helpers)
+diff --git a/benchmarks/eggcc-encoding/source/schema.egg b/benchmarks/eggcc-encoding/source/schema.egg
+new file mode 100644
+index 00000000..53239055
+--- /dev/null
++++ b/benchmarks/eggcc-encoding/source/schema.egg
+@@ -0,0 +1,312 @@
++; Every term is an `Expr` or a `ListExpr`.
++(datatype Expr)
++; Used for constructing a list of branches for `Switch`es
++; or a list of functions in a `Program`.
++(datatype ListExpr (Cons Expr ListExpr) (Nil))
++
++; =================================
++; Types
++; =================================
++
++(sort TypeList)
++
++(datatype BaseType
++  (IntT)
++  (BoolT)
++  (FloatT)
++  ; a pointer to a memory region with a particular type
++  (PointerT BaseType)
++  (StateT))
++
++
++(datatype Type
++  ; a primitive type
++  (Base BaseType)
++  ; a typed tuple. Use an empty tuple as a unit type.
++  ; state edge also has unit type
++  (TupleT TypeList)
++)
++
++; use TmpType for helpers where the type doesn't matter
++; these shouldn't appear in values in the program, only intermediate terms (such as in ivt.egg permutations)
++(constructor TmpType () Type)
++
++(constructor TNil () TypeList)
++(constructor TCons (BaseType TypeList) TypeList) ; Head element should never be a tuple
++
++
++; =================================
++; Assumptions
++; =================================
++
++(datatype Assumption
++  ; Assume nothing
++  (InFunc String)
++  ; The term is in a loop with `input` and `pred_output`.
++  ; InLoop is a special context because it describes the argument of the loop. It is a *scope context*.
++  ;      input    pred_output
++  (InLoop Expr     Expr)
++  ; Branch of the switch, and what the predicate is, and what the input is
++  (InSwitch i64 Expr Expr)
++  ; If the predicate was true, and what the predicate is, and what the input is
++  (InIf bool Expr Expr)
++)
++
++
++
++; =================================
++; Leaf nodes
++; Constants, argument, and empty tuple
++; =================================
++
++; Only a single argument is bound- if multiple values are needed, arg will be a tuple.
++; e.g. `(Get (Arg tuple_type) 1)` gets the second value in the argument with some tuple_type.
++(constructor Arg (Type Assumption) Expr)
++
++; Constants
++(datatype Constant
++  (Int i64)
++  (Bool bool)
++  (Float f64))
++; All leaf nodes need the type of the argument
++; Type is the type of the bound argument in scope
++(constructor Const (Constant Type Assumption) Expr)
++
++; An empty tuple.
++; Type is the type of the bound argument in scope
++(constructor Empty (Type Assumption) Expr)
++
++
++; =================================
++; Operators
++; =================================
++
++(datatype TernaryOp
++  ; given a pointer, value, and a state edge
++  ; writes the value to the pointer and returns
++  ; the resulting state edge
++  (Write)
++  (Select))
++(datatype BinaryOp
++  ;; Bitwise operators
++  (Bitand)
++  ;; integer operators
++  (Add)
++  (Sub)
++  (Div)
++  (Mul)
++  (LessThan)
++  (GreaterThan)
++  (LessEq)
++  (GreaterEq)
++  (Eq)
++  (Smin)
++  (Smax)
++  (Shl)
++  (Shr)
++  ;; float operators 
++  (FAdd)
++  (FSub)
++  (FDiv)
++  (FMul)
++  (FLessThan)
++  (FGreaterThan) 
++  (FLessEq)
++  (FGreaterEq)
++  (FEq)
++  (Fmin)
++  (Fmax)
++  ;; logical operators
++  (And)
++  (Or)
++  ; given a pointer and a state edge
++  ; loads the value at the pointer and returns (value, state edge)
++  (Load)
++  ; Takes a pointer and an integer, and offsets
++  ; the pointer by the integer
++  (PtrAdd)
++  ; given and value and a state edge, prints the value as a side-effect
++  ; the value must be a base value, not a tuple
++  ; returns an empty tuple
++  (Print)
++  ; given a pointer and state edge, frees the whole memory region at the pointer
++  (Free))
++(datatype UnaryOp
++  (Neg)
++  (Abs)
++  (Not))
++
++; Operators
++(constructor Top   (TernaryOp Expr Expr Expr) Expr)
++(constructor Bop   (BinaryOp Expr Expr) Expr)
++(constructor Uop   (UnaryOp Expr) Expr)
++; gets from a tuple. static index
++(constructor Get   (Expr i64) Expr)
++; (Alloc id amount state_edge pointer_type)
++; allocate an integer amount of memory for a particular type
++; returns (pointer to the allocated memory, state edge)
++(constructor Alloc (i64 Expr Expr BaseType)      Expr)
++;               name of func   arg
++(constructor Call (String         Expr) Expr)
++
++
++
++; =================================
++; Tuple operations
++; =================================
++
++; `Empty`, `Single` and `Concat` create tuples.
++; 1. Use `Empty` for an empty tuple.
++; 2. Use `Single` for a tuple with one element.
++; 3. Use `Concat` to append the elements from two tuples together.
++; Nested tuples are not allowed.
++
++
++; A tuple with a single element.
++; Necessary because we only use `Concat` to add to tuples.
++(constructor Single (Expr) Expr)
++; Concat appends the elemnts from two tuples together
++; e.g. (Concat (Concat (Single a) (Single b))
++;              (Concat (Single c) (Single d))) = (a, b, c, d)
++;                 expr1       expr2
++(constructor Concat (Expr        Expr)       Expr)
++
++
++
++; =================================
++; Control flow
++; =================================
++
++; Switch on a list of lazily-evaluated branches.
++; pred must be an integer
++;                 pred  inputs   branches     chosen
++(constructor Switch (Expr  Expr     ListExpr)    Expr)
++; If is like switch, but with a boolean predicate
++;             pred inputs   then else
++(constructor If (Expr Expr     Expr Expr) Expr)
++
++
++; A do-while loop.
++; Evaluates the input, then evaluates the body.
++; Keeps looping while the predicate is true.
++; input must have the same type as (output1, output2, ..., outputi)
++; input must be a tuple 
++; pred must be a boolean
++; pred-and-body must be a flat tuple (pred, out1, out2, ..., outi)
++; input must be the same type as (out1, out2, ..., outi)
++;                  input   pred-and-body
++(constructor DoWhile (Expr    Expr)                   Expr)
++
++
++; =================================
++; Top-level expressions
++; =================================
++(sort ProgramType)
++; An entry function and a list of additional functions.
++;                      entry function     other functions
++(constructor Program     (Expr               ListExpr) ProgramType)
++;                   name   input ty  output ty  output
++(constructor Function (String Type      Type       Expr)      Expr)
++
++; to get the type of a funciton, look in this table
++; since we might not be optimizing the entire program
++(relation FunctionHasType (String Type Type))
++
++; Rulesets
++(ruleset always-run)
++(ruleset is-resolved)
++(ruleset error-checking)
++(ruleset memory)
++(ruleset memory-helpers)
++(ruleset smem)
++
++;; Initliazation
++(relation bop->string (BinaryOp String))
++(relation uop->string (UnaryOp String))
++(relation top->string (TernaryOp String))
++(bop->string (Add) "Add")
++(bop->string (Sub) "Sub")
++(bop->string (Div) "Div")
++(bop->string (Mul) "Mul")
++(bop->string (LessThan) "LessThan")
++(bop->string (GreaterThan) "GreaterThan")
++(bop->string (LessEq) "LessEq")
++(bop->string (GreaterEq) "GreaterEq")
++(bop->string (Eq) "Eq")
++(bop->string (FAdd) "FAdd")
++(bop->string (FSub) "FSub")
++(bop->string (FDiv) "FDiv")
++(bop->string (FMul) "FMul")
++(bop->string (FLessThan) "FLessThan")
++(bop->string (FGreaterThan) "FGreaterThan")
++(bop->string (FLessEq) "FLessEq")
++(bop->string (FGreaterEq) "FGreaterEq")
++(bop->string (FEq) "FEq")
++(bop->string (And) "And")
++(bop->string (Or) "Or")
++(bop->string (Load) "Load")
++(bop->string (PtrAdd) "PtrAdd")
++(bop->string (Print) "Print")
++(bop->string (Free) "Free")
++
++;; If anything is put in the DebugExpr relation, we'll extract them instead of the original program.
++;; These can then be visualized using the `optimized-rvsdg` run mode
++(relation DebugExpr (Expr))
++
++; TERMS
++(datatype Term)
++(datatype ListTerm (TermCons Term ListTerm) (TermNil))
++
++; TODO: Will probably need ctx so that we can resubstitute?
++; (datatype TermAssumption
++;   ; Assume nothing
++;   (InFunc String)
++;   ; The term is in a loop with `input` and `pred_output`.
++;   ; InLoop is a special context because it describes the argument of the loop. It is a *scope context*.
++;   ;      input    pred_output
++;   (InLoop Term     Term)
++;   ; Branch of the switch, and what the predicate is, and what the input is
++;   (InSwitch i64 Term Term)
++;   ; If the predicate was true, and what the predicate is, and what the input is
++;   (InIf bool Term Term)
++; )
++
++(constructor TermArg () Term)
++
++(constructor TermConst (Constant) Term)
++
++(constructor TermEmpty () Term)
++
++; Term Operators
++(constructor TermTop (TernaryOp Term Term Term) Term)
++(constructor TermBop (BinaryOp Term Term) Term)
++(constructor TermUop (UnaryOp Term) Term)
++(constructor TermGet (Term i64) Term)
++(constructor TermAlloc (i64 Term Term BaseType) Term)
++(constructor TermCall (String Term) Term)
++
++; Tuple Operators
++(constructor TermSingle (Term) Term)
++(constructor TermConcat (Term Term) Term)
++
++; Control Flow (TODO? Not sure if needed)
++; (constructor TermSwitch (Term Term ListTerm) Term)
++; (constructor TermIf (Term Term Term Term) Term)
++
++; (constructor TermDoWhile (Term Term) Term)
++
++;;                      inputs, outputs -> number of iterations
++;; The minimum possible guess is 1 because of do-while loops
++(function LoopNumItersGuess (Expr Expr) i64 :merge (max 1 (min old new)))
++
++;; inputs, outputs -> the loop is proven to terminate
++(relation LoopIsFinite (Expr Expr))
++
++
++;; A hint for no-context mode that this rule
++;; fundamentally relies on context and can't be fixed using dummy contexts
++(relation RELIESONCONTEXT ())
++;; A dummy context for use in no context mode
++(let DUMMYCTX (InFunc "DUMMY"))
++
++(ruleset never)
+\ No newline at end of file
+diff --git a/scripts/eggcc_encoding_case_study.md b/scripts/eggcc_encoding_case_study.md
+new file mode 100644
+index 00000000..872e6f41
+--- /dev/null
++++ b/scripts/eggcc_encoding_case_study.md
+@@ -0,0 +1,142 @@
++# Full-eggcc case-study evidence
++
++This small driver never builds a compiler or changes a configuration. Supply
++built release binaries and a fixed study JSON. Keep study evidence under
++`benchmarks/local/eggcc-encoding-case-study/`, outside Cargo's `target/`.
++Paths in the study resolve relative to the study JSON; CLI paths resolve from
++the invocation directory. Use fresh result paths: collection refuses to replace
++existing results or a receipt directory.
++
++```sh
++uv run --no-project --python 3.13 python scripts/eggcc_encoding_case_study.py collect STUDY.json RESULTS.json
++uv run --no-project --python 3.13 python scripts/eggcc_encoding_case_study.py verify STUDY.json RESULTS.json
++uv run --no-project --python 3.13 --with matplotlib==3.10.7 python scripts/eggcc_encoding_case_study.py figures STUDY.json RESULTS.json FIGURES_DIR
++```
++
++Python 3.12 or newer is required; these commands explicitly select Python 3.13.
++Only `figures` needs Matplotlib. The pinned invocation uses an isolated uv
++environment and does not add a project dependency. `collect` and `verify` use
++the standard library and the existing `benchmarking.processes.run_command`.
++Operational messages go to stderr; command failure returns a nonzero exit.
++
++The following is a schema example, **not a measured case or runnable study**:
++
++```json
++{
++  "schema_version": 1,
++  "study_id": "chosen-eggcc-case",
++  "warmups": 1,
++  "observations": 10,
++  "timeout_sec": 300,
++  "cases": [
++    {
++      "id": "positive",
++      "label": "Positive control",
++      "input": "fixtures/positive.bril",
++      "origin": "eggcc REV:path, or precise derivation and local patch"
++    }
++  ],
++  "arms": [
++    {
++      "id": "B",
++      "binary": "/absolute/path/to/release/eggcc",
++      "cwd": "/absolute/path/to/eggcc-worktree",
++      "engine": "egglog-experimental REV, ordinary NEE",
++      "configuration": "engine-only compatibility arm; common Rust VERSION",
++      "args": ["--with-context", "--run-mode", "optimize"],
++      "env": {"RAYON_NUM_THREADS": "1"}
++    }
++  ],
++  "artifacts": [
++    {
++      "id": "source-manifest",
++      "path": "provenance/compiler-and-dependencies.json",
++      "origin": "revision, toolchain, build flags, resolved dependency graphs and dirty diff inventory"
++    },
++    {
++      "id": "focused-tests",
++      "kind": "tests",
++      "path": "correctness/focused-tests.json",
++      "origin": "exact canary commands and retained stdout/stderr"
++    }
++  ],
++  "claims": {"real_bug": null, "optimization": null}
++}
++```
++
++Cases, arms and artifacts need unique filename-safe `id` values. Input and
++artifact origins are required. Arms require explicit engine/configuration
++labels and `--run-mode optimize`. List every configuration file, manifest,
++lockfile, source diff and evidence file that needs byte-level verification in
++`artifacts`; hashing an inventory JSON does not recursively hash its referenced
++files. Binaries and input files are always hashed separately. The driver does
++not establish source/build equivalence or semantically justify new axioms.
++
++Represent interpreter input variants as separate `.bril` fixtures with retained
++`# ARGS:` lines and origins. Eggcc's CLI currently ignores its trailing
++positional arguments when constructing interpreter input. The collector passes
++only each fixture path, and does not expose an interpreter-arguments setting.
++Fix all optimizer flags, schedules, pass counts, extraction settings and thread
++counts through the arm configuration; unspecified flags retain that binary's
++defaults. Keep engine-only and feature contrasts separate.
++
++A `kind: "tests"` artifact is JSON with `"status": "success"` and a positive
++integer `"selected_tests"`; collection checks this before launching any process.
++Retain command and log evidence alongside those
++fields; the collector checks the receipt/count, not the truth of a hand-written
++count. Claims default to explicit nulls. A real-bug claim requires
++`description`, `violated_invariant`, and `baseline_reproducer` naming a retained
++artifact ID. An optimization claim requires `description` and `transformation`
++naming an artifact ID. These byte-level checks support manual review of the
++actual baseline fault, invariant, transformation and representative coverage;
++they cannot establish those claims by themselves. Label seeded faults in the
++case origins and evidence.
++
++Collection first runs every case/arm with `--interp --run-data-out RECEIPT`.
++It explicitly requires both interpreter-output fields to be non-null and equal;
++eggcc's CLI alone does not compare them. Correctness timings are discarded.
++Only then does it run warmups and observations with the same optimizer flags,
++omitting `--interp`. Every repetition visits cases in manifest order and rotates
++the starting arm, giving A/B, B/A order for two arms. Warmups and interpreted
++checks never enter figures. Diagnostic/profiling flags are rejected.
++
++Compiler wall time includes launching the CLI, optimizing, extracting,
++reconstructing, and writing its JSON receipt. It excludes interpretation and
++does not measure generated-program execution performance. RSS is the existing
++runner's platform-normalized `wait4` child `rusage.ru_maxrss`, **not simultaneous
++process-group peak, host memory use, or combined eggcc+Tiger live RSS**. The
++OS's child-resource accounting limits apply. Rows and figure labels retain that
++scope. Use independent measurements for any stronger memory claim.
++
++Results include exact commands, working directories, explicit environment
++overrides, engine/configuration labels, hashes, full compiler JSON receipts,
++exit/signal/timeout status, and raw time/RSS observations. All inherited
++environment values are hashed per key; selected non-sensitive execution keys
++are also retained as text. Explicit `env` values are retained as text, so do not
++put credentials in the study. Other inherited values are not disclosed and
++must be supplied separately if necessary for reproduction. `RUST_LOG` defaults
++to `error`, matching the shared process runner. Result JSON checkpoints after
++every invocation and retains incomplete/failing rows; the first failure stops
++collection. Partial runs are never accepted by verification or figure export.
++
++`verify` checks the study, current binaries/inputs/artifacts and compiler receipt
++hashes, exact scheduled row count/order, invocation/configuration provenance,
++successful exits, non-null equal correctness output, and positive finite timing
++and RSS observations. Preserve referenced files at their recorded paths for
++verification; relocating or rebuilding requires a fresh study/result capture.
++No cached measurement is silently reused.
++
++`figures` verifies first and writes `figure-data.json`, `table.md`, and one
++standalone SVG/PDF pair per case. Figures show every observation, the median,
++and min/max; the table includes sample standard deviation. These express
++observational variability, not confidence intervals. `n=1` explicitly leaves
++standard deviation unavailable. There is no overall aggregate. The figure data
++retains raw values and source result/study hashes for inspection. Regenerate
++into a fresh directory with the same command to check the artifact path.
++
++Focused protocol tests use clearly labeled pytest compiler stand-ins. Their
++rows are **test fixtures, not eggcc study measurements**:
++
++```sh
++uv run --no-project --python 3.13 --with pytest==8.4.2 --with matplotlib==3.10.7 python -m pytest -q tests/test_eggcc_encoding_case_study.py
++```
+diff --git a/scripts/eggcc_encoding_case_study.py b/scripts/eggcc_encoding_case_study.py
+new file mode 100644
+index 00000000..9a672310
+--- /dev/null
++++ b/scripts/eggcc_encoding_case_study.py
+@@ -0,0 +1,462 @@
++#!/usr/bin/env python3
++"""Collect, verify and plot a fixed full-eggcc case study; never build binaries."""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import importlib
++import json
++import math
++import os
++import platform
++import re
++import statistics
++import sys
++from collections.abc import Iterator, Sequence
++from dataclasses import asdict
++from datetime import UTC, datetime
++from pathlib import Path
++from typing import Any
++
++# Permit the documented `python scripts/…` invocation from any directory.
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++from benchmarking.processes import run_command  # noqa: E402
++
++SCHEMA_VERSION = 1
++RSS_SCOPE = "wait4 child rusage.ru_maxrss; platform-normalized, not simultaneous process-group peak"
++FORBIDDEN_FLAGS = {
++    "--interp",
++    "--run-data-out",
++    "--add-timing",
++    "--profile-out",
++    "--debug-dir",
++    "--egraph-out-dir",
++    "--time-ilp",
++}
++
++
++def sha256(path: Path) -> str:
++    """Hash large binaries without materializing them in memory."""
++
++    with path.open("rb") as handle:
++        return hashlib.file_digest(handle, "sha256").hexdigest()
++
++
++def write_json(path: Path, value: Any) -> None:
++    """Replace a checkpoint atomically, leaving the previous one intact on interruption."""
++
++    temporary = path.with_suffix(path.suffix + ".tmp")
++    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
++    temporary.replace(path)
++
++
++def load_study(path: Path) -> dict[str, Any]:
++    """Resolve the intentionally small, case-specific manifest against its own directory."""
++
++    study: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
++    if study["schema_version"] != SCHEMA_VERSION:
++        raise ValueError("unsupported study schema_version")
++    if not study["study_id"] or not study["cases"] or not study["arms"]:
++        raise ValueError("study_id, cases and arms must be nonempty")
++    study.setdefault("warmups", 1)
++    study.setdefault("observations", 10)
++    study.setdefault("timeout_sec", 300)
++    study.setdefault("artifacts", [])
++    study.setdefault("claims", {"real_bug": None, "optimization": None})
++    for name, minimum in (("warmups", 0), ("observations", 1), ("timeout_sec", 1)):
++        if type(study[name]) is not int or study[name] < minimum:
++            raise ValueError(f"{name} must be an integer >= {minimum}")
++    for group in ("cases", "arms", "artifacts"):
++        identities: set[str] = set()
++        for item in study[group]:
++            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", item["id"]) or item["id"] in identities:
++                raise ValueError(f"{group} ids must be unique filename-safe identifiers")
++            identities.add(item["id"])
++            fields = {"cases": ("input",), "arms": ("binary", "cwd"), "artifacts": ("path",)}[group]
++            for field in fields:
++                item[field] = str((path.parent / item[field]).resolve())
++            if group in ("cases", "artifacts") and not item["origin"]:
++                raise ValueError(f"{group} require a source origin")
++    for arm in study["arms"]:
++        if not arm["engine"] or not arm["configuration"]:
++            raise ValueError("arms require engine and configuration labels")
++        arm.setdefault("env", {})
++        if not Path(arm["cwd"]).is_dir():
++            raise ValueError(f"arm cwd is not a directory: {arm['cwd']}")
++        if not os.access(arm["binary"], os.X_OK):
++            raise ValueError(f"arm binary is not executable: {arm['binary']}")
++        flags = {arg.split("=", 1)[0] for arg in arm["args"]}
++        if flags & FORBIDDEN_FLAGS:
++            raise ValueError(
++                f"collector owns interpretation/receipt flags; diagnostics are excluded: {flags & FORBIDDEN_FLAGS}"
++            )
++        args = arm["args"]
++        if "--run-mode" not in args or args[args.index("--run-mode") + 1] != "optimize":
++            raise ValueError("each arm must explicitly select --run-mode optimize")
++    for case in study["cases"]:
++        if "args" in case:
++            raise ValueError("input variants must use retained # ARGS: fixtures; positional CLI arguments are unused")
++    for artifact in study["artifacts"]:
++        if artifact.get("kind") == "tests":
++            receipt = json.loads(Path(artifact["path"]).read_text(encoding="utf-8"))
++            if (
++                receipt["status"] != "success"
++                or type(receipt["selected_tests"]) is not int
++                or receipt["selected_tests"] <= 0
++            ):
++                raise ValueError(f"test receipt must report success and nonzero selected_tests: {artifact['id']}")
++    artifact_ids = {artifact["id"] for artifact in study["artifacts"]}
++    for name, field in (("real_bug", "baseline_reproducer"), ("optimization", "transformation")):
++        claim = study["claims"][name]
++        if claim is not None:
++            if not claim["description"] or claim[field] not in artifact_ids:
++                raise ValueError(f"{name} claim requires description and a retained {field} artifact")
++            if name == "real_bug" and not claim["violated_invariant"]:
++                raise ValueError("real_bug requires a sound violated_invariant for manual review")
++    return study
++
++
++def provenance(study: dict[str, Any]) -> list[dict[str, str]]:
++    """Bind binaries, inputs and externally supplied source/configuration receipts to bytes."""
++
++    files = (
++        [{"kind": "binary", "id": arm["id"], "path": arm["binary"], "origin": arm["engine"]} for arm in study["arms"]]
++        + [
++            {"kind": "input", "id": case["id"], "path": case["input"], "origin": case["origin"]}
++            for case in study["cases"]
++        ]
++        + [
++            {"kind": "artifact", "id": artifact["id"], "path": artifact["path"], "origin": artifact["origin"]}
++            for artifact in study["artifacts"]
++        ]
++    )
++    return [{**entry, "sha256": sha256(Path(entry["path"]))} for entry in files]
++
++
++def schedule(study: dict[str, Any]) -> Iterator[tuple[str, int, dict[str, Any], dict[str, Any]]]:
++    """Check all configurations first, then rotate arm order on each repetition."""
++
++    arms = study["arms"]
++    for phase, count in (("correctness", 1), ("warmup", study["warmups"]), ("measurement", study["observations"])):
++        for repetition in range(count):
++            order = arms[repetition % len(arms) :] + arms[: repetition % len(arms)]
++            for case in study["cases"]:
++                for arm in order:
++                    yield phase, repetition, case, arm
++
++
++def invocation(arm: dict[str, Any], case: dict[str, Any], phase: str, receipt: Path) -> list[str]:
++    """Keep compiler treatment identical across interpreted and timing invocations."""
++
++    return [
++        arm["binary"],
++        *arm["args"],
++        *(["--interp"] if phase == "correctness" else []),
++        "--run-data-out",
++        str(receipt),
++        case["input"],
++    ]
++
++
++def check_receipt(row: dict[str, Any]) -> None:
++    """Require a complete CLI run and explicit, non-null interpreter agreement."""
++
++    if row["status"] != "success" or row["exit_code"] != 0 or row["signal"] is not None or row["error"] is not None:
++        raise ValueError(f"incomplete compiler run: {row['status']}: {row.get('error')}")
++    path = Path(row["receipt_path"])
++    if sha256(path) != row["receipt_sha256"]:
++        raise ValueError(f"changed compiler receipt: {path}")
++    receipt = json.loads(path.read_text(encoding="utf-8"))
++    if (
++        receipt != row["receipt"]
++        or not {"original_interpreted", "result_interpreted", "eggcc_compile_time"} <= receipt.keys()
++    ):
++        raise ValueError("missing or inconsistent compiler receipt")
++    original, result = receipt.get("original_interpreted"), receipt.get("result_interpreted")
++    if row["phase"] == "correctness":
++        if not isinstance(original, str) or not isinstance(result, str):
++            raise ValueError("missing non-null original/result interpreter outputs")
++        if original != result:
++            raise ValueError("original/result interpreter outputs differ")
++    elif original is not None or result is not None:
++        raise ValueError("timing invocation unexpectedly interpreted the program")
++    if row["phase"] != "correctness":
++        if type(row["wall_sec"]) not in (float, int) or not math.isfinite(row["wall_sec"]) or row["wall_sec"] <= 0:
++            raise ValueError("missing positive finite measured wall time")
++        if type(row["max_rss_bytes"]) is not int or row["max_rss_bytes"] <= 0:
++            raise ValueError("missing positive measured wait4 peak RSS")
++
++
++def collect(study_path: Path, results_path: Path) -> dict[str, Any]:
++    """Checkpoint every run and retain failures; never collect timing after a failed check."""
++
++    study = load_study(study_path)
++    if results_path.exists():
++        raise ValueError(f"results already exist; choose a fresh result path: {results_path}")
++    receipts = results_path.with_suffix(".receipts")
++    receipts.mkdir(parents=True, exist_ok=False)
++    results: dict[str, Any] = {
++        "schema_version": SCHEMA_VERSION,
++        "study_path": str(study_path),
++        "study_sha256": sha256(study_path),
++        "study": study,
++        "provenance": provenance(study),
++        "status": "collecting",
++        "rows": [],
++        "started_utc": datetime.now(UTC).isoformat(),
++        "host": {"platform": platform.platform(), "python": sys.version},
++        "rss_scope": RSS_SCOPE,
++        "timing_scope": (
++            "compiler process wall time including CLI JSON receipt; excludes interpretation; not program execution"
++        ),
++    }
++    write_json(results_path, results)
++    try:
++        for phase, repetition, case, arm in schedule(study):
++            if provenance(study) != results["provenance"] or sha256(study_path) != results["study_sha256"]:
++                raise ValueError("study/input/binary/artifact provenance changed during collection")
++            receipt = receipts / f"{phase}-{repetition:02}-{case['id']}-{arm['id']}.json"
++            command = invocation(arm, case, phase, receipt)
++            overrides = {"RUST_LOG": "error", **arm["env"]}
++            effective_env = {**os.environ, **overrides}
++            row: dict[str, Any] = {
++                "phase": phase,
++                "repetition": repetition,
++                "case": case["id"],
++                "arm": arm["id"],
++                "engine": arm["engine"],
++                "configuration": arm["configuration"],
++                "command": command,
++                "cwd": arm["cwd"],
++                "env_overrides": overrides,
++                # Bind the entire effective environment without disclosing inherited credentials.
++                "environment_sha256": {
++                    key: hashlib.sha256(value.encode()).hexdigest() for key, value in sorted(effective_env.items())
++                },
++                "inherited_environment": {
++                    key: effective_env[key]
++                    for key in ("PATH", "LANG", "LC_ALL", "RUSTUP_TOOLCHAIN", "RAYON_NUM_THREADS", "OMP_NUM_THREADS")
++                    if key in effective_env
++                },
++                "receipt_path": str(receipt),
++                "receipt_sha256": None,
++                "receipt": None,
++                "rss_scope": RSS_SCOPE,
++                "wall_sec": None,
++                "max_rss_bytes": None,
++                "status": "failure",
++                "exit_code": None,
++                "signal": None,
++                "error": None,
++            }
++            results["rows"].append(row)
++            print(f"{phase} {repetition + 1}: {case['id']} / {arm['id']}", file=sys.stderr)
++            try:
++                run = run_command(command, Path(arm["cwd"]), study["timeout_sec"], overrides)
++                if phase != "correctness":
++                    row.update(asdict(run.timing))
++                row.update(status=run.status, exit_code=0 if run.status == "success" else None)
++                if run.error is not None:
++                    row.update(error=run.error.message, exit_code=run.error.exit_code, signal=run.error.signal)
++                if receipt.exists():
++                    row["receipt_sha256"] = sha256(receipt)
++                    row["receipt"] = json.loads(receipt.read_text(encoding="utf-8"))
++                check_receipt(row)
++            except (OSError, ValueError) as error:
++                row["error"] = str(error)
++                if row["status"] == "success":
++                    row["status"] = "failure"
++                raise ValueError(f"{phase} {case['id']}/{arm['id']}: {error}") from error
++            finally:
++                write_json(results_path, results)
++        verify(study_path, results_path, require_complete=False)
++        results["status"] = "complete"
++    except BaseException as error:
++        results["status"] = "interrupted" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failure"
++        results["error"] = str(error)
++        raise
++    finally:
++        write_json(results_path, results)
++    return results
++
++
++def verify(study_path: Path, results_path: Path, *, require_complete: bool = True) -> dict[str, Any]:
++    """Check current provenance, complete schedule, test counts and correctness receipts."""
++
++    study = load_study(study_path)
++    results: dict[str, Any] = json.loads(results_path.read_text(encoding="utf-8"))
++    if (
++        results["schema_version"] != SCHEMA_VERSION
++        or results["study_sha256"] != sha256(study_path)
++        or results["study"] != study
++    ):
++        raise ValueError("study manifest provenance mismatch")
++    if provenance(study) != results["provenance"]:
++        raise ValueError("input/binary/artifact provenance mismatch")
++    if require_complete and results["status"] != "complete":
++        raise ValueError(f"collection is incomplete: {results['status']}")
++    if results["rss_scope"] != RSS_SCOPE:
++        raise ValueError("unexpected RSS measurement scope")
++    expected = list(schedule(study))
++    if len(results["rows"]) != len(expected):
++        raise ValueError("missing or extra correctness/warmup/measured rows")
++    for row, (phase, repetition, case, arm) in zip(results["rows"], expected, strict=True):
++        if (row["phase"], row["repetition"], row["case"], row["arm"]) != (phase, repetition, case["id"], arm["id"]):
++            raise ValueError("row identity/order does not match interleaved schedule")
++        if row["command"] != invocation(arm, case, phase, Path(row["receipt_path"])) or row["cwd"] != arm["cwd"]:
++            raise ValueError("recorded invocation provenance mismatch")
++        if (row["engine"], row["configuration"], row["rss_scope"], row["env_overrides"]) != (
++            arm["engine"],
++            arm["configuration"],
++            RSS_SCOPE,
++            {"RUST_LOG": "error", **arm["env"]},
++        ):
++            raise ValueError("recorded treatment/environment provenance mismatch")
++        for key, value in {**row["env_overrides"], **row["inherited_environment"]}.items():
++            if row["environment_sha256"].get(key) != hashlib.sha256(value.encode()).hexdigest():
++                raise ValueError("recorded environment hash mismatch")
++        check_receipt(row)
++    return results
++
++
++def figure_data(results: dict[str, Any]) -> list[dict[str, Any]]:
++    """Derive per-case summaries directly from every measured observation; no aggregate."""
++
++    summaries = []
++    for case in results["study"]["cases"]:
++        for arm in results["study"]["arms"]:
++            rows = [
++                row
++                for row in results["rows"]
++                if (row["phase"], row["case"], row["arm"]) == ("measurement", case["id"], arm["id"])
++            ]
++            values: dict[str, Any] = {"case": case["id"], "arm": arm["id"], "n": len(rows)}
++            for metric in ("wall_sec", "max_rss_bytes"):
++                raw = [row[metric] for row in rows]
++                values[metric] = {
++                    "raw": raw,
++                    "median": statistics.median(raw),
++                    "min": min(raw),
++                    "max": max(raw),
++                    "stdev": statistics.stdev(raw) if len(raw) > 1 else None,
++                }
++            summaries.append(values)
++    return summaries
++
++
++def figures(study_path: Path, results_path: Path, output_dir: Path) -> None:
++    """Export standalone scientific figures and their raw-value source and compact table."""
++
++    results = verify(study_path, results_path)
++    try:
++        matplotlib = importlib.import_module("matplotlib")
++        matplotlib.use("Agg")
++        pyplot = importlib.import_module("matplotlib.pyplot")
++    except ImportError as error:
++        raise ValueError("figures requires matplotlib==3.10.7; see the documented pinned uv invocation") from error
++    output_dir.mkdir(parents=True, exist_ok=True)
++    summaries = figure_data(results)
++    write_json(
++        output_dir / "figure-data.json",
++        {
++            "study_sha256": sha256(study_path),
++            "results_sha256": sha256(results_path),
++            "rss_scope": RSS_SCOPE,
++            "spread": "min/max and sample standard deviation of observations; not confidence intervals",
++            "summaries": summaries,
++        },
++    )
++    table = [
++        "| Case | Arm | n | Compiler wall s: median [min, max]; SD | wait4 peak MiB: median [min, max]; SD |",
++        "| --- | --- | ---: | ---: | ---: |",
++    ]
++    for summary in summaries:
++        cells = []
++        for metric, scale in (("wall_sec", 1), ("max_rss_bytes", 1024**2)):
++            values = summary[metric]
++            sd = "unavailable (n=1)" if values["stdev"] is None else f"{values['stdev'] / scale:.4g}"
++            cells.append(
++                f"{values['median'] / scale:.4g} [{values['min'] / scale:.4g}, {values['max'] / scale:.4g}]; {sd}"
++            )
++        table.append(f"| {summary['case']} | {summary['arm']} | {summary['n']} | {' | '.join(cells)} |")
++    table.extend(
++        [
++            "",
++            f"RSS: {RSS_SCOPE}. Wall time is compiler process elapsed time, not generated-program performance.",
++            "Spread is observational, not a confidence interval. Warmups and interpreted checks are excluded.",
++        ]
++    )
++    (output_dir / "table.md").write_text("\n".join(table) + "\n", encoding="utf-8")
++    with matplotlib.rc_context({"svg.fonttype": "none", "svg.hashsalt": "eggcc-encoding-case-study", "font.size": 10}):
++        for case in results["study"]["cases"]:
++            data = [summary for summary in summaries if summary["case"] == case["id"]]
++            figure, axes = pyplot.subplots(1, 2, figsize=(10, max(3, 1.6 + len(data) * 0.5)), layout="constrained")
++            for axis, metric, scale, label in zip(
++                axes,
++                ("wall_sec", "max_rss_bytes"),
++                (1, 1024**2),
++                ("Compiler elapsed time (s)", "wait4 child peak RSS (MiB)"),
++                strict=True,
++            ):
++                for index, summary in enumerate(data):
++                    values = summary[metric]
++                    raw = [value / scale for value in values["raw"]]
++                    offsets = [
++                        index + (position - (len(raw) - 1) / 2) * 0.16 / max(1, len(raw) - 1)
++                        for position in range(len(raw))
++                    ]
++                    axis.plot(
++                        [values["min"] / scale, values["max"] / scale], [index, index], color="#505050", linewidth=1.5
++                    )
++                    axis.scatter(raw, offsets, marker="o", facecolors="none", edgecolors="#24578a", s=22, zorder=3)
++                    axis.scatter([values["median"] / scale], [index], marker="|", color="#171717", s=140, zorder=4)
++                axis.set_yticks(range(len(data)), [f"{row['arm']} (n={row['n']})" for row in data])
++                axis.invert_yaxis()
++                axis.set_xlim(0, max(row[metric]["max"] / scale for row in data) * 1.06)
++                axis.set_xlabel(label)
++                axis.grid(axis="x", color="#dddddd", linewidth=0.6)
++                axis.set_axisbelow(True)
++                axis.spines[["top", "right"]].set_visible(False)
++            figure.suptitle(case.get("label", case["id"]))
++            figure.supxlabel(
++                "Open circles: observations; black tick: median; line: min-max. "
++                "RSS is not simultaneous process-group peak.",
++                fontsize=8,
++            )
++            for extension in ("svg", "pdf"):
++                metadata = {"Date": None} if extension == "svg" else {"CreationDate": None, "ModDate": None}
++                figure.savefig(output_dir / f"{case['id']}.{extension}", metadata=metadata)
++            pyplot.close(figure)
++
++
++def main(argv: Sequence[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    subparsers = parser.add_subparsers(dest="operation", required=True)
++    for operation in ("collect", "verify", "figures"):
++        subparser = subparsers.add_parser(operation)
++        subparser.add_argument("study", type=Path)
++        subparser.add_argument("results", type=Path)
++        if operation == "figures":
++            subparser.add_argument("output_dir", type=Path)
++    args = parser.parse_args(argv)
++    study, results = args.study.expanduser().resolve(), args.results.expanduser().resolve()
++    try:
++        if args.operation == "collect":
++            collect(study, results)
++        elif args.operation == "verify":
++            verify(study, results)
++        else:
++            figures(study, results, args.output_dir.expanduser().resolve())
++    except (OSError, ValueError, KeyError, TypeError, IndexError) as error:
++        print(f"{args.operation}: {error}", file=sys.stderr)
++        return 1
++    print(
++        f"{args.operation}: verified {results}" if args.operation == "verify" else f"{args.operation}: wrote {results}",
++        file=sys.stderr,
++    )
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_eggcc_encoding_case_study.py b/tests/test_eggcc_encoding_case_study.py
+new file mode 100644
+index 00000000..702c23b0
+--- /dev/null
++++ b/tests/test_eggcc_encoding_case_study.py
+@@ -0,0 +1,323 @@
++"""Exercise the case-study evidence boundary with test-only compiler stand-ins."""
++
++from __future__ import annotations
++
++import importlib
++import json
++import subprocess
++import sys
++from pathlib import Path
++from typing import Any
++
++import pytest
++
++study = importlib.import_module("scripts.eggcc_encoding_case_study")
++SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts/eggcc_encoding_case_study.py"
++
++
++@pytest.fixture
++def paths(tmp_path: Path) -> tuple[Path, Path]:
++    binary = tmp_path / "test-only-compiler"
++    binary.write_text(
++        f"#!{sys.executable}\n"
++        "import json, os, sys, time\n"
++        "from pathlib import Path\n"
++        "mode = os.environ.get('CASE_STUDY_TEST_MODE', '')\n"
++        "if mode == 'exit': sys.exit(7)\n"
++        "if mode == 'timeout': time.sleep(60)\n"
++        "interpreted = '--interp' in sys.argv\n"
++        "receipt = {'original_interpreted': '42\\n' if interpreted else None,\n"
++        "           'result_interpreted': '42\\n' if interpreted else None,\n"
++        "           'eggcc_compile_time': {'secs': 0, 'nanos': 1}}\n"
++        "if mode == 'mismatch': receipt['result_interpreted'] = 'wrong\\n'\n"
++        "if mode == 'missing': receipt['original_interpreted'] = None\n"
++        "if mode == 'malformed': receipt = {'not': 'an eggcc receipt'}\n"
++        "out = Path(sys.argv[sys.argv.index('--run-data-out') + 1])\n"
++        "if mode == 'measured-exit' and out.name.startswith('measurement-'): sys.exit(9)\n"
++        "out.write_text(json.dumps(receipt))\n",
++        encoding="utf-8",
++    )
++    binary.chmod(0o755)
++    (tmp_path / "test-only-input.bril").write_text("# ARGS: 42\n# test-only fixture, not a study case\n")
++    manifest = {
++        "schema_version": 1,
++        "study_id": "test-only-not-study-measurements",
++        "warmups": 1,
++        "observations": 2,
++        "timeout_sec": 1,
++        "cases": [{"id": "fixture", "input": "test-only-input.bril", "origin": "pytest-generated test double"}],
++        "arms": [
++            {
++                "id": arm,
++                "binary": "test-only-compiler",
++                "cwd": ".",
++                "engine": "pytest stand-in, not eggcc",
++                "configuration": "test-only collection protocol",
++                "args": ["--run-mode", "optimize"],
++                "env": {"CASE_STUDY_TEST_MODE": ""},
++            }
++            for arm in ("A", "B")
++        ],
++    }
++    study_path = tmp_path / "study.json"
++    study_path.write_text(json.dumps(manifest), encoding="utf-8")
++    return study_path, tmp_path / "results.json"
++
++
++def test_collect_separates_correctness_interleaves_and_binds_provenance(paths: tuple[Path, Path]) -> None:
++    study_path, results_path = paths
++    result = study.collect(study_path, results_path)
++    assert study.verify(study_path, results_path) == result
++    assert result["status"] == "complete"
++    assert [(row["phase"], row["arm"]) for row in result["rows"]] == [
++        ("correctness", "A"),
++        ("correctness", "B"),
++        ("warmup", "A"),
++        ("warmup", "B"),
++        ("measurement", "A"),
++        ("measurement", "B"),
++        ("measurement", "B"),
++        ("measurement", "A"),
++    ]
++    for row in result["rows"]:
++        assert ("--interp" in row["command"]) == (row["phase"] == "correctness")
++        assert (row["wall_sec"] is None) == (row["phase"] == "correctness")
++        assert row["exit_code"] == 0
++        assert row["environment_sha256"]["RUST_LOG"]
++        assert row["rss_scope"] == study.RSS_SCOPE
++        assert row["cwd"] == str(study_path.parent)
++        assert Path(row["receipt_path"]).is_file()
++    assert {entry["kind"] for entry in result["provenance"]} == {"binary", "input"}
++    with pytest.raises(ValueError, match="results already exist"):
++        study.collect(study_path, results_path)
++
++
++@pytest.mark.parametrize(
++    ("mode", "message", "status", "exit_code"),
++    [
++        ("mismatch", "interpreter outputs differ", "failure", 0),
++        ("missing", "missing non-null", "failure", 0),
++        ("malformed", "missing or inconsistent", "failure", 0),
++        ("exit", "incomplete compiler run", "failure", 7),
++        ("timeout", "incomplete compiler run", "timed-out", None),
++    ],
++)
++def test_failure_is_retained_and_prevents_timing(
++    paths: tuple[Path, Path], mode: str, message: str, status: str, exit_code: int | None
++) -> None:
++    study_path, results_path = paths
++    manifest = json.loads(study_path.read_text())
++    manifest["arms"][0]["env"]["CASE_STUDY_TEST_MODE"] = mode
++    study_path.write_text(json.dumps(manifest))
++    with pytest.raises(ValueError, match=message):
++        study.collect(study_path, results_path)
++    result = json.loads(results_path.read_text())
++    assert result["status"] == "failure"
++    assert len(result["rows"]) == 1
++    assert result["rows"][0]["status"] == status
++    assert result["rows"][0]["exit_code"] == exit_code
++    assert result["rows"][0]["phase"] == "correctness"
++    with pytest.raises(ValueError, match="collection is incomplete"):
++        study.verify(study_path, results_path)
++
++
++@pytest.mark.parametrize("file", ["test-only-compiler", "test-only-input.bril"])
++def test_changed_input_or_binary_provenance_is_rejected(paths: tuple[Path, Path], file: str) -> None:
++    study_path, results_path = paths
++    study.collect(study_path, results_path)
++    with (study_path.parent / file).open("a") as handle:
++        handle.write("\n# changed after collection\n")
++    with pytest.raises(ValueError, match="provenance mismatch"):
++        study.verify(study_path, results_path)
++
++
++def test_failed_measurement_retains_partial_evidence_and_stops(paths: tuple[Path, Path]) -> None:
++    study_path, results_path = paths
++    manifest = json.loads(study_path.read_text())
++    manifest["arms"][0]["env"]["CASE_STUDY_TEST_MODE"] = "measured-exit"
++    study_path.write_text(json.dumps(manifest))
++    with pytest.raises(ValueError, match="incomplete compiler run"):
++        study.collect(study_path, results_path)
++    result = json.loads(results_path.read_text())
++    assert result["status"] == "failure"
++    assert len(result["rows"]) == 5
++    assert all(row["status"] == "success" for row in result["rows"][:-1])
++    assert result["rows"][-1]["phase"] == "measurement"
++    assert result["rows"][-1]["exit_code"] == 9
++    assert result["rows"][-1]["wall_sec"] > 0
++    with pytest.raises(ValueError, match="collection is incomplete"):
++        study.verify(study_path, results_path)
++
++
++@pytest.mark.parametrize(
++    "corruption", ["missing-row", "incomplete", "missing-wall", "missing-rss", "wrong-command", "wrong-label"]
++)
++def test_incomplete_or_unmeasured_rows_are_rejected(paths: tuple[Path, Path], corruption: str) -> None:
++    study_path, results_path = paths
++    result = study.collect(study_path, results_path)
++    row = result["rows"][-1]
++    if corruption == "missing-row":
++        result["rows"].pop()
++    elif corruption == "incomplete":
++        result["status"] = "collecting"
++    elif corruption == "missing-wall":
++        row["wall_sec"] = None
++    elif corruption == "missing-rss":
++        row["max_rss_bytes"] = None
++    elif corruption == "wrong-command":
++        row["command"].insert(1, "--interp")
++    else:
++        row["configuration"] = "different treatment"
++    study.write_json(results_path, result)
++    with pytest.raises(ValueError):
++        study.verify(study_path, results_path)
++
++
++def test_changed_manifest_or_compiler_receipt_is_rejected(paths: tuple[Path, Path]) -> None:
++    study_path, results_path = paths
++    result = study.collect(study_path, results_path)
++    receipt = Path(result["rows"][0]["receipt_path"])
++    receipt.write_text("{}")
++    with pytest.raises(ValueError, match="changed compiler receipt"):
++        study.verify(study_path, results_path)
++    study_path.write_text(study_path.read_text() + "\n")
++    with pytest.raises(ValueError, match="manifest provenance mismatch"):
++        study.verify(study_path, results_path)
++
++
++@pytest.mark.parametrize("count", [0, 1])
++def test_selected_test_receipts_require_nonzero_success(
++    paths: tuple[Path, Path], count: int, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    study_path, results_path = paths
++    tests = study_path.parent / "focused-test-receipt.json"
++    tests.write_text(json.dumps({"status": "success", "selected_tests": count}))
++    manifest = json.loads(study_path.read_text())
++    manifest["artifacts"] = [
++        {"id": "focused-tests", "kind": "tests", "path": tests.name, "origin": "pytest-generated receipt"}
++    ]
++    study_path.write_text(json.dumps(manifest))
++    if count:
++        study.collect(study_path, results_path)
++        study.verify(study_path, results_path)
++    else:
++
++        def forbidden_run(*args: Any, **kwargs: Any) -> None:
++            pytest.fail("a zero-selected-tests precondition must prevent every compiler invocation")
++
++        monkeypatch.setattr(study, "run_command", forbidden_run)
++        with pytest.raises(ValueError, match="nonzero selected_tests"):
++            study.collect(study_path, results_path)
++        assert not results_path.exists()
++
++
++def test_claims_require_retained_conditional_evidence(paths: tuple[Path, Path]) -> None:
++    study_path, _ = paths
++    manifest = json.loads(study_path.read_text())
++    manifest["claims"] = {
++        "real_bug": {"description": "test only", "violated_invariant": "test only", "baseline_reproducer": "missing"},
++        "optimization": None,
++    }
++    study_path.write_text(json.dumps(manifest))
++    with pytest.raises(ValueError, match="retained baseline_reproducer"):
++        study.load_study(study_path)
++
++
++def test_default_sampling_and_unused_positional_arguments(paths: tuple[Path, Path]) -> None:
++    study_path, _ = paths
++    manifest = json.loads(study_path.read_text())
++    manifest.pop("warmups")
++    manifest.pop("observations")
++    study_path.write_text(json.dumps(manifest))
++    loaded = study.load_study(study_path)
++    assert loaded["warmups"] == 1
++    assert loaded["observations"] == 10
++    assert len(list(study.schedule(loaded))) == 24
++    manifest["cases"][0]["args"] = ["42"]
++    study_path.write_text(json.dumps(manifest))
++    with pytest.raises(ValueError, match="positional CLI arguments are unused"):
++        study.load_study(study_path)
++
++
++def test_interruption_retains_incomplete_checkpoint(paths: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
++    study_path, results_path = paths
++
++    def interrupted_run(*args: Any, **kwargs: Any) -> None:
++        raise KeyboardInterrupt
++
++    monkeypatch.setattr(study, "run_command", interrupted_run)
++    with pytest.raises(KeyboardInterrupt):
++        study.collect(study_path, results_path)
++    result = json.loads(results_path.read_text())
++    assert result["status"] == "interrupted"
++    assert len(result["rows"]) == 1
++    with pytest.raises(ValueError, match="collection is incomplete"):
++        study.verify(study_path, results_path)
++
++
++def test_cli_collection_and_verification_from_another_directory(paths: tuple[Path, Path]) -> None:
++    study_path, results_path = paths
++    for operation in ("collect", "verify"):
++        process = subprocess.run(
++            [sys.executable, str(SCRIPT_PATH), operation, str(study_path), str(results_path)],
++            cwd=study_path.parent,
++            capture_output=True,
++            text=True,
++            check=False,
++        )
++        assert process.returncode == 0, process.stderr
++        assert process.stdout == ""
++        assert f"{operation}:" in process.stderr
++
++
++def test_figures_export_raw_rows_and_variability_without_aggregate(paths: tuple[Path, Path]) -> None:
++    pytest.importorskip("matplotlib")
++    study_path, results_path = paths
++    result = study.collect(study_path, results_path)
++    output = study_path.parent / "figures"
++    study.figures(study_path, results_path, output)
++    data: dict[str, Any] = json.loads((output / "figure-data.json").read_text())
++    assert data["results_sha256"] == study.sha256(results_path)
++    assert len(data["summaries"]) == 2
++    for summary in data["summaries"]:
++        raw = [
++            row["wall_sec"] for row in result["rows"] if row["phase"] == "measurement" and row["arm"] == summary["arm"]
++        ]
++        assert summary["wall_sec"]["raw"] == raw
++        assert summary["wall_sec"]["median"] == sum(raw) / 2
++        assert summary["wall_sec"]["stdev"] is not None
++    svg = (output / "fixture.svg").read_text()
++    assert "Compiler elapsed time (s)" in svg
++    assert "wait4 child peak RSS (MiB)" in svg
++    assert "not simultaneous process-group peak" in svg
++    assert (output / "fixture.pdf").read_bytes().startswith(b"%PDF")
++    assert "| fixture | A | 2 |" in (output / "table.md").read_text()
++    assert not list(output.glob("*aggregate*"))
++    # A new output directory regenerates solely from the same rows, without collection.
++    process = subprocess.run(
++        [
++            sys.executable,
++            str(SCRIPT_PATH),
++            "figures",
++            str(study_path),
++            str(results_path),
++            str(study_path.parent / "figures-again"),
++        ],
++        cwd=study_path.parent,
++        capture_output=True,
++        text=True,
++        check=False,
++    )
++    assert process.returncode == 0, process.stderr
++    assert process.stdout == ""
++    assert (output / "figure-data.json").read_bytes() == (
++        study_path.parent / "figures-again/figure-data.json"
++    ).read_bytes()
++
++
++def test_cli_returns_failure_status_for_incomplete_results(
++    paths: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
++) -> None:
++    study_path, results_path = paths
++    assert study.main(["verify", str(study_path), str(results_path)]) == 1
++    assert "verify:" in capsys.readouterr().err

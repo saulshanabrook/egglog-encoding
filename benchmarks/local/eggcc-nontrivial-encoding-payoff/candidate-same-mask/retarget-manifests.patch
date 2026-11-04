@@ -1,0 +1,22 @@
+--- Cargo.toml
++++ Cargo.toml
+@@ -9,7 +9,7 @@
+ 
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental", rev = "08771f9", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
+ egraph-serialize = "0.3.0"
+ log = "0.4.19"
+ thiserror = "1"
+--- dag_in_context/Cargo.toml
++++ dag_in_context/Cargo.toml
+@@ -6,7 +6,7 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental", rev = "08771f9", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
+ smallvec = "1.11.1"
+ strum = "0.25"
+ strum_macros = "0.25"

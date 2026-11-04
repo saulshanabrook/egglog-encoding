@@ -1,0 +1,16 @@
+{
+  "status": "reused source-compatible frozen runtime artifacts; no runtime rebuild/clean",
+  "six_runtime_source_inputs_match": true,
+  "pinned_nightly_version": "rustc 1.80.0-nightly (f705de596 2024-04-30)",
+  "old_artifacts": {
+    "/Users/saul/p/wt/eggcc/encoding-study-retarget/runtime/rt.bc": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91",
+    "/Users/saul/p/wt/eggcc/encoding-study-retarget/runtime/rt.o": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+  },
+  "new_artifacts": {
+    "/Users/saul/p/wt/eggcc/encoding-impact/runtime/rt.bc": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91",
+    "/Users/saul/p/wt/eggcc/encoding-impact/runtime/rt.o": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+  },
+  "LLVM18_verification": 0,
+  "old_tree_read_only": true,
+  "prior_documented_setup_failure": "old make runtime emitted bitcode then failed no_main executable link; retained old receipts are not a new successful make runtime claim"
+}

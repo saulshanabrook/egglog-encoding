@@ -1,0 +1,22 @@
+# Explanation and reference semantic review
+
+Consent: no semantic or mathematical blocker in the reviewed explanation and compact reference. This is a bounded source/documentation review, reusing the accepted empirical reviews; no builds, tests, imports, workloads, or new measurement audit were performed.
+
+Reviewed documents, SHA-256:
+
+- `report.md`: `3a33d0a6be9abe0cedbc342f492000c067c5c7eeac06bea558a8e6705e640395`
+- `reference.md`: `2cf5552706248dfb21dc2f1d08798c6e9c550fbd81d5d196becddac58cbf293f`
+
+The literal multiplication-rule excerpts match frozen `compiler/observations/corrected-control-1/recovery/interval-original.egg`, lines 159–169 and 192–202. They are respectively the strictly positive product lower bound of 1 and the nonnegative product lower bound of 0. The diagnostic correction deletes both complete blocks, adds no replacement, and makes no general interval-analysis repair claim. Original interval SHA-256 is `ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647`; corrected expected interval SHA-256 is `ef5ff6ca63884d2c2588babb624971b76f464c15e92849c0c6a95c3cfce33037`.
+
+The explanation's route from the true-branch lower bound of 1, through the unsound product bound, to a false comparison upper bound and a union with same-context false matches the surrounding original rules at lines 328–342, 213–219, and 78–85. It correctly labels the graph evidence as diagnostic rather than a complete recorded firing trace. MAX times 2 wraps to −2; the actual emitted original Bril replaces the answer with false. The text distinguishes that actual wrong output from the source-modified control's observed true output, without inventing a corrected emitted-program excerpt.
+
+The observer description preserves the valid narrow contract: only immutable `ObservedBool(bool)` is marked injective; `Expr` and `EvalBoolAt(Expr,i64)` remain unmarked. Seed unions constrain observation results, not global expression values. The shared point is an identity for a feasible contextual observation, not the numerical MAX argument. One selected input can refute expression equivalence without proving unequal runtime values at every input or establishing nonaliasing. Unsupported reached grammar and unvisited arms are distinguished.
+
+The reasoning directions and the final explicit quantifier scopes in the mathematical table are correct. Marked-wrapper injectivity supports forward disequality from native Boolean mismatch. The new E1 remaining-child query uses ordinary congruence plus equality of the point sibling; it does not require injectivity of evaluation. After an erroneous Expr union, ordinary congruence and existing wrapper cancellation cause the later primitive-mismatch panic. The direct manual conflict oracle has the same detection capability for these observations. The prose does not credit E1 with unique bug-detection power, repair, or an optimization guard.
+
+The reference correctly distinguishes asserted NE/EE storage from the read-only witness search. Native primitive mismatch needs no stored primitive-disequality relation. The query creates no persistent derived-pair relation, constructor applications, or unions; transient search state and observation/assertion storage are acknowledged. Unknown is undefined, rule consumers require `:naive`, cancellation must be scheduled, and neither query nor contradiction checking supplies arbitrary joint closure. Scalar-fragment, container, primitive-query, proof/term-mode, disjointness, and incompleteness limits match the owned implementation.
+
+The old/E1 initialized-graph comparison is explicitly separated from actual new-engine host diagnostics and the actual source-modified release. The existing selected-baseline limitation, 21 nearby successes versus three expected unsupported rejections, unchanged official compiler test/lint failures with matched-baseline attribution, descriptive interactive-host cost scope, unmeasured I/O, uniformly disabled optional guard, and withheld strict host consent remain visible. No speedup, production benefit, current-upstream bug, exhaustive search, or all-input verification claim is introduced. The PDF interpretation is correctly supplied as an external caption rather than attributed to the frozen PDF bytes.
+
+No corrections are required for this semantic review. Consent covers the two document byte versions above; historical evidence-index or completion-bookend updates do not change the source or empirical acceptance boundaries.

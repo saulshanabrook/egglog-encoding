@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "qualification": "supporting actual-host mechanism and native-code evidence; full host validation remains unwaived; no bug or speedup claim",
+  "positive_native_checks": 160,
+  "negative_native_checks": 56,
+  "no_context_native_checks": 20,
+  "invalid_fold_native_checks": 8,
+  "source_and_emitted_interpretations": 244,
+  "generic_chain_and_both_intermediate_rescues": true,
+  "u0_b1_seed_primitive_parity": true,
+  "manual_encoding_parity": true,
+  "causal_knockouts": [
+    "application-off",
+    "bridge-off",
+    "cancellation-off",
+    "cancellation-rescue",
+    "forward-off",
+    "identity-off",
+    "query-off",
+    "reverse-off",
+    "reverse-rescue"
+  ],
+  "primitive_only_executed_external_pass": true,
+  "primitive_comparisons": 12,
+  "native_application_instructions": {
+    "u0": 29,
+    "encoding": 25
+  },
+  "semantic_revisions": 0,
+  "timing_campaign": false
+}

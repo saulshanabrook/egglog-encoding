@@ -1,0 +1,1342 @@
+{
+  "status": "foundation-admitted-U0-pair-native-canary-and-frozen-E1-selected19-terminal",
+  "utc": "2026-10-18T21:04:11.343512+00:00",
+  "adapter_python": {
+    "executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "version": "3.14.8 (main, Sep 30 2026, 17:55:09) [Clang 21.0.0 (clang-2100.3.34.2)]"
+  },
+  "U0_base": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "U0_source_files_unchanged": 771,
+  "E1_base": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+  "E1_source_files_unchanged": 969,
+  "B1_handoff": "Dependency-only four-file immutable checkpoint; source/build ownership transferred through root; live B1 not rechecked or touched after handoff.",
+  "U0_release": {
+    "manifest": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-release/manifest.json",
+    "manifest_sha256": "6f1b81ec383a88a15abff05152a66d6e826db24817d6f021b9670ed3889296fa",
+    "binary_sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0",
+    "tiger_sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201",
+    "passing_canary_command_count": 6,
+    "expected_output": "3\n",
+    "actual_pass_markers": {
+      "U0-canary-optimize": [
+        0,
+        1,
+        2
+      ],
+      "U0-canary-optimized-lower": [
+        0,
+        1,
+        2
+      ]
+    }
+  },
+  "E1_selected_tests": {
+    "integration": 18,
+    "ordinary_file": 1,
+    "failed": 0,
+    "result": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/E1-tests-result.json",
+    "sha256": "73f4017d333cf0b6e2ff2955365120ab783a1877dbf0ec287f93d680f81f6e07"
+  },
+  "preservation": {
+    "entries": 34654,
+    "changed": 0,
+    "missing": 0,
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/protected-final-comparison.json",
+    "sha256": "374872fef043a786b547d1e2b065ca9e9ecf9eea2cbe5bbe0ef137d70af65ff8"
+  },
+  "owned_workload_pids_absent": [
+    35809,
+    41186,
+    41188,
+    41192,
+    41496,
+    41497,
+    41800,
+    42550,
+    43123
+  ],
+  "commands": {
+    "B1-handoff-patch": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/B1-handoff-patch/receipt.json",
+      "sha256": "532fce0429bb61939d6868142d1836e97da64fc2b369fcf71011b9be6dfea3ea",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "B1-metadata-dag-locked": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/B1-metadata-dag-locked/receipt.json",
+      "sha256": "8ee88e201030420ed2e23c1ff522533d10bb486a94ead5d29fef1d28fba8f74f",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "B1-metadata-dag-regenerate": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/B1-metadata-dag-regenerate/receipt.json",
+      "sha256": "cb1594ac645d8829ea4e9c18c5481e6aed1604d9978403bc0bd710967fd29bed",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "B1-metadata-root-locked": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/B1-metadata-root-locked/receipt.json",
+      "sha256": "967a3407ae65129fe3a72cfa91565d79877ef27d160c5e15c880a1c8fd2502f9",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "B1-metadata-root-regenerate": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/B1-metadata-root-regenerate/receipt.json",
+      "sha256": "75dbe4cca78495f8b0cd2fdb1cbf27b9b99f833cc5debfad53668d368b64bb64",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "E1-apply": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-apply/receipt.json",
+      "sha256": "ed4a1ffc3a391510fb0f84fb4762329c1df95157d28ef4fca1031c29f3583534",
+      "argv": [
+        "git",
+        "apply",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-combined-encoding/provenance/encoding-reconstructed.patch"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "E1-apply-check": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-apply-check/receipt.json",
+      "sha256": "8ee1be0b47480f751f4ff63c4b98e5a0a30fb1396ab03c9ecb9fdd81d2dc9215",
+      "argv": [
+        "git",
+        "apply",
+        "--check",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-combined-encoding/provenance/encoding-reconstructed.patch"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "E1-cache-clone": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-cache-clone/receipt.json",
+      "sha256": "7ee055a07dfb4ac7ad1ea546bf040c2d958e7578342c0e3cbeb88f44c35318a9",
+      "argv": [
+        "/bin/cp",
+        "-cR",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-combined-encoding/target",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff/target"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 600,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "E1-final-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-final-head/receipt.json",
+      "sha256": "9a4178c3ea69b697a154e661495640254dc45b487dad8f7259f713aba249e917",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "E1-final-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-final-status/receipt.json",
+      "sha256": "7150e555658796d5efc3007de6e081a8b485a264c042544e0af0eff085318c58",
+      "argv": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "E1-focused-integration": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-focused-integration/receipt.json",
+      "sha256": "7afd1f1bd6d338dd4b99e7795409a676fb6655a2fc131b99b41848007b001cd2",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "egglog-experimental",
+        "--test",
+        "injectivity_disequality"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 1800,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "E1-ordinary-file-canary": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/E1-ordinary-file-canary/receipt.json",
+      "sha256": "4ca769b5d482c6382c436f5251c99998c979acba5736cda9140101cde61fba92",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "egglog-experimental",
+        "--test",
+        "files",
+        "injectivity_disequality",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+      "returncode": 0,
+      "timeout_seconds": 1800,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff/target",
+      "memory_guard_present": false
+    },
+    "U0-cache-clone": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-cache-clone/receipt.json",
+      "sha256": "8b9b6559e0284ffe1eebc4bde9d94f364e1f5a855110e75e45193942efd82044",
+      "argv": [
+        "/bin/cp",
+        "-cR",
+        "/Users/saul/p/wt/eggcc/combined-encoding-control/target/.",
+        "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 600,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-canary-optimize": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-optimize/receipt.json",
+      "sha256": "2690c5885102bf16906dd59ed4bff7faa0a07f04e23e6516427b2831adb65dd8",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-release/bin/eggcc",
+        "--with-context",
+        "--run-mode",
+        "optimize",
+        "--interp",
+        "--run-data-out",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/correctness.json",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/add.bril"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 60,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-canary-optimized-execute": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-optimized-execute/receipt.json",
+      "sha256": "642b5dafdbda84c71a8df43bbaa90d1a66bbb3646f16d14edec50e23a36fbb4b",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/optimized-program"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 30,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-canary-optimized-lower": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-optimized-lower/receipt.json",
+      "sha256": "c0e46172cc17893a2a528d82a6d59035d03971b03023f4216340627c94d01b83",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-release/bin/eggcc",
+        "--with-context",
+        "--run-mode",
+        "llvm",
+        "--optimize-egglog",
+        "true",
+        "--optimize-bril-llvm",
+        "O3_O3",
+        "-o",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/optimized-program",
+        "--llvm-output-dir",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/optimized.ll",
+        "--run-data-out",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/optimized-lowering.json",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/add.bril"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-canary-reference-execute": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-reference-execute/receipt.json",
+      "sha256": "72b6828b70bd4f4d59e3958369514ec539e29605c86065383eb374b343ab0c57",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/reference-program"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 30,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-canary-reference-lower": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-reference-lower/receipt.json",
+      "sha256": "5d4c3a52be2c88522fbb8236d8ee5ff0acaf74f6235ba9098bcf2501fd18b348",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-release/bin/eggcc",
+        "--with-context",
+        "--run-mode",
+        "llvm",
+        "--optimize-egglog",
+        "false",
+        "--optimize-bril-llvm",
+        "O3_O3",
+        "-o",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/reference-program",
+        "--llvm-output-dir",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/reference.ll",
+        "--run-data-out",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/reference-lowering.json",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/add.bril"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-canary-source": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-canary-source/receipt.json",
+      "sha256": "da005d1083cc65881c3447299c7a4001289a0bc43d8834358d9808a4c8bafede",
+      "argv": [
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-release/bin/eggcc",
+        "--with-context",
+        "--run-mode",
+        "parse",
+        "--interp",
+        "--run-data-out",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/source.json",
+        "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/U0-passing-canary/add.bril"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 60,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-dependency-egglog-experimental-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-dependency-egglog-experimental-head/receipt.json",
+      "sha256": "02c25c796baa47302f756ea8cef6c841605e6ca9832bf71ebdbf0eda33a27642",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/08771f9",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-dependency-egglog-experimental-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-dependency-egglog-experimental-status/receipt.json",
+      "sha256": "5903541cbd7ff5bf6f0352ade0ee3e85d5307ef77ef6c19a739544f2ab47bf07",
+      "argv": [
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=no"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/08771f9",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-dependency-egglog-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-dependency-egglog-head/receipt.json",
+      "sha256": "2035dedaeeba92fd8e830818a3e86e44fd487b7e84586c9d62acfe74ec41cb7d",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egg-smol-65fdca4a5529f39b/ebba7bb",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-dependency-egglog-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-dependency-egglog-status/receipt.json",
+      "sha256": "610c45d48b034a08a12e35d872c3c23335dee82f19da4f11d5aa81ade6664fac",
+      "argv": [
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=no"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egg-smol-65fdca4a5529f39b/ebba7bb",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-dependency-egglog-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-dependency-egglog-head/receipt.json",
+      "sha256": "dafad303b3f84aa8ceeee747ed7de6f496dc9161a67e57314fa8a5c941a0c0c1",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egg-smol-65fdca4a5529f39b/ebba7bb",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-dependency-egglog-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-dependency-egglog-status/receipt.json",
+      "sha256": "aa0cef3cbebe44e574353559951b0378f0f947a79bcf412959e00c81016a23fa",
+      "argv": [
+        "git",
+        "status",
+        "--short",
+        "--untracked-files=no"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egg-smol-65fdca4a5529f39b/ebba7bb",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-dependency-experimental-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-dependency-experimental-head/receipt.json",
+      "sha256": "3ac59f0fbadd1904ddbc667621e733be8ff8430798b9301f8603c63e4a8b9f1d",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/08771f9",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-dependency-experimental-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-dependency-experimental-status/receipt.json",
+      "sha256": "372d3339c93592931a464a9ec31600a199c4beb0f9c556b0a280497ec20f6427",
+      "argv": [
+        "git",
+        "status",
+        "--short",
+        "--untracked-files=no"
+      ],
+      "cwd": "/Users/saul/.cargo/git/checkouts/egglog-experimental-e48206cd5b150391/08771f9",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-head": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-head/receipt.json",
+      "sha256": "37938e47b6faccffc19fdeca7ca760ce34dcc19e87cb4ee36c9427147f1d9399",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-final-status": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-final-status/receipt.json",
+      "sha256": "d2a2bab135eeafbb77c8d54c70f01d08bcb1a7561594597b7624c0a115e798a4",
+      "argv": [
+        "git",
+        "status",
+        "--short"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "U0-metadata-dag-locked": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-metadata-dag-locked/receipt.json",
+      "sha256": "de8d795959a7f88dd945606d2f5815f0b97208afe3ff465a9cff520748a9f442",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--manifest-path",
+        "dag_in_context/Cargo.toml",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-metadata-root-locked": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-metadata-root-locked/receipt.json",
+      "sha256": "e8731896345387c4a6f7a7512cd4374459a07f9bca7246ce5917e3706c25feee",
+      "argv": [
+        "cargo",
+        "metadata",
+        "--locked",
+        "--format-version",
+        "1"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-release-build": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-release-build/receipt.json",
+      "sha256": "b9f88dfcbd4ec5aaabc9c603810c3d0b255ea61a3fdba434008e4a136abf7c0c",
+      "argv": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--bin",
+        "eggcc"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 1800,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-tool-cargo": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-tool-cargo/receipt.json",
+      "sha256": "f83407865e6f850e7f514fb7d2c56412020ea4fd96975fb4f880d7c3aa49fd7a",
+      "argv": [
+        "cargo",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-tool-clang": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-tool-clang/receipt.json",
+      "sha256": "d6636b4035e35a2877043092e45ac21d595fd8bdd51b6c53f4dfdb6c62d22520",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/clang-18",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-tool-cxx": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-tool-cxx/receipt.json",
+      "sha256": "001965ceb5c84f982bd29a043a53e73b89b4c4367b6647dd1ed9a6bf18ccea07",
+      "argv": [
+        "/usr/bin/g++",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-tool-opt": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-tool-opt/receipt.json",
+      "sha256": "a993d2f335a71fb99b403fc421b71ea0a6c42095b5848a92ea37129e5e0f1fb5",
+      "argv": [
+        "/opt/homebrew/opt/llvm@18/bin/opt",
+        "--version"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "U0-tool-rustc": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/U0-tool-rustc/receipt.json",
+      "sha256": "eed26aed115c063f65a38d510f06a804546b26107c095c6fa491fa357121979a",
+      "argv": [
+        "rustc",
+        "-vV"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control/target",
+      "memory_guard_present": false
+    },
+    "branch-absent-B1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/branch-absent-B1/receipt.json",
+      "sha256": "47106accaaa48fd224fdd84d61f4671f01a8a7614d262a91223f015080fa96b4",
+      "argv": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/heads/codex/eggcc-encoding-payoff"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 1,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "branch-absent-E1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/branch-absent-E1/receipt.json",
+      "sha256": "5450a97c7c690658ddfdd40ca3d0fb9177a65ee767452ea1359fc679cc953edd",
+      "argv": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/heads/codex/eggcc-encoding-payoff"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 1,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "branch-absent-U0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/branch-absent-U0/receipt.json",
+      "sha256": "04179524f5eb531354e4f41f1c07eafa20a255d7e2c345bde2c748eb3d7478c9",
+      "argv": [
+        "git",
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/heads/codex/eggcc-encoding-payoff-upstream-control"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 1,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "compiler-main-ref": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/compiler-main-ref/receipt.json",
+      "sha256": "1ce6be17437be367aeba3ef20451761de5a32320cc79bf19dd74092a42703ca6",
+      "argv": [
+        "git",
+        "ls-remote",
+        "origin",
+        "refs/heads/main"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "encoding-refs": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/encoding-refs/receipt.json",
+      "sha256": "2388e2d495bbe47c94eaeb5af8c37eb937fb3388587b16d951f633a0116a734d",
+      "argv": [
+        "git",
+        "ls-remote",
+        "origin",
+        "refs/heads/main",
+        "refs/pull/119/head"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "main-git-archive": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/main-git-archive/receipt.json",
+      "sha256": "47d908085c4f5baa54a15b9e97938bdf95a42dd545c2523a19003c3c061964f3",
+      "argv": [
+        "git",
+        "archive",
+        "--format=tar",
+        "a0bbec127f83249074a46af3fd6f6126c90fe0fb"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "owned-processes-terminal": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/owned-processes-terminal/receipt.json",
+      "sha256": "ba7240f607b4127bd93e94af073e2dfa5ec0155b0414757d99fb188fbf34c524",
+      "argv": [
+        "/bin/ps",
+        "-p",
+        "35809,41186,41188,41192,41496,41497,41800,42550,43123",
+        "-o",
+        "pid=,ppid=,stat=,args="
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 1,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-0/receipt.json",
+      "sha256": "1eb31cdddd44349c0dd8f85d94eb1801e8371aefa87fe57d5a807c292edfd420",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-1/receipt.json",
+      "sha256": "4c6f29e0f8f6509a017376a260c661bd294e5a8a5965a8392bfdee6836768b3f",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-2": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-2/receipt.json",
+      "sha256": "d4d7f6fbdb6202b8370bd60acdf7d1a916adc993e71f32b57d26f62014e20b64",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-3": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-3/receipt.json",
+      "sha256": "77ca550942ec2f699e9121da4129c17ca22e63b182ca2cf728b4e8fe84c12a50",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-4": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-4/receipt.json",
+      "sha256": "420d420cb4e48f9dee40b19b65df1700b6263a0f124b6eb1b8e0dcf848d090a0",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-5": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-5/receipt.json",
+      "sha256": "a2321ab13ac61a595ec41415490abbd69ecd58efb67476d342ea1098c1351a07",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-diff-6": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-diff-6/receipt.json",
+      "sha256": "ddce3862d483fcde4a518581470056c3d3f6e398e522379999336584b2966b4d",
+      "argv": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-0/receipt.json",
+      "sha256": "a57ee18bc293e602051e603ca10168b569c41f98038381b3bbca71f18e114010",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-1/receipt.json",
+      "sha256": "6ba882744429d221917ecdaee8f6d4c0b721cced139aaea22c0dba40b8b809ad",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-2": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-2/receipt.json",
+      "sha256": "32e160987de86d79e3e2c2eab708a82fc9c4999ff9ba236cf800840bcde3c5d3",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-3": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-3/receipt.json",
+      "sha256": "4142c874985e0a07bded95e6c04d91eb4e1c2adbded3b297a15aa61b0361a989",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-4": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-4/receipt.json",
+      "sha256": "6e630a7e968cd6ec2840a9b69d272fb2946e32e88697b88d94b2c5ac895760b3",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-5": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-5/receipt.json",
+      "sha256": "0949ad413edf721eb1fc13d1fd96c6b476361ba30eeaa1d80c55ce1f8af6224f",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-head-6": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-head-6/receipt.json",
+      "sha256": "0a0c88e85cc085e15cb7cc8b8abdbe1293a05a5f10e63e9d123009c1e025fec8",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-0/receipt.json",
+      "sha256": "84dbc3e743e1148f3e2cceb75a461f7fb6e4110081e35a8e31bfbb4d5a089044",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-1/receipt.json",
+      "sha256": "71954b0bb6b8b192904f8cd3328fae50e8f349d515d0629fba3e77e4cf9293fc",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-2": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-2/receipt.json",
+      "sha256": "c7dfd0e93cfb2f3e0e6e6ddbda7e3f63d9d094dd1518335f6a108f27497d9c30",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-3": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-3/receipt.json",
+      "sha256": "adcccb7f39732333d8396e94c4487bc235d1cf056cea0a7a43842257af5e40c1",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-4": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-4/receipt.json",
+      "sha256": "9b95e131daeda16558d3a8c594b2740057efbc33015ffa70c97d5f3eadd25b0c",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-5": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-5/receipt.json",
+      "sha256": "f30b36c34e6cf8c4049d60eb8c78fcd9246fcf126e16a79a63a748437737b733",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-index-6": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-index-6/receipt.json",
+      "sha256": "d77804ce132bce364c734ad898800417687978b1d5cdf2c6c5738b8550d92c1e",
+      "argv": [
+        "git",
+        "diff",
+        "--cached",
+        "--binary",
+        "HEAD"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-0/receipt.json",
+      "sha256": "af3e570a88742fba36a9ba77b248f26c4f3d48a8df3d93520df24a9e15c67045",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-1/receipt.json",
+      "sha256": "1b24367f39a68901af0261b8f732f62208f0eeb44bb6077f8bef9cd040627a38",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-2": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-2/receipt.json",
+      "sha256": "d131421d2a8c68ea970290457da2ef54e2d396425ceb11a15d913a63360104b5",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-3": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-3/receipt.json",
+      "sha256": "799a4947aa3b1646c5c5cede9723dcf4124243b4d754bf60fcf215908701a838",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-4": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-4/receipt.json",
+      "sha256": "711ba3b30676491b28701453b8184b96ccff677c7d52483f04247f606806704d",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/combined-encoding-control",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-5": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-5/receipt.json",
+      "sha256": "fb0ed28b3fe02ae2c86f91d432791d930c951367676319b85e5daf3ce25b0615",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/wt/egglog-encoding/eggcc-impact-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "protected-paths-6": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/protected-paths-6/receipt.json",
+      "sha256": "1adb602a6f5ee99f7a9aefc034dc6c04852b141064ef84fc16f237c19f0c0c39",
+      "argv": [
+        "git",
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z"
+      ],
+      "cwd": "/Users/saul/p/wt/eggcc/encoding-impact",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "worktree-B1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/worktree-B1/receipt.json",
+      "sha256": "7c68e5804dd7d8533266544614365e653a93103b5830234eb4c0a31dc98af649",
+      "argv": [
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        "codex/eggcc-encoding-payoff",
+        "/Users/saul/p/wt/eggcc/encoding-payoff",
+        "a0bbec127f83249074a46af3fd6f6126c90fe0fb"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "worktree-E1": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/worktree-E1/receipt.json",
+      "sha256": "453fce9b421ef0ecb72fbcfe71770a6cc2fb73c7faa654eebd218a137fbd2905",
+      "argv": [
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        "codex/eggcc-encoding-payoff",
+        "/Users/saul/p/wt/egglog-encoding/eggcc-encoding-payoff",
+        "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5"
+      ],
+      "cwd": "/Users/saul/p/egglog-encoding",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    },
+    "worktree-U0": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-payoff/admission/commands/worktree-U0/receipt.json",
+      "sha256": "3703159fd37bcf3ea0c16e41f287ef592af4b3de86cd3b5d700cab28d5469426",
+      "argv": [
+        "git",
+        "worktree",
+        "add",
+        "-b",
+        "codex/eggcc-encoding-payoff-upstream-control",
+        "/Users/saul/p/wt/eggcc/encoding-payoff-upstream-control",
+        "a0bbec127f83249074a46af3fd6f6126c90fe0fb"
+      ],
+      "cwd": "/Users/saul/p/eggcc",
+      "returncode": 0,
+      "timeout_seconds": 180,
+      "timed_out": false,
+      "cargo_target_dir": null,
+      "memory_guard_present": false
+    }
+  },
+  "artifacts": {
+    "created.json": "8001ee5a886ed4c5170859529a05205134c0d115732af1c9160f02bd57cd667b",
+    "main-source.json": "28218c37633a31839936dfa2bce7675f092b26dc1cbf557bc9baad92836c2c3e",
+    "main-source.tar": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+    "E1-source.json": "97618f533dfb36f038432cab4517cff78a855eb23caf1ea100f3e27e35f44fe2",
+    "B1-handoff-source.json": "bb1bd4c546fae2413f2f5a51dd634b3b7b303ae3f6069af84d87939364315f1c",
+    "B1-handoff.patch": "b92c8f39273702f466da4217fad80904b91350d352857cfd5a3cf9cd013b8747",
+    "U0-build-before.json": "398659249508f58b3f4845dd1116c1d8ede0f68eb59a486709efb786e75e5942",
+    "U0-release/manifest.json": "6f1b81ec383a88a15abff05152a66d6e826db24817d6f021b9670ed3889296fa",
+    "E1-tests-result.json": "73f4017d333cf0b6e2ff2955365120ab783a1877dbf0ec287f93d680f81f6e07",
+    "protected-before.json": "a814ed99f3ce69966e3ca6838bfc735ec62510ec28aa3e859797f52d2c737db6",
+    "protected-final-comparison.json": "374872fef043a786b547d1e2b065ca9e9ecf9eea2cbe5bbe0ef137d70af65ff8",
+    "U0-source-final.json": "087c685463fc44ca7ab4d1a5aeec6732f95caa7c236dfa27a5285c024dd58893",
+    "E1-source-final.json": "7e8a515249e4153aff45000e9fd9a81d93b0001a3eca234aef37954a5687009c"
+  },
+  "admission_scripts": {
+    "foundation.py": "d8d7861c9e721071e46fd63f79515a927be799f345f462acbf4f068bab0e3c99",
+    "prepare-handoff.py": "5548e0861e176397b00d1d2dcab9d4bdf7235b29229e3429107bd3608c03e9b5",
+    "build-u0.py": "2ab11fe077d13e194d20f906d769e1717b1d9e6f448cca9bd020c4e8d8dc1b50",
+    "admit-native.py": "54c130d968c3ae077938180cf797a155960874958cd1c2b5ffe2d0490de6f059",
+    "test-e1.py": "68243dc0d355e10542b527850fe579a2950034a69c1ac8de216ba73a2456e6b5",
+    "finalize-admission.py": "917dfc7363550edd7db2db50161ef096e8c98e6a50a9a3b05b3272edc74a69ea"
+  },
+  "limits": {
+    "new_case_optimized_endpoint_executed": false,
+    "performance_measurements": false,
+    "full_make_gate_executed": false,
+    "proof_subset_executed": false,
+    "new_bug_or_speedup_claim": false,
+    "source_or_snapshot_acceptance": false,
+    "memory_guard": "UNSET",
+    "B1_observer_port_or_build_by_harness": false,
+    "remaining": "Candidate owner ports/admission, first encoding detector receipt, matched correctness/source gates and prospective payoff validation remain root-coordinated."
+  }
+}

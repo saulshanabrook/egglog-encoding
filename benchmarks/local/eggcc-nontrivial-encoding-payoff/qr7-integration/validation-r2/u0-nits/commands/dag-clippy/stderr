@@ -1,0 +1,36 @@
+    Checking egglog-numeric-id v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-reports v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+   Compiling egglog v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-ast v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+   Compiling egglog-add-primitive v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-concurrency v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+   Compiling dag_in_context v0.1.0 (/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context)
+    Checking egglog-union-find v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-core-relations v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-bridge v2.0.0 (https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb9)
+    Checking egglog-experimental v0.1.0 (https://github.com/egraphs-good/egglog-experimental?rev=08771f9#08771f9f)
+error: called `unwrap` on `lookup` after checking its variant with `is_some`
+   --> src/extractiongymfastergreedydag.rs:134:33
+    |
+133 |                 if lookup.is_some() {
+    |                 ------------------- help: try: `if let Some(<item>) = lookup`
+134 |                     prev_cost = lookup.unwrap().total;
+    |                                 ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#unnecessary_unwrap
+    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`
+
+error: this call to `clone` can be replaced with `std::slice::from_ref`
+   --> src/fastercbcextractor.rs:991:37
+    |
+991 |                     reachable(vars, &[child_class.clone()], is_reachable);
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^ help: try: `std::slice::from_ref(child_class)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#cloned_ref_to_slice_refs
+    = note: `-D clippy::cloned-ref-to-slice-refs` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cloned_ref_to_slice_refs)]`
+
+error: could not compile `dag_in_context` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `dag_in_context` (lib test) due to 2 previous errors

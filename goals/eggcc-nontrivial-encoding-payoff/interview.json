@@ -1,0 +1,82 @@
+{
+  "stage": "interview",
+  "title": "Nontrivial EggCC encoding payoff",
+  "goalSlug": "eggcc-nontrivial-encoding-payoff",
+  "questions": [
+    {
+      "id": "mechanism_floor",
+      "prompt": "What generic-reasoning floor must a result meet?",
+      "description": "The completed ObservedBool result ends at one primitive true/false conflict and is excluded under every option.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Require injectivity or disequality to derive an equality or disequality over equality-sort children, then require a distinct real EggCC consumer to use that intermediate fact. Fixed-input knockout and mediation-rescue controls must show that the intermediate fact causes the endpoint.",
+      "recommendedOptionIds": [
+        "equality_sort_mediation"
+      ],
+      "options": [
+        {
+          "id": "equality_sort_mediation",
+          "label": "Equality-sort mediation"
+        },
+        {
+          "id": "cross_constructor",
+          "label": "Cross-constructor chain"
+        },
+        {
+          "id": "both_encodings",
+          "label": "Both encodings required"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "manual_comparison",
+      "prompt": "When should a hand-written equivalent disqualify the result?",
+      "description": "Every finite inference can be expanded into several custom rules, so this decides whether the objection is specifically the one-simple-rule shortcut or any manual equivalent.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Disqualify a result when one constructor-specific primitive comparator can reproduce the endpoint from the same seeds. Allow a larger faithful manual implementation as the required fair comparator, without claiming unique logical power.",
+      "recommendedOptionIds": [
+        "primitive_null_only"
+      ],
+      "options": [
+        {
+          "id": "primitive_null_only",
+          "label": "Exclude simple shortcut"
+        },
+        {
+          "id": "any_manual_equivalent",
+          "label": "Exclude any equivalent"
+        },
+        {
+          "id": "beat_manual",
+          "label": "Must beat manual"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "search_budget",
+      "prompt": "What finite search portfolio should end in failure if no qualifying payoff appears?",
+      "description": "Each family gets one eligibility screen, one smallest actual-host/native probe if eligible, and at most one revision for a concrete falsifier. A family closes immediately on its declared early falsifier.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Search the scoped fixed-shift chain, the same-mask Bitand reverse-disequality chain, and then screen fixed-split tuple cancellation as a reserve. If all three close without a pre-existing baseline bug or repeated end-to-end speedup, mark the goal failed; do not add another family silently.",
+      "recommendedOptionIds": [
+        "two_plus_tuple"
+      ],
+      "options": [
+        {
+          "id": "two_plus_tuple",
+          "label": "Two plus tuple"
+        },
+        {
+          "id": "add_live_region",
+          "label": "Add live-region screen"
+        },
+        {
+          "id": "one_strongest",
+          "label": "One strongest probe"
+        }
+      ],
+      "required": true
+    }
+  ]
+}

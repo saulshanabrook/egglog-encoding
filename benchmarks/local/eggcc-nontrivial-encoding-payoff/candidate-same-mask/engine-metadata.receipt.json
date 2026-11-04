@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "cargo",
+    "metadata",
+    "--offline",
+    "--format-version",
+    "1"
+  ],
+  "cwd": "/private/tmp/encoding-same-mask-candidate",
+  "exit_code": 0,
+  "timeout_s": 180
+}

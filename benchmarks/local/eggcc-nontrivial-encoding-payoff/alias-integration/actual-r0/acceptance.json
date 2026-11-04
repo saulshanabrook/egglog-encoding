@@ -1,0 +1,18 @@
+{
+  "candidate": "A1-mask-live-cell",
+  "valid_source_workload": "verified",
+  "private_generic_law": "initial standalone controls pass; revised actual import not reached",
+  "actual_import": "failed closed",
+  "transport": "unreached in actual compiler",
+  "bridge": "unreached in actual compiler; standalone parity test passes",
+  "existing_store_forward_consumer": "standalone parity test passes; actual compiler not enabled",
+  "manual_comparison": "actual arm identical because admission rejected",
+  "primitive_null": "actual arm not reached",
+  "knockout_rescue_causality": "not established",
+  "semantic_negative_controls": "source/native matrix passes fail-closed; several registered certificate tests blocked by failed positive",
+  "correctness_matrix": "passed on unchanged code",
+  "actual_code_opportunity": "none in attempted implementation",
+  "full_validation": "failed new A1 tests",
+  "performance": "not collected",
+  "qualifying_payoff": false
+}

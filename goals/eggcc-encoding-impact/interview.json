@@ -1,0 +1,57 @@
+{
+  "stage": "interview",
+  "title": "Find an impactful EggCC encoding case",
+  "goalSlug": "eggcc-encoding-impact",
+  "questions": [
+    {
+      "id": "speedup-target",
+      "prompt": "Which speedups should qualify for this goal?",
+      "description": "The first example removed a load, but measured only compiler wall time and RSS. A new optimization could speed up the compiled program even if compilation gets slower. Keep compiler/analysis costs and generated-program runtime as separate results.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Either a compiler/analysis speedup or a generated-program speedup can qualify, with a fair equivalent control, validated outputs and repeated measurements; a genuine baseline bug can also qualify.",
+      "recommendedOptionIds": [
+        "either"
+      ],
+      "options": [
+        {
+          "id": "either",
+          "label": "Either compiler/analysis or generated-program speedup"
+        },
+        {
+          "id": "compiler",
+          "label": "Compiler/analysis speedup only"
+        },
+        {
+          "id": "program",
+          "label": "Generated-program speedup only"
+        }
+      ],
+      "required": true
+    },
+    {
+      "id": "search-stop",
+      "prompt": "When may the search finish without a verified speedup or bug?",
+      "description": "This follow-on should search more broadly and should not stop merely after another neutral toy example. We will preserve failed and neutral experiments, favor existing EggCC/Bril workloads, and use scalable examples only with a clear connection to a real compiler consumer.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Allow a negative conclusion only after a reviewed candidate map and substantial targeted experiments show why the plausible high-value leads did not yield an impact; otherwise keep pursuing promising leads. Do not impose an arbitrary two-prototype limit.",
+      "recommendedOptionIds": [
+        "exhaustion"
+      ],
+      "options": [
+        {
+          "id": "exhaustion",
+          "label": "Only after an evidence-backed search exhaustion review"
+        },
+        {
+          "id": "positive",
+          "label": "Require a verified speedup or genuine bug"
+        },
+        {
+          "id": "limit",
+          "label": "Use a concrete effort limit that I specify"
+        }
+      ],
+      "required": true
+    }
+  ]
+}

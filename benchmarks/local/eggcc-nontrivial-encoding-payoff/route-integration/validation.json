@@ -1,0 +1,313 @@
+{
+  "status": "supporting_only_host_validation_failed",
+  "required_host_make_test": "host-make-test-disk-retry",
+  "resource_contaminated_runs": [
+    "host-make-test",
+    "host-make-test-final"
+  ],
+  "checks": {
+    "focused-primitive-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/focused-primitive-final/receipt.json",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/tmp/eggcc-route-candidate/dag_in_context/Cargo.toml",
+        "scoped_reasoning",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.96s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "diagnostics": []
+    },
+    "engine-focused": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/engine-focused/receipt.json",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/tmp/encoding-route-candidate/Cargo.toml",
+        "-p",
+        "egglog-experimental",
+        "--test",
+        "injectivity_disequality",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s"
+      ],
+      "diagnostics": []
+    },
+    "u0-root-clippy": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/u0-root-clippy/receipt.json",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 101,
+      "timed_out": false,
+      "test_results": [],
+      "diagnostics": [
+        {
+          "message": "called `unwrap` on `target` after checking its variant with `is_some`",
+          "location": "src/rvsdg/optimize_direct_jumps.rs:236:28"
+        }
+      ]
+    },
+    "host-make-test": {
+      "disk_error_occurrences": 12,
+      "receipt": "commands/host-make-test/receipt.json",
+      "argv": [
+        "make",
+        "test"
+      ],
+      "exit_code": 2,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 48.16s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: FAILED. 2414 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1561.73s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "diagnostics": []
+    },
+    "host-make-test-disk-retry": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/host-make-test-disk-retry/receipt.json",
+      "argv": [
+        "make",
+        "test"
+      ],
+      "exit_code": 2,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.57s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2421 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 627.11s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "diagnostics": []
+    },
+    "dag-release-required": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/dag-release-required/receipt.json",
+      "argv": [
+        "cargo",
+        "insta",
+        "test",
+        "--release",
+        "--unreferenced=reject"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.99s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "diagnostics": []
+    },
+    "format-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/format-final/receipt.json",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [],
+      "diagnostics": []
+    },
+    "dag-format-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/dag-format-final/receipt.json",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/private/tmp/eggcc-route-candidate/dag_in_context/Cargo.toml",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [],
+      "diagnostics": []
+    },
+    "dag-clippy-audit-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/dag-clippy-audit-final/receipt.json",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/tmp/eggcc-route-candidate/dag_in_context/Cargo.toml",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 101,
+      "timed_out": false,
+      "test_results": [],
+      "diagnostics": [
+        {
+          "message": "called `unwrap` on `lookup` after checking its variant with `is_some`",
+          "location": "src/extractiongymfastergreedydag.rs:134:33"
+        },
+        {
+          "message": "this call to `clone` can be replaced with `std::slice::from_ref`",
+          "location": "src/fastercbcextractor.rs:991:37"
+        }
+      ]
+    },
+    "host-clippy-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/host-clippy-final/receipt.json",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 101,
+      "timed_out": false,
+      "test_results": [],
+      "diagnostics": [
+        {
+          "message": "called `unwrap` on `target` after checking its variant with `is_some`",
+          "location": "src/rvsdg/optimize_direct_jumps.rs:236:28"
+        }
+      ]
+    },
+    "host-make-test-final": {
+      "disk_error_occurrences": 64,
+      "receipt": "commands/host-make-test-final/receipt.json",
+      "argv": [
+        "make",
+        "test"
+      ],
+      "exit_code": 2,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 82.33s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: FAILED. 2388 passed; 33 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1263.15s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "diagnostics": []
+    },
+    "dag-library-final": {
+      "disk_error_occurrences": 0,
+      "receipt": "commands/dag-library-final/receipt.json",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "/private/tmp/eggcc-route-candidate/dag_in_context/Cargo.toml",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "test_results": [
+        "test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.49s"
+      ],
+      "diagnostics": []
+    }
+  },
+  "new_lint_diagnostics": 0,
+  "snapshots_accepted": false,
+  "pending_snapshots": [
+    {
+      "path": "tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907"
+    },
+    {
+      "path": "tests/snapshots/files__branch_duplicate_work-optimize.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907"
+    },
+    {
+      "path": "tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap.new",
+      "sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef"
+    },
+    {
+      "path": "tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660"
+    },
+    {
+      "path": "tests/snapshots/files__if_invariant_do_pull_out-optimize.snap.new",
+      "sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718"
+    },
+    {
+      "path": "tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7"
+    },
+    {
+      "path": "tests/snapshots/files__loop_strength_reduction-optimize.snap.new",
+      "sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd"
+    },
+    {
+      "path": "tests/snapshots/files__loop_with_mul_by_inv-optimize.snap.new",
+      "sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a"
+    },
+    {
+      "path": "tests/snapshots/files__pull_out_small-optimize-sequential.snap.new",
+      "sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20"
+    },
+    {
+      "path": "tests/snapshots/files__pull_out_small-optimize.snap.new",
+      "sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036"
+    },
+    {
+      "path": "tests/snapshots/files__strong_loop-optimize-no-ctx.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f"
+    },
+    {
+      "path": "tests/snapshots/files__strong_loop-optimize-sequential.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f"
+    },
+    {
+      "path": "tests/snapshots/files__strong_loop-optimize.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f"
+    }
+  ],
+  "pending_snapshots_match_frozen_parts32": true,
+  "engine_full_check_reused": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/engine-make-check-process-access/receipt.json",
+  "timing_campaign": false,
+  "qualification": "Supporting mechanism/native evidence only; no compiler bug or measured speedup claimed."
+}

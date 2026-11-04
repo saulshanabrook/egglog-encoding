@@ -1,0 +1,639 @@
+{
+  "functions": {
+    "u0": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "seed-only": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "primitive-only": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "forward-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "reverse-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "identity-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "high-rescue": {
+      "main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e"
+      },
+      "_main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9"
+      }
+    },
+    "query-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "manual": {
+      "main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e"
+      },
+      "_main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9"
+      }
+    },
+    "encoding": {
+      "main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e"
+      },
+      "_main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9"
+      }
+    },
+    "bridge-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "consumer-off": {
+      "main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "32bfed296af5219f854701362eb9904374820641d60e851f0e755bf9ad8f8379"
+      },
+      "_main": {
+        "score99": true,
+        "vector_i64": false,
+        "conditional_branches": 5,
+        "sha256": "f7b4b8f086c8adde9324b39da3864189fd45414e1237d4009bfa8d4edb6fd829"
+      }
+    },
+    "if-consumer-off": {
+      "main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "47dd1069cbdc681999168f19594ede5419fc7778f77d771822623cee861e1d5e"
+      },
+      "_main": {
+        "score99": false,
+        "vector_i64": true,
+        "conditional_branches": 6,
+        "sha256": "d97b581654774318b3719ab562aa26126a65d22b65150df03cd3f29ea87afcd9"
+      }
+    }
+  },
+  "causal": {
+    "u0": [],
+    "off": [],
+    "seed-only": [
+      {
+        "word_known": false,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": false,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": false,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "primitive-only": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": null,
+        "bottom": null,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "forward-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": false,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": false,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": false,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "reverse-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": false,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": false,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": false,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "identity-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": false,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": false,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": false,
+        "high_known": false,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": false,
+        "rescue": false
+      }
+    ],
+    "high-rescue": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": false,
+        "pair_known": false,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": true,
+        "reverse_enabled": false,
+        "parts32_marked": false,
+        "representation_identity": true,
+        "rescue": true
+      }
+    ],
+    "query-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": null,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": null,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": null,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "manual": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "encoding": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "bridge-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": false,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "consumer-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": false,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": false,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      },
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": false,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ],
+    "if-consumer-off": [
+      {
+        "word_known": true,
+        "low_equal": true,
+        "parts_known": true,
+        "pair_known": true,
+        "high_known": true,
+        "bottom": false,
+        "export": true,
+        "consumer_enabled": true,
+        "reverse_enabled": true,
+        "parts32_marked": true,
+        "representation_identity": true,
+        "rescue": false
+      }
+    ]
+  },
+  "gates": {
+    "positive_native_executions": 154,
+    "semantic_negative_native_executions": 25,
+    "loop_negative_native_executions": 10,
+    "context_negative_native_executions": 11,
+    "B1_matches_U0": true,
+    "SeedOnly_matches_U0": true,
+    "Encoding_matches_Manual": true,
+    "all_output_checks_passed": true,
+    "native_difference_survives": true,
+    "primitive_only_is_null": true,
+    "all_required_theory_knockouts_restore_U0": true,
+    "exact_high_rescue_restores_Encoding": true,
+    "Eq_false_consumer_knockout_restores_U0": true,
+    "existing_EggCC_false_If_rule_is_essential": false,
+    "SeedOnly_retains_exact_graph_and_seeds_without_reasoning": true,
+    "PrimitiveOnly_retains_exact_graph_and_seeds_without_reasoning": true
+  },
+  "timing_campaign": false
+}

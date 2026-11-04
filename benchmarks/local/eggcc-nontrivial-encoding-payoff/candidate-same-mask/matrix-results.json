@@ -1,0 +1,1436 @@
+[
+  {
+    "family": "cold",
+    "mode": "off",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "423e23631becf38f37475e82336a33826cd5aa377b754f0c2e62b4b549c4e279"
+  },
+  {
+    "family": "cold",
+    "mode": "seed-only",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "SeedOnly",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": null,
+        "child_known": null,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      },
+      {
+        "mode": "SeedOnly",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": null,
+        "child_known": null,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 1
+      },
+      {
+        "mode": "SeedOnly",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": null,
+        "child_known": null,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 2
+      }
+    ],
+    "native_main_sha256": "423e23631becf38f37475e82336a33826cd5aa377b754f0c2e62b4b549c4e279"
+  },
+  {
+    "family": "cold",
+    "mode": "annotation-off",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "AnnotationOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word )\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": false,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      },
+      {
+        "mode": "AnnotationOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word )\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": false,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 1
+      },
+      {
+        "mode": "AnnotationOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word )\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": false,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 2
+      }
+    ],
+    "native_main_sha256": "423e23631becf38f37475e82336a33826cd5aa377b754f0c2e62b4b549c4e279"
+  },
+  {
+    "family": "cold",
+    "mode": "query-off",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "QueryOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      },
+      {
+        "mode": "QueryOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 1
+      },
+      {
+        "mode": "QueryOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": null,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 2
+      }
+    ],
+    "native_main_sha256": "423e23631becf38f37475e82336a33826cd5aa377b754f0c2e62b4b549c4e279"
+  },
+  {
+    "family": "cold",
+    "mode": "manual",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "Manual",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": true,
+        "absent_witness": "unknown-or-error",
+        "export": true,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      }
+    ],
+    "native_main_sha256": "2962ce3959f43b2bab8134da32267795495da200883acc8c8f838310af2c0152"
+  },
+  {
+    "family": "cold",
+    "mode": "encoding",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "Encoding",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": true,
+        "absent_witness": "unknown-or-error",
+        "export": true,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      }
+    ],
+    "native_main_sha256": "2962ce3959f43b2bab8134da32267795495da200883acc8c8f838310af2c0152"
+  },
+  {
+    "family": "cold",
+    "mode": "bridge-off",
+    "outputs": [
+      {
+        "args": [
+          0,
+          1,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          0,
+          2,
+          1
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          -9223372036854775808,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": [
+      {
+        "mode": "BridgeOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": true,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 0
+      },
+      {
+        "mode": "BridgeOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": true,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 1
+      },
+      {
+        "mode": "BridgeOff",
+        "encoding": "NEE",
+        "program": "(datatype Scope (ThisScope))\n(datatype Word)\n(constructor Mask (Word Word) Word)\n(constructor Leaf0 (Scope) Word)\n(constructor Leaf1 (Scope) Word)\n(constructor Leaf2 (Scope) Word)\n(constructor Shift0 (Word) Word :injective)\n(Leaf0 (ThisScope))\n(Leaf1 (ThisScope))\n(Leaf2 (ThisScope))\n(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))\n(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))\n(Shift0 (Leaf0 (ThisScope)))\n(Shift0 (Leaf1 (ThisScope)))\n(disequal (Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope))) (Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope))))\n(run-schedule (saturate injectivity))\n",
+        "scope": "fresh graph's ThisScope denotes exactly receipt parent_context",
+        "leaves": "[Slot(0), Slot(1), Slot(2)]",
+        "shift_constants": [
+          7
+        ],
+        "parent": [
+          "(Mask (Leaf0 (ThisScope)) (Leaf2 (ThisScope)))",
+          "(Mask (Leaf1 (ThisScope)) (Leaf2 (ThisScope)))"
+        ],
+        "target": [
+          "(Shift0 (Leaf0 (ThisScope)))",
+          "(Shift0 (Leaf1 (ThisScope)))"
+        ],
+        "bottom": false,
+        "parent_known": true,
+        "child_known": true,
+        "target_known": true,
+        "absent_witness": "unknown-or-error",
+        "export": false,
+        "parent_context": "(InFunc \"main\")",
+        "child_context": "(InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))",
+        "source_parent": "(Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)))",
+        "branch_input": "(Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0)))))",
+        "source_target": "(Bop (Eq) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 3) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)) (Bop (Add) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 1) (Get (Arg (TupleT (TCons (StateT) (TCons (IntT) (TCons (IntT) (TCons (IntT) (TNil)))))) (InIf false (Bop (Eq) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2)) (Bop (Bitand) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1) (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 2))) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 3)) (Concat (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 1)) (Concat (Single (Const (Int 7) (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\"))) (Single (Get (Arg (TupleT (TCons (IntT) (TCons (IntT) (TCons (IntT) (TCons (StateT) (TNil)))))) (InFunc \"main\")) 0))))))) 2)))",
+        "boundary": "contextualized source initialization before main-graph facts or saturation",
+        "source_boundary_invocation": 2
+      }
+    ],
+    "native_main_sha256": "423e23631becf38f37475e82336a33826cd5aa377b754f0c2e62b4b549c4e279"
+  },
+  {
+    "family": "hot",
+    "mode": "off",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "seed-only",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "annotation-off",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "query-off",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "manual",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "encoding",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  },
+  {
+    "family": "hot",
+    "mode": "bridge-off",
+    "outputs": [
+      {
+        "args": [
+          8,
+          0,
+          1,
+          6
+        ],
+        "expected": "48\n",
+        "stdout": "48\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          -1,
+          0,
+          1,
+          6
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          1,
+          0,
+          1,
+          6
+        ],
+        "expected": "3\n",
+        "stdout": "3\n"
+      },
+      {
+        "args": [
+          17,
+          0,
+          0,
+          6
+        ],
+        "expected": "99\n",
+        "stdout": "99\n"
+      },
+      {
+        "args": [
+          257,
+          9223372036854775807,
+          -9223372036854775808,
+          6
+        ],
+        "expected": "1543\n",
+        "stdout": "1543\n"
+      },
+      {
+        "args": [
+          257,
+          -9223372036854775808,
+          -9223372036854775807,
+          -1
+        ],
+        "expected": "1799\n",
+        "stdout": "1799\n"
+      },
+      {
+        "args": [
+          257,
+          10,
+          11,
+          0
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      },
+      {
+        "args": [
+          257,
+          2,
+          2,
+          1
+        ],
+        "expected": "771\n",
+        "stdout": "771\n"
+      }
+    ],
+    "queries": [],
+    "native_main_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+  }
+]

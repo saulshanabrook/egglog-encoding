@@ -1,0 +1,43 @@
+{
+  "semantic_revisions": 0,
+  "native_or_interpreter_oracle_failures": [],
+  "evidence_harness_corrections": [
+    {
+      "stage": "initial freeze",
+      "observation": "Comparing all candidate archive entries directly to the 771-file admission source manifest classified generated runtime rt.bc/rt.o as added source.",
+      "correction": "Admission hashes remain strictly verified; compare candidate source/archive entries with the current verified U0 source/runtime tree, retaining both runtime identities.",
+      "candidate_source_changed": false
+    },
+    {
+      "stage": "first interpreter pass",
+      "observation": "The new raw-source native role duplicated the original-source interpreter command label. The write-once command directory assertion stopped before a duplicate invocation.",
+      "correction": "Use the original source interpreter checks for byte-identical raw-source role, skip duplicate checks, and reuse already captured exact-header receipts after checking content and independent output.",
+      "candidate_source_changed": false
+    }
+  ],
+  "compiler_validation_failures": {
+    "clippy-root": "one pre-existing unnecessary_unwrap in src/rvsdg/optimize_direct_jumps.rs:236",
+    "clippy-dag": "two pre-existing extractor diagnostics; zero diagnostics in new sidecar",
+    "host-make-test": {
+      "file_tests_passed": 2410,
+      "file_tests_failed": 11,
+      "environmental_failure": "ten tiger ENOSPC failures and one LLVM Opt IO-output ENOSPC failure; exact first-run streams and receipt retained",
+      "pending_snapshots": 13,
+      "snapshots_accepted": false,
+      "retry": "one exact-command environmental retry after inactive debug cache cleanup; no source changes"
+    },
+    "host-make-test-retry-after-enospc": {
+      "unit_tests_passed": 31,
+      "file_tests_passed": 2421,
+      "file_tests_failed": 0,
+      "enospc": false,
+      "exit_code": 2,
+      "pending_snapshots": 13,
+      "snapshot_names_and_hashes_equal_first_run_and_parts32": true,
+      "snapshots_accepted": false
+    }
+  },
+  "snapshots_accepted": false,
+  "timing_campaign": false,
+  "environmental_retries": 1
+}

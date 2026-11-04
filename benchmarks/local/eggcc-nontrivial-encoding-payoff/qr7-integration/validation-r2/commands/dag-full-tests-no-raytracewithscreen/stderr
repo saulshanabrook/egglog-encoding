@@ -1,0 +1,5 @@
+    Finished `release` profile [optimized] target(s) in 0.12s
+     Running unittests src/lib.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/dag_in_context-b7d990d5a95f10b8)
+     Running unittests src/main.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/dag_in_context-1c18e321347f44b9)
+   Doc-tests dag_in_context
+info: no unreferenced snapshots found

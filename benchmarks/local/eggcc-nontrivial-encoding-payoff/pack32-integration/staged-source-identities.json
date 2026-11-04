@@ -1,0 +1,29 @@
+{
+  "status": "staged only; no compiler/native execution",
+  "files": [
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/src/lib.rs",
+      "sha256": "4a5db6345ff03809f7e70c7b7ef97475e64ff9abc3d725d6807bc4cf064813d2"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/src/scoped_reasoning.rs",
+      "sha256": "f01f52f7350725bd4ecdee76d22ad81cb4e9ff4d934b2a08c25eaa13e488743c"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/Cargo.toml",
+      "sha256": "af7ea30ef560bc0833c0123cfaa98794543a05cbbb56f1bb45f2b9fd20325f37"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/Cargo.toml",
+      "sha256": "e22706d2d5dc0227d602d96c6f2d30731f2277a07bec3bdfee87463d70939262"
+    },
+    {
+      "path": "/private/tmp/eggcc-pack32-candidate/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    }
+  ]
+}

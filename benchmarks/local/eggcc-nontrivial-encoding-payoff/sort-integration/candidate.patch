@@ -1,0 +1,1281 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -95,6 +95,15 @@
+ version = "1.0.101"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
++
++[[package]]
++name = "ar_archive_writer"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
++dependencies = [
++ "object 0.39.1",
++]
+ 
+ [[package]]
+ name = "arbitrary"
+@@ -538,7 +547,7 @@
+  "cranelift-control",
+  "cranelift-module",
+  "log",
+- "object",
++ "object 0.32.2",
+  "target-lexicon",
+ ]
+ 
+@@ -789,7 +798,6 @@
+ [[package]]
+ name = "egglog"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "chrono",
+  "clap",
+@@ -798,6 +806,7 @@
+  "egglog-add-primitive",
+  "egglog-ast",
+  "egglog-bridge",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -814,6 +823,7 @@
+  "rayon",
+  "rustc-hash 2.1.1",
+  "serde_json",
++ "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+ ]
+@@ -821,7 +831,6 @@
+ [[package]]
+ name = "egglog-add-primitive"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "quote",
+  "syn 2.0.114",
+@@ -830,7 +839,6 @@
+ [[package]]
+ name = "egglog-ast"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "ordered-float",
+ ]
+@@ -838,10 +846,10 @@
+ [[package]]
+ name = "egglog-bridge"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+  "dyn-clone",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -852,7 +860,6 @@
+  "num-rational",
+  "once_cell",
+  "ordered-float",
+- "rayon",
+  "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+@@ -861,19 +868,17 @@
+ [[package]]
+ name = "egglog-concurrency"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "arc-swap",
+  "bumpalo",
++ "crossbeam",
+  "egglog-numeric-id",
+- "rayon",
+  "smallvec",
+ ]
+ 
+ [[package]]
+ name = "egglog-core-relations"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+  "bumpalo",
+@@ -892,7 +897,6 @@
+  "num",
+  "once_cell",
+  "rand 0.9.2",
+- "rayon",
+  "rustc-hash 2.1.1",
+  "smallvec",
+  "thiserror 2.0.18",
+@@ -901,33 +905,29 @@
+ 
+ [[package]]
+ name = "egglog-experimental"
+-version = "0.1.0"
+-source = "git+https://github.com/egraphs-good/egglog-experimental?rev=08771f9#08771f9f69de51cc8cdc58e3760b7f00a03e40d8"
++version = "3.0.0"
+ dependencies = [
+  "egglog",
+  "egglog-ast",
+  "egglog-reports",
++ "fixedbitset 0.5.7",
++ "hashbrown 0.16.1",
+  "lazy_static",
+  "log",
+  "num",
++ "stacker",
+ ]
+ 
+ [[package]]
+ name = "egglog-numeric-id"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+-dependencies = [
+- "rayon",
+-]
+ 
+ [[package]]
+ name = "egglog-reports"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "clap",
+  "hashbrown 0.16.1",
+- "indexmap",
+  "rustc-hash 2.1.1",
+  "serde",
+  "serde_json",
+@@ -937,7 +937,6 @@
+ [[package]]
+ name = "egglog-union-find"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "crossbeam",
+  "egglog-concurrency",
+@@ -1035,7 +1034,7 @@
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -1659,6 +1658,15 @@
+ ]
+ 
+ [[package]]
++name = "object"
++version = "0.39.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
++dependencies = [
++ "memchr",
++]
++
++[[package]]
+ name = "once_cell"
+ version = "1.21.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1834,6 +1842,16 @@
+ ]
+ 
+ [[package]]
++name = "psm"
++version = "0.1.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
++dependencies = [
++ "ar_archive_writer",
++ "cc",
++]
++
++[[package]]
+ name = "quote"
+ version = "1.0.44"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2060,7 +2078,7 @@
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -2209,6 +2227,19 @@
+ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+ 
+ [[package]]
++name = "stacker"
++version = "0.1.25"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "libc",
++ "psm",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
+ name = "string_cache"
+ version = "0.8.9"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -2293,7 +2324,7 @@
+  "getrandom 0.4.1",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+@@ -2605,7 +2636,7 @@
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.52.0",
++ "windows-sys 0.61.2",
+ ]
+ 
+ [[package]]
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -9,7 +9,7 @@
+ 
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental", rev = "08771f9", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-sort-candidate/egglog-experimental", package = "egglog-experimental" }
+ egraph-serialize = "0.3.0"
+ log = "0.4.19"
+ thiserror = "1"
+--- a/dag_in_context/Cargo.lock
++++ b/dag_in_context/Cargo.lock
+@@ -82,6 +82,15 @@
+ version = "1.0.102"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
++
++[[package]]
++name = "ar_archive_writer"
++version = "0.5.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
++dependencies = [
++ "object",
++]
+ 
+ [[package]]
+ name = "arc-swap"
+@@ -430,7 +439,6 @@
+ [[package]]
+ name = "egglog"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "chrono",
+  "clap",
+@@ -439,6 +447,7 @@
+  "egglog-add-primitive",
+  "egglog-ast",
+  "egglog-bridge",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -455,6 +464,7 @@
+  "rayon",
+  "rustc-hash 2.1.1",
+  "serde_json",
++ "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+ ]
+@@ -462,7 +472,6 @@
+ [[package]]
+ name = "egglog-add-primitive"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "quote",
+  "syn 2.0.90",
+@@ -471,7 +480,6 @@
+ [[package]]
+ name = "egglog-ast"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "ordered-float",
+ ]
+@@ -479,10 +487,10 @@
+ [[package]]
+ name = "egglog-bridge"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+  "dyn-clone",
++ "egglog-concurrency",
+  "egglog-core-relations",
+  "egglog-numeric-id",
+  "egglog-reports",
+@@ -493,7 +501,6 @@
+  "num-rational",
+  "once_cell",
+  "ordered-float",
+- "rayon",
+  "smallvec",
+  "thiserror 2.0.18",
+  "web-time",
+@@ -502,19 +509,17 @@
+ [[package]]
+ name = "egglog-concurrency"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "arc-swap",
+  "bumpalo",
++ "crossbeam",
+  "egglog-numeric-id",
+- "rayon",
+  "smallvec",
+ ]
+ 
+ [[package]]
+ name = "egglog-core-relations"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "anyhow",
+  "bumpalo",
+@@ -533,7 +538,6 @@
+  "num",
+  "once_cell",
+  "rand 0.9.2",
+- "rayon",
+  "rustc-hash 2.1.1",
+  "smallvec",
+  "thiserror 2.0.18",
+@@ -542,33 +546,29 @@
+ 
+ [[package]]
+ name = "egglog-experimental"
+-version = "0.1.0"
+-source = "git+https://github.com/egraphs-good/egglog-experimental?rev=08771f9#08771f9f69de51cc8cdc58e3760b7f00a03e40d8"
++version = "3.0.0"
+ dependencies = [
+  "egglog",
+  "egglog-ast",
+  "egglog-reports",
++ "fixedbitset",
++ "hashbrown 0.16.1",
+  "lazy_static",
+  "log",
+  "num",
++ "stacker",
+ ]
+ 
+ [[package]]
+ name = "egglog-numeric-id"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+-dependencies = [
+- "rayon",
+-]
+ 
+ [[package]]
+ name = "egglog-reports"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "clap",
+  "hashbrown 0.16.1",
+- "indexmap",
+  "rustc-hash 2.1.1",
+  "serde",
+  "serde_json",
+@@ -578,7 +578,6 @@
+ [[package]]
+ name = "egglog-union-find"
+ version = "2.0.0"
+-source = "git+https://github.com/saulshanabrook/egg-smol.git?branch=codex%2Fsplit-scheduler-can-stop-report#ebba7bb902bdc1b0f377b6bb22c06ac305912674"
+ dependencies = [
+  "crossbeam",
+  "egglog-concurrency",
+@@ -1037,6 +1036,15 @@
+ ]
+ 
+ [[package]]
++name = "object"
++version = "0.39.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
++dependencies = [
++ "memchr",
++]
++
++[[package]]
+ name = "once_cell"
+ version = "1.21.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1136,6 +1144,16 @@
+ ]
+ 
+ [[package]]
++name = "psm"
++version = "0.1.32"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
++dependencies = [
++ "ar_archive_writer",
++ "cc",
++]
++
++[[package]]
+ name = "quote"
+ version = "1.0.37"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1413,6 +1431,19 @@
+ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
+ 
+ [[package]]
++name = "stacker"
++version = "0.1.25"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "libc",
++ "psm",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
+ name = "strsim"
+ version = "0.11.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1650,6 +1681,15 @@
+ checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
+ dependencies = [
+  "windows-targets",
++]
++
++[[package]]
++name = "windows-sys"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++dependencies = [
++ "windows-link",
+ ]
+ 
+ [[package]]
+--- a/dag_in_context/Cargo.toml
++++ b/dag_in_context/Cargo.toml
+@@ -6,7 +6,7 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
+-egglog = { git = "https://github.com/egraphs-good/egglog-experimental", rev = "08771f9", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-sort-candidate/egglog-experimental", package = "egglog-experimental" }
+ smallvec = "1.11.1"
+ strum = "0.25"
+ strum_macros = "0.25"
+--- a/dag_in_context/src/lib.rs
++++ b/dag_in_context/src/lib.rs
+@@ -49,6 +49,7 @@
+ pub mod fastercbcextractor;
+ pub mod pretty_print;
+ pub mod schedule;
++mod scoped_reasoning;
+ 
+ pub type Result = std::result::Result<(), MainError>;
+ 
+@@ -257,6 +258,33 @@
+     let loop_context_unions =
+         context_cache.get_unions_with_sharing(&mut printed, &mut tree_state, &mut term_cache);
+ 
++    if use_context {
++        for predicate in scoped_reasoning::analyze(&program) {
++            let term = predicate.to_egglog_with(&mut tree_state);
++            let predicate_var = print_with_intermediate_helper(
++                &tree_state.termdag,
++                term,
++                &mut term_cache,
++                &mut printed,
++            );
++            let false_expr = RcExpr::new(Expr::Const(
++                crate::schema::Constant::Bool(false),
++                predicate.get_arg_type(),
++                predicate.get_ctx().clone(),
++            ));
++            let term = false_expr.to_egglog_with(&mut tree_state);
++            let false_var = print_with_intermediate_helper(
++                &tree_state.termdag,
++                term,
++                &mut term_cache,
++                &mut printed,
++            );
++            if std::env::var("EGGCC_SCOPED_MODE").as_deref() != Ok("application-off") {
++                writeln!(printed, "(union {predicate_var} {false_var})").unwrap();
++            }
++        }
++    }
++
+     // set the type of each function
+     for func in program.fns() {
+         let func = program.get_function(&func).unwrap();
+--- a/dag_in_context/src/scoped_reasoning.rs
++++ b/dag_in_context/src/scoped_reasoning.rs
+@@ -0,0 +1,739 @@
++//! Private, exact-scope experiment for a order-tagged signed sorting key.
++//!
++//! Only a checked final `Eq=false` leaves this sidecar. Dynamic equalities and
++//! disequalities remain in a fresh graph for one source predicate.
++
++use crate::schema::{
++    Assumption, BaseType, BinaryOp, Constant, Expr, RcExpr, TernaryOp, TreeProgram, Type,
++};
++use egglog::{new_experimental_egraph_with_options, DisequalityEncoding, Error};
++use serde_json::json;
++use std::{
++    collections::BTreeSet,
++    path::Path,
++    sync::atomic::{AtomicUsize, Ordering},
++};
++
++#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
++enum Word {
++    Slot(usize),
++    Constant(i64),
++    Add(Box<Word>, Box<Word>),
++    Scale(Box<Word>, i64),
++    Min(Box<Word>, Box<Word>),
++    Max(Box<Word>, Box<Word>),
++    Tag(Box<Word>, Box<Word>),
++}
++
++fn tuple_length(expr: &RcExpr) -> Option<usize> {
++    match expr.as_ref() {
++        Expr::Single(_) => Some(1),
++        Expr::Concat(a, b) => Some(tuple_length(a)? + tuple_length(b)?),
++        Expr::Empty(_, _) => Some(0),
++        Expr::Arg(Type::TupleT(fields), _) => Some(fields.len()),
++        _ => None,
++    }
++}
++
++/// Project through the branch input syntax without inventing tuple equalities.
++fn project(expr: &RcExpr, index: usize) -> Option<RcExpr> {
++    match expr.as_ref() {
++        Expr::Single(value) if index == 0 => Some(value.clone()),
++        Expr::Concat(left, right) => {
++            let length = tuple_length(left)?;
++            if index < length {
++                project(left, index)
++            } else {
++                project(right, index - length)
++            }
++        }
++        Expr::Arg(Type::TupleT(fields), _) if index < fields.len() => {
++            Some(RcExpr::new(Expr::Get(expr.clone(), index)))
++        }
++        _ => None,
++    }
++}
++
++/// Translate a pure integer expression through its exact enclosing If inputs.
++fn translate(expr: &RcExpr, root: &Assumption, expected: &Assumption) -> Option<Word> {
++    if expr.get_ctx() != expected {
++        return None;
++    }
++    match expr.as_ref() {
++        Expr::Const(Constant::Int(value), _, _) => Some(Word::Constant(*value)),
++        Expr::Arg(Type::Base(BaseType::IntT), ctx) if ctx == root => Some(Word::Slot(0)),
++        Expr::Get(arg, index) => {
++            let Expr::Arg(Type::TupleT(fields), ctx) = arg.as_ref() else {
++                return None;
++            };
++            if fields.get(*index) != Some(&BaseType::IntT) {
++                return None;
++            }
++            if ctx == root {
++                Some(Word::Slot(*index))
++            } else if let Assumption::InIf(_, _, input) = ctx {
++                translate(&project(input, *index)?, root, input.get_ctx())
++            } else {
++                None
++            }
++        }
++        Expr::Bop(BinaryOp::Add, left, right) => Some(Word::Add(
++            Box::new(translate(left, root, expected)?),
++            Box::new(translate(right, root, expected)?),
++        )),
++        Expr::Bop(op @ (BinaryOp::Smin | BinaryOp::Smax), left, right) => {
++            let left = Box::new(translate(left, root, expected)?);
++            let right = Box::new(translate(right, root, expected)?);
++            Some(if *op == BinaryOp::Smin {
++                Word::Min(left, right)
++            } else {
++                Word::Max(left, right)
++            })
++        }
++        Expr::Top(TernaryOp::Select, predicate, yes, no) => {
++            if predicate.get_ctx() != expected
++                || translate(yes, root, expected)? != Word::Constant(1)
++                || translate(no, root, expected)? != Word::Constant(0)
++            {
++                return None;
++            }
++            let Expr::Bop(BinaryOp::LessThan, left, right) = predicate.as_ref() else {
++                return None;
++            };
++            Some(Word::Tag(
++                Box::new(translate(left, root, expected)?),
++                Box::new(translate(right, root, expected)?),
++            ))
++        }
++        Expr::Bop(BinaryOp::Mul, left, right) => {
++            let left = translate(left, root, expected)?;
++            let right = translate(right, root, expected)?;
++            match (left, right) {
++                (Word::Constant(coefficient), value) | (value, Word::Constant(coefficient)) => {
++                    Some(Word::Scale(Box::new(value), coefficient))
++                }
++                _ => None,
++            }
++        }
++        _ => None,
++    }
++}
++
++/// Require all three exact fields over the same ordered signed-i64 pair.
++fn order_pair(minimum: &Word, maximum: &Word, tag: &Word) -> Option<(Word, Word)> {
++    let Word::Min(a, b) = minimum else {
++        return None;
++    };
++    if maximum != &Word::Max(a.clone(), b.clone()) || tag != &Word::Tag(a.clone(), b.clone()) {
++        return None;
++    }
++    Some((a.as_ref().clone(), b.as_ref().clone()))
++}
++
++/// Return the non-shared Add child, rejecting ambiguous double matches.
++fn other_addend(sum: &Word, shared: &Word) -> Option<Word> {
++    let Word::Add(left, right) = sum else {
++        return None;
++    };
++    match (left.as_ref() == shared, right.as_ref() == shared) {
++        (true, false) => Some(right.as_ref().clone()),
++        (false, true) => Some(left.as_ref().clone()),
++        _ => None,
++    }
++}
++
++fn odd_mul_child(word: &Word) -> Option<Word> {
++    match word {
++        Word::Scale(child, 3) => Some(child.as_ref().clone()),
++        _ => None,
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Mode {
++    Off,
++    SeedOnly,
++    PrimitiveOnly,
++    CancellationOff,
++    ForwardOff,
++    ReverseOff,
++    IdentityOff,
++    CancellationRescue,
++    ReverseRescue,
++    QueryOff,
++    Manual,
++    Encoding,
++    BridgeOff,
++    ApplicationOff,
++}
++
++impl Mode {
++    fn from_env() -> Self {
++        match std::env::var("EGGCC_SCOPED_MODE")
++            .as_deref()
++            .unwrap_or("off")
++        {
++            "off" => Self::Off,
++            "seed-only" => Self::SeedOnly,
++            "primitive-only" => Self::PrimitiveOnly,
++            "cancellation-off" => Self::CancellationOff,
++            "forward-off" => Self::ForwardOff,
++            "reverse-off" => Self::ReverseOff,
++            "identity-off" => Self::IdentityOff,
++            "cancellation-rescue" => Self::CancellationRescue,
++            "reverse-rescue" => Self::ReverseRescue,
++            "query-off" => Self::QueryOff,
++            "manual" => Self::Manual,
++            "encoding" => Self::Encoding,
++            "bridge-off" => Self::BridgeOff,
++            "application-off" => Self::ApplicationOff,
++            other => panic!("Unknown EGGCC_SCOPED_MODE: {other}"),
++        }
++    }
++}
++
++type ApplicationRow = (&'static str, Vec<usize>, Vec<i64>, usize, bool);
++
++fn merge(equality: &mut [usize], left: usize, right: usize) {
++    let old = equality[right];
++    let new = equality[left];
++    for value in equality {
++        if *value == old {
++            *value = new;
++        }
++    }
++}
++
++/// Independent finite closure over the same generic rows and committed seeds.
++fn manual(
++    key_marked: bool,
++    mul_marked: bool,
++    reverse: bool,
++    identity: bool,
++    cancellation_rescue: bool,
++    reverse_rescue: bool,
++) -> ([bool; 7], bool) {
++    // 0..5 a,b,c,d,z,w; 6..11 min/max/tag fields; 12..15 keys/products;
++    // 16..17 mixed Adds; 18..19 odd products.
++    let rows: Vec<ApplicationRow> = vec![
++        ("Min", vec![0, 1], vec![], 6, false),
++        ("Max", vec![0, 1], vec![], 7, false),
++        ("Tag", vec![0, 1], vec![1, 0], 8, false),
++        ("Min", vec![2, 3], vec![], 9, false),
++        ("Max", vec![2, 3], vec![], 10, false),
++        ("Tag", vec![2, 3], vec![1, 0], 11, false),
++        ("OrderKey", vec![0, 1], vec![], 12, key_marked),
++        ("OrderKey", vec![2, 3], vec![], 13, key_marked),
++        ("Triple", vec![6, 7, 8], vec![], 14, false),
++        ("Triple", vec![9, 10, 11], vec![], 15, false),
++        ("Add", vec![2, 4], vec![], 16, false),
++        ("Add", vec![0, 5], vec![], 17, false),
++        ("OddMul", vec![4], vec![3], 18, mul_marked),
++        ("OddMul", vec![5], vec![3], 19, mul_marked),
++    ];
++    let mut equality = (0..20).collect::<Vec<_>>();
++    merge(&mut equality, 6, 9);
++    merge(&mut equality, 7, 10);
++    merge(&mut equality, 8, 11);
++    if identity {
++        merge(&mut equality, 12, 14);
++        merge(&mut equality, 13, 15);
++    }
++    if cancellation_rescue {
++        merge(&mut equality, 0, 2);
++    }
++    let mut disequality = BTreeSet::from([(16, 17)]);
++    if reverse_rescue {
++        disequality.insert((4, 5));
++    }
++    loop {
++        let before = (equality.clone(), disequality.clone());
++        for (left_name, left_children, left_params, left_output, left_marked) in &rows {
++            for (right_name, right_children, right_params, right_output, _) in &rows {
++                if left_name != right_name || left_params != right_params {
++                    continue;
++                }
++                if left_children
++                    .iter()
++                    .zip(right_children)
++                    .all(|(left, right)| equality[*left] == equality[*right])
++                {
++                    merge(&mut equality, *left_output, *right_output);
++                }
++                if *left_marked && equality[*left_output] == equality[*right_output] {
++                    for (left, right) in left_children.iter().zip(right_children) {
++                        merge(&mut equality, *left, *right);
++                    }
++                }
++            }
++        }
++        disequality = disequality
++            .into_iter()
++            .map(|(left, right)| {
++                let (left, right) = (equality[left], equality[right]);
++                (left.min(right), left.max(right))
++            })
++            .collect();
++        for (left_name, left_children, left_params, left_output, left_marked) in &rows {
++            for (right_name, right_children, right_params, right_output, _) in &rows {
++                if left_name != right_name || left_params != right_params {
++                    continue;
++                }
++                let (left, right) = (equality[*left_output], equality[*right_output]);
++                let output = (left.min(right), left.max(right));
++                for (index, (left_child, right_child)) in
++                    left_children.iter().zip(right_children).enumerate()
++                {
++                    let (left, right) = (equality[*left_child], equality[*right_child]);
++                    let child = (left.min(right), left.max(right));
++                    if *left_marked && disequality.contains(&child) {
++                        disequality.insert(output);
++                    }
++                    if reverse
++                        && disequality.contains(&output)
++                        && left_children.iter().zip(right_children).enumerate().all(
++                            |(other, (left, right))| {
++                                other == index || equality[*left] == equality[*right]
++                            },
++                        )
++                    {
++                        disequality.insert(child);
++                    }
++                }
++            }
++        }
++        if before == (equality.clone(), disequality.clone()) {
++            break;
++        }
++    }
++    let equal = |left: usize, right: usize| equality[left] == equality[right];
++    let disequal = |left: usize, right: usize| {
++        let (left, right) = (equality[left], equality[right]);
++        disequality.contains(&(left.min(right), left.max(right)))
++    };
++    (
++        [
++            equal(12, 13),
++            equal(0, 2),
++            equal(1, 3),
++            equal(14, 15),
++            disequal(16, 17),
++            disequal(4, 5),
++            disequal(18, 19),
++        ],
++        disequality.iter().any(|(left, right)| left == right),
++    )
++}
++
++fn query_disequality(
++    graph: &mut egglog::EGraph,
++    name: &str,
++    left: &str,
++    right: &str,
++    reverse: bool,
++) -> Result<bool, Error> {
++    graph.parse_and_run_program(None,&format!("(relation {name} ())\n(ruleset {name}-query)\n(rule (({} {left} {right})) (({name})) :ruleset {name}-query :naive)\n(run-schedule (run {name}-query))",if reverse{"known-disequal?"}else{"known-disequal-forward-only?"}))?;
++    Ok(graph.get_size(name) > 0)
++}
++
++fn query_equality(
++    graph: &mut egglog::EGraph,
++    name: &str,
++    left: &str,
++    right: &str,
++) -> Result<bool, Error> {
++    graph.parse_and_run_program(
++        None,
++        &format!("(relation {name} ())\n(ruleset {name}-query)\n(rule ((= {left} {right})) (({name})) :ruleset {name}-query :naive)\n(run-schedule (run {name}-query))"),
++    )?;
++    Ok(graph.get_size(name) > 0)
++}
++
++fn prove(mode: Mode) -> Result<(bool, serde_json::Value), Error> {
++    let key_marked = !matches!(mode, Mode::CancellationOff | Mode::CancellationRescue);
++    let mul_marked = mode != Mode::ForwardOff;
++    let reverse = !matches!(mode, Mode::ReverseOff | Mode::ReverseRescue);
++    let identity = mode != Mode::IdentityOff;
++    let cancellation_rescue = mode == Mode::CancellationRescue;
++    let reverse_rescue = mode == Mode::ReverseRescue;
++    let mut program = format!(
++        "(datatype Scope (ThisScope))\n(datatype Word)\n(datatype Key)\n(constructor A (Scope) Word)\n(constructor B (Scope) Word)\n(constructor C (Scope) Word)\n(constructor D (Scope) Word)\n(constructor Z (Scope) Word)\n(constructor W (Scope) Word)\n(constructor Min (Word Word) Word)\n(constructor Max (Word Word) Word)\n(constructor Tag (Word Word i64 i64) Word)\n(constructor OrderKey (Word Word) Key {})\n(constructor Triple (Word Word Word) Key)\n(constructor Add (Word Word) Word)\n(constructor OddMul (Word i64) Word {})\n(let a (A (ThisScope)))\n(let b (B (ThisScope)))\n(let c (C (ThisScope)))\n(let d (D (ThisScope)))\n(let z (Z (ThisScope)))\n(let w (W (ThisScope)))\n(let uab (Min a b))\n(let vab (Max a b))\n(let tab (Tag a b 1 0))\n(let ucd (Min c d))\n(let vcd (Max c d))\n(let tcd (Tag c d 1 0))\n(let kab (OrderKey a b))\n(let kcd (OrderKey c d))\n(let pab (Triple uab vab tab))\n(let pcd (Triple ucd vcd tcd))\n(let acz (Add c z))\n(let aaw (Add a w))\n(let mz (OddMul z 3))\n(let mw (OddMul w 3))\n",
++        if key_marked { ":injective" } else { "" },
++        if mul_marked { ":injective" } else { "" },
++    );
++    if identity {
++        program.push_str("(union kab pab)\n(union kcd pcd)\n");
++    }
++    program.push_str("(union uab ucd)\n(union vab vcd)\n(union tab tcd)\n(disequal acz aaw)\n");
++    if cancellation_rescue {
++        program.push_str("(union a c)\n");
++    }
++    if reverse_rescue {
++        program.push_str("(disequal z w)\n");
++    }
++    let run_engine = !matches!(mode, Mode::SeedOnly | Mode::PrimitiveOnly | Mode::Manual);
++    if run_engine {
++        program.push_str("(run-schedule (saturate injectivity))\n");
++    }
++    let mut graph = new_experimental_egraph_with_options(false, DisequalityEncoding::Nee);
++    graph.parse_and_run_program(None, &program)?;
++    let manual_result = if mode == Mode::Manual {
++        Some(manual(
++            key_marked,
++            mul_marked,
++            reverse,
++            identity,
++            cancellation_rescue,
++            reverse_rescue,
++        ))
++    } else {
++        None
++    };
++    let bottom = if run_engine {
++        match graph.parse_and_run_program(None, "(check-contradiction)") {
++            Ok(_) => true,
++            Err(Error::CheckError(..)) => false,
++            Err(error) => return Err(error),
++        }
++    } else if mode == Mode::Manual {
++        manual_result.unwrap().1
++    } else {
++        false
++    };
++    let mut known = [false; 7];
++    let mut target_queried = false;
++    if !bottom {
++        if mode == Mode::Manual {
++            known = manual_result.unwrap().0;
++            target_queried = true;
++        } else if !matches!(mode, Mode::SeedOnly | Mode::PrimitiveOnly) {
++            known[0] = query_equality(&mut graph, "KeyEqual", "kab", "kcd")?;
++            known[1] = query_equality(&mut graph, "AEqual", "a", "c")?;
++            known[2] = query_equality(&mut graph, "BEqual", "b", "d")?;
++            known[3] = query_equality(&mut graph, "PairEqual", "pab", "pcd")?;
++            known[4] = query_disequality(&mut graph, "AddKnown", "acz", "aaw", reverse)?;
++            known[5] = query_disequality(&mut graph, "ZKnown", "z", "w", reverse)?;
++            if mode != Mode::QueryOff {
++                known[6] = query_disequality(&mut graph, "TargetKnown", "mz", "mw", reverse)?;
++                target_queried = true;
++            }
++        }
++    }
++    let export = !bottom && known[6] && mode != Mode::BridgeOff;
++    Ok((
++        export,
++        json!({
++            "mode":format!("{mode:?}"),
++            "encoding":"NEE",
++            "program":program,
++            "key_law":"(smin(a,b),smax(a,b),select(a<b,1,0))",
++            "component_equal_seeds":[true,true,true],
++            "mixed_add_disequality_seed":true,
++            "key_equal":known[0],
++            "a_equal_c":known[1],
++            "b_equal_d":known[2],
++            "pair_equal":known[3],
++            "mixed_add_known_disequal":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(known[4])},
++            "z_known_disequal_w":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(known[5])},
++            "target_known_disequal":if target_queried{Some(known[6])}else{None},
++            "target_queried":target_queried,
++            "bottom":if matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly){None}else{Some(bottom)},
++            "manual_receipts":manual_result.map(|result| result.0),
++            "manual_bottom":manual_result.map(|result| result.1),
++            "export":export,
++            "application_enabled":mode!=Mode::ApplicationOff,
++            "order_key_marked":key_marked,
++            "odd_mul_marked":mul_marked,
++            "reverse_enabled":reverse,
++            "representation_identity":identity,
++            "intermediate_a_equal_c_rescue":cancellation_rescue,
++            "intermediate_z_disequal_w_rescue":reverse_rescue,
++            "injectivity_saturated":run_engine,
++            "engine_witness_queries_run":!matches!(mode,Mode::SeedOnly|Mode::PrimitiveOnly|Mode::Manual),
++            "manual_closure_run":mode==Mode::Manual,
++            "primitive_only_marked_primitive_fields":[1,0,3],
++            "primitive_only_dynamic_witness":false,
++        }),
++    ))
++}
++
++/// Admit only the exact nested min/max/tag, mixed-Add and odd-product chain.
++pub(crate) fn analyze(program: &TreeProgram) -> Vec<RcExpr> {
++    let mode = Mode::from_env();
++    if mode == Mode::Off {
++        return Vec::new();
++    }
++    static BOUNDARY: AtomicUsize = AtomicUsize::new(0);
++    let boundary = BOUNDARY.fetch_add(1, Ordering::Relaxed);
++    let types = program.typecheck();
++    let mut stack = vec![program.entry.clone()];
++    stack.extend(program.functions.clone());
++    let (mut seen, mut exports, mut receipts) = (BTreeSet::new(), Vec::new(), Vec::new());
++    while let Some(expr) = stack.pop() {
++        if !seen.insert(std::rc::Rc::as_ptr(&expr)) {
++            continue;
++        }
++        stack.extend(expr.children_exprs());
++        let Expr::If(target, _, _, _) = expr.as_ref() else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, target_left, target_right) = target.as_ref() else {
++            continue;
++        };
++        if types.get(&std::rc::Rc::as_ptr(target)) != Some(&Type::Base(BaseType::BoolT)) {
++            continue;
++        }
++        let target_scope = target.get_ctx();
++        let Assumption::InIf(false, mixed_predicate, mixed_input) = &target_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, mixed_left, mixed_right) = mixed_predicate.as_ref() else {
++            continue;
++        };
++        let mixed_scope = mixed_predicate.get_ctx();
++        let Assumption::InIf(true, third_predicate, third_input) = &mixed_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, third_left, third_right) = third_predicate.as_ref() else {
++            continue;
++        };
++        let third_scope = third_predicate.get_ctx();
++        let Assumption::InIf(true, second_predicate, second_input) = &third_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, second_left, second_right) = second_predicate.as_ref() else {
++            continue;
++        };
++        let second_scope = second_predicate.get_ctx();
++        let Assumption::InIf(true, first_predicate, first_input) = &second_scope else {
++            continue;
++        };
++        let Expr::Bop(BinaryOp::Eq, first_left, first_right) = first_predicate.as_ref() else {
++            continue;
++        };
++        let root = first_predicate.get_ctx();
++        let translated_first = (
++            translate(first_left, root, root),
++            translate(first_right, root, root),
++        );
++        let translated_second = (
++            translate(second_left, root, second_scope),
++            translate(second_right, root, second_scope),
++        );
++        let translated_third = (
++            translate(third_left, root, third_scope),
++            translate(third_right, root, third_scope),
++        );
++        let translated_mixed = (
++            translate(mixed_left, root, mixed_scope),
++            translate(mixed_right, root, mixed_scope),
++        );
++        let translated_target = (
++            translate(target_left, root, target_scope),
++            translate(target_right, root, target_scope),
++        );
++        let accepted = (|| {
++            let (Some(first_left), Some(first_right)) = &translated_first else {
++                return None;
++            };
++            let (Some(second_left), Some(second_right)) = &translated_second else {
++                return None;
++            };
++            let (Some(third_left), Some(third_right)) = &translated_third else {
++                return None;
++            };
++            let ((a, b), (c, d)) = (
++                order_pair(first_left, second_left, third_left)?,
++                order_pair(first_right, second_right, third_right)?,
++            );
++            if [a.clone(), b.clone(), c.clone(), d.clone()]
++                .iter()
++                .any(|word| matches!(word, Word::Constant(_)))
++                || a == c
++                || b == d
++            {
++                return None;
++            }
++            let (Some(mixed_left), Some(mixed_right)) = &translated_mixed else {
++                return None;
++            };
++            let (z, w) = if let (Some(z), Some(w)) =
++                (other_addend(mixed_left, &c), other_addend(mixed_right, &a))
++            {
++                (z, w)
++            } else {
++                (
++                    other_addend(mixed_right, &c)?,
++                    other_addend(mixed_left, &a)?,
++                )
++            };
++            if z == w || matches!(z, Word::Constant(_)) || matches!(w, Word::Constant(_)) {
++                return None;
++            }
++            let (Some(target_left), Some(target_right)) = &translated_target else {
++                return None;
++            };
++            let target_children = (odd_mul_child(target_left)?, odd_mul_child(target_right)?);
++            if target_children != (z.clone(), w.clone())
++                && target_children != (w.clone(), z.clone())
++            {
++                return None;
++            }
++            Some((a, b, c, d, z, w))
++        })();
++        let Some((a, b, c, d, z, w)) = accepted else {
++            receipts.push(json!({
++                "accepted":false,
++                "reason":"exact min/max/tag fields, contexts, mixed Add, or odd target mismatch",
++                "first":format!("{translated_first:?}"),
++                "second":format!("{translated_second:?}"),
++                "third":format!("{translated_third:?}"),
++                "mixed":format!("{translated_mixed:?}"),
++                "target":format!("{translated_target:?}"),
++            }));
++            continue;
++        };
++        let (export, mut receipt) = match prove(mode) {
++            Ok(value) => value,
++            Err(error) => (
++                false,
++                json!({"analysis_error":format!("{error:?}"),"export":false}),
++            ),
++        };
++        receipt["accepted"] = json!(true);
++        receipt["source_first_component"] = json!(first_predicate.to_string());
++        receipt["source_second_component"] = json!(second_predicate.to_string());
++        receipt["source_third_component"] = json!(third_predicate.to_string());
++        receipt["source_mixed_add"] = json!(mixed_predicate.to_string());
++        receipt["source_target"] = json!(target.to_string());
++        receipt["root_scope"] = json!(root.to_string());
++        receipt["second_scope"] = json!(second_scope.to_string());
++        receipt["third_scope"] = json!(third_scope.to_string());
++        receipt["mixed_scope"] = json!(mixed_scope.to_string());
++        receipt["target_scope"] = json!(target_scope.to_string());
++        receipt["first_input"] = json!(first_input.to_string());
++        receipt["second_input"] = json!(second_input.to_string());
++        receipt["third_input"] = json!(third_input.to_string());
++        receipt["mixed_input"] = json!(mixed_input.to_string());
++        receipt["translated_dynamic_words"] =
++            json!(format!("a={a:?},b={b:?},c={c:?},d={d:?},z={z:?},w={w:?}"));
++        receipts.push(receipt);
++        if export {
++            exports.push(target.clone());
++        }
++    }
++    if let Ok(directory) = std::env::var("EGGCC_SCOPED_EVIDENCE") {
++        std::fs::create_dir_all(&directory).unwrap();
++        let path = Path::new(&directory).join(format!("boundary-{boundary:04}.json"));
++        assert!(!path.exists());
++        std::fs::write(
++            path,
++            serde_json::to_vec_pretty(&json!({
++                "boundary":boundary,
++                "mode":format!("{mode:?}"),
++                "queries":receipts,
++                "exports":exports.len(),
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++    }
++    exports
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn sort_chain_causal_controls() {
++        for mode in [
++            Mode::Encoding,
++            Mode::Manual,
++            Mode::CancellationOff,
++            Mode::ForwardOff,
++            Mode::ReverseOff,
++            Mode::IdentityOff,
++            Mode::CancellationRescue,
++            Mode::ReverseRescue,
++            Mode::QueryOff,
++            Mode::PrimitiveOnly,
++            Mode::SeedOnly,
++            Mode::BridgeOff,
++            Mode::ApplicationOff,
++        ] {
++            let (export, receipt) = prove(mode).unwrap();
++            assert_eq!(
++                export,
++                matches!(
++                    mode,
++                    Mode::Encoding
++                        | Mode::Manual
++                        | Mode::CancellationRescue
++                        | Mode::ReverseRescue
++                        | Mode::ApplicationOff
++                ),
++                "{receipt}"
++            );
++            if mode == Mode::CancellationOff {
++                assert_eq!(receipt["a_equal_c"], false);
++                assert_eq!(receipt["target_known_disequal"], false);
++            }
++            if mode == Mode::ForwardOff {
++                assert_eq!(receipt["z_known_disequal_w"], true);
++                assert_eq!(receipt["target_known_disequal"], false);
++            }
++            if mode == Mode::ReverseOff {
++                assert_eq!(receipt["a_equal_c"], true);
++                assert_eq!(receipt["z_known_disequal_w"], false);
++            }
++            if mode == Mode::IdentityOff {
++                assert_eq!(receipt["pair_equal"], true);
++                assert_eq!(receipt["a_equal_c"], false);
++            }
++            if mode == Mode::CancellationRescue {
++                assert_eq!(receipt["order_key_marked"], false);
++                assert_eq!(receipt["a_equal_c"], true);
++                assert_eq!(receipt["target_known_disequal"], true);
++            }
++            if mode == Mode::ReverseRescue {
++                assert_eq!(receipt["reverse_enabled"], false);
++                assert_eq!(receipt["z_known_disequal_w"], true);
++                assert_eq!(receipt["target_known_disequal"], true);
++            }
++            if mode == Mode::Encoding {
++                assert_eq!(receipt["bottom"], false);
++            }
++            if matches!(mode, Mode::PrimitiveOnly | Mode::SeedOnly) {
++                assert_eq!(receipt["manual_closure_run"], false);
++                assert_eq!(receipt["engine_witness_queries_run"], false);
++            }
++        }
++    }
++
++    #[test]
++    fn sort_manual_closure_respects_missing_edges() {
++        assert_eq!(manual(true, true, true, true, false, false).0, [true; 7]);
++        assert_eq!(
++            manual(false, true, true, true, false, false).0,
++            [true, false, false, true, true, false, false]
++        );
++        assert_eq!(
++            manual(true, false, true, true, false, false).0,
++            [true, true, true, true, true, true, false]
++        );
++        assert_eq!(
++            manual(true, true, false, true, false, false).0,
++            [true, true, true, true, true, false, false]
++        );
++        assert_eq!(
++            manual(true, true, true, false, false, false).0,
++            [false, false, false, true, true, false, false]
++        );
++        assert_eq!(
++            manual(false, true, true, true, true, false).0,
++            [true, true, false, true, true, true, true]
++        );
++        assert_eq!(manual(true, true, false, true, false, true).0, [true; 7]);
++    }
++}

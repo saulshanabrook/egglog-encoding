@@ -1,0 +1,360 @@
+{
+  "status": "passed",
+  "implementation": "external primitive-column comparison pass; Rust PrimitiveOnly retains and emits the unchanged seed graph",
+  "program_sha256": "1602db2375f853aaea44456fdde33a33403379c0fe5c62572d8e434ba6e055ec",
+  "encoding_program_sha256": "dc04128f0ce97e527e303a1a43a85877e30da132d59207ed553847d02a40316d",
+  "positive_results_sha256": "8cfcab1a8c0ea1d42312b18112ac623954c25cf5c8c2de68af5cf5007e181887",
+  "binary_sha256": "56808fe97852950e1080f07c4b3f1284327a9f050ee80e37518648f066bcb26e",
+  "graph_equal_after_removing_only_encoding_run_schedule": true,
+  "seed_only_graph_identical": true,
+  "schemas": {
+    "ThisScope": {
+      "fields": [],
+      "output_sort": "Scope"
+    },
+    "A": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "B": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "C": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "D": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "Z": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "W": {
+      "fields": [
+        "Scope"
+      ],
+      "output_sort": "Word"
+    },
+    "Min": {
+      "fields": [
+        "Word",
+        "Word"
+      ],
+      "output_sort": "Word"
+    },
+    "Max": {
+      "fields": [
+        "Word",
+        "Word"
+      ],
+      "output_sort": "Word"
+    },
+    "Tag": {
+      "fields": [
+        "Word",
+        "Word",
+        "i64",
+        "i64"
+      ],
+      "output_sort": "Word"
+    },
+    "OrderKey": {
+      "fields": [
+        "Word",
+        "Word"
+      ],
+      "output_sort": "Key"
+    },
+    "Triple": {
+      "fields": [
+        "Word",
+        "Word",
+        "Word"
+      ],
+      "output_sort": "Key"
+    },
+    "Add": {
+      "fields": [
+        "Word",
+        "Word"
+      ],
+      "output_sort": "Word"
+    },
+    "OddMul": {
+      "fields": [
+        "Word",
+        "i64"
+      ],
+      "output_sort": "Word"
+    }
+  },
+  "applications": [
+    {
+      "identity": "a.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "a",
+      "constructor": "A",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "b.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "b",
+      "constructor": "B",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "c.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "c",
+      "constructor": "C",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "d.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "d",
+      "constructor": "D",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "z.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "z",
+      "constructor": "Z",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "w.0",
+      "constructor": "ThisScope",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "w",
+      "constructor": "W",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "uab",
+      "constructor": "Min",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "vab",
+      "constructor": "Max",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "tab",
+      "constructor": "Tag",
+      "primitive_fields": {
+        "2": 1,
+        "3": 0
+      }
+    },
+    {
+      "identity": "ucd",
+      "constructor": "Min",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "vcd",
+      "constructor": "Max",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "tcd",
+      "constructor": "Tag",
+      "primitive_fields": {
+        "2": 1,
+        "3": 0
+      }
+    },
+    {
+      "identity": "kab",
+      "constructor": "OrderKey",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "kcd",
+      "constructor": "OrderKey",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "pab",
+      "constructor": "Triple",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "pcd",
+      "constructor": "Triple",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "acz",
+      "constructor": "Add",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "aaw",
+      "constructor": "Add",
+      "primitive_fields": {}
+    },
+    {
+      "identity": "mz",
+      "constructor": "OddMul",
+      "primitive_fields": {
+        "1": 3
+      }
+    },
+    {
+      "identity": "mw",
+      "constructor": "OddMul",
+      "primitive_fields": {
+        "1": 3
+      }
+    }
+  ],
+  "primitive_comparisons": [
+    {
+      "constructor": "Tag",
+      "left": "tab",
+      "right": "tab",
+      "column": 2,
+      "left_primitive": 1,
+      "right_primitive": 1,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tab",
+      "right": "tab",
+      "column": 3,
+      "left_primitive": 0,
+      "right_primitive": 0,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tab",
+      "right": "tcd",
+      "column": 2,
+      "left_primitive": 1,
+      "right_primitive": 1,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tab",
+      "right": "tcd",
+      "column": 3,
+      "left_primitive": 0,
+      "right_primitive": 0,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tcd",
+      "right": "tab",
+      "column": 2,
+      "left_primitive": 1,
+      "right_primitive": 1,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tcd",
+      "right": "tab",
+      "column": 3,
+      "left_primitive": 0,
+      "right_primitive": 0,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tcd",
+      "right": "tcd",
+      "column": 2,
+      "left_primitive": 1,
+      "right_primitive": 1,
+      "equal": true
+    },
+    {
+      "constructor": "Tag",
+      "left": "tcd",
+      "right": "tcd",
+      "column": 3,
+      "left_primitive": 0,
+      "right_primitive": 0,
+      "equal": true
+    },
+    {
+      "constructor": "OddMul",
+      "left": "mz",
+      "right": "mz",
+      "column": 1,
+      "left_primitive": 3,
+      "right_primitive": 3,
+      "equal": true
+    },
+    {
+      "constructor": "OddMul",
+      "left": "mz",
+      "right": "mw",
+      "column": 1,
+      "left_primitive": 3,
+      "right_primitive": 3,
+      "equal": true
+    },
+    {
+      "constructor": "OddMul",
+      "left": "mw",
+      "right": "mz",
+      "column": 1,
+      "left_primitive": 3,
+      "right_primitive": 3,
+      "equal": true
+    },
+    {
+      "constructor": "OddMul",
+      "left": "mw",
+      "right": "mw",
+      "column": 1,
+      "left_primitive": 3,
+      "right_primitive": 3,
+      "equal": true
+    }
+  ],
+  "primitive_mismatches": [],
+  "equality_sort_comparison_or_propagation": false,
+  "final_primitive_target_witness": false,
+  "export": false
+}

@@ -1,0 +1,434 @@
+[
+  {
+    "phase": "warmup",
+    "round": 0,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91193,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3267958,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "warmup",
+    "round": 0,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91194,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1880542,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "warmup",
+    "round": 1,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91195,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3012250,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "warmup",
+    "round": 1,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91196,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1816833,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 0,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91197,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3090625,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 0,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91199,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1818417,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 1,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91200,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1885666,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 1,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91203,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3223459,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 2,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91204,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1948583,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 2,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91207,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3123375,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 3,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91210,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1815625,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 3,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91211,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3193084,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 4,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91212,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 3195750,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 4,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91213,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1992292,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 5,
+    "arm": "baseline",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91214,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 2988959,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "19845a9b5fc8a48c7772422f81980ab1040150d7bd5163c6c041583122a3a61e",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  },
+  {
+    "phase": "measured",
+    "round": 5,
+    "arm": "manual",
+    "argv": [
+      "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/manual-optimized-native/program",
+      "12",
+      "12",
+      "10000000"
+    ],
+    "cwd": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0",
+    "environment_complete": {
+      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "LC_ALL": "C",
+      "TZ": "UTC"
+    },
+    "pid": 91215,
+    "timeout_seconds": 30,
+    "timed_out": false,
+    "exit_code": 0,
+    "wall_nanoseconds": 1824416,
+    "stdout_sha256": "c5980dce7780da7890dc91de45b151697a24521da34216575d8fcbc5524c7203",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executable_sha256": "83cf679c9ae876e1f0b36756e25394bcfd4d225b048aa1a478b0809c45988c13",
+    "expected_stdout": "49999995000000\n",
+    "actual_stdout": "49999995000000\n"
+  }
+]

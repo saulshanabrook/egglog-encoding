@@ -1,0 +1,186 @@
+[
+  {
+    "family": "invalid-fold-omitted-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/omitted-tag.bril",
+    "source_sha256": "659d5f691b4ec0331b2ba0827d8c28853f9dc713b098b4d007e618813f4d4a15",
+    "emitted_sha256": "659d5f691b4ec0331b2ba0827d8c28853f9dc713b098b4d007e618813f4d4a15",
+    "main_sha256": "d7356ab5270acc02fce881784c3becc924dbcb3c8c7de55985c143a0898169d7",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-omitted-min",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/omitted-min.bril",
+    "source_sha256": "cd655b49059f022d5270a604f380af8dd1bec63da2752b09f2e59943ec4e7a5a",
+    "emitted_sha256": "cd655b49059f022d5270a604f380af8dd1bec63da2752b09f2e59943ec4e7a5a",
+    "main_sha256": "d48fcebb3fa8a0d3931e1fa3100324014a2130b2751234a0f85ede2dad30efae",
+    "outputs": [
+      {
+        "args": [
+          0,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-omitted-max",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/omitted-max.bril",
+    "source_sha256": "53da9f9c51083501a975468301546426ea625fc3976db5753a5204e4e7d24061",
+    "emitted_sha256": "53da9f9c51083501a975468301546426ea625fc3976db5753a5204e4e7d24061",
+    "main_sha256": "162ee2e460304c3cb342c4a6542529089f1412e7033c25ea0516499023395db2",
+    "outputs": [
+      {
+        "args": [
+          2,
+          0,
+          3,
+          0,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-reversed-right-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/reversed-right-tag.bril",
+    "source_sha256": "cca4933335cd670c7546053d7ea35534fb9345169ef217c0f60b247777d8f6ae",
+    "emitted_sha256": "cca4933335cd670c7546053d7ea35534fb9345169ef217c0f60b247777d8f6ae",
+    "main_sha256": "23ae1fe43561af0c46c244f3a6cf6c5c651299cf67d61255fb107abf21148d05",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-changed-right-tag",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/changed-right-tag.bril",
+    "source_sha256": "b57e45ae48bebdba1d7d6abe90bead662d275749318e27f0de16016a882e3f76",
+    "emitted_sha256": "b57e45ae48bebdba1d7d6abe90bead662d275749318e27f0de16016a882e3f76",
+    "main_sha256": "c9f98f33fadea892968815d37bacf2e5b080f162c435b86013dcc896d7f36134",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-even-multiplier",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/even-multiplier.bril",
+    "source_sha256": "62ee58f8d46fd0c92445187d59a23080005b07679308f2ac1e6510315b3318b5",
+    "emitted_sha256": "62ee58f8d46fd0c92445187d59a23080005b07679308f2ac1e6510315b3318b5",
+    "main_sha256": "78bfb804595d49496e456448e9336ea25a0d1618318a83adb375198eb0490a35",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          -9223372036854775808
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-wrong-mixed-branch",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/wrong-mixed-branch.bril",
+    "source_sha256": "97c503f03c769c0b24c80be3c71334afcbe19a15917b7ebdbbca77d0e00bb7e0",
+    "emitted_sha256": "97c503f03c769c0b24c80be3c71334afcbe19a15917b7ebdbbca77d0e00bb7e0",
+    "main_sha256": "349393f5a21a5066d51f9133b13c441a2c7678d84313bcf1e06f83f65224bbe9",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          1,
+          2,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  },
+  {
+    "family": "invalid-fold-no-key-context",
+    "mode": "source",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/sort-integration/fixtures/invalid-folds/no-key-context.bril",
+    "source_sha256": "38f2cc0f18b197670eea9e5b86278a1633896650491a919a609754e7f2bda36e",
+    "emitted_sha256": "38f2cc0f18b197670eea9e5b86278a1633896650491a919a609754e7f2bda36e",
+    "main_sha256": "80f59ba36fd9026998ba840d72ad1f43f00e9f246f94082c0ba0baac99605d30",
+    "outputs": [
+      {
+        "args": [
+          1,
+          2,
+          2,
+          1,
+          0,
+          0
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      }
+    ],
+    "queries": []
+  }
+]

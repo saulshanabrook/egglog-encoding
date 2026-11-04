@@ -1,0 +1,101 @@
+[
+  {
+    "args": [
+      12,
+      12,
+      8
+    ],
+    "expected": "28\n",
+    "actual": "28\n"
+  },
+  {
+    "args": [
+      0,
+      0,
+      0
+    ],
+    "expected": "0\n",
+    "actual": "0\n"
+  },
+  {
+    "args": [
+      0,
+      0,
+      1
+    ],
+    "expected": "0\n",
+    "actual": "0\n"
+  },
+  {
+    "args": [
+      63,
+      63,
+      1024
+    ],
+    "expected": "523776\n",
+    "actual": "523776\n"
+  },
+  {
+    "args": [
+      7,
+      7,
+      8
+    ],
+    "expected": "28\n",
+    "actual": "28\n"
+  },
+  {
+    "args": [
+      5,
+      12,
+      8
+    ],
+    "expected": "-1\n",
+    "actual": "-1\n"
+  },
+  {
+    "args": [
+      12,
+      13,
+      8
+    ],
+    "expected": "-2\n",
+    "actual": "-2\n"
+  },
+  {
+    "args": [
+      -1,
+      0,
+      8
+    ],
+    "expected": "-9\n",
+    "actual": "-9\n"
+  },
+  {
+    "args": [
+      64,
+      64,
+      8
+    ],
+    "expected": "-9\n",
+    "actual": "-9\n"
+  },
+  {
+    "args": [
+      1,
+      1,
+      -1
+    ],
+    "expected": "-9\n",
+    "actual": "-9\n"
+  },
+  {
+    "args": [
+      1,
+      1,
+      10000001
+    ],
+    "expected": "-9\n",
+    "actual": "-9\n"
+  }
+]

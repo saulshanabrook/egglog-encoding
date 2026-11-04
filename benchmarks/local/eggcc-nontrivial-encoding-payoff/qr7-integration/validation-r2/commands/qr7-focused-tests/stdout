@@ -1,0 +1,16 @@
+
+running 6 tests
+test scoped_qr7::tests::qr7_key_is_lossless_at_signed_boundaries ... ok
+test scoped_qr7::tests::qr7_independent_manual_closure_needs_both_edges ... ok
+test scoped_qr7::tests::qr7_recognizer_rejects_wrong_divisor_operand_and_scope ... ok
+test scoped_qr7::tests::qr7_if_transport_requires_both_same_index_arms ... ok
+test scoped_qr7::tests::qr7_tuple_load_keeps_unrelated_pointer_passthrough ... ok
+test scoped_qr7::tests::qr7_finite_chain_and_fixed_input_controls ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

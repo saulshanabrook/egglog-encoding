@@ -1,0 +1,735 @@
+{
+  "status": "passed",
+  "ordinary_mode": true,
+  "configuration": {
+    "context": true,
+    "schedule": "parallel",
+    "passes": 3,
+    "non_weakly_linear": true,
+    "extraction": "native Tiger greedy",
+    "RAYON_NUM_THREADS": 1
+  },
+  "rows": [
+    {
+      "case": "fresh-allocations",
+      "arm": "A",
+      "mode": "baseline",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-fresh-allocations-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/A-fresh-allocations-baseline.run-data.json",
+      "run_data_sha256": "c3669c71170616a998efc5060fa9f608ff038bea4bcbb5357ec5571debafa2e0",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-fresh-allocations-baseline-bril.stdout",
+      "bril_sha256": "82e8adf2efe71778dca6cadd87db037d59a44be428d750a2926a4f13f7940fe9",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-fresh-allocations-baseline/tiger_egraph_0001.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-fresh-allocations-baseline/tiger_egraph_0002.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-fresh-allocations-baseline/tiger_egraph_0003.json",
+          "sha256": "bd8ac51b10523a35667e08a4fb4f546f0d4e79afbc9774e4e1744b452f0a4a83"
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "B",
+      "mode": "baseline",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-fresh-allocations-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/B-fresh-allocations-baseline.run-data.json",
+      "run_data_sha256": "e94403f426862c4e5157c71e82bb6249fcf846189429b3dfd5f7904077d0ae41",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-fresh-allocations-baseline-bril.stdout",
+      "bril_sha256": "82e8adf2efe71778dca6cadd87db037d59a44be428d750a2926a4f13f7940fe9",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/eggcc",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-fresh-allocations-baseline/tiger_egraph_0001.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-fresh-allocations-baseline/tiger_egraph_0002.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-fresh-allocations-baseline/tiger_egraph_0003.json",
+          "sha256": "bd8ac51b10523a35667e08a4fb4f546f0d4e79afbc9774e4e1744b452f0a4a83"
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "off",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-off.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-fresh-allocations-off.run-data.json",
+      "run_data_sha256": "9b68d7602604d5cc35ee0d65663ade6ccb15159a865a1836af73d2ca03f5e03d",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-off-bril.stdout",
+      "bril_sha256": "82e8adf2efe71778dca6cadd87db037d59a44be428d750a2926a4f13f7940fe9",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-off/tiger_egraph_0001.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-off/tiger_egraph_0002.json",
+          "sha256": "85613cd49c2a51a4d35ec651d31180ccdb0affbbc9f01cade46b836842437f77"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-off/tiger_egraph_0003.json",
+          "sha256": "bd8ac51b10523a35667e08a4fb4f546f0d4e79afbc9774e4e1744b452f0a4a83"
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "keys",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-keys.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-fresh-allocations-keys.run-data.json",
+      "run_data_sha256": "96ac3cd6ca97fd5723bfe6680875d68bf32be71e01bacb30a2bbefed265bde03",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-keys-bril.stdout",
+      "bril_sha256": "82e8adf2efe71778dca6cadd87db037d59a44be428d750a2926a4f13f7940fe9",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-keys/tiger_egraph_0001.json",
+          "sha256": "4d3f67332b6b44074dfa6a2d2d1973c2e35902ca3742a50482ecaee33312504b"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-keys/tiger_egraph_0002.json",
+          "sha256": "4d3f67332b6b44074dfa6a2d2d1973c2e35902ca3742a50482ecaee33312504b"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-keys/tiger_egraph_0003.json",
+          "sha256": "647ea1177c78dc36ea12fddcc58c30807dfee85aa6fb53cb185760580d509247"
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "query",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 1,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-query.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-fresh-allocations-query.run-data.json",
+      "run_data_sha256": "f3b522a165042f29ce46f0a08dec05dedb86c2e6c14bdcc93cf7bb5c3f723e9d",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-query-bril.stdout",
+      "bril_sha256": "59dcb2097ffa76d558bf68b62bc4be2da3e0f6f0448fa30931f25a30442bac25",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-query/tiger_egraph_0001.json",
+          "sha256": "199bf9454ba2d4b0b0d34709f8f64453e7c456f70fa22805c353e6938f77ddca"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-query/tiger_egraph_0002.json",
+          "sha256": "0ff692bd7ba5693e5bcae0632261d2406d92250e0d8f22e8837bb7d4b3bbd327"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-query/tiger_egraph_0003.json",
+          "sha256": "0ff692bd7ba5693e5bcae0632261d2406d92250e0d8f22e8837bb7d4b3bbd327"
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "manual",
+      "expected": "17\n",
+      "original_interpreted": "17\n",
+      "result_interpreted": "17\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 1,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-manual.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-fresh-allocations-manual.run-data.json",
+      "run_data_sha256": "090e289b610486117cb6879602b670ef05be1457961786dc85684fc00c7a6f1e",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-fresh-allocations-manual-bril.stdout",
+      "bril_sha256": "59dcb2097ffa76d558bf68b62bc4be2da3e0f6f0448fa30931f25a30442bac25",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/fresh-allocations.bril",
+      "input_sha256": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-manual/tiger_egraph_0001.json",
+          "sha256": "a89845a68cac85379863375d6cda6813f4cbaa74b0fcfcf232020cef2aece9c8"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-manual/tiger_egraph_0002.json",
+          "sha256": "1895daba70abe7f7545d1aa4410f95b441d84cf873e2ea8187d648c7c147b24c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-fresh-allocations-manual/tiger_egraph_0003.json",
+          "sha256": "1895daba70abe7f7545d1aa4410f95b441d84cf873e2ea8187d648c7c147b24c"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "A",
+      "mode": "baseline",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-same-pointer-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/A-same-pointer-baseline.run-data.json",
+      "run_data_sha256": "8bdbf29c02507693874280acbe1c9f346351968dfcf80367f839968811897dfd",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-same-pointer-baseline-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-same-pointer-baseline/tiger_egraph_0001.json",
+          "sha256": "09270508aea79497ab246c7fce8a7343191e32f57c53d6658b65349c7dff8e1b"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-same-pointer-baseline/tiger_egraph_0002.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-same-pointer-baseline/tiger_egraph_0003.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "B",
+      "mode": "baseline",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-same-pointer-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/B-same-pointer-baseline.run-data.json",
+      "run_data_sha256": "050a2ee5cbb6783859af705da3448317de1cf7bd607c25cb4fcff10b5e55c86d",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-same-pointer-baseline-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/eggcc",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-same-pointer-baseline/tiger_egraph_0001.json",
+          "sha256": "09270508aea79497ab246c7fce8a7343191e32f57c53d6658b65349c7dff8e1b"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-same-pointer-baseline/tiger_egraph_0002.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-same-pointer-baseline/tiger_egraph_0003.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "off",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-off.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-same-pointer-off.run-data.json",
+      "run_data_sha256": "1875a959ac6a621492f51ed84a2b5e85ee963690eacf7a979d056e338da35887",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-off-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-off/tiger_egraph_0001.json",
+          "sha256": "09270508aea79497ab246c7fce8a7343191e32f57c53d6658b65349c7dff8e1b"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-off/tiger_egraph_0002.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-off/tiger_egraph_0003.json",
+          "sha256": "835df73af2b9bf5e383c286a10e1d4dc4bad1670a0adeeb9e293e184544c31d1"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "keys",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-keys.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-same-pointer-keys.run-data.json",
+      "run_data_sha256": "19e49d23a51e89ab74afc535bdef7364ec1d462a3fa65451e79e491286ee268e",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-keys-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-keys/tiger_egraph_0001.json",
+          "sha256": "2ea138dbfbfd5ad7325f3c213dca7957f96c51f657bd9ad6f5d326a9f1c6b882"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-keys/tiger_egraph_0002.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-keys/tiger_egraph_0003.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "query",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-query.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-same-pointer-query.run-data.json",
+      "run_data_sha256": "761cf3c5e2c54874f56f6d154b639354004d39119b0269a9edf047c74b61427a",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-query-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-query/tiger_egraph_0001.json",
+          "sha256": "2ea138dbfbfd5ad7325f3c213dca7957f96c51f657bd9ad6f5d326a9f1c6b882"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-query/tiger_egraph_0002.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-query/tiger_egraph_0003.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "manual",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-manual.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-same-pointer-manual.run-data.json",
+      "run_data_sha256": "8c284fd5bc3ca97e2afd754db30b9abaeb2653ddd2f695a3d1c9fc6d68720ae5",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-same-pointer-manual-bril.stdout",
+      "bril_sha256": "fb1166a5381e90771a901a56fb739fdbfd18c6cf32bf48de9549237e9e9c1e46",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/same-pointer.bril",
+      "input_sha256": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-manual/tiger_egraph_0001.json",
+          "sha256": "2ea138dbfbfd5ad7325f3c213dca7957f96c51f657bd9ad6f5d326a9f1c6b882"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-manual/tiger_egraph_0002.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-same-pointer-manual/tiger_egraph_0003.json",
+          "sha256": "bbb9eafc479f2af55c44c34bacc1ea7af159e450d9ad147160830bd6d6ce89ca"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "A",
+      "mode": "baseline",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-zero-offset-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/A-zero-offset-baseline.run-data.json",
+      "run_data_sha256": "8c164b4136cd7072f64687ff1f48f1feed772d2e11a2b59d0e70fb208b9bf551",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-A-zero-offset-baseline-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/eggcc",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/A/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-zero-offset-baseline/tiger_egraph_0001.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-zero-offset-baseline/tiger_egraph_0002.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/A-zero-offset-baseline/tiger_egraph_0003.json",
+          "sha256": "562c3212dd6b98913371798d1c9ce99ede11eba741ed1164a36edc40bceb05e4"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "B",
+      "mode": "baseline",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-zero-offset-baseline.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/B-zero-offset-baseline.run-data.json",
+      "run_data_sha256": "f981f06bd08c0bc97384cd4020f1332ab26d008ad569ae00fe9cc1d7d76cb4d2",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-B-zero-offset-baseline-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/eggcc",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/bin/B/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-zero-offset-baseline/tiger_egraph_0001.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-zero-offset-baseline/tiger_egraph_0002.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/B-zero-offset-baseline/tiger_egraph_0003.json",
+          "sha256": "562c3212dd6b98913371798d1c9ce99ede11eba741ed1164a36edc40bceb05e4"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "off",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-off.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-zero-offset-off.run-data.json",
+      "run_data_sha256": "e75b7469c6dbba03f6e1323836cb9dcec69608193d72a111d96c7b08e86796bd",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-off-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-off/tiger_egraph_0001.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-off/tiger_egraph_0002.json",
+          "sha256": "f3fa6f45816564d16d04b8352afcbba702922cc4feff2ce6718f88738f4e159c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-off/tiger_egraph_0003.json",
+          "sha256": "562c3212dd6b98913371798d1c9ce99ede11eba741ed1164a36edc40bceb05e4"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "keys",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-keys.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-zero-offset-keys.run-data.json",
+      "run_data_sha256": "a0912ba66b52a7475367226ff0ada4a3c7ccc6850f67bbe046959bb1c359b21e",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-keys-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-keys/tiger_egraph_0001.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-keys/tiger_egraph_0002.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-keys/tiger_egraph_0003.json",
+          "sha256": "3f4bde8d87b18d211685ab34fa04ab7cd1c19cc18d175e881e3afc0140cc33d9"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "query",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-query.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-zero-offset-query.run-data.json",
+      "run_data_sha256": "0887d6c3d1a6a436c5e173c4e460bdfa0b7b8370fbc8b94c35d04526c0ada546",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-query-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-query/tiger_egraph_0001.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-query/tiger_egraph_0002.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-query/tiger_egraph_0003.json",
+          "sha256": "3f4bde8d87b18d211685ab34fa04ab7cd1c19cc18d175e881e3afc0140cc33d9"
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "manual",
+      "expected": "99\n",
+      "original_interpreted": "99\n",
+      "result_interpreted": "99\n",
+      "passes": [
+        0,
+        1,
+        2
+      ],
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-manual.json",
+      "run_data": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/P-zero-offset-manual.run-data.json",
+      "run_data_sha256": "344bef8719f129189efec99bc9ef636e5d6617b0e307427a52c447ac96d25546",
+      "bril_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype-final-cli-P-zero-offset-manual-bril.stdout",
+      "bril_sha256": "003ac7eebd8c35056cce084d1219cda0977fe084f8ceba87488c9ce0457abd2c",
+      "input_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/source/tests/encoding/zero-offset.bril",
+      "input_sha256": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+      "compiler": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger",
+      "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+      "egraphs": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-manual/tiger_egraph_0001.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-manual/tiger_egraph_0002.json",
+          "sha256": "bedc9c56232a441e7f21abbab677309377b3f46768a2d674cad6e25dbac14246"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/egraphs/P-zero-offset-manual/tiger_egraph_0003.json",
+          "sha256": "3f4bde8d87b18d211685ab34fa04ab7cd1c19cc18d175e881e3afc0140cc33d9"
+        }
+      ]
+    }
+  ],
+  "performance_claim": null
+}

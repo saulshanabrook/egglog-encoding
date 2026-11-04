@@ -1,0 +1,1146 @@
+{
+  "status": "no-endpoint-opportunity-in-this-attempt",
+  "actual_binary_inspected": true,
+  "causal_code_difference": false,
+  "all_emitted_bril_identical": true,
+  "all_native_process_main_instructions_identical": true,
+  "all_keep_hot_loop_one_load_two_stores": true,
+  "timing_eligible": false,
+  "performance_samples_taken": false,
+  "rows": [
+    {
+      "mode": "u0",
+      "binary_sha256": "11d32d04afa83dd26938bf0c959d3efabc568a41577ae8e41977a1e6f367d0d6",
+      "assembly_sha256": "bf05641dabdfff34807dcfdc423657763aa0df2433a31cae35020b3b8f545935",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "off",
+      "binary_sha256": "52d53558043a55fe326ab30f615e0d4e0325ad9c6b34ac1c98e163cdc1eb25dd",
+      "assembly_sha256": "613f8ffabad0d3dae50cc3e5e108191fe929a7187b89c4078c354f5a472084d7",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "seed-only",
+      "binary_sha256": "ec919497d17759aad9cbdf5bc781542cbbb0d792f5317b0398596dd6803796fb",
+      "assembly_sha256": "18bc53438db39adae254d45f3d5fd9adcf16fff395e4460c0d9160161b9d836b",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "seed-off",
+      "binary_sha256": "dd18bde5dc4bab2386f4ca250ab22368021e1045713c2879296176d62f7e224a",
+      "assembly_sha256": "efbe37b47c65702b5f2b52f2e4593779d972e971f9fdb29f50dc68ccadb554cc",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "primitive-only",
+      "binary_sha256": "7819feacb0b0b097ea37a25816ee8524bf0d39155e3fe10a1a5fa71feb98f821",
+      "assembly_sha256": "ca4ed60289a11a4867e52bdb871c47c8ade22eb4050a249a6bfa331155638d2d",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "encoding",
+      "binary_sha256": "b48f31c665c9a6f6647942d629d86b677117c75abce1ac38cfdf4c954143c8e7",
+      "assembly_sha256": "9b46add8a91a1da4fd1c9bd07d8370414319df4ee142970b37364426e0c1be58",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "manual",
+      "binary_sha256": "4ef07a428b5e6d8130c4f1ddae325f21f0de315040f10302105f584bacb31e58",
+      "assembly_sha256": "56e2d6940f72bae3942d3a8af198de83fb630114f67ffc3d569521c7d1fc0912",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "reverse-off",
+      "binary_sha256": "81ad3c83928470cf4fd50c9cc064eee2f7d85058ef748afb6168c23e57e27ca7",
+      "assembly_sha256": "af2f296067289ad0aaa6cb034114b0cbe14de63e565e994ffe36398bc463c826",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "shift-forward-off",
+      "binary_sha256": "ec243f26f1b82ae433aa37282a9f919e57be389d33a308f014ccfd9ffd15075a",
+      "assembly_sha256": "154f9a152f94fe157b15f96b6b872ee698eea9fa92fdfac8430da774f89accac",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "cell-forward-off",
+      "binary_sha256": "15d69dac23003bc5bb5517bf277a50ef2ad9a965b68191f3cef13519f315af7f",
+      "assembly_sha256": "a0036a857ab263387a34b5c28d49601d99e5aba1fe7c841a72501f210b5d3191",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "query-off",
+      "binary_sha256": "faadb4b3e0ac28079912186a85d5c80164fdf895277ba375dab285b1f8f2058d",
+      "assembly_sha256": "6360e1d44b17ddc252309b0c258e229f08d8ebbb565c50e921e886e016ef2b59",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "transport-off",
+      "binary_sha256": "38c561ca771153e05ecee44dedd595bd7a838d3aa3f136993f8f76b54065d99c",
+      "assembly_sha256": "371667650a3f4f6d6036475f429086e372d124f0120a684b3dec1ede9dd02bf5",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "bridge-off",
+      "binary_sha256": "3f79445d8197bf1adff448ee05e17bd0f2a36579315e3e05e9572cabc6f619bc",
+      "assembly_sha256": "f94fc1169f0fb102d105c366367bc469c5630b9423a9d88bdfb1616c93e076e4",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "consumer-off",
+      "binary_sha256": "11849e5794e494a829a8e87b875139df6c181edc0694246764b0902a3150486d",
+      "assembly_sha256": "16c93567fd52dd72a4e568e30f62cba9382e37188457bbeb78be67ab600f538e",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "index-rescue",
+      "binary_sha256": "808d9af3964cf7171eb9bfbc2b6257ea2ea0aa2838f39edf596e8721d09e3260",
+      "assembly_sha256": "d5729b6adf9ca9e0b07a0f350dca42dd5cdf126e7696bb1a21705e21187d6751",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "shift-rescue",
+      "binary_sha256": "141de8e3fca808daa56ae00dd2a13852fa98d5dec972f528e67be9f8a5384f12",
+      "assembly_sha256": "723ef6853af096e6787a7616dd0d314549621bce9b1a1a811e2a199d778f71a1",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "cell-rescue",
+      "binary_sha256": "aaa4bdde309c716d2e6233a9dfc88b1c1f87ccc5143443e7be61c05f79cc299d",
+      "assembly_sha256": "ff4e9e68a279eb4471e3536394b90a574515929999fb28d81039b7f0eec14bba",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    },
+    {
+      "mode": "branch-alias-rescue",
+      "binary_sha256": "6a88d2d7ddac568f55f514307f268e73fbd695bdcd2dc895887d3015dc91d988",
+      "assembly_sha256": "124da9d935e31aacc2d774d908f4977d7cb0985055a4d53bbd4f88659c2463dd",
+      "emitted_sha256": "8d3d25bb06e3974d5db4ccad05098bf13b5f5091231bfc65eb325e2ee966549e",
+      "actual_binary_functions": {
+        "__main": {
+          "instruction_count": 53,
+          "instruction_sha256": "554e762b2b1c79133222861516ff71cefce89e36b5c17197ebf38b7849f0b89a",
+          "loops": [
+            {
+              "start": "0x1000056cc",
+              "end": "0x1000056e4",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000056cc: str x10, [x11, #0x8]",
+                "0x1000056d0: str xzr, [x12, #0x8]",
+                "0x1000056d4: ldr x13, [x11, #0x8]",
+                "0x1000056d8: add x9, x13, x9",
+                "0x1000056dc: add x10, x10, #0x1",
+                "0x1000056e0: cmp x8, x10",
+                "0x1000056e4: b.ne 0x1000056cc <__main+0x7c>"
+              ]
+            }
+          ]
+        },
+        "_main": {
+          "instruction_count": 53,
+          "instruction_sha256": "60bc6fc607730263d74b6aaa38a04677e622a510114ff6c8b2209725ad3b95c8",
+          "loops": [
+            {
+              "start": "0x1000057a8",
+              "end": "0x1000057c0",
+              "instruction_count": 7,
+              "stores": 2,
+              "loads": 1,
+              "instructions": [
+                "0x1000057a8: str x10, [x11, #0x8]",
+                "0x1000057ac: str xzr, [x12, #0x8]",
+                "0x1000057b0: ldr x13, [x11, #0x8]",
+                "0x1000057b4: add x9, x13, x9",
+                "0x1000057b8: add x10, x10, #0x1",
+                "0x1000057bc: cmp x8, x10",
+                "0x1000057c0: b.ne 0x1000057a8 <_main+0x84>"
+              ]
+            }
+          ]
+        }
+      },
+      "llvm_functions": {
+        "_main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        },
+        "main": {
+          "loads_i64": 1,
+          "stores_i64": 2
+        }
+      },
+      "exports": 0
+    }
+  ]
+}

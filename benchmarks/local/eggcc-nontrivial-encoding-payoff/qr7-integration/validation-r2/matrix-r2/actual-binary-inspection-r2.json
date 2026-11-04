@@ -1,0 +1,534 @@
+{
+  "emitted_bril_sha256": {
+    "bridge-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "cancellation-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "consumer-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "encoding": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+    "identity-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "key-rescue": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+    "manual": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d",
+    "off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "primitive-only": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "query-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "seed-only": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "transport-off": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "u0": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+    "x-rescue": "627dba047e4f673ad618631697801a6038f4451917fc5c933a38b953f700c80d"
+  },
+  "global_executable_hashes_are_expected_to_differ": true,
+  "groups": {
+    "baseline": {
+      "instruction_count": 91,
+      "internal_backward_branch_count": 2,
+      "modes": [
+        "bridge-off",
+        "cancellation-off",
+        "consumer-off",
+        "identity-off",
+        "off",
+        "primitive-only",
+        "query-off",
+        "seed-only",
+        "transport-off",
+        "u0"
+      ],
+      "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+    },
+    "winning": {
+      "instruction_count": 55,
+      "internal_backward_branch_count": 0,
+      "modes": [
+        "encoding",
+        "key-rescue",
+        "manual",
+        "x-rescue"
+      ],
+      "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+    }
+  },
+  "modes": {
+    "bridge-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/bridge-off/native/program.asm",
+      "assembly_sha256": "973343bc20fc28aefc6dec8bf8e539175c02548e3091fdf79d28e015dc7d9209",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/bridge-off/native/program",
+      "binary_sha256": "e900f87ce2e44141fa6916b2a6fa666d171ad010c72c626b0b32fadd9fb0af7d",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "cancellation-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/cancellation-off/native/program.asm",
+      "assembly_sha256": "a1ca675d65a739a5c0202dd7e55cbeb57253f582922beb3691f8c359ec2be505",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/cancellation-off/native/program",
+      "binary_sha256": "6600acc7279598d9f20522194630bff9bfb12a2c8a5aecd681ace98ffef8e8a1",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "consumer-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/consumer-off/native/program.asm",
+      "assembly_sha256": "cca5763d74f60276ca1f61323a6db7d0e6939036fcd7882ce3ca50d607fe5569",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/consumer-off/native/program",
+      "binary_sha256": "4eceb51940afb3e9c7509cd0cd237e27e36a2913e2d03fc9e53b59b60a5cb6dd",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "encoding": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/encoding/native/program.asm",
+      "assembly_sha256": "a0926fd5dfbf78e718380f6e683b45d95de049405673e1b158e8ee88df9930c8",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/encoding/native/program",
+      "binary_sha256": "ec91406c8e56b274ba2ed3f75dc58e554fbcdfd955998e70537a8ab0e48d40ed",
+      "functions": {
+        "bril_main": {
+          "end": "0x100005720",
+          "instruction_count": 52,
+          "instruction_sha256": "eacc7ea34fe241c18065e77f24333e256786e95fc19738fe013de31d960e389b",
+          "internal_backward_branches": [],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000057fc",
+          "instruction_count": 55,
+          "instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360",
+          "internal_backward_branches": [],
+          "start": "0x100005720"
+        }
+      }
+    },
+    "identity-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/identity-off/native/program.asm",
+      "assembly_sha256": "d0eba8e45de52b776043a26c7fe4894180aed532ccc1a4226b70be26290a1a2f",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/identity-off/native/program",
+      "binary_sha256": "ffd1a77b44cd4868a7944edb56f6ebb4e86a1697499c0810b730faeaff695ebc",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "key-rescue": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/key-rescue/native/program.asm",
+      "assembly_sha256": "f3f659f1d3fba57b3fc4fad4087faec4cc2705d2bba08e4cfb1e07282b7a8a0b",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/key-rescue/native/program",
+      "binary_sha256": "e7e13ec4ec073c902920250c124c2abc4cbab3f2b083c2184ddf6ff6dd359973",
+      "functions": {
+        "bril_main": {
+          "end": "0x100005720",
+          "instruction_count": 52,
+          "instruction_sha256": "eacc7ea34fe241c18065e77f24333e256786e95fc19738fe013de31d960e389b",
+          "internal_backward_branches": [],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000057fc",
+          "instruction_count": 55,
+          "instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360",
+          "internal_backward_branches": [],
+          "start": "0x100005720"
+        }
+      }
+    },
+    "manual": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/manual/native/program.asm",
+      "assembly_sha256": "7930d1c5f2b19b3d7396bcb7a5cc536e3b38565e1b719293fcdaee6bd3fa119a",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/manual/native/program",
+      "binary_sha256": "f4325450519c658da272ad433757cc74de3b4d4e58e4ee0c9a73eb656302f165",
+      "functions": {
+        "bril_main": {
+          "end": "0x100005720",
+          "instruction_count": 52,
+          "instruction_sha256": "eacc7ea34fe241c18065e77f24333e256786e95fc19738fe013de31d960e389b",
+          "internal_backward_branches": [],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000057fc",
+          "instruction_count": 55,
+          "instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360",
+          "internal_backward_branches": [],
+          "start": "0x100005720"
+        }
+      }
+    },
+    "off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/off/native/program.asm",
+      "assembly_sha256": "2508e02521f4f87fb8ac50d0f662e302fa06e2d9498674ed6c315901a1b93f4b",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/off/native/program",
+      "binary_sha256": "0f9b0644a710d493575cb5af150fbfb5addbdd3f52fcc3b8edf5045127abea84",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "primitive-only": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/primitive-only/native/program.asm",
+      "assembly_sha256": "3ea53ae9298a1c4f89c5e43ce1c10e044425ff255d3473f427261fd74a6872be",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/primitive-only/native/program",
+      "binary_sha256": "0550ce731b3467c9536c0c189f095ec938addecf4e73a52e9840fb7c2d269562",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "query-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/query-off/native/program.asm",
+      "assembly_sha256": "36c8596635c7852319f3b838855f5e66ade2ce86b40172de9e052211e9c7532d",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/query-off/native/program",
+      "binary_sha256": "8eb9db6b4b098a3640f60d1cc3dd7e7f42c5b8f192bdedbc0dfcc8dd89e99e4c",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "seed-only": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/seed-only/native/program.asm",
+      "assembly_sha256": "8c8fda18338ebc1561ded19ad9d95eb768b96221e00a0c15ed15fbb1a12d4b11",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/seed-only/native/program",
+      "binary_sha256": "db3756b847dafca8d2689524a274d0253abd05568222ee497680a31785824642",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "transport-off": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/transport-off/native/program.asm",
+      "assembly_sha256": "eead11b6ac0b2c5314e9cb69c829385af5cee31a5268f927b68183c8aa1fce04",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/transport-off/native/program",
+      "binary_sha256": "2f2c568e8a89690c8aeffc69491910576bc546956f597c8c46f8d8366435cbc3",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "u0": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/u0/native/program.asm",
+      "assembly_sha256": "cf5631a4db6677b2dd95360dbccc25f220ff8a77796648be0468ff5a61c06248",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/u0/native/program",
+      "binary_sha256": "b212db2f56e093f42f101412fee4d5f1711f2463295bf4aff695344239372a50",
+      "functions": {
+        "bril_main": {
+          "end": "0x10000575c",
+          "instruction_count": 67,
+          "instruction_sha256": "53d35c22d5e5cd0411923267401f34eb1ce7aace168ea185797b9dd4aa23080b",
+          "internal_backward_branches": [
+            {
+              "address": "0x1000056f4",
+              "opcode": "b.ne",
+              "target": "0x1000056e0"
+            }
+          ],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000058c8",
+          "instruction_count": 91,
+          "instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0",
+          "internal_backward_branches": [
+            {
+              "address": "0x100005878",
+              "opcode": "b.ne",
+              "target": "0x100005854"
+            },
+            {
+              "address": "0x1000058a0",
+              "opcode": "b.ne",
+              "target": "0x100005894"
+            }
+          ],
+          "start": "0x10000575c"
+        }
+      }
+    },
+    "x-rescue": {
+      "assembly": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/x-rescue/native/program.asm",
+      "assembly_sha256": "aa2e3ba487c768f614c04fd4020732e09b190094d298df36f31bc8fefdb6a307",
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/matrix/positive/x-rescue/native/program",
+      "binary_sha256": "84bebbf3b79067c22636ca49bb656bb18355d5b3e973c83c726195c173a12632",
+      "functions": {
+        "bril_main": {
+          "end": "0x100005720",
+          "instruction_count": 52,
+          "instruction_sha256": "eacc7ea34fe241c18065e77f24333e256786e95fc19738fe013de31d960e389b",
+          "internal_backward_branches": [],
+          "start": "0x100005650"
+        },
+        "process_main": {
+          "end": "0x1000057fc",
+          "instruction_count": 55,
+          "instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360",
+          "internal_backward_branches": [],
+          "start": "0x100005720"
+        }
+      }
+    }
+  },
+  "performance_samples_taken": false,
+  "schema_version": 1,
+  "scope": "retained llvm-objdump disassembly of the actual Mach-O executables",
+  "status": "passed",
+  "transport_off_label_limit": "transport-off suppresses export at the same gate as bridge-off; it is an export-gate placebo, not a direct transport-computation ablation"
+}

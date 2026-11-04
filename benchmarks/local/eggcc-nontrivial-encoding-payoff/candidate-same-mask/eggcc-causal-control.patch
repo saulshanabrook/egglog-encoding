@@ -1,0 +1,116 @@
+--- selected/Cargo.toml
++++ controlled/Cargo.toml
+@@ -9,7 +9,7 @@
+ 
+ 
+ [dependencies]
+-egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-same-mask-causal-control/egglog-experimental", package = "egglog-experimental" }
+ egraph-serialize = "0.3.0"
+ log = "0.4.19"
+ thiserror = "1"
+--- selected/dag_in_context/Cargo.toml
++++ controlled/dag_in_context/Cargo.toml
+@@ -6,7 +6,7 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
+-egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
++egglog = { path = "/private/tmp/encoding-same-mask-causal-control/egglog-experimental", package = "egglog-experimental" }
+ smallvec = "1.11.1"
+ strum = "0.25"
+ strum_macros = "0.25"
+--- selected/dag_in_context/src/lib.rs
++++ controlled/dag_in_context/src/lib.rs
+@@ -294,6 +294,11 @@
+         ..EggccConfig::default()
+     };
+     let mut prologue = prologue_for_config(&config_for_prologue);
++    if std::env::var_os("EGGCC_CONTROL_CONSUMER_OFF").is_some() {
++        let ordinary = "(rule (\n       (= lhs (If cond inputs thn els))\n       (ContextOf lhs if_ctx)\n       (= (BoolB false) (hi-bound cond))\n      )\n      ((union lhs (Subst if_ctx inputs els)))\n      :ruleset interval-rewrite)";
++        assert!(prologue.contains(ordinary));
++        prologue=prologue.replace(ordinary,&ordinary.replace(":ruleset interval-rewrite",":ruleset never"));
++    }
+     let mut schedule = schedule.to_string();
+ 
+     if let Some(ablate) = ablate {
+--- selected/dag_in_context/src/scoped_reasoning.rs
++++ controlled/dag_in_context/src/scoped_reasoning.rs
+@@ -193,6 +193,7 @@
+     Manual,
+     Encoding,
+     BridgeOff,
++    PrimitiveNull,
+ }
+ 
+ impl Mode {
+@@ -208,6 +209,7 @@
+             "manual" => Self::Manual,
+             "encoding" => Self::Encoding,
+             "bridge-off" => Self::BridgeOff,
++            "primitive-null" => Self::PrimitiveNull,
+             other => panic!("Unknown EGGCC_SCOPED_MODE: {other}"),
+         }
+     }
+@@ -439,6 +441,26 @@
+     program.push_str(&format!(
+         "(disequal {pa} {pb})\n(run-schedule (saturate injectivity))\n"
+     ));
++    let mut rescue_fact = None;
++    match std::env::var("EGGCC_CONTROL_RESCUE").as_deref() {
++        Ok("child") => {
++            if let (Word::Mask(x, _), Word::Mask(y, _)) = parent {
++                let fact = format!(
++                    "(disequal {} {})",
++                    render(x, &leaves, &shifts),
++                    render(y, &leaves, &shifts)
++                );
++                program.push_str(&format!("{fact}\n"));
++                rescue_fact = Some(fact);
++            }
++        }
++        Ok("target") => {
++            let fact = format!("(disequal {ta} {tb})");
++            program.push_str(&format!("{fact}\n"));
++            rescue_fact = Some(fact);
++        }
++        _ => {}
++    }
+     let mut graph = new_experimental_egraph_with_options(false, DisequalityEncoding::Nee);
+     graph.parse_and_run_program(None, &program)?;
+     let bottom = match graph.parse_and_run_program(None, "(check-contradiction)") {
+@@ -448,7 +470,20 @@
+     };
+     let (mut parent_known, mut child_known, mut target_known) = (None, None, None);
+     if !bottom && mode != Mode::SeedOnly {
+-        if mode == Mode::Manual {
++        if mode == Mode::PrimitiveNull {
++            // All committed Word constructor inputs are equality sorts. Give
++            // the primitive-only comparator the target's paired literal guard
++            // metadata anyway; same Shift constructor means identical k.
++            if let (Word::Shift(k, _), Word::Shift(l, _)) = target {
++                if k == l {
++                    graph.parse_and_run_program(None,&format!(
++                        "(relation PrimitiveNullWitness ())\n(ruleset primitive-null-query)\n(rule ((!= {k} {l})) ((PrimitiveNullWitness)) :ruleset primitive-null-query :naive)\n(run-schedule (run primitive-null-query))"))?;
++                    target_known = Some(graph.get_size("PrimitiveNullWitness") > 0);
++                } else {
++                    target_known = Some(false)
++                }
++            }
++        } else if mode == Mode::Manual {
+             let known = manual(&terms, parent);
+             parent_known = Some(known.contains(&(parent.0.clone(), parent.1.clone())));
+             if let (Word::Mask(x, _), Word::Mask(y, _)) = parent {
+@@ -477,7 +512,11 @@
+         "scope":"fresh graph's ThisScope denotes exactly receipt parent_context", "leaves":format!("{leaves:?}"),
+         "shift_constants":shifts,"parent": [pa,pb],"target":[ta,tb],"bottom":bottom,
+         "parent_known":parent_known,"child_known":child_known,"target_known":target_known,
+-        "absent_witness":"unknown-or-error","export":export}),
++        "absent_witness":"unknown-or-error","export":export,
++        "control_reverse_off":std::env::var_os("EGGCC_CONTROL_REVERSE_OFF").is_some(),
++        "control_rescue_fact":rescue_fact,
++        "primitive_null":mode==Mode::PrimitiveNull,
++        "word_constructor_primitive_fields":0}),
+     ))
+ }
+ 

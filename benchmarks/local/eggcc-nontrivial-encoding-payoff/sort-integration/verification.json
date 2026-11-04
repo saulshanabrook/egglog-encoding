@@ -1,0 +1,3227 @@
+{
+  "status": "passed",
+  "semantic_laws": {
+    "law": "tag 1: (min,max); tag 0: (max,min)",
+    "reduced_exhaustive": [
+      {
+        "width": 2,
+        "pairs": 16
+      },
+      {
+        "width": 3,
+        "pairs": 64
+      },
+      {
+        "width": 4,
+        "pairs": 256
+      },
+      {
+        "width": 5,
+        "pairs": 1024
+      },
+      {
+        "width": 6,
+        "pairs": 4096
+      },
+      {
+        "width": 7,
+        "pairs": 16384
+      },
+      {
+        "width": 8,
+        "pairs": 65536
+      }
+    ],
+    "full_width_pairs": 4145,
+    "inverse_of_three_mod_2_64": 12297829382473034411,
+    "no_tag_collision": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        1
+      ]
+    ],
+    "even_multiplier_collision": [
+      0,
+      -9223372036854775808
+    ]
+  },
+  "interpretations": 244,
+  "rows": [
+    {
+      "label": "positive/source/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/source/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/source/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/source/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/source/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/u0/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/u0/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/u0/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/u0/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/seed-only/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/seed-only/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/seed-only/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/seed-only/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/primitive-only/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/primitive-only/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/primitive-only/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/primitive-only/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/cancellation-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/cancellation-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/cancellation-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/forward-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/forward-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/forward-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/forward-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/reverse-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/reverse-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/reverse-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/identity-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/identity-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/identity-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/identity-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/cancellation-rescue/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/reverse-rescue/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/reverse-rescue/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/reverse-rescue/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/reverse-rescue/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/query-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/query-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/query-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/query-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/manual/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/manual/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/manual/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/manual/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/encoding/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/encoding/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/encoding/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/encoding/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/bridge-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/bridge-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/bridge-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/bridge-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "positive/application-off/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "positive/application-off/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/application-off/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "positive/application-off/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "negative/omitted-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/u0",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/off",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/seed-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/primitive-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/manual",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-tag/encoding",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/source",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/u0",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/off",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/seed-only",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/primitive-only",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/manual",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-min/encoding",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/source",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/u0",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/off",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/seed-only",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/primitive-only",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/manual",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/omitted-max/encoding",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/u0",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/off",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/seed-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/primitive-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/manual",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/reversed-right-tag/encoding",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/u0",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/off",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/seed-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/primitive-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/manual",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/changed-right-tag/encoding",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/source",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/u0",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/off",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/seed-only",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/primitive-only",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/manual",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/even-multiplier/encoding",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/source",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/u0",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/off",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/seed-only",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/primitive-only",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/manual",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/wrong-mixed-branch/encoding",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/u0",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/off",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/seed-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/primitive-only",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/manual",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "negative/no-key-context/encoding",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "99\n",
+      "actual": "99\n"
+    },
+    {
+      "label": "context/u0/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/u0/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "context/u0/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "context/u0/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "context/u0/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/00",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/01",
+      "args": [
+        2,
+        1,
+        2,
+        1,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/02",
+      "args": [
+        2,
+        2,
+        2,
+        2,
+        3,
+        4
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/03",
+      "args": [
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/04",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/05",
+      "args": [
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        -9223372036854775808,
+        0,
+        1
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "context/encoding/06",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected": "5\n",
+      "actual": "5\n"
+    },
+    {
+      "label": "context/encoding/07",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "context/encoding/08",
+      "args": [
+        1,
+        2,
+        1,
+        3,
+        0,
+        0
+      ],
+      "expected": "3\n",
+      "actual": "3\n"
+    },
+    {
+      "label": "context/encoding/09",
+      "args": [
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808,
+        9223372036854775807,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-omitted-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-omitted-min/source",
+      "args": [
+        0,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-omitted-max/source",
+      "args": [
+        2,
+        0,
+        3,
+        0,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-reversed-right-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-changed-right-tag/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-even-multiplier/source",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        -9223372036854775808
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-wrong-mixed-branch/source",
+      "args": [
+        1,
+        2,
+        1,
+        2,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    },
+    {
+      "label": "invalid-fold-no-key-context/source",
+      "args": [
+        1,
+        2,
+        2,
+        1,
+        0,
+        0
+      ],
+      "expected": "7\n",
+      "actual": "7\n"
+    }
+  ]
+}

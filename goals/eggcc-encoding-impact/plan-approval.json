@@ -1,0 +1,10 @@
+{
+  "decision": "approved",
+  "recordedUtc": "2026-10-17T20:29:31.776463+00:00",
+  "source": "plan-result.json",
+  "planSha256": "ea1ab25f0970a4ce6ed20e47fa3117ee16172f52b4935dc9f7796a387083b712",
+  "goalSha256": "84cb306ffc786ba40d70022f75e2c36912a1b24c6c8ef4c119d021311851b4e2",
+  "factsSha256": "bf31dc2ec89a90757e805a0de6112f5ca723033ff79554df5ca34fc77527eda7",
+  "factsMetaSha256": "a3355e1e6b6fa3d7ba8e6b5a67f879ff0cfee0bedc30a3fd92d042727fe8e02c",
+  "launchCommand": "/goal goals/eggcc-encoding-impact/goal.md"
+}

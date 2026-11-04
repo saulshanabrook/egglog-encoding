@@ -1,0 +1,112 @@
+[
+  {
+    "family": "no-context",
+    "mode": "encoding",
+    "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/fixtures/source.bril",
+    "source_sha256": "d1fe5b6ace306fff529d1ed7bac03609066624cf750fc0238cb71fcbee583ae0",
+    "emitted_sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb",
+    "main_sha256": "5acc1b241edcba37b437efef2ef69d8754250d57620ff791dbf107700ab2f2eb",
+    "outputs": [
+      {
+        "args": [
+          0,
+          4294967296,
+          8
+        ],
+        "expected": "56\n",
+        "stdout": "56\n"
+      },
+      {
+        "args": [
+          0,
+          0,
+          8
+        ],
+        "expected": "54\n",
+        "stdout": "54\n"
+      },
+      {
+        "args": [
+          4294967296,
+          0,
+          8
+        ],
+        "expected": "54\n",
+        "stdout": "54\n"
+      },
+      {
+        "args": [
+          0,
+          1,
+          8
+        ],
+        "expected": "24\n",
+        "stdout": "24\n"
+      },
+      {
+        "args": [
+          -9223372036854775808,
+          -9223372032559808512,
+          8
+        ],
+        "expected": "56\n",
+        "stdout": "56\n"
+      },
+      {
+        "args": [
+          9223372036854775807,
+          9223372032559808511,
+          8
+        ],
+        "expected": "54\n",
+        "stdout": "54\n"
+      },
+      {
+        "args": [
+          -1,
+          4294967295,
+          8
+        ],
+        "expected": "56\n",
+        "stdout": "56\n"
+      },
+      {
+        "args": [
+          0,
+          4294967296,
+          0
+        ],
+        "expected": "0\n",
+        "stdout": "0\n"
+      },
+      {
+        "args": [
+          0,
+          4294967296,
+          1
+        ],
+        "expected": "7\n",
+        "stdout": "7\n"
+      },
+      {
+        "args": [
+          0,
+          4294967296,
+          1024
+        ],
+        "expected": "7168\n",
+        "stdout": "7168\n"
+      },
+      {
+        "args": [
+          0,
+          4294967296,
+          -1
+        ],
+        "expected": "-2\n",
+        "stdout": "-2\n"
+      }
+    ],
+    "queries": []
+  }
+]

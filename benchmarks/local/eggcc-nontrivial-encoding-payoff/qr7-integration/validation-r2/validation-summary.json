@@ -1,0 +1,71 @@
+{
+  "binary": {
+    "full_matrix_rerun": false,
+    "r1_frozen_binary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/bin-r1/eggcc",
+      "sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+      "size": 61915472
+    },
+    "r2_rebuilt_binary": {
+      "path": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+      "sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+      "size": 61915472
+    },
+    "same_size": true,
+    "schema_version": 1,
+    "sha256_equal": false,
+    "status": "rebuilt-binary-differs-stop-gate-triggered",
+    "stop_reason": "The delegated validation required stopping after reporting when the r2 binary differs.",
+    "timing_rerun": false
+  },
+  "commands": {
+    "dag_clippy_exit": 101,
+    "dag_clippy_inherited_u0_diagnostics": 2,
+    "dag_clippy_qr7_local_diagnostics": 0,
+    "dag_fmt_exit": 0,
+    "focused_qr7_tests": {
+      "failed": 0,
+      "passed": 6
+    },
+    "full_dag_tests": {
+      "failed": 0,
+      "passed": 70,
+      "pending_snapshots": 0
+    },
+    "memory_guard_absent": true,
+    "raytracewithscreen_skipped": true,
+    "release_build_exit": 0,
+    "root_fmt_exit": 0,
+    "summary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/command-summary.json",
+      "sha256": "a4df63228c698e305e1f412c1952b586101fd847de3ee7eb0b2a88ba7f1cd9be",
+      "size": 9240
+    }
+  },
+  "schema_version": 1,
+  "source": {
+    "after_manifest": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/source-manifest-after.json",
+      "sha256": "9f51e0329f46d6560e689b06bfc00f782f4ee8ca4a94bf5fe5f99741da037741",
+      "size": 158816
+    },
+    "before_manifest": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/source-manifest-before.json",
+      "sha256": "8290a581b90e722bded31c8abfdf6c9358313e5040b569965455304ac3b92a47",
+      "size": 158830
+    },
+    "changed_files": [
+      "dag_in_context/src/scoped_qr7.rs"
+    ],
+    "copy_root": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+    "entries": 774,
+    "generated_snap_new": 0,
+    "patch": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/nits-r2.patch",
+      "sha256": "b0802da11e40e6d7fba3eefc8a3639a81153bee445cd90a71000e967d4211e00",
+      "size": 2558
+    },
+    "unchanged_after_validation_commands": true
+  },
+  "status": "qr7_local_nits_clean_tests_pass_binary_identity_stop_gate"
+}

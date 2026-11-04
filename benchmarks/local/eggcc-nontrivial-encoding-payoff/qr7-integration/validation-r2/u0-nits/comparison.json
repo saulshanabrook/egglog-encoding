@@ -1,0 +1,357 @@
+{
+  "schema_version": 1,
+  "generated_utc": "2026-10-20T04:46:34.123582+00:00",
+  "status": "u0_inherited_diagnostics_reproduced_candidate_only_diagnostics_absent",
+  "source": {
+    "identity": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/source-identity.json",
+    "identity_sha256": "2c98539938509d27d4f965784e674947ee0871cbfa132a642fe430c0efd86a4d",
+    "archive_sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+    "fresh_archive_sha256": "7a886debd758e78d0e859a05bbac75084e7da9c4f4bd0d73321dcf6f5ad25c2a",
+    "archive_reproduces_byte_identically": true,
+    "manifest_before": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/source-manifest-before.json",
+    "manifest_before_file_sha256": "b4a4c1a5d4f61872af3d94b9d2698a72208fe80828c587c3a96b6bdf40edf7d9",
+    "manifest_after": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/source-manifest-after.json",
+    "manifest_after_file_sha256": "b4a4c1a5d4f61872af3d94b9d2698a72208fe80828c587c3a96b6bdf40edf7d9",
+    "tracked_entries": 771,
+    "all_extracted_git_blob_ids_and_sha256_verified": true,
+    "extracted_blob_mismatches": [],
+    "source_manifest_before_equals_after": true,
+    "source_unchanged_by_commands": true
+  },
+  "commands": [
+    {
+      "name": "root-fmt",
+      "receipt": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/root-fmt/receipt.json",
+      "receipt_sha256": "0a0dd85895cd4931c11b45890f9f84d3766ae8c59305d00405ebcfec88e7e13c",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 0.13312208299976191,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-root-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "streams_match_receipt": true
+    },
+    {
+      "name": "dag-fmt",
+      "receipt": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-fmt/receipt.json",
+      "receipt_sha256": "c9f89c93e4f93b8f10bd1d243986278316f77d60a49ffcd2015fbeb097ab19e2",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "fmt",
+        "--check"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 0.18148608399860677,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-dag-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "streams_match_receipt": true
+    },
+    {
+      "name": "root-clippy",
+      "receipt": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/root-clippy/receipt.json",
+      "receipt_sha256": "ba4c7b420c57e54e7da6cc9b0d768ad4bd1bead8ef5b065c0a0be33112c7bbc5",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2",
+      "exit_code": 101,
+      "timed_out": false,
+      "elapsed_seconds": 20.077329083000222,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-root-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "02bfd3ec70557d459084eed0f0ee7c0246b55aa3e176e4652a0908ca450d4595",
+      "streams_match_receipt": true
+    },
+    {
+      "name": "dag-clippy",
+      "receipt": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-clippy/receipt.json",
+      "receipt_sha256": "ed44c46d3496c7f5ff673d6c5ea82a7c4c262803dab470c523db6c9cf051f769",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "executed_argv": [
+        "rustup",
+        "run",
+        "1.91.0",
+        "cargo",
+        "clippy",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context",
+      "exit_code": 101,
+      "timed_out": false,
+      "elapsed_seconds": 7.941713791999064,
+      "environment": {
+        "RUSTUP_TOOLCHAIN": "1.91.0",
+        "CARGO_BUILD_JOBS": "4",
+        "RUST_TEST_THREADS": "4",
+        "RAYON_NUM_THREADS": "1",
+        "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-u0-nits-r2-dag-target",
+        "CARGO_TERM_COLOR": "never",
+        "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+        "LIBRARY_PATH": "/opt/homebrew/lib",
+        "PATH": "/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.local/bin:/Users/saul/.rd/bin:/usr/local/Caskroom/miniconda/base/bin:/Users/saul/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/TeX/texbin:/Applications/VMware Fusion.app/Contents/Public:/opt/homebrew/bin:/Users/saul/.codex/tmp/arg0-macos/codex-arg0qZfmCH:/Users/saul/.codex/packages/standalone/releases/0.163.0-aarch64-apple-darwin/codex-path:/Users/saul/.codex/tmp/arg0-macos/codex-arg0URVIwe:/Users/saul/.opam/default/bin:/Users/saul/.local/bin:/Users/saul/.cabal/bin:/Users/saul/.ghcup/bin:/usr/local/opt/ruby/bin:/Users/saul/p/go/bin:/usr/local/opt/go/libexec/bin:/Users/saul/.cargo/bin:/Users/saul/.krew/bin:/usr/local/opt/node@10/bin:/usr/local/opt/python/libexec/bin:/usr/local/opt/llvm/bin:/Users/saul/installs/platform-tools/:/usr/local/sbin:/Users/saul/bin:/Users/saul/.local/state/fnm_multishells/3443_1792441307708/bin:/opt/homebrew/opt/cbc/bin:/opt/homebrew/opt/llvm@18/bin:/Users/saul/installs/llvm-12/bin:/opt/homebrew/opt/ruby@3.4/bin:/opt/homebrew/opt/ruby/bin:/Users/saul/installs/bin:/usr/local/opt/cbc/bin:/Users/saul/p/dafny:/usr/local/opt/dotnet@6/bin:/Users/saul/.dotnet:/Applications/iTerm.app/Contents/Resources/utilities:/Users/saul/.orbstack/bin",
+        "absent": [
+          "EGGLOG_BENCH_MEMORY_GUARD"
+        ]
+      },
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057",
+      "streams_match_receipt": true
+    }
+  ],
+  "command_results": {
+    "root_fmt": "pass",
+    "dag_fmt": "pass",
+    "root_clippy": "fails on one inherited warning",
+    "dag_clippy": "fails on two inherited warnings"
+  },
+  "flagged_files": [
+    {
+      "relative_path": "src/rvsdg/optimize_direct_jumps.rs",
+      "u0": {
+        "path": "/private/tmp/eggcc-qr7-u0-nits-r2/src/rvsdg/optimize_direct_jumps.rs",
+        "present": true,
+        "size_bytes": 15440,
+        "sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7"
+      },
+      "candidate": {
+        "path": "/private/tmp/eggcc-qr7-candidate/src/rvsdg/optimize_direct_jumps.rs",
+        "present": true,
+        "size_bytes": 15440,
+        "sha256": "d15406ee7ef7e72f04a0185648c0d1ce5ea83d6c609c9da36ab8bc26acd936c7"
+      },
+      "byte_identical_when_present": true
+    },
+    {
+      "relative_path": "dag_in_context/src/extractiongymfastergreedydag.rs",
+      "u0": {
+        "path": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context/src/extractiongymfastergreedydag.rs",
+        "present": true,
+        "size_bytes": 6177,
+        "sha256": "2f8406cd070d52f054ff74e2863270510a68e1296560ebe64b818cf4feb9c365"
+      },
+      "candidate": {
+        "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/extractiongymfastergreedydag.rs",
+        "present": true,
+        "size_bytes": 6177,
+        "sha256": "2f8406cd070d52f054ff74e2863270510a68e1296560ebe64b818cf4feb9c365"
+      },
+      "byte_identical_when_present": true
+    },
+    {
+      "relative_path": "dag_in_context/src/fastercbcextractor.rs",
+      "u0": {
+        "path": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context/src/fastercbcextractor.rs",
+        "present": true,
+        "size_bytes": 41744,
+        "sha256": "cb0c10f5ce03e6b7ac42c70a978a40a9184cd219ca9d54f051f7b9b27ca15052"
+      },
+      "candidate": {
+        "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/fastercbcextractor.rs",
+        "present": true,
+        "size_bytes": 41744,
+        "sha256": "cb0c10f5ce03e6b7ac42c70a978a40a9184cd219ca9d54f051f7b9b27ca15052"
+      },
+      "byte_identical_when_present": true
+    },
+    {
+      "relative_path": "dag_in_context/src/scoped_qr7.rs",
+      "u0": {
+        "path": "/private/tmp/eggcc-qr7-u0-nits-r2/dag_in_context/src/scoped_qr7.rs",
+        "present": false,
+        "size_bytes": null,
+        "sha256": null
+      },
+      "candidate": {
+        "path": "/private/tmp/eggcc-qr7-candidate/dag_in_context/src/scoped_qr7.rs",
+        "present": true,
+        "size_bytes": 38731,
+        "sha256": "76b93d107e01e3490b2875903ed3eea111bf4f810f3744bd631bfe5ebf4ae6b2"
+      },
+      "byte_identical_when_present": false
+    }
+  ],
+  "diagnostics": [
+    {
+      "id": "root-unnecessary-unwrap",
+      "scope": "root",
+      "source_path": "src/rvsdg/optimize_direct_jumps.rs",
+      "expected_in_u0": true,
+      "candidate_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/host-nits/stderr",
+      "candidate_stream_sha256": "4f8e356c7c0d73160a74e56eea87e9d171ad83719b69764b195629ed72cee90a",
+      "candidate_diagnostic": "error: called `unwrap` on `target` after checking its variant with `is_some`\n   --> src/rvsdg/optimize_direct_jumps.rs:236:28\n    |\n235 |             if target.is_some() && node_mapping.contains_key(&target.unwrap()) {\n    |                ---------------- the check is happening here\n236 |                 let next = target.unwrap();\n    |                            ^^^^^^^^^^^^^^^\n    |\n    = help: try using `if let` or `match`\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#unnecessary_unwrap\n    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`\n\n",
+      "candidate_diagnostic_sha256": "3917f8c50b858ca96d8ba51f357d0634c9c717aaf4af9aefa2b51af91c8f6075",
+      "u0_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/root-clippy/stderr",
+      "u0_stream_sha256": "02bfd3ec70557d459084eed0f0ee7c0246b55aa3e176e4652a0908ca450d4595",
+      "u0_diagnostic": "error: called `unwrap` on `target` after checking its variant with `is_some`\n   --> src/rvsdg/optimize_direct_jumps.rs:236:28\n    |\n235 |             if target.is_some() && node_mapping.contains_key(&target.unwrap()) {\n    |                ---------------- the check is happening here\n236 |                 let next = target.unwrap();\n    |                            ^^^^^^^^^^^^^^^\n    |\n    = help: try using `if let` or `match`\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#unnecessary_unwrap\n    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`\n\n",
+      "u0_diagnostic_sha256": "3917f8c50b858ca96d8ba51f357d0634c9c717aaf4af9aefa2b51af91c8f6075",
+      "reproduces_byte_identically": true
+    },
+    {
+      "id": "dag-unnecessary-unwrap",
+      "scope": "dag",
+      "source_path": "dag_in_context/src/extractiongymfastergreedydag.rs",
+      "expected_in_u0": true,
+      "candidate_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/host-dag-clippy-direct/stderr",
+      "candidate_stream_sha256": "f528f287bd1b519bfb095b148f793176ff08f890f33ec2a32c803c206d633ff7",
+      "candidate_diagnostic": "error: called `unwrap` on `lookup` after checking its variant with `is_some`\n   --> src/extractiongymfastergreedydag.rs:134:33\n    |\n133 |                 if lookup.is_some() {\n    |                 ------------------- help: try: `if let Some(<item>) = lookup`\n134 |                     prev_cost = lookup.unwrap().total;\n    |                                 ^^^^^^^^^^^^^^^\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#unnecessary_unwrap\n    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`\n\n",
+      "candidate_diagnostic_sha256": "f4f72191a3e5cd21dda8d59e112bdc5b79434afe744c335fbf41519969222243",
+      "u0_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-clippy/stderr",
+      "u0_stream_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057",
+      "u0_diagnostic": "error: called `unwrap` on `lookup` after checking its variant with `is_some`\n   --> src/extractiongymfastergreedydag.rs:134:33\n    |\n133 |                 if lookup.is_some() {\n    |                 ------------------- help: try: `if let Some(<item>) = lookup`\n134 |                     prev_cost = lookup.unwrap().total;\n    |                                 ^^^^^^^^^^^^^^^\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#unnecessary_unwrap\n    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`\n\n",
+      "u0_diagnostic_sha256": "f4f72191a3e5cd21dda8d59e112bdc5b79434afe744c335fbf41519969222243",
+      "reproduces_byte_identically": true
+    },
+    {
+      "id": "dag-cloned-ref-to-slice-refs",
+      "scope": "dag",
+      "source_path": "dag_in_context/src/fastercbcextractor.rs",
+      "expected_in_u0": true,
+      "candidate_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/host-dag-clippy-direct/stderr",
+      "candidate_stream_sha256": "f528f287bd1b519bfb095b148f793176ff08f890f33ec2a32c803c206d633ff7",
+      "candidate_diagnostic": "error: this call to `clone` can be replaced with `std::slice::from_ref`\n   --> src/fastercbcextractor.rs:991:37\n    |\n991 |                     reachable(vars, &[child_class.clone()], is_reachable);\n    |                                     ^^^^^^^^^^^^^^^^^^^^^^ help: try: `std::slice::from_ref(child_class)`\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#cloned_ref_to_slice_refs\n    = note: `-D clippy::cloned-ref-to-slice-refs` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::cloned_ref_to_slice_refs)]`\n\n",
+      "candidate_diagnostic_sha256": "8636f067c8a4934e65fab20391f4896155bb22e7db294465f0e76f7b3e85304a",
+      "u0_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-clippy/stderr",
+      "u0_stream_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057",
+      "u0_diagnostic": "error: this call to `clone` can be replaced with `std::slice::from_ref`\n   --> src/fastercbcextractor.rs:991:37\n    |\n991 |                     reachable(vars, &[child_class.clone()], is_reachable);\n    |                                     ^^^^^^^^^^^^^^^^^^^^^^ help: try: `std::slice::from_ref(child_class)`\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#cloned_ref_to_slice_refs\n    = note: `-D clippy::cloned-ref-to-slice-refs` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::cloned_ref_to_slice_refs)]`\n\n",
+      "u0_diagnostic_sha256": "8636f067c8a4934e65fab20391f4896155bb22e7db294465f0e76f7b3e85304a",
+      "reproduces_byte_identically": true
+    },
+    {
+      "id": "dag-qr7-type-complexity",
+      "scope": "dag",
+      "source_path": "dag_in_context/src/scoped_qr7.rs",
+      "expected_in_u0": false,
+      "candidate_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/host-dag-clippy-direct/stderr",
+      "candidate_stream_sha256": "f528f287bd1b519bfb095b148f793176ff08f890f33ec2a32c803c206d633ff7",
+      "candidate_diagnostic": "error: very complex type used. Consider factoring parts into `type` definitions\n   --> src/scoped_qr7.rs:478:15\n    |\n478 |     let rows: Vec<(&str, Vec<usize>, Vec<i64>, usize, bool)> = vec![\n    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#type_complexity\n    = note: `-D clippy::type-complexity` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`\n\n",
+      "candidate_diagnostic_sha256": "9976cd0256d7a8c2b555718a6516d19eef9d989621c1d0264a4d8185907c0946",
+      "u0_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-clippy/stderr",
+      "u0_stream_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057",
+      "u0_diagnostic": null,
+      "u0_diagnostic_sha256": null,
+      "reproduces_byte_identically": false
+    },
+    {
+      "id": "dag-qr7-identity-op",
+      "scope": "dag",
+      "source_path": "dag_in_context/src/scoped_qr7.rs",
+      "expected_in_u0": false,
+      "candidate_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r1/commands/host-dag-clippy-direct/stderr",
+      "candidate_stream_sha256": "f528f287bd1b519bfb095b148f793176ff08f890f33ec2a32c803c206d633ff7",
+      "candidate_diagnostic": "error: this operation has no effect\n   --> src/scoped_qr7.rs:939:21\n    |\n939 |         assert_eq!((5 % 7, 12 % 7), (5, 5));\n    |                     ^^^^^ help: consider reducing it to: `5`\n    |\n    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#identity_op\n    = note: `-D clippy::identity-op` implied by `-D warnings`\n    = help: to override `-D warnings` add `#[allow(clippy::identity_op)]`\n\n",
+      "candidate_diagnostic_sha256": "1e8b86009234e26482626c1ad5935aa93b86ac378794a138fa460bf3f7ee50e6",
+      "u0_stream": "benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/u0-nits/commands/dag-clippy/stderr",
+      "u0_stream_sha256": "0093f5e8f55603b9218c2c99edd3295608baf811e5635e53a9a2aa257a25b057",
+      "u0_diagnostic": null,
+      "u0_diagnostic_sha256": null,
+      "reproduces_byte_identically": false
+    }
+  ],
+  "conclusion": {
+    "candidate_root_warning_count": 1,
+    "candidate_dag_warning_count": 4,
+    "u0_root_warning_count": 1,
+    "u0_dag_warning_count": 2,
+    "root_warning_reproduces_byte_identically": true,
+    "pre_existing_dag_warnings_reproduce_byte_identically": true,
+    "qr7_scoped_warnings_absent_from_u0": true,
+    "entire_candidate_warning_set_reproduces_in_u0": false,
+    "u0_fmt_passes_both_workspaces": true,
+    "candidate_dag_fmt_failure_is_in_qr7_only_file": true,
+    "memory_guard_absent": true,
+    "rust_1_91_0_used": true,
+    "bounded_jobs": true,
+    "all_receipt_stream_hashes_verified": true,
+    "tests_benchmarks_or_raytracing_run": false
+  }
+}

@@ -1,0 +1,65 @@
+[package]
+name = "eggcc"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+harness = false
+name = "files"
+
+
+[dependencies]
+egglog = { path = "/private/tmp/encoding-same-mask-candidate/egglog-experimental", package = "egglog-experimental" }
+egraph-serialize = "0.3.0"
+log = "0.4.19"
+thiserror = "1"
+lalrpop-util = { version = "0.20.2", features = ["lexer"] }
+petgraph = "0.6"
+hashbrown = "0.14"
+indexmap = "2.0"
+fixedbitset = "0.4.2"
+smallvec = "1.11.1"
+rpds = "1.1.0"
+
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+# currently using the uwplse/bril fork of bril, on eggcc-main
+bril2json = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+brilirs = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+bril-rs = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+brilift = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+rs2bril = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" ,features = [
+  "import",
+] }
+brillvm = { git = "https://github.com/uwplse/bril", rev = "06117c089c2d235ff8d040bb3d0cfd1e2a1c4880" }
+
+ordered-float = "5"
+serde_json = "1.0.103"
+dot-structures = "0.1.1"
+graphviz-rust = "0.8.0"
+serde = "1.0.217"
+
+dag_in_context = { path = "dag_in_context" }
+
+# binary dependencies
+clap = { version = "4.4.7", features = ["derive"] }
+tempfile = "3.10.1"
+
+env_logger = "0.11.3"
+
+[dev-dependencies]
+glob = "0.3.1"
+libtest-mimic = "0.6.1"
+insta = { version = "1.31.0", features = ["yaml"] }
+
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3
+
+[features]
+# Writes intermediate graphs and SVGs to /tmp
+write-intermediates = []
+# Runs tests relying on LLVM. This may not be available on all systems.
+llvm = []
+default = ["llvm"]

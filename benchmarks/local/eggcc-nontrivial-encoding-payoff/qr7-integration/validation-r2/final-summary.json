@@ -1,0 +1,263 @@
+{
+  "compiler_binary": {
+    "byte_equal": false,
+    "r1_sha256": "ab1185cd3e24d1ed1698bc004ed3cc70f16c89202e3cc36a910b8308221df251",
+    "r2_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333"
+  },
+  "generated_utc": "2026-10-20T05:05:37.147237+00:00",
+  "host_tests": {
+    "artifacts": {
+      "comparison": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/comparison.json",
+        "sha256": "12bf6cbaef77011ba8f029537559eb1cf51c4898ea016355cb8e4aeb3cf2edab",
+        "size": 20178
+      },
+      "first_missing_tiger_receipt": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/attempt-01-missing-tiger/receipt.json",
+        "sha256": "9454697b828e38bb370612ad025913b127dbc12fb915e69687e7159ba674a0d8",
+        "size": 1912
+      },
+      "pending_snapshot_manifest": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/pending-snapshots.json",
+        "sha256": "3dcef30a4aa4ffd886a32e0a785291c49b1bf04fa2579fe7990500aa11be28f8",
+        "size": 2491
+      },
+      "receipt": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/command/receipt.json",
+        "sha256": "ddbdc039d56baadd7875f0d9ed2431bbe81bd5d1e1fed559b3e6b6ac15d1a8a4",
+        "size": 1912
+      },
+      "report": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/report.md",
+        "sha256": "f9042ace3c640efd18b638b977ce4338afb0908d7686a8ad78aaf029ce795f4f",
+        "size": 2450
+      },
+      "snapshot_cleanup": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/snapshot-cleanup.json",
+        "sha256": "b079bd1f8f18cbfbf02a7abbf19b83abd750729ab0b2908c95bf211876aedd65",
+        "size": 5445
+      },
+      "tiger_provision": {
+        "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/host-tests/tiger-provision.json",
+        "sha256": "b287e1fe88b2bb076a9916a3b0d4c8bfb42d0e857216e454f760824991b624c6",
+        "size": 590
+      }
+    },
+    "command": {
+      "argv": [
+        "cargo",
+        "insta",
+        "test",
+        "--release",
+        "--unreferenced=reject",
+        "--",
+        "--skip",
+        "raytracewithscreen"
+      ],
+      "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+      "diagnostic_elapsed_is_performance_evidence": false,
+      "elapsed_seconds_diagnostic": 496.4970144580002,
+      "exit_code": 1,
+      "stderr_sha256": "7f17d51801db4fbbc617bb4ec556beba8379e472cf6eb241d993a3eefcdb0886",
+      "stdout_sha256": "92288f1122e09c9e0ba5633b999dd3092b71237f471a1402c0d14fe1d8d1de0e",
+      "timed_out": false
+    },
+    "environment_and_scope": {
+      "cargo_build_jobs": "4",
+      "heavy_raytracing_requested": false,
+      "memory_guard_absent": true,
+      "ordinary_raytrace_test_benchmark_ran_and_passed": true,
+      "raytracewithscreen_skipped": true,
+      "rust_toolchain": "1.91.0"
+    },
+    "first_missing_tiger_harness_attempt": {
+      "argv": [
+        "cargo",
+        "insta",
+        "test",
+        "--release",
+        "--unreferenced=reject",
+        "--",
+        "--skip",
+        "raytracewithscreen"
+      ],
+      "classification": "harness_setup_failure_not_candidate_result",
+      "exit_code": 1,
+      "file_tests": {
+        "failed": 1012,
+        "filtered": 1,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 1408,
+        "status": "FAILED"
+      },
+      "pending_snapshots_after": 0,
+      "resolution": "retained Tiger copied beside external-target test executables with identity recorded before corrected rerun",
+      "source_excluding_generated_snapshots_unchanged": true,
+      "timed_out": false,
+      "unit": {
+        "failed": 1,
+        "filtered": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 30,
+        "status": "FAILED"
+      }
+    },
+    "functional_counts": {
+      "all_test_bodies_passed": true,
+      "binary_main": {
+        "failed": 0,
+        "filtered": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 0,
+        "status": "ok"
+      },
+      "doctests": {
+        "failed": 0,
+        "filtered": 0,
+        "ignored": 2,
+        "measured": 0,
+        "passed": 0,
+        "status": "ok"
+      },
+      "file_tests": {
+        "failed": 0,
+        "filtered": 1,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 2420,
+        "status": "ok"
+      },
+      "matches_r1": true,
+      "u0_count_difference_explained_by_explicit_skip": true,
+      "u0_file_tests_passed_without_filter": 2421,
+      "unit": {
+        "failed": 0,
+        "filtered": 0,
+        "ignored": 0,
+        "measured": 0,
+        "passed": 31,
+        "status": "ok"
+      }
+    },
+    "snapshots": {
+      "all_checked_in_byte_equal_u0": true,
+      "all_match_dependency_only_control": true,
+      "all_observed_root_snapshot_differences_are_inherited_dependency_retargeting": true,
+      "all_pending_byte_equal_r1": true,
+      "exit_classification": "insta_snapshot_rejection_after_all_test_bodies_passed",
+      "generated_pending_files_removed_from_isolated_source": true,
+      "pending_count": 13,
+      "pending_files_retained_in_evidence": 13,
+      "r1_pending_count": 13,
+      "snapshots_accepted": false,
+      "u0_pending_count": 0
+    },
+    "source_preservation": {
+      "checked_in_snapshots_unchanged": true,
+      "external_target_side_effect": "retained Tiger remains in external Cargo target release/deps",
+      "source_entry_count": 774,
+      "source_excluding_generated_snapshots_unchanged": true,
+      "source_matches_r2_post_cleanup_manifest": true
+    },
+    "status": "functional_tests_pass_snapshot_rejection_inherited_dependency_retarget_only"
+  },
+  "matrix": {
+    "actual_binary_inspection": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/actual-binary-inspection-r2.json",
+      "sha256": "1c92c4b9b4407a6cc4a521d7a5f94cbb816edcbd262b0ab8b3426d0d0f57fdf4",
+      "size": 23093
+    },
+    "aggregate": {
+      "all_disassembled_function_instruction_bodies_equal": true,
+      "assembly_equal_after_input_path_banner_normalization": true,
+      "assembly_files_raw_byte_equal": false,
+      "egraph_and_evidence_files_byte_equal": true,
+      "emitted_bril_stdout_byte_equal": true,
+      "inspection_json_byte_equal": true,
+      "llvm_files_equal_after_temporary_module_id_normalization": true,
+      "llvm_files_raw_byte_equal": false,
+      "native_executable_files_raw_byte_equal": false,
+      "native_file_differences_confined_to_uuid_symbols_strings_and_signature": true,
+      "native_loadable_sections_and_execution_content_equal": true,
+      "native_stdout_byte_equal": true,
+      "optimized_bril_files_byte_equal": true,
+      "positive_actual_binary_function_summaries_equal": true,
+      "positive_actual_binary_groups_equal": true,
+      "positive_emitted_bril_hash_maps_equal": true,
+      "queries_and_counters_equal": true,
+      "semantic_result_rows_equal": true,
+      "semantic_run_reports_equal_after_excluding_diagnostic_durations": true
+    },
+    "case_count": 37,
+    "comparison": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/r1-r2-comparison.json",
+      "sha256": "0b29b24ccfe9b5b7de9d2b5a1a2cd82f095810384fa542aeb935d042dee125f4",
+      "size": 153957
+    },
+    "inner_receipt_count": 325,
+    "native_output_count": 177,
+    "report": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/report.md",
+      "sha256": "3b4fb9866fcc56cd75073b8e42a9045417efed5a08dd4194fa9468bbe8b06356",
+      "size": 2809
+    },
+    "semantic_inspection": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/inspection.json",
+      "sha256": "54801698936cd372e2aa8b4d1d76a32c9bf3e706e295b939018cceb9cb533ae0",
+      "size": 3192065
+    },
+    "top_level_receipt_count": 6,
+    "top_level_summary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2/top-level-summary.json",
+      "sha256": "6d6abd9871b4447c66293f1b3c14d65ac1d03a634af303242c7f2c044c662ff7",
+      "size": 7524
+    }
+  },
+  "memory_guard_absent": true,
+  "performance_samples_taken": false,
+  "raytracing": {
+    "heavy_raytracing_requested": false,
+    "ordinary_raytrace_test_benchmark_ran_and_passed_in_root_suite": true,
+    "qualification": "The validation excluded raytracewithscreen; it does not claim that every raytrace-named fixture was excluded.",
+    "raytracewithscreen_skipped_in_full_dag_and_root_suites": true
+  },
+  "raytracing_requested": false,
+  "schema_version": 1,
+  "source_cleanup": {
+    "after_manifest": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/source-manifest-after.json",
+      "sha256": "9f51e0329f46d6560e689b06bfc00f782f4ee8ca4a94bf5fe5f99741da037741",
+      "size": 158816
+    },
+    "before_manifest": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/source-manifest-before.json",
+      "sha256": "8290a581b90e722bded31c8abfdf6c9358313e5040b569965455304ac3b92a47",
+      "size": 158830
+    },
+    "changed_files": [
+      "dag_in_context/src/scoped_qr7.rs"
+    ],
+    "patch": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/nits-r2.patch",
+      "sha256": "b0802da11e40e6d7fba3eefc8a3639a81153bee445cd90a71000e967d4211e00",
+      "size": 2558
+    },
+    "validation_summary": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/validation-summary.json",
+      "sha256": "830dafc1de2e46df0159564ed303632f9ea94bf1232e8c232189946ce875e49c",
+      "size": 2733
+    }
+  },
+  "status": "qr7-r2-source-clean-semantic-execution-and-host-equivalence-validated",
+  "timing": {
+    "every_artifact_byte_identical": false,
+    "exact_timed_macho_file_identity": false,
+    "execution_content_equivalent": true,
+    "existing_r1_timing_directly_measures_r2_regenerated_macho_files": false,
+    "performance_samples_taken": false,
+    "strict_answer": "No: every semantic row, emitted program, loadable section, native output, and instruction body is identical, but the regenerated Mach-O files are not byte identical because UUID, temporary-object symbol/string metadata, and the derived ad-hoc code signature differ. The retained r1 timing directly measures the frozen r1 Mach-O files, not these r2 regenerated files."
+  }
+}

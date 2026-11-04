@@ -1,0 +1,16 @@
+# ARGS: 9223372036854775807
+@main(v0: int) {
+  c1_: int = const 0;
+  v2_: bool = lt c1_ v0;
+  c3_: int = const 2;
+  br v2_ .b4_ .b5_;
+.b4_:
+  c6_: bool = const false;
+  print c6_;
+  ret;
+  jmp .b7_;
+.b5_:
+  ret;
+.b7_:
+}
+

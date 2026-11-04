@@ -1,0 +1,290 @@
+{
+  "status": "native_gate_passed_full_host_validation_failed",
+  "isolated_host": "/private/tmp/eggcc-sort-candidate",
+  "isolated_engine": "/private/tmp/encoding-sort-candidate",
+  "focused_tests": {
+    "receipt": "commands/focused-initial/receipt.json",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-sort-candidate/dag_in_context/Cargo.toml",
+      "scoped_reasoning",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "ff5cc71a24d30b2d054f80cec2cdc932f5fa05efa3c0f5268f99c7d980236224",
+    "stderr_sha256": "06a0d71d81e90b7f0e1ea75ef66b9e5b5e896ba0788b249692f541f44a67ab4f"
+  },
+  "dag_library_tests": {
+    "receipt": "commands/dag-library-tests/receipt.json",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-sort-candidate/dag_in_context/Cargo.toml",
+      "--lib",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "db9e3dfc6cd6419a2acb847a9573f6b2c3a559f4eb9ec669591dbffb7192b3dc",
+    "stderr_sha256": "06f36977611bff6c73b534d05319f47efe4994b1109e073e9632d1b3f190e58b"
+  },
+  "engine_registered_tests": {
+    "receipt": "commands/engine-registered-tests/receipt.json",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/encoding-sort-candidate/Cargo.toml",
+      "-p",
+      "egglog-experimental",
+      "--test",
+      "injectivity_disequality",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "548b1afd8b6257fa81f400c71900f379ef0551c6d474a0269f9d0046b5d4573b",
+    "stderr_sha256": "1f3f26c319e51d6dce708a0ece72c708dd281924f12e2b26bd2d22f18bc3f7a2"
+  },
+  "format_check": {
+    "receipt": "commands/format-check/receipt.json",
+    "argv": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "root_clippy": {
+    "receipt": "commands/clippy-root/receipt.json",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--tests",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 101,
+    "timed_out": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "3015cd6f6a8ce533be1da44bf455b8cbba94db121d903fb4812bb0133c687eb0"
+  },
+  "dag_clippy": {
+    "receipt": "commands/clippy-dag/receipt.json",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/private/tmp/eggcc-sort-candidate/dag_in_context/Cargo.toml",
+      "--tests",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 101,
+    "timed_out": false,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "b856a12e05e0444cf88848db15b45644ea549983483cdad997be0861f588eb28"
+  },
+  "new_clippy_diagnostics": 0,
+  "pre_existing_clippy_diagnostics": [
+    {
+      "file": "src/rvsdg/optimize_direct_jumps.rs",
+      "line": 236,
+      "lint": "unnecessary_unwrap",
+      "file_byte_identical_to_u0": true
+    },
+    {
+      "file": "dag_in_context/src/extractiongymfastergreedydag.rs",
+      "line": 134,
+      "lint": "unnecessary_unwrap",
+      "file_byte_identical_to_u0": true
+    },
+    {
+      "file": "dag_in_context/src/fastercbcextractor.rs",
+      "line": 991,
+      "lint": "cloned_ref_to_slice_refs",
+      "file_byte_identical_to_u0": true
+    }
+  ],
+  "first_full_host_make_test": {
+    "receipt": "commands/host-make-test/receipt.json",
+    "argv": [
+      "make",
+      "test"
+    ],
+    "exit_code": 2,
+    "timed_out": false,
+    "stdout_sha256": "435a80b804479aa195592bc3158fabff209de6c6f6917cc6825525570e71318c",
+    "stderr_sha256": "6b262ed00d74ca4cbb4e4bc5b3164903fb0437ffc6eedfaba02883fb35672ebd"
+  },
+  "first_full_host_test_result_summaries": [
+    "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.78s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: FAILED. 2410 passed; 11 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1248.84s",
+    "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "first_full_host_enospc_failures": [
+    "deriche-test-benchmark",
+    "heat-3d-test-benchmark",
+    "adi-test-benchmark",
+    "fdtd-2d-test-benchmark",
+    "nussinov-test-benchmark",
+    "covariance-test-benchmark",
+    "jacobi-1d-test-benchmark",
+    "seidel-2d-test-benchmark",
+    "jacobi-2d-test-benchmark",
+    "raytrace-test-benchmark",
+    "correlation-test-benchmark"
+  ],
+  "first_full_host_enospc_origin": "ten tiger invocations; jacobi-1d LLVM Opt IO failure, stderr explicitly reports output-stream ENOSPC",
+  "environmental_retry_without_source_change": true,
+  "environmental_retry_explicit_environment_exact": true,
+  "full_host_make_test": {
+    "receipt": "commands/host-make-test-retry-after-enospc/receipt.json",
+    "argv": [
+      "make",
+      "test"
+    ],
+    "exit_code": 2,
+    "timed_out": false,
+    "stdout_sha256": "be715444958ac04453d51c564efc56a4ff15fddc5aef66c405685e6d902ce9da",
+    "stderr_sha256": "ec0e36db3fb19a38d9e40cb66f0c279209340d4730576988a83b587be6c8c1b6"
+  },
+  "full_host_test_result_summaries": [
+    "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.90s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 2421 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 762.34s",
+    "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "full_dag_release_tests": {
+    "receipt": "commands/dag-release-tests/receipt.json",
+    "argv": [
+      "cargo",
+      "insta",
+      "test",
+      "--release",
+      "--manifest-path",
+      "/private/tmp/eggcc-sort-candidate/dag_in_context/Cargo.toml",
+      "--unreferenced=reject"
+    ],
+    "exit_code": 0,
+    "timed_out": false,
+    "stdout_sha256": "1b542b5412dc8683fc28d78a0e66dffb2535893e24c9cd01ee03a3804efdd472",
+    "stderr_sha256": "0ef593c9b224851cc5bdb17d409766be350ad986d7aa4d589ca9b413031d155e"
+  },
+  "full_dag_release_test_summaries": [
+    "test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "pending_snapshots": [
+    {
+      "name": "files__branch_duplicate_work-optimize-sequential.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__branch_duplicate_work-optimize.snap.new",
+      "sha256": "2e63da42c89a6da82f46aa8d97c2fdaf5ccd1cb39b0d0e88a3c66ed79d9b7907",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__branch_hoisting-optimize-no-ctx.snap.new",
+      "sha256": "94e94e57ce9f001437cbc77f15b5fd4cd698fdce54f2b0de29f8ce55a2d458ef",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__if_invariant_do_pull_out-optimize-sequential.snap.new",
+      "sha256": "8225f7d3079ac965032ca57dc8c36256ee4017e6d141946a4455a64d61ef1660",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__if_invariant_do_pull_out-optimize.snap.new",
+      "sha256": "89b6a5c4dd9ce9bfb5dc9936af54454cc19d6a0a9c069f895f203d848c004718",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__if_invariant_dont_pull_out-optimize-sequential.snap.new",
+      "sha256": "b9270fe3a82efbd8b4804f489ff997e4ced48da4db0ff2545e8548d49a30c0a7",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__loop_strength_reduction-optimize.snap.new",
+      "sha256": "17430a7d3e448083a3938644a505296431f8f38c9e1a98581039baf5aa88a6dd",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__loop_with_mul_by_inv-optimize.snap.new",
+      "sha256": "c0a52ef119278d0d25034620cb8f20f079ace645bdbe8decb97167de459fff7a",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__pull_out_small-optimize-sequential.snap.new",
+      "sha256": "713b55afe6c280849afdb60da03e0325d077c41720b8d9cf28f2653899a8be20",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__pull_out_small-optimize.snap.new",
+      "sha256": "5737670988bd3695fd6d4e36bfbdfb7c2eff0cf767e38fa1d2b01c27adb65036",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__strong_loop-optimize-no-ctx.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__strong_loop-optimize-sequential.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "matches_parts32_name_and_hash": true
+    },
+    {
+      "name": "files__strong_loop-optimize.snap.new",
+      "sha256": "d5e98fc1c58b3ff09b1dbb597ffc8eadd691868dba122f8c709b1f68a02c842f",
+      "matches_parts32_name_and_hash": true
+    }
+  ],
+  "pending_snapshot_count": 13,
+  "pending_snapshots_equal_first_run": true,
+  "all_pending_match_parts32": true,
+  "u0_full_make_test_reused": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/affine-integration/commands/validation-u0-release-make-test/receipt.json",
+    "sha256": "34a819f136c240ccee7b9efbc1b941732f4c7cd9f535bc05bf6ce215449ece14",
+    "exit_code": 0,
+    "scope": "prior fresh pinned-U0 source; all 771 admitted source hashes verified by freeze.py"
+  },
+  "engine_full_make_check_reused": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/engine-make-check-process-access/receipt.json",
+    "sha256": "99f8ff02e41a46e7cb530c6388fd7b73577580b09c196da9efff23e4f8d04d73",
+    "exit_code": 0,
+    "scope": "all 884 retained Cargo/source files byte-identical to current Parts32 E1 tree; five changed files match frozen historical archive; not a fresh sort-engine check"
+  },
+  "snapshots_accepted": false,
+  "semantic_revisions": 0,
+  "timing_campaign": false,
+  "qualification": "supporting actual-host mechanism/native-code evidence only; no measured speedup or pre-existing compiler bug"
+}

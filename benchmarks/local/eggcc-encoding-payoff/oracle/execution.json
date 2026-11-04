@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python3",
+    "benchmarks/local/eggcc-encoding-payoff/oracle/oracle.py",
+    "benchmarks/local/eggcc-encoding-payoff/oracle/run-01"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "exit_code": 0,
+  "result_directory": "run-01",
+  "script_sha256": "a27c49d729119067d175246a1d3e7910979c6dd6c57141b0349b3591a42528a0",
+  "results_sha256": "37240f29a50cb9b499a3afbc6590c370cbd851645168aec164a167906fd31432",
+  "manifest_sha256": "c67e9406591ddac314a5e838e6c5b0749b041f741d7cc2455e16fd6e29024aeb",
+  "process_pid": 34843,
+  "started_utc": "2026-10-18T20:55:03.362957+00:00",
+  "finished_utc": "2026-10-18T20:55:03.628083+00:00",
+  "compiler_invocations": 0,
+  "native_invocations": 0,
+  "interpretation": "Independent arithmetic oracle passed; compiler behavior and fixture parser/native admission remain untested."
+}

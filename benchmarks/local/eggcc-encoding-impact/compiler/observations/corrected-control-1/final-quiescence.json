@@ -1,0 +1,21 @@
+{
+  "checked_utc": "2026-10-17T22:50:10.322959+00:00",
+  "active_owned_compiler_native_processes": [],
+  "active_external_compiler_native_processes": [],
+  "host_globally_quiescent": true,
+  "source_audit": {
+    "source_files": 788,
+    "corrected": false,
+    "interval_sha256": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647"
+  },
+  "source_mutation_during_audit": false,
+  "known_unified_sessions_terminal": [
+    59426,
+    28159,
+    95418,
+    99427,
+    83207
+  ],
+  "performance_collection": false,
+  "host_cost_window_note": "Parent must recheck unrelated host activity before measurement."
+}

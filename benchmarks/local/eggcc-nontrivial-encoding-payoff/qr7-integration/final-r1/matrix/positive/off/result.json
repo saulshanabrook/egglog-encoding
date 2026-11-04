@@ -1,0 +1,112 @@
+{
+  "family": "positive",
+  "mode": "off",
+  "context": true,
+  "source": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/fixtures/source.bril",
+  "source_sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+  "emitted_sha256": "9ed32d49f87923259f9264325b9e5b7c3208942d7feaec4e47c6b4214034f809",
+  "binary_sha256": "27b7e9e6fcdfe8d476b5163ea8f0d2e16de9595b623c36ba72091f9088ba8278",
+  "outputs": [
+    {
+      "args": [
+        12,
+        12,
+        8
+      ],
+      "expected_stdout": "28\n",
+      "stdout": "28\n"
+    },
+    {
+      "args": [
+        0,
+        0,
+        0
+      ],
+      "expected_stdout": "0\n",
+      "stdout": "0\n"
+    },
+    {
+      "args": [
+        0,
+        0,
+        1
+      ],
+      "expected_stdout": "0\n",
+      "stdout": "0\n"
+    },
+    {
+      "args": [
+        63,
+        63,
+        1024
+      ],
+      "expected_stdout": "523776\n",
+      "stdout": "523776\n"
+    },
+    {
+      "args": [
+        7,
+        7,
+        8
+      ],
+      "expected_stdout": "28\n",
+      "stdout": "28\n"
+    },
+    {
+      "args": [
+        5,
+        12,
+        8
+      ],
+      "expected_stdout": "-1\n",
+      "stdout": "-1\n"
+    },
+    {
+      "args": [
+        12,
+        13,
+        8
+      ],
+      "expected_stdout": "-2\n",
+      "stdout": "-2\n"
+    },
+    {
+      "args": [
+        -1,
+        0,
+        8
+      ],
+      "expected_stdout": "-9\n",
+      "stdout": "-9\n"
+    },
+    {
+      "args": [
+        64,
+        64,
+        8
+      ],
+      "expected_stdout": "-9\n",
+      "stdout": "-9\n"
+    },
+    {
+      "args": [
+        1,
+        1,
+        -1
+      ],
+      "expected_stdout": "-9\n",
+      "stdout": "-9\n"
+    },
+    {
+      "args": [
+        1,
+        1,
+        10000001
+      ],
+      "expected_stdout": "-9\n",
+      "stdout": "-9\n"
+    }
+  ],
+  "queries": [],
+  "performance_samples": false
+}

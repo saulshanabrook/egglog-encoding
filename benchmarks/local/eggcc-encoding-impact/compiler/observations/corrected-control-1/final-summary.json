@@ -1,0 +1,301 @@
+{
+  "status": "completed compiler gates and final frozen release; awaiting parent review/cost routing",
+  "cost_collection": false,
+  "source_audit": {
+    "source_files": 788,
+    "corrected": false,
+    "interval_sha256": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647"
+  },
+  "final_endpoint": {
+    "source_manifest": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release/source.json",
+    "source_manifest_sha256": "5cddb863fa1a242fd028051400fb9a58c54ff33c876fe74a678e29fee020c6a3",
+    "source_patch_sha256": "db5eec0373d8a77a06356d3d064a17b449e83208baed3f416e463ea0970b66e6",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release/bin/eggcc",
+    "binary_sha256": "5d980389feec6270146db9a2cfe4e1775974102ab6c50cdf7bad029471907af1",
+    "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release/bin/tiger",
+    "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+    "variant": "uncorrected observer",
+    "native_lookup": "dag_in_context/src/lib.rs find_tiger_binary checks current_exe sibling first"
+  },
+  "corrected_diagnostic_endpoint": {
+    "source_manifest": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-release/source.json",
+    "source_manifest_sha256": "8748805409bdc89ae7d529521140aacadb85483ffb421b957d82b3a8de0fbc22",
+    "source_patch_sha256": "9ea4a5a1fb8597ba498abb6ccbe80ce60944e20a31e15d8e36dbdd9aa518a61a",
+    "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-release/bin/eggcc",
+    "binary_sha256": "f44edb3cb9c4b9660524335a29bea536571fe2ddbd1bcc68ba589decbd9bcc15",
+    "tiger": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-release/bin/tiger",
+    "tiger_sha256": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a",
+    "variant": "two-rule diagnostic control",
+    "native_lookup": "dag_in_context/src/lib.rs find_tiger_binary checks current_exe sibling first"
+  },
+  "source_package_delta_after_control": {
+    "dag_in_context/src/observations/tests.rs": {
+      "control_original": "271c694e1cd1999d9ab960f405b64b0fdec5a9b636e0ed577fd3378343d78874",
+      "final": "67074cfe369419fba1b9853c76130566a7305d90e7848aaa0b5ecfcd14fa16e1"
+    }
+  },
+  "corrected_control_vs_final_source_delta": {
+    "dag_in_context/src/interval_analysis.egg": {
+      "corrected_control": "ef5ff6ca63884d2c2588babb624971b76f464c15e92849c0c6a95c3cfce33037",
+      "final": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647"
+    },
+    "dag_in_context/src/observations/tests.rs": {
+      "corrected_control": "271c694e1cd1999d9ab960f405b64b0fdec5a9b636e0ed577fd3378343d78874",
+      "final": "67074cfe369419fba1b9853c76130566a7305d90e7848aaa0b5ecfcd14fa16e1"
+    }
+  },
+  "production_identity": "All production Rust, .egg, fixture and four Python helper inputs are unchanged from the accepted uncorrected control package. Only the cfg(test) test borrow differs. Corrected endpoint intentionally retains its pre-repair package and exact two-rule diagnostic deletion.",
+  "corrected_control": {
+    "original_strict_red_assertions": 4,
+    "corrected_green_assertions": 4,
+    "nearby_control_invocations": 24,
+    "byte_restoration_verified": true,
+    "same_driver_helper_input": true,
+    "production_fix_claim": false
+  },
+  "gates": {
+    "official_make_test": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/official-make-test.json",
+      "exit": 2,
+      "rust_reported_passes": {
+        "root_library": 36,
+        "integration": 2421
+      },
+      "ignored_doctests": 2,
+      "snapshot_review_failures": 13,
+      "snapshots_autoaccepted": false,
+      "repeated_after_test_only_fix": false,
+      "scope_note": "Parent authorized retaining root outcome across cfg(test)-only borrow repair; affected DAG suite rerun."
+    },
+    "post_fix_full_dag_suite": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/post-fix-full-dag-release-suite.json",
+      "exit": 0,
+      "passed": 74
+    },
+    "official_make_nits_after_fix": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/post-fix-official-make-nits.json",
+      "exit": 2,
+      "failure": "unchanged root clippy::unnecessary_unwrap"
+    },
+    "strict_dag_lint_after_fix": {
+      "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/post-fix-strict-dag-clippy.json",
+      "exit": 101,
+      "failures": [
+        "unchanged unnecessary_unwrap",
+        "unchanged cloned_ref_to_slice_refs"
+      ]
+    },
+    "baseline_attribution": {
+      "fresh_E1_control": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/results.json",
+      "actual_exact_trials": 13,
+      "selected_tests_each": 1,
+      "all_actual_snapshot_bodies_equal": true,
+      "same_input_harness_expected_bytes": true,
+      "strict_root_and_DAG_all_3_warnings_reproduced": true,
+      "gate_reclassified_as_pass": false
+    },
+    "diagnostic_lint": {
+      "root_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/diagnostic-root-clippy-known-lint-allow.json",
+      "root_allowed": [
+        "clippy::unnecessary_unwrap"
+      ],
+      "DAG_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/post-fix-diagnostic-dag-clippy-baseline-only-allows.json",
+      "DAG_allowed": [
+        "clippy::unnecessary_unwrap",
+        "clippy::cloned_ref_to_slice_refs"
+      ],
+      "both_exit": 0,
+      "altered_commands_not_official_nits": true
+    },
+    "focused_post_fix_DAG": 10,
+    "focused_root_unchanged": 5,
+    "root_format_exit": 0,
+    "DAG_format_exit": 0,
+    "git_diff_check_exit": 0
+  },
+  "fresh_release_matrix": {
+    "invocations": 37,
+    "composition": "7 source parse oracles +28 ordinary four-mode cases +2 separately attributed E1 prepass diagnostics",
+    "outcomes": {
+      "source-oracle": 7,
+      "full-native-round-trip": 24,
+      "expected-observer-rejection": 3,
+      "expected-unsupported-domain-rejection": 3
+    },
+    "main_MAX_behavior": "Off/Common source true -> optimized false; Manual/Injective reject exact feasible witness before serialization/Tiger. This remains the intentional uncorrected baseline bug.",
+    "all_expected": true
+  },
+  "fresh_release_repeats": {
+    "invocations": 10,
+    "byte_identical_argv_pairs": 5,
+    "distinct_persistent_children": 10,
+    "all_first_receipts_revalidated_after_second_overwrite": true,
+    "all_expected": true
+  },
+  "explicit_failures_retained": [
+    "first focused declaration namespace failure",
+    "original MAX oracle red",
+    "historical runtime setup linker failure (compatible frozen outputs reused)",
+    "13 official snapshot differences",
+    "official root and standalone DAG strict lint failures",
+    "snapshot comparison attempt1 Rust-input lookup setup failure",
+    "fresh baseline attempt1 missing native fallback before selected trials"
+  ],
+  "E1_source_authority": "Authoritative five-file encoding-reviewable-1 patch and final-source-checkpoint bound below; not the incomplete development four-file engine diff.",
+  "successful_cost_receipt_policy": "Earlier debug nine-call protocol smoke only; no release timings admitted. Collector success lacks independent PID/full stderr; named postcapture archives normal locator trees externally. Diagnostic commands retain actual PID/full stderr.",
+  "artifact_index": [
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/original-release/manifest.json",
+      "sha256": "b722688c93a27a8deb28f900efd9f1ad300887c1e7724a337774bb0f00fbed88"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-release/manifest.json",
+      "sha256": "860add623480776002f680501c1077ea7c2cd8e268545ce4c028c0e90aab20e2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release/manifest.json",
+      "sha256": "ff017790bf298fd56213f56759b8372cd6d74bb12457a747f088c03670f9fef2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/original-release-red/results.json",
+      "sha256": "476d5939652cc041af7f29160c2cdbe7e0d7c59fad8cc638ccd8a26ad79bcfbd"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-release-green/results.json",
+      "sha256": "a3d37046e6875842fdfdb822f11e11121bf6b15124f54d85fd3dfaac7e9759f2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/corrected-controls/results.json",
+      "sha256": "427968ca61444dc8fc18f9714ec62a26d9f432e557e451d19672dbe56fd70e1e"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/control-result.json",
+      "sha256": "1fe893d4f9ef8cc202d26e11b79934cc704c8a133d88657b49957b3b810919d2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/independent-restoration-command.json",
+      "sha256": "b33e5dd1357a61630e01c565950025021952b1e5a2fa1cc64fa4f50073168c42"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/pass00-observation-comparison.json",
+      "sha256": "88be035b99448b39010f4716b56dc0062589d158484e9a171821062b73d34a61"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/pass00-initialization-deletion-check.json",
+      "sha256": "80ca4b17dde64e933e2d9ffe434faf95ace9e6fdc448d150caa223f32af40ec6"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/runtime-reuse.json",
+      "sha256": "a0b9f5fe70cabe4a64f2fefcefbc97df3267abb96ef636c7c583586c687d3017"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/runtime-compatibility.json",
+      "sha256": "f4496cbb9630084cd61036a282aceccdbc7bbab83dfa1294e96b4886c267ebb3"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/cache-reuse.json",
+      "sha256": "5ae8b584ae5e29be945424bdc2d59342f97567e6b66ce68d561e61e9805b71ae"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/test-lint-fix-1/manifest.json",
+      "sha256": "f7bd89c9986b385b78257b7654215025268afcef8cf75c7171c0af79ae7e8c11"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/test-lint-fix-1/test-only.patch",
+      "sha256": "44faafb128b64250395e79b0bac8546342b92c477d1e68480686dbf69d70f8d2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-lint-source.json",
+      "sha256": "9ded5939ed0e0bbf5b5be4a69d9d5e8c094eb46259efce0d9cb93841621862f3"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-lint-source.patch",
+      "sha256": "db5eec0373d8a77a06356d3d064a17b449e83208baed3f416e463ea0970b66e6"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release-comparison.json",
+      "sha256": "9415f01ccff2f006615bfdd62fcbd27ad4801f2543f0d1a47a36cd0d1a11830b"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release/results.json",
+      "sha256": "6002863600cf5295fc34285b9fe5e017826859f0acb8dac9659670459bd41bcd"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-release-repeated/results.json",
+      "sha256": "aa6c916fb7e8b0918950706fa8c1742bea3521a1ac641c83c0d937554f0a09c8"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/results.json",
+      "sha256": "7ff433c2ed4970845f0dd2347f33cce736300e2e4fa24a2a7d0046e0ef0df20e"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/source.json",
+      "sha256": "e417c5a4a2855511867d1dbdc752aebd21104a79ece01c191b18232d46a3488d"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/native-reuse.json",
+      "sha256": "7dc818a1677738db191a90ef870b67bab7108447e12f13addf907529fbc16353"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/fresh-engine-control/attempt-2/results.json",
+      "sha256": "241c479424a8e12d948b3b2b599df7c2fd3cec5325887ea385b1a30ee745d7d9"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/generated-snapshot-outputs.json",
+      "sha256": "98bf6ecdcf8379568b4411b6bcc5824d7ec683105c08f5b3a2b762f977bbfa36"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/gate-snapshot-comparison-2/results.json",
+      "sha256": "6dcfd7aa14942598598ccbbf9d7d596b79507767607d076c93ab7081119ad199"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-command-index.json",
+      "sha256": "2dd04ee19c7b2e431435ceeeac4399ef63906b83aec104884defea1f758634a2"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/corrected-control-1/final-quiescence.json",
+      "sha256": "9e6a115f67ab593baa4f0a5eb04fdf96fed29c75351f9fbcf9df5ac6e1225e83"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/review-checkpoint/encoding-final-source-checkpoint.json",
+      "sha256": "b36f2f2c82beb06d105ce020cf718acd6804f9baf8ea7b37e6700e06a5b74cbf"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/review-checkpoint/encoding-reviewable-1.patch",
+      "sha256": "b21d12ce1fd58453275d001609d12583439a295c8899d4ed058bd1ba070c1ee0"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/review-checkpoint/encoding-reviewable-1.json",
+      "sha256": "8d1b4d4b3ab7e3eb20455dab151552ddc2ec33ada6631e98848c37dc41cca569"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/fresh-evidence-python-2-final/source.json",
+      "sha256": "91ba80abe47dbc3b8c4b83243c879b88b967b2247d1ff6a2797e0a760629e89f"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-impact/compiler/observations/fresh-evidence-python-2-final/results.json",
+      "sha256": "4b3534a6b820536c6d7699430c5c8654d5ffe7373f0c67624a31f5a526ac9e54"
+    }
+  ],
+  "quiescence": {
+    "checked_utc": "2026-10-17T22:50:10.322959+00:00",
+    "active_owned_compiler_native_processes": [],
+    "active_external_compiler_native_processes": [],
+    "host_globally_quiescent": true,
+    "source_audit": {
+      "source_files": 788,
+      "corrected": false,
+      "interval_sha256": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647"
+    },
+    "source_mutation_during_audit": false,
+    "known_unified_sessions_terminal": [
+      59426,
+      28159,
+      95418,
+      99427,
+      83207
+    ],
+    "performance_collection": false,
+    "host_cost_window_note": "Parent must recheck unrelated host activity before measurement."
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "frozen_utc": "2026-10-19T16:29:58.471348+00:00",
+  "timed_samples_taken": false,
+  "workload": "hot same-mask source SHA f4448682f67a73ab98677b1c997f419175999f4c221e297f1a443e6c95f856dd",
+  "args": [
+    200000000,
+    0,
+    1,
+    6
+  ],
+  "expected_stdout": "1200000000\n",
+  "cycles": 32,
+  "observations_per_arm": 32,
+  "warmups_per_arm": 3,
+  "warmup_args": [
+    10000000,
+    0,
+    1,
+    6
+  ],
+  "order_rows": [
+    [
+      "U0",
+      "B1",
+      "Encoding",
+      "Manual"
+    ],
+    [
+      "B1",
+      "Manual",
+      "U0",
+      "Encoding"
+    ],
+    [
+      "Manual",
+      "Encoding",
+      "B1",
+      "U0"
+    ],
+    [
+      "Encoding",
+      "U0",
+      "Manual",
+      "B1"
+    ]
+  ],
+  "order_rule": "cycle modulo4 selects row;32 complete cycles",
+  "timer": "perf_counter_ns immediately around subprocess.run, before any artifact writes",
+  "timeout_s": 30,
+  "estimator": "median of cycle-matched Encoding elapsed divided by U0 elapsed",
+  "uncertainty": "10000 bootstrap resamples of complete cycles;percentile95% interval;fixed seed20261019",
+  "acceptance": "upper95% interval <0.99;Encoding entry code exactly equals Manual and B1 entry code exactly equals U0;all outputs exact",
+  "cpu_isolation": false,
+  "memory_guard_enabled": false,
+  "compile_time_included": false,
+  "arms": {
+    "U0": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-supplement/hot-u0/off/native/program",
+      "binary_sha256": "2694f6a18b5251a9954efc3d75c7acae1d898d429e1f0600e202858aa3d306ce",
+      "entry_assembly_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+    },
+    "B1": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/off/native/program",
+      "binary_sha256": "90ce73810da2e79c6f18e385a9444790ad5d4406a78f6a8dd3bb24c44b4ee21a",
+      "entry_assembly_sha256": "51ae23de35ba8fd933a3d745ce96b6b052f22b5bcb2351d0609d1620cf07ac5a"
+    },
+    "Manual": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/manual/native/program",
+      "binary_sha256": "e2c1d2b8405c6b5618ce633b8263b3814841bf7b1d6583f712b54fe950ede2cf",
+      "entry_assembly_sha256": "bea1d5f29236a47e3a43a5139fb6f844ebea03090a3b077342cc8cde609e43cc"
+    },
+    "Encoding": {
+      "binary": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/candidate-same-mask/matrix-invariants/hot/encoding/native/program",
+      "binary_sha256": "3d81e83ff64cff5702ca5d0402fee07b002286ee2b75b881d63a7f204d0ec370",
+      "entry_assembly_sha256": "bea1d5f29236a47e3a43a5139fb6f844ebea03090a3b077342cc8cde609e43cc"
+    }
+  }
+}

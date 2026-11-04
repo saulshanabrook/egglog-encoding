@@ -1,0 +1,249 @@
+{
+  "status": "passed",
+  "checked_utc": "2026-10-17T19:50:28.226434+00:00",
+  "dataset": "reproduction",
+  "operation": "export/regeneration and read-only raw-value QA; no compiler/build/timing collection",
+  "sources_unchanged": {
+    "study": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/study.json",
+      "sha256": "6c3f10ef3d5a15f516e6b4977d552111b639407c53032fcfaeee3b56c3174d48"
+    },
+    "results": {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/results.json",
+      "sha256": "e5f1488226642873d6867210d1d7855bee6a9085513bd97f83b4f1e5e12bba55"
+    },
+    "collector": {
+      "path": "/Users/saul/p/wt/egglog-encoding/eggcc-study/scripts/eggcc_encoding_case_study.py",
+      "sha256": "79c4147dbe5b74d1d9138e170643a7c09205f55a6d49d355f1fc201c3a811380"
+    }
+  },
+  "invocations_by_phase": {
+    "correctness": 4,
+    "warmup": 4,
+    "measurement": 40
+  },
+  "raw_summary_matches": true,
+  "export_comparisons": [
+    {
+      "file": "README.md",
+      "first_sha256": "c252f06e106f0587f5e374853573b7fcaef2dddf64344d13737aea6ffa98a3a8",
+      "regenerated_sha256": "c252f06e106f0587f5e374853573b7fcaef2dddf64344d13737aea6ffa98a3a8",
+      "byte_equal": true
+    },
+    {
+      "file": "figure-data.json",
+      "first_sha256": "edadd41074473576266afff823722b57e9826853aa40ceae2753c3ce5df52545",
+      "regenerated_sha256": "edadd41074473576266afff823722b57e9826853aa40ceae2753c3ce5df52545",
+      "byte_equal": true
+    },
+    {
+      "file": "fresh-allocations.pdf",
+      "first_sha256": "92d81f9b04fffff88f89564108f53da231bba1cff002d2a62f8efb9d196af26f",
+      "regenerated_sha256": "92d81f9b04fffff88f89564108f53da231bba1cff002d2a62f8efb9d196af26f",
+      "byte_equal": true
+    },
+    {
+      "file": "fresh-allocations.svg",
+      "first_sha256": "e97d9825ba8e37d2981fb02707a91e8a959eeb421336eee451b8d333e2a84a8f",
+      "regenerated_sha256": "e97d9825ba8e37d2981fb02707a91e8a959eeb421336eee451b8d333e2a84a8f",
+      "byte_equal": true
+    },
+    {
+      "file": "table.md",
+      "first_sha256": "ad9e6231fb58f01583bfed222041b1c5803e139b0f1700292db43d922356c6af",
+      "regenerated_sha256": "ad9e6231fb58f01583bfed222041b1c5803e139b0f1700292db43d922356c6af",
+      "byte_equal": true
+    }
+  ],
+  "engine_control_exports_unchanged": true,
+  "rss_scope": "wait4 child rusage.ru_maxrss; platform-normalized, not simultaneous process-group peak",
+  "timing_scope": "compiler process wall time including CLI JSON receipt; excludes interpretation; not program execution",
+  "per_case_descriptive": [
+    {
+      "case": "fresh-allocations",
+      "arm": "off",
+      "n": 10,
+      "wall_sec": {
+        "raw": [
+          0.1525287500116974,
+          0.1423220420256257,
+          0.14301683398662135,
+          0.14834058296401054,
+          0.14775604201713577,
+          0.2193479579873383,
+          0.19265437498688698,
+          0.2192109590396285,
+          0.214302874985151,
+          0.2126223329687491
+        ],
+        "median": 0.1725915624992922,
+        "min": 0.1423220420256257,
+        "max": 0.2193479579873383,
+        "stdev": 0.035062809791242606
+      },
+      "max_rss_bytes": {
+        "raw": [
+          43286528,
+          43417600,
+          43319296,
+          43204608,
+          43253760,
+          43188224,
+          43270144,
+          43450368,
+          43253760,
+          43237376
+        ],
+        "median": 43261952.0,
+        "min": 43188224,
+        "max": 43450368,
+        "stdev": 85814.214107765
+      }
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "keys",
+      "n": 10,
+      "wall_sec": {
+        "raw": [
+          0.14807695796480402,
+          0.1485453749774024,
+          0.15639737498713657,
+          0.15579345799051225,
+          0.15459554200060666,
+          0.15752741700271145,
+          0.2593275419785641,
+          0.19718524999916553,
+          0.2102649579755962,
+          0.22495679202256724
+        ],
+        "median": 0.156962395994924,
+        "min": 0.14807695796480402,
+        "max": 0.2593275419785641,
+        "stdev": 0.03917359667572868
+      },
+      "max_rss_bytes": {
+        "raw": [
+          44892160,
+          44892160,
+          44531712,
+          44679168,
+          44990464,
+          44515328,
+          44548096,
+          44630016,
+          44417024,
+          44826624
+        ],
+        "median": 44654592.0,
+        "min": 44417024,
+        "max": 44990464,
+        "stdev": 195665.17640590918
+      }
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "query",
+      "n": 10,
+      "wall_sec": {
+        "raw": [
+          0.1481923329993151,
+          0.14821800001664087,
+          0.15228833397850394,
+          0.15473258297424763,
+          0.15479620796395466,
+          0.23101491702254862,
+          0.1999766249791719,
+          0.2786295000114478,
+          0.2370816670008935,
+          0.19286183401709422
+        ],
+        "median": 0.17382902099052444,
+        "min": 0.1481923329993151,
+        "max": 0.2786295000114478,
+        "stdev": 0.04626039180110148
+      },
+      "max_rss_bytes": {
+        "raw": [
+          44974080,
+          44908544,
+          44892160,
+          44990464,
+          45056000,
+          45137920,
+          44711936,
+          45088768,
+          44908544,
+          44974080
+        ],
+        "median": 44974080.0,
+        "min": 44711936,
+        "max": 45137920,
+        "stdev": 120198.97156446704
+      }
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "manual",
+      "n": 10,
+      "wall_sec": {
+        "raw": [
+          0.14768083300441504,
+          0.14843500003917143,
+          0.1613873749738559,
+          0.15697408298728988,
+          0.1570559999672696,
+          0.3183528339723125,
+          0.2047617500065826,
+          0.27861791697796434,
+          0.21315520798088983,
+          0.22023695899406448
+        ],
+        "median": 0.18307456249021925,
+        "min": 0.14768083300441504,
+        "max": 0.3183528339723125,
+        "stdev": 0.059040100824313574
+      },
+      "max_rss_bytes": {
+        "raw": [
+          44924928,
+          45072384,
+          44875776,
+          44744704,
+          44728320,
+          44924928,
+          44744704,
+          44941312,
+          44744704,
+          44826624
+        ],
+        "median": 44851200.0,
+        "min": 44728320,
+        "max": 45072384,
+        "stdev": 114609.95439722211
+      }
+    }
+  ],
+  "interpretation_limits": [
+    "off-to-keys includes key/audit and added memory/type fixed-point closure",
+    "query/manual share analysis, eligibility, closure and query-based audit",
+    "no asserted disequalities: NEE/EE assertion storage is not isolated",
+    "compiler costs are not generated-program performance or production speedup",
+    "wait4 child RSS is not simultaneous process-group peak or pair-relation bytes",
+    "cohorts remain separate; observation spread is not a confidence interval"
+  ],
+  "visual_review": {
+    "status": "passed manual inspection of all primary case PDF renders",
+    "checks": [
+      "case titles",
+      "all four arm labels and n=10",
+      "observation/median/range marks",
+      "units",
+      "RSS note",
+      "no clipping"
+    ],
+    "rendered_pngs": {
+      "fresh-allocations.png": "21b2d0e23d79ea53ca2385f2e9d9d24319c2777578e65a656b3a7b2b3ebb3280"
+    }
+  }
+}

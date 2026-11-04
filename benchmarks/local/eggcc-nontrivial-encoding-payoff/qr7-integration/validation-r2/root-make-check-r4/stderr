@@ -1,0 +1,382 @@
+Resolved 21 packages in 22ms
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.50s
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.22s
+   Generated /Users/saul/p/egglog-encoding/target/doc/egg_math_benchmark/index.html and 11 other files
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.48s
+     Running unittests src/main.rs (target/debug/deps/egg_math_benchmark-dc771abae3115da9)
+     Running unittests src/lib.rs (target/debug/deps/egglog-9e5fa13ea03347d2)
+     Running unittests src/main.rs (target/debug/deps/egglog-1d6063fa3c7f5353)
+     Running tests/api_const_fold.rs (target/debug/deps/api_const_fold-10f553d3f5ad7838)
+     Running tests/api_fact_ops.rs (target/debug/deps/api_fact_ops-31cc32f018e1ffc9)
+     Running tests/api_proofs.rs (target/debug/deps/api_proofs-549521195b415eb4)
+     Running tests/api_query.rs (target/debug/deps/api_query-280429fbd4aa2c34)
+     Running tests/container_rebuild.rs (target/debug/deps/container_rebuild-b486d9fd388b54fd)
+     Running tests/extraction_proof_mode.rs (target/debug/deps/extraction_proof_mode-724d834372245e9d)
+     Running tests/files.rs (target/debug/deps/files-f57757044c7cd9ad)
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(16) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:50Z ERROR egglog::extract] Unextractable root Value(16) with sort EqSort { name: "Expr" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(13) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(21) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(13) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(21) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:10:51Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@RSort" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(25) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:01Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view2" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(1) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(2) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(3) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(4) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(5) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(7) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(8) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(10) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(13) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(15) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(16) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(17) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(18) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(19) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(2) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(4) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(8) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(10) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(16) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(18) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(24) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(26) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(28) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(32) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(34) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(36) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(38) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(40) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(45) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(48) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(59) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(62) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(75) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(80) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(89) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(94) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(103) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(108) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(117) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(122) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(129) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(134) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(141) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(146) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(153) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(158) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(165) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(170) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(177) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(182) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(189) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(194) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(201) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(206) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(213) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(218) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(225) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(230) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(237) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(242) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(249) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(254) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(261) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(266) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(273) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(278) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(285) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(290) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(297) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(302) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(309) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(314) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(0) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(2) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(4) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(6) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(8) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(10) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(16) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(18) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(24) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(26) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(28) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(30) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(32) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(34) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(36) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(38) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(40) with sort EqSort { name: "@view" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(45) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(48) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(59) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(62) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(75) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(80) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(89) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(94) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(103) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(108) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(117) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(122) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(129) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(134) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(141) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(146) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(153) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(158) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(165) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(170) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(177) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(182) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(189) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(194) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(201) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(206) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(213) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(218) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(225) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(230) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(237) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(242) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(249) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(254) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(261) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(266) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(273) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(278) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(285) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(290) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(297) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(302) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(309) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:05Z ERROR egglog::extract] Unextractable root Value(314) with sort EqSort { name: "Value" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(13) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(21) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(12) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(13) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(14) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(21) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(22) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(18) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(10) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(19) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(36) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(28) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(37) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(29) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(38) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(48) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(57) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(49) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(58) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(50) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(59) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(9) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(18) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(10) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(19) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(11) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(20) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(27) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(36) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(28) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(37) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(29) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(38) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(48) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(57) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(49) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(58) with sort EqSort { name: "@pathSort" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(50) with sort EqSort { name: "Proof" }
+[2026-10-20T05:11:09Z ERROR egglog::extract] Unextractable root Value(59) with sort EqSort { name: "@pathSort" }
+     Running tests/globals_warning_tests.rs (target/debug/deps/globals_warning_tests-4fa623992da0b390)
+     Running tests/integration_test.rs (target/debug/deps/integration_test-c6492cbf79fac653)
+     Running tests/merge_action_block.rs (target/debug/deps/merge_action_block-ed265c71bdc25b54)
+     Running tests/naive_unstable_fn_via_global.rs (target/debug/deps/naive_unstable_fn_via_global-e4378eda7d4b0e53)
+     Running tests/no_panic.rs (target/debug/deps/no_panic-47adcf68eacaf676)
+     Running tests/proof_mode_regression.rs (target/debug/deps/proof_mode_regression-34d66885489b85d7)
+     Running tests/proof_selector_merge.rs (target/debug/deps/proof_selector_merge-ec73659cf68663bb)
+     Running tests/terms.rs (target/debug/deps/terms-2af0e72e59ec1520)
+     Running tests/test_command_macros.rs (target/debug/deps/test_command_macros-d371063fdb4dbad9)
+     Running tests/test_desugar.rs (target/debug/deps/test_desugar-42bd61de244ae3db)
+     Running tests/timing_summary_cli.rs (target/debug/deps/timing_summary_cli-1775d5c900cb351b)
+     Running tests/tuple_outputs.rs (target/debug/deps/tuple_outputs-63e6caca857ec2a0)
+     Running tests/typed_primitive.rs (target/debug/deps/typed_primitive-a947c2cc3003d160)
+     Running tests/validator_test.rs (target/debug/deps/validator_test-7a54bb932d198194)
+     Running unittests src/lib.rs (target/debug/deps/egglog_add_primitive-3c8457722de344dc)
+     Running unittests src/lib.rs (target/debug/deps/egglog_ast-f4677f78dad47d78)
+     Running unittests src/lib.rs (target/debug/deps/egglog_bridge-9a01fb74fb80e07d)
+     Running unittests src/lib.rs (target/debug/deps/egglog_concurrency-4bfdb5a9856b4933)
+     Running unittests src/lib.rs (target/debug/deps/egglog_core_relations-8c3356479061c047)
+     Running unittests src/lib.rs (target/debug/deps/egglog_experimental-b2e95f2837b0cfd3)
+     Running unittests src/main.rs (target/debug/deps/egglog_experimental-31e271a0d7f9563f)
+     Running tests/eggcc_2mm_proof.rs (target/debug/deps/eggcc_2mm_proof-40f873a7741060ea)
+     Running tests/files.rs (target/debug/deps/files-d7b3416b94eff4a2)
+     Running tests/integration_test.rs (target/debug/deps/integration_test-481430ad46c66aae)
+     Running tests/math_benchmark_proofs.rs (target/debug/deps/math_benchmark_proofs-76d352054d2ddfac)
+     Running tests/scheduler_reporting.rs (target/debug/deps/scheduler_reporting-0936f97725b77b64)
+     Running tests/test_fresh.rs (target/debug/deps/test_fresh-fb2a4efdb85a9c0f)
+     Running unittests src/lib.rs (target/debug/deps/egglog_numeric_id-eb5e4c007569cdaf)
+     Running unittests src/lib.rs (target/debug/deps/egglog_reports-a32c29b7bfc18b03)
+     Running unittests src/lib.rs (target/debug/deps/egglog_union_find-290ead415d7df40e)
+     Running unittests src/lib.rs (target/debug/deps/egglog_wasm_example-b289cfa0abd32adf)
+   Doc-tests egglog
+   Doc-tests egglog_add_primitive
+   Doc-tests egglog_ast
+   Doc-tests egglog_bridge
+   Doc-tests egglog_concurrency
+   Doc-tests egglog_core_relations
+   Doc-tests egglog_experimental
+   Doc-tests egglog_numeric_id
+   Doc-tests egglog_reports
+   Doc-tests egglog_union_find

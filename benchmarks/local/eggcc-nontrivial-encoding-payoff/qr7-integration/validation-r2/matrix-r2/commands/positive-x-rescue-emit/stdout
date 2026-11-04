@@ -1,0 +1,107 @@
+# ARGS: 12 12 8
+@main(v0: int, v1: int, v2: int) {
+  c3_: int = const -1;
+  v4_: bool = lt c3_ v0;
+  c5_: int = const 64;
+  v6_: bool = lt v0 c5_;
+  v7_: bool = and v4_ v6_;
+  v8_: bool = lt c3_ v1;
+  v9_: bool = lt v1 c5_;
+  v10_: bool = and v8_ v9_;
+  v11_: bool = and v10_ v7_;
+  v12_: bool = lt c3_ v2;
+  c13_: int = const 10000000;
+  v14_: bool = le v2 c13_;
+  v15_: bool = and v12_ v14_;
+  v16_: bool = and v11_ v15_;
+  c17_: int = const 1;
+  c18_: int = const 7;
+  br v16_ .b19_ .b20_;
+.b19_:
+  v21_: int = div v0 c18_;
+  v22_: int = div v1 c18_;
+  v23_: bool = eq v21_ v22_;
+  br v23_ .b24_ .b25_;
+.b24_:
+  v26_: int = mul c18_ v21_;
+  v27_: int = sub v0 v26_;
+  v28_: int = mul c18_ v22_;
+  v29_: int = sub v1 v28_;
+  v30_: bool = eq v27_ v29_;
+  br v30_ .b31_ .b32_;
+.b31_:
+  c33_: int = const 0;
+  v34_: bool = lt c33_ v2;
+  v35_: ptr<int> = alloc c5_;
+  v36_: ptr<int> = ptradd v35_ v1;
+  c37_: int = const -3;
+  store v36_ c37_;
+  v38_: ptr<int> = ptradd v35_ v0;
+  v39_: int = id c33_;
+  v40_: ptr<int> = id v35_;
+  v41_: int = id c33_;
+  v42_: int = id c17_;
+  v43_: ptr<int> = id v36_;
+  v44_: ptr<int> = id v38_;
+  v45_: int = id v2;
+  br v34_ .b46_ .b47_;
+.b46_:
+  v48_: int = id c33_;
+  v49_: ptr<int> = id v35_;
+  v50_: int = id c33_;
+  v51_: int = id c17_;
+  v52_: ptr<int> = id v36_;
+  v53_: ptr<int> = id v38_;
+  v54_: int = id v2;
+.b55_:
+  store v53_ v50_;
+  v56_: int = add v48_ v50_;
+  v57_: int = add v50_ v51_;
+  v58_: bool = lt v57_ v54_;
+  v48_: int = id v56_;
+  v59_: ptr<int> = id v49_;
+  v50_: int = id v57_;
+  v60_: int = id v51_;
+  v61_: ptr<int> = id v52_;
+  v62_: ptr<int> = id v53_;
+  v63_: int = id v54_;
+  v49_: ptr<int> = id v59_;
+  v51_: int = id v60_;
+  v52_: ptr<int> = id v61_;
+  v53_: ptr<int> = id v62_;
+  v54_: int = id v63_;
+  br v58_ .b55_ .b64_;
+.b64_:
+  v39_: int = id v48_;
+  v40_: ptr<int> = id v49_;
+  v41_: int = id v50_;
+  v42_: int = id v51_;
+  v43_: ptr<int> = id v52_;
+  v44_: ptr<int> = id v53_;
+  v45_: int = id v54_;
+  free v40_;
+  print v39_;
+  ret;
+  jmp .b65_;
+.b47_:
+  free v40_;
+  print v39_;
+  ret;
+  jmp .b65_;
+.b32_:
+  c66_: int = const -2;
+  print c66_;
+  ret;
+  jmp .b65_;
+.b25_:
+  c67_: int = const -1;
+  print c67_;
+  ret;
+  jmp .b65_;
+.b20_:
+  c68_: int = const -9;
+  print c68_;
+  ret;
+.b65_:
+}
+

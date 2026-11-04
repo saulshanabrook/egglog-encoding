@@ -1,0 +1,106 @@
+{
+  "changed": {
+    "eggcc": [
+      "Cargo.lock",
+      "Cargo.toml",
+      "dag_in_context/Cargo.lock",
+      "dag_in_context/Cargo.toml",
+      "dag_in_context/src/lib.rs",
+      "dag_in_context/src/scoped_reasoning.rs"
+    ],
+    "encoding": [
+      "egglog-experimental/README.md",
+      "egglog-experimental/src/disequality.rs",
+      "egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "egglog-experimental/tests/injectivity_disequality.rs",
+      "egglog-experimental/tests/injectivity_disequality/oracle.rs"
+    ]
+  },
+  "files": [
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/Cargo.lock",
+      "archive_path": "eggcc/Cargo.lock",
+      "sha256": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/Cargo.toml",
+      "archive_path": "eggcc/Cargo.toml",
+      "sha256": "9f966e66dd5deb21b6a67ceb255770b3d4fa689851591c6bd0ccc0d83e1d2dd4"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/Cargo.lock",
+      "archive_path": "eggcc/dag_in_context/Cargo.lock",
+      "sha256": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/Cargo.toml",
+      "archive_path": "eggcc/dag_in_context/Cargo.toml",
+      "sha256": "d85e1d65d1be19eeb55347186ee90d279adef91debf8fbcde0948b9882f00c0b"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/src/lib.rs",
+      "archive_path": "eggcc/dag_in_context/src/lib.rs",
+      "sha256": "b03a532a272787912b34daee638f4cbed8bccc97b19cde4eed0db036345a47b1"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/dag_in_context/src/scoped_reasoning.rs",
+      "archive_path": "eggcc/dag_in_context/src/scoped_reasoning.rs",
+      "sha256": "f4f9fef2f06e066faedaf345c1281076b0cd0f17cbe6ebdde117ca1c5a347d4a"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/README.md",
+      "archive_path": "encoding/egglog-experimental/README.md",
+      "sha256": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/src/disequality.rs",
+      "archive_path": "encoding/egglog-experimental/src/disequality.rs",
+      "sha256": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "archive_path": "encoding/egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+      "sha256": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/tests/injectivity_disequality.rs",
+      "archive_path": "encoding/egglog-experimental/tests/injectivity_disequality.rs",
+      "sha256": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c"
+    },
+    {
+      "path": "/private/tmp/encoding-parts32-candidate/egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "archive_path": "encoding/egglog-experimental/tests/injectivity_disequality/oracle.rs",
+      "sha256": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/runtime/rt.bc",
+      "archive_path": "eggcc/runtime/rt.bc",
+      "sha256": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91"
+    },
+    {
+      "path": "/private/tmp/eggcc-parts32-candidate/runtime/rt.o",
+      "archive_path": "eggcc/runtime/rt.o",
+      "sha256": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin-reviewed-final/eggcc",
+      "sha256": "d712e8347bf6eea231de829174a9436f411a3cedfd210daf8e7c4614c2371d2f"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/bin-reviewed-final/tiger",
+      "sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix.py",
+      "sha256": "66fc42797a8f8f05c6de154b6c2d493cc6717b883ff737b6d81aeddd5fe877fb"
+    },
+    {
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/run.py",
+      "sha256": "6f973293fab836e96a4c5a47283cbd1e1954cb7f4d1f02d7ab639e1a6acd4d33"
+    }
+  ],
+  "source_archive": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-source.tar",
+  "source_archive_sha256": "ba2f65df7091573a594b7c51ec68a8b3665b5c85f279fe4415ca0f6e08565873",
+  "build_receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/commands/release-reviewed-final/receipt.json",
+  "source_frozen": true
+}

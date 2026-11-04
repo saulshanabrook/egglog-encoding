@@ -1,0 +1,96 @@
+# ARGS: 7 8 8
+@main(v0: int, v1: int, v2: int) {
+  c3_: int = const -1;
+  v4_: bool = lt c3_ v0;
+  c5_: int = const 64;
+  v6_: bool = lt v0 c5_;
+  v7_: bool = and v4_ v6_;
+  v8_: bool = lt c3_ v1;
+  v9_: bool = lt v1 c5_;
+  v10_: bool = and v8_ v9_;
+  v11_: bool = and v10_ v7_;
+  v12_: bool = lt c3_ v2;
+  c13_: int = const 10000000;
+  v14_: bool = le v2 c13_;
+  v15_: bool = and v12_ v14_;
+  v16_: bool = and v11_ v15_;
+  c17_: int = const 1;
+  c18_: int = const 7;
+  br v16_ .b19_ .b20_;
+.b19_:
+  v21_: int = div v0 c18_;
+  v22_: int = div v1 c18_;
+  v23_: bool = eq v21_ v22_;
+  br v23_ .b24_ .b25_;
+.b24_:
+  c26_: int = const 0;
+  v27_: bool = lt c26_ v2;
+  v28_: ptr<int> = alloc c5_;
+  v29_: ptr<int> = ptradd v28_ v1;
+  c30_: int = const -3;
+  store v29_ c30_;
+  v31_: ptr<int> = ptradd v28_ v0;
+  v32_: int = id c26_;
+  v33_: ptr<int> = id v28_;
+  v34_: int = id c26_;
+  v35_: int = id c17_;
+  v36_: ptr<int> = id v29_;
+  v37_: ptr<int> = id v31_;
+  v38_: int = id v2;
+  br v27_ .b39_ .b40_;
+.b39_:
+  v41_: int = id c26_;
+  v42_: ptr<int> = id v28_;
+  v43_: int = id c26_;
+  v44_: int = id c17_;
+  v45_: ptr<int> = id v29_;
+  v46_: ptr<int> = id v31_;
+  v47_: int = id v2;
+.b48_:
+  store v46_ v43_;
+  v49_: int = load v45_;
+  v50_: int = add v41_ v49_;
+  v51_: int = add v43_ v44_;
+  v52_: bool = lt v51_ v47_;
+  v41_: int = id v50_;
+  v53_: ptr<int> = id v42_;
+  v43_: int = id v51_;
+  v54_: int = id v44_;
+  v55_: ptr<int> = id v45_;
+  v56_: ptr<int> = id v46_;
+  v57_: int = id v47_;
+  v42_: ptr<int> = id v53_;
+  v44_: int = id v54_;
+  v45_: ptr<int> = id v55_;
+  v46_: ptr<int> = id v56_;
+  v47_: int = id v57_;
+  br v52_ .b48_ .b58_;
+.b58_:
+  v32_: int = id v41_;
+  v33_: ptr<int> = id v42_;
+  v34_: int = id v43_;
+  v35_: int = id v44_;
+  v36_: ptr<int> = id v45_;
+  v37_: ptr<int> = id v46_;
+  v38_: int = id v47_;
+  free v33_;
+  print v32_;
+  ret;
+  jmp .b59_;
+.b40_:
+  free v33_;
+  print v32_;
+  ret;
+  jmp .b59_;
+.b25_:
+  c60_: int = const -1;
+  print c60_;
+  ret;
+  jmp .b59_;
+.b20_:
+  c61_: int = const -9;
+  print c61_;
+  ret;
+.b59_:
+}
+

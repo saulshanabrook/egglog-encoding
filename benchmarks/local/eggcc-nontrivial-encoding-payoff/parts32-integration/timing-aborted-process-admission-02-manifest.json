@@ -1,0 +1,42 @@
+{
+  "competitors": [
+    {
+      "comm": "/Users/saul/p/wt/egglog-python/proto-ir-conformance/.venv/bin/python",
+      "cpu_percent": 100.0,
+      "memory_percent": 3.6,
+      "pid": 5611,
+      "ppid": 5610,
+      "reasons": [
+        "material_cpu"
+      ]
+    }
+  ],
+  "elapsed_values_inspected": false,
+  "excluded_from_timing": true,
+  "files": [
+    {
+      "bytes": 125634,
+      "path": "timing-aborted-process-admission-02/session-01/events.jsonl",
+      "sha256": "af0241d771019301b56a9f2f990a2c1fe0d39b765080ebcf4a88e55ca7571d64"
+    },
+    {
+      "bytes": 118087,
+      "path": "timing-aborted-process-admission-02/session-01/process-checks.jsonl",
+      "sha256": "9eda83ed7af7034f5e17955d41ab9af24a07779101bcee913bdc98ddf1127af4"
+    },
+    {
+      "bytes": 0,
+      "path": "timing-aborted-process-admission-02/session-01/samples.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "timing-aborted-process-admission-02/session-01/warmups.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "persisted_raw_rows": 0,
+  "reason": "session_start_process_admission_failure_before_warmups_or_samples",
+  "schema_version": 1,
+  "session": 1
+}

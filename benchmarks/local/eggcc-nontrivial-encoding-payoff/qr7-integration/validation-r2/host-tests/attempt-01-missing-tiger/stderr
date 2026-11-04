@@ -1,0 +1,3052 @@
+   Compiling num_cpus v1.17.0
+   Compiling glob v0.3.3
+   Compiling threadpool v1.8.1
+   Compiling libtest-mimic v0.6.1
+   Compiling eggcc v0.1.0 (/private/tmp/eggcc-qr7-candidate-nits-r2)
+    Finished `release` profile [optimized] target(s) in 13.20s
+     Running unittests src/lib.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/eggcc-e9b904ab1adc3587)
+error: test failed, to rerun pass `--lib`
+     Running unittests src/main.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/eggcc-a07167e3c91e8ef6)
+     Running tests/files.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/files-b8685906925e8a3c)
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141029) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141030) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141025) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141027) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141024) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141026) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141021) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141028) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141022) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+
+thread '<unnamed>' (1141023) panicked at dag_in_context/src/lib.rs:702:10:
+called `Result::unwrap()` on an `Err` value: "tiger binary not found; build the tiger tools first"
+error: test failed, to rerun pass `--test files`
+   Doc-tests eggcc
+error: 2 targets failed:
+    `--lib`
+    `--test files`

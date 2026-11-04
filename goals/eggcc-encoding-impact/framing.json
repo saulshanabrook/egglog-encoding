@@ -1,0 +1,8 @@
+{
+  "stage": "framing",
+  "goalSlug": "eggcc-encoding-impact",
+  "framing": "Continue exploring EggCC for additional uses of injectivity or disequality, aiming for a reproducible speedup or a genuine compiler bug, while building on the existing example and retaining the semantic checks and reproducible evidence needed for the paper.",
+  "confirmed": true,
+  "userAnswer": "Yes, use this framing",
+  "previousGoal": "../eggcc-encoding-case-study/goal.md"
+}

@@ -1,0 +1,19 @@
+{
+  "copies": [
+    {
+      "source": "/private/tmp/eggcc-same-mask-candidate",
+      "copy": "/private/tmp/eggcc-same-mask-causal-control"
+    },
+    {
+      "source": "/private/tmp/encoding-same-mask-candidate",
+      "copy": "/private/tmp/encoding-same-mask-causal-control"
+    }
+  ],
+  "generic_reverse_gate": {
+    "file": "/private/tmp/encoding-same-mask-causal-control/egglog-experimental/src/disequality.rs",
+    "selected_sha256": "8d56d53d87d0c21595b765f3aa6a9f7e3bc4752b4f87dfbcc651c108fe11bb3c",
+    "controlled_sha256": "220ed902ed8189e94c8fdbef3e9b553527e01d7e160f1a8d5b8be0696a443c8d",
+    "flag": "EGGCC_CONTROL_REVERSE_OFF",
+    "effect": "When flag present, suppress only generic reverse constructor indexing; assertions and marked forward search remain."
+  }
+}

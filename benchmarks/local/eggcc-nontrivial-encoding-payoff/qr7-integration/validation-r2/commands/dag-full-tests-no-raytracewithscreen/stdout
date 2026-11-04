@@ -1,0 +1,86 @@
+
+running 70 tests
+test interpreter::test_recursive_interp ... ok
+test interpreter::test_interpreter ... ok
+test interpreter::test_interpret_calls ... ok
+test interpreter::test_interpret_recursive ... ok
+test interval_analysis::constant_interval_test ... ok
+test interval_analysis::constant_fold ... ok
+test interval_analysis::constant_interval_test2 ... ok
+test interval_analysis::context_if ... ok
+test interval_analysis::if_interval ... ok
+test interval_analysis::context_if_rev ... ok
+test interval_analysis::nested_if ... ok
+test interval_analysis::context_if_with_state ... ok
+test interval_analysis::test_add_constant_fold ... ok
+test interval_analysis::test_add_interval ... ok
+test interval_analysis::simple_less_than ... ok
+test interval_analysis::test_if_constant_fold ... ok
+test interval_analysis::test_lt_interval ... ok
+test optimizations::is_resolved::test_is_resolved ... ok
+test optimizations::is_valid::test_is_valid ... ok
+test optimizations::body_contains::test_body_contains ... ok
+test optimizations::loop_invariant::simple_inv_detect ... ok
+test optimizations::loop_invariant::test_invariant_hoist ... ok
+test optimizations::loop_invariant::test_invariant_detect ... ok
+test optimizations::loop_unroll::loop_unroll_simple ... ok
+test optimizations::memory::load_after_write ... ok
+test optimizations::ivt::ivt_if_more_outputs_than_inputs ... ok
+test optimizations::memory::load_after_write_without_alias ... ok
+test optimizations::memory::pqrs_deep_loop_swap ... ok
+test optimizations::memory::redundant_load_elim ... ok
+test optimizations::memory::simple_loop_swap ... ok
+test optimizations::passthrough::passthrough_if_arg ... ok
+test optimizations::peepholes::arith_rewrites ... ok
+test optimizations::passthrough::passthrough_if_predicate ... ok
+test optimizations::switch_rewrites::single_branch_switch ... ok
+test optimizations::switch_rewrites::switch_rewrite_forward_pred ... ok
+test scoped_qr7::tests::qr7_finite_chain_and_fixed_input_controls ... ok
+test scoped_qr7::tests::qr7_if_transport_requires_both_same_index_arms ... ok
+test scoped_qr7::tests::qr7_independent_manual_closure_needs_both_edges ... ok
+test scoped_qr7::tests::qr7_key_is_lossless_at_signed_boundaries ... ok
+test scoped_qr7::tests::qr7_recognizer_rejects_wrong_divisor_operand_and_scope ... ok
+test scoped_qr7::tests::qr7_tuple_load_keeps_unrelated_pointer_passthrough ... ok
+test to_egglog::convert_to_egglog_simple_arithmetic ... ok
+test to_egglog::convert_to_egglog_switch ... ok
+test to_egglog::convert_whole_program ... ok
+test optimizations::switch_rewrites::switch_rewrite_negate_pred ... ok
+test optimizations::switch_rewrites::switch_rewrite_three_quarters_or ... ok
+test pretty_print::test_pretty_print_snapshot ... ok
+test utility::add_context::simple_context ... ok
+test utility::add_context::test_in_context_tuple ... ok
+test utility::add_context::test_in_context_two_loops ... ok
+test utility::add_context::test_simple_context_cycle ... ok
+test utility::context_of::test_context_of ... ok
+test utility::context_of::test_context_of_base_case ... ok
+test utility::context_of::test_context_of_panics_if_two ... ok
+test utility::context_of::test_context_of_no_func_context ... ok
+test utility::expr_size::test_expr_size ... ok
+test utility::subst::test_subst_add ... ok
+test utility::subst::test_subst_arg_type_changes ... ok
+test type_analysis::primitives ... ok
+test utility::subst::test_subst_cycle ... ok
+test utility::subst::test_subst_identity ... ok
+test utility::subst::test_subst_if ... ok
+test utility::subst::test_subst_makes_new_context ... ok
+test utility::subst::test_subst_nested ... ok
+test utility::subst::test_subst_ten_times ... ok
+test utility::util::append_test ... ok
+test utility::subst::test_subst_twice ... ok
+test utility::util::test_list_util ... ok
+test utility::util::test_tuple_ith ... ok
+test utility::wildcard::test_wildcard ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.71s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+info: no snapshots to review

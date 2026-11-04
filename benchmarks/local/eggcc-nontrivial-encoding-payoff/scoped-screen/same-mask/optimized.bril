@@ -1,0 +1,29 @@
+# ARGS: 0 1 1
+@main(v0: int, v1: int, v2: int) {
+  v3_: int = bitand v0 v2;
+  v4_: int = bitand v1 v2;
+  v5_: bool = eq v3_ v4_;
+  c6_: int = const 7;
+  br v5_ .b7_ .b8_;
+.b7_:
+  c9_: int = const 3;
+  print c9_;
+  ret;
+  jmp .b10_;
+.b8_:
+  v11_: int = add c6_ v0;
+  v12_: int = add c6_ v1;
+  v13_: bool = eq v11_ v12_;
+  br v13_ .b14_ .b15_;
+.b14_:
+  c16_: int = const 99;
+  print c16_;
+  ret;
+  jmp .b10_;
+.b15_:
+  c17_: int = const 7;
+  print c17_;
+  ret;
+.b10_:
+}
+

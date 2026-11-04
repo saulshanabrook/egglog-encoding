@@ -1,0 +1,16 @@
+# EggCC encoding impact: accepted facts
+
+- Deliver a research dossier for the paper with an expanded candidate map, reproducible EggCC experiments, per-workload results, and regenerable tables or figures; drafting the paper itself is outside this goal.
+- Build on the completed eggcc-encoding-case-study without altering its frozen evidence, preserve existing author changes, and record revisions, dependency pins, configurations, and experiment changes in isolated worktrees.
+- Search beyond the first local-address example for sound uses of injectivity or disequality in real EggCC consumers, including bug detection, new optimizations, and replacements for existing analyses; record why each promising lead is pursued or rejected.
+- Every constructor law and disequality-to-optimization inference used in a result has an explicit semantic justification, including relevant context and effect restrictions; previously rejected unsound laws are not reused without a new justification.
+- Improvements to the encoding are in scope when they help an EggCC case or close an explicitly defined reasoning gap; assess remaining-child disequality propagation and schedule closure, with automated edge-case checks for implemented changes and no claim of unrestricted completeness.
+- Promising cases may include compiler or runtime changes needed to demonstrate their impact, with each change tied to the case and no new proof support or Lean mechanization.
+- Prefer existing EggCC or Bril workloads; label new or scaled examples, document their connection to an actual compiler consumer, and distinguish them from production evidence.
+- Each implemented optimization or analysis case runs through actual EggCC optimization and has automated positive, negative, and source-versus-optimized execution checks where supported; encoding-only replays are labeled separately.
+- A claimed genuine compiler bug has a minimized reproducer, a sound violated invariant, and a reproducible failure in baseline EggCC; invalid annotations and deliberately seeded faults do not count as baseline bugs.
+- A reproducible compiler or analysis speedup, a generated-program speedup, or a genuine baseline compiler bug can satisfy the impact objective; a removed operation, fewer stored rows, or another neutral example alone cannot.
+- Speedup claims use fair baseline and feature controls, validate outputs, and isolate the contribution of the encoding from accompanying changes; analysis replacements include an equivalent manual comparison when applicable.
+- Report repeated measurements and variability per workload, retain neutral results and regressions, and keep compiler or analysis time, compiler memory, and generated-program runtime as separate metrics with explicit measurement boundaries.
+- Retain exact inputs, case origins, commands, configurations, raw machine-readable observations, and scripts that verify evidence and regenerate reported results.
+- A negative conclusion is allowed only after an evidence-backed search exhaustion review of the candidate map and substantial targeted experiments explains why the remaining plausible high-value leads did not produce an impact; do not stop at an arbitrary prototype count or claim that no use case can exist.

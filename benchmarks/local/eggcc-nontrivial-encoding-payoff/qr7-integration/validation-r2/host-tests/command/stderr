@@ -1,0 +1,34 @@
+    Finished `release` profile [optimized] target(s) in 0.34s
+     Running unittests src/lib.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/eggcc-e9b904ab1adc3587)
+     Running unittests src/main.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/eggcc-a07167e3c91e8ef6)
+     Running tests/files.rs (/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/deps/files-b8685906925e8a3c)
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_duplicate_work-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__loop_with_mul_by_inv-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__loop_strength_reduction-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize-no-ctx.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_do_pull_out-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__pull_out_small-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__pull_out_small-optimize-sequential.snap.new
+   Doc-tests eggcc
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_duplicate_work-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_duplicate_work-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__loop_with_mul_by_inv-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__branch_hoisting-optimize-no-ctx.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__loop_strength_reduction-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize-no-ctx.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__strong_loop-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_do_pull_out-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_do_pull_out-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__if_invariant_dont_pull_out-optimize-sequential.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__pull_out_small-optimize.snap.new
+stored new snapshot /private/tmp/eggcc-qr7-candidate-nits-r2/tests/snapshots/files__pull_out_small-optimize-sequential.snap.new
+info: no unreferenced snapshots found
+info: 13 snapshots to review
+use `cargo insta review` to review snapshots

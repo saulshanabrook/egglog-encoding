@@ -1,0 +1,657 @@
+{
+  "status": "passed",
+  "operation": "read-only source/hash and existing artifact inspection; no compiler/test execution",
+  "checkpoint_status_at_review": "passed focused correctness; awaiting independent review and final broad gates",
+  "checkpoint_sha256": "250ef509b4f37e7f9d7756052c103fb0a75668254f6c0b8d29ca2fde813889f4",
+  "correctness_json_sha256": "6fdb8746afb878cc84603e01dc11125e47369cf81f992e37dccdfbe6e14e90fb",
+  "source_files_sha256": {
+    "Cargo.lock": "760bc3a0003dd467de29c3f664af1df58485c801abd8aee1a5bcd67987cab630",
+    "Cargo.toml": "e5b7f848e9fcb0cfcbd558efe45eaa717e15e967c3f9780072f45a54ec3be7bf",
+    "dag_in_context/Cargo.lock": "6ab079882f74ae94c96f92d9c1f24bb25eb9a5d4e483c6f401522a4f26d07e2e",
+    "dag_in_context/Cargo.toml": "28016671c59d7ddfe1a214ed9216849897f97cc345a7eeabdda22736da0340f8",
+    "dag_in_context/src/exact_local_addresses_tests.rs": "6979ca6f97b1072352a54cace30e7c2961ea766e1f3869b34bb4dee7a0f84ad8",
+    "dag_in_context/src/lib.rs": "f6b3f45d0bb2a7028c691d709b8bb4b4f76aa2fb31f6918640c61c355fe8ec0a",
+    "dag_in_context/src/optimizations/exact_local_addresses.egg": "541df505987408d94d0ce3be1857a191df4b77b1c87d4e65b7a7ecb3a1b7e2ee",
+    "src/main.rs": "8eae87472ebd3db93b87f322730b98f7ae861bdeed63155d6fd7e378cc62088f",
+    "src/util.rs": "75271fb2ae8c4f2cbd6d8c5ddfd5f1ded3a6f6cff5f8cf807e4cd9193fdb24f0",
+    "tests/encoding/README.md": "528577f4fd39545ac6b7aa8602fd20b5f7115e1c796de096c4818ad585b64c18",
+    "tests/encoding/fresh-allocations.bril": "a5c0281dc49b93af37a696a26d8b65811883bb3d3d99165a6fad9e9fd80be16a",
+    "tests/encoding/same-pointer.bril": "4d42cbb6401dc30aea22c7423ab8e8fec03c655f287f45e248c0ce3ee1997f12",
+    "tests/encoding/zero-offset.bril": "ef588e94540d7915acd20fff37df673c5000673100c62fefcff6e0b61b9ac41b",
+    "tests/exact_local_addresses.rs": "2bc283ccd4d76b20a17ab98566f05893e55e66d61888d1bdc399e7398071dc2d"
+  },
+  "full_patch_sha256": "7ab6605cedbdb7e6e44fe7b4a6f1768033b1cb83bb7c4f3ad5aee391f64cb08c",
+  "feature_patch_sha256": "243298fbf886be35e9919d54a73bfa4a973e8da62c7a1361fcf455cc8b913183",
+  "binaries": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/eggcc": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/bin/tiger": "bd53d3716c6ec4fffbb8aa4a4435476cf5cfa977415fbbcb364d1ecbd8cb3b0a"
+  },
+  "configuration": {
+    "context": true,
+    "schedule": "parallel",
+    "passes": 3,
+    "non_weakly_linear": true,
+    "extraction": "native Tiger greedy",
+    "RAYON_NUM_THREADS": 1
+  },
+  "interpreted_receipts": 18,
+  "emitted_receipts": 18,
+  "egraph_dumps_checked": 54,
+  "invalid_cli_receipts": 6,
+  "focused_guard_selected_tests": 2,
+  "focused_native_selected_tests": 2,
+  "rows": [
+    {
+      "case": "fresh-allocations",
+      "arm": "A",
+      "mode": "baseline",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "B",
+      "mode": "baseline",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "off",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "keys",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "query",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 1,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 1
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "fresh-allocations",
+      "arm": "P",
+      "mode": "manual",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 1,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 6,
+          "DidExactOptimization": 1
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 6,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 2,
+          "FreshState": 5,
+          "LiveAllocation": 7,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 6,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "A",
+      "mode": "baseline",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "B",
+      "mode": "baseline",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "off",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "keys",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "query",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "same-pointer",
+      "arm": "P",
+      "mode": "manual",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": false,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 3,
+          "LiveAllocation": 2,
+          "ExactLocalAddress": 1,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "A",
+      "mode": "baseline",
+      "compiler_sha256": "e062c92bbcb9a8f05caed3cc10ec013c126a1d1f528e57f3b797bf6c3004912d",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "B",
+      "mode": "baseline",
+      "compiler_sha256": "6c30c8cb28768f3c461666b0370ff5c249fe6ba1f8f58a1a1d6c78e2df3e638f",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "off",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 0,
+          "FreshState": 0,
+          "LiveAllocation": 0,
+          "ExactLocalAddress": 0,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "keys",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "query",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    },
+    {
+      "case": "zero-offset",
+      "arm": "P",
+      "mode": "manual",
+      "compiler_sha256": "d44a89c2f752aff60b2691d9e055f23e54215fc9dfa74a0db8e956afc713162e",
+      "has_load": true,
+      "consumer_witnesses": 0,
+      "serialized_nodes_by_op_per_pass": [
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        },
+        {
+          "LocalCell": 1,
+          "FreshState": 4,
+          "LiveAllocation": 3,
+          "ExactLocalAddress": 2,
+          "ManualNoAlias": 0,
+          "DidExactOptimization": 0
+        }
+      ]
+    }
+  ]
+}

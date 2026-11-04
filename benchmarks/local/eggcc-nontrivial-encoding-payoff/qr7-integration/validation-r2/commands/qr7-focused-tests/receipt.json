@@ -1,0 +1,37 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--release",
+    "qr7_"
+  ],
+  "cwd": "/private/tmp/eggcc-qr7-candidate-nits-r2/dag_in_context",
+  "started_utc": "2026-10-20T04:45:07.239920Z",
+  "finished_utc": "2026-10-20T04:46:10.175099Z",
+  "timeout_s": 1800,
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_s_diagnostic": 62.918616667000606,
+  "diagnostic_elapsed_is_performance_evidence": false,
+  "environment": {
+    "EGGCC_ROOT": "/private/tmp/eggcc-qr7-candidate-nits-r2",
+    "RUSTUP_TOOLCHAIN": "1.91.0",
+    "CARGO_BUILD_JOBS": "4",
+    "RUST_TEST_THREADS": "4",
+    "RAYON_NUM_THREADS": "1",
+    "LLVM_SYS_180_PREFIX": "/opt/homebrew/opt/llvm@18",
+    "LIBRARY_PATH": "/opt/homebrew/lib",
+    "CARGO_TARGET_DIR": "/private/tmp/eggcc-qr7-candidate-nits-r2-target",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD",
+    "INSTA_UPDATE",
+    "INSTA_FORCE_PASS"
+  ],
+  "raytracing_requested": false,
+  "executable": "/Users/saul/.cargo/bin/cargo",
+  "executable_sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1",
+  "stdout_sha256": "edaf32c7cf5ea9790409d0699f892ace877700c6e4ef82e51f5389ec1723c2c9",
+  "stderr_sha256": "f336b202e24442103ab1135a6f1b36394edf75d56af8617d0653ab1c7240b5a1"
+}

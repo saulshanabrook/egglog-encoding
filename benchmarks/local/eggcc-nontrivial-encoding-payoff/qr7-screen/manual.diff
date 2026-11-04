@@ -1,0 +1,11 @@
+--- source.bril
++++ manual.bril
+@@ -56,7 +56,7 @@
+   br more .body .done;
+ .body:
+   store pi count;
+-  value: int = load pj;
++  value: int = id count;
+   sum: int = add sum value;
+   count: int = add count one;
+   jmp .header;

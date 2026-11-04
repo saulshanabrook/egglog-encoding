@@ -1,0 +1,387 @@
+{
+  "graph": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/egraphs/tiger_egraph_0001.json",
+  "graph_sha256": "51df3de7f524263c4587447135345a94fca6eb371d4b10e383b510ff6f52563b",
+  "result": "reachable with one new guarded NoAlias loop transport law",
+  "existing_only": {
+    "facts": [
+      [
+        "Expr-232",
+        "Expr-236"
+      ],
+      [
+        "Expr-236",
+        "Expr-232"
+      ]
+    ],
+    "derivations": [
+      {
+        "fact": [
+          "Expr-232",
+          "Expr-236"
+        ],
+        "rule": "hypothetical checked branch bridge"
+      },
+      {
+        "fact": [
+          "Expr-236",
+          "Expr-232"
+        ],
+        "rule": "existing NoAlias symmetry",
+        "premise": [
+          "Expr-232",
+          "Expr-236"
+        ]
+      }
+    ]
+  },
+  "with_guarded_loop": {
+    "facts": [
+      [
+        "Expr-232",
+        "Expr-236"
+      ],
+      [
+        "Expr-236",
+        "Expr-232"
+      ],
+      [
+        "Expr-272",
+        "Expr-274"
+      ],
+      [
+        "Expr-274",
+        "Expr-272"
+      ],
+      [
+        "Expr-289",
+        "Expr-291"
+      ],
+      [
+        "Expr-291",
+        "Expr-289"
+      ],
+      [
+        "Expr-342",
+        "Expr-344"
+      ],
+      [
+        "Expr-344",
+        "Expr-342"
+      ]
+    ],
+    "derivations": [
+      {
+        "fact": [
+          "Expr-232",
+          "Expr-236"
+        ],
+        "rule": "hypothetical checked branch bridge"
+      },
+      {
+        "fact": [
+          "Expr-236",
+          "Expr-232"
+        ],
+        "rule": "existing NoAlias symmetry",
+        "premise": [
+          "Expr-232",
+          "Expr-236"
+        ]
+      },
+      {
+        "fact": [
+          "Expr-272",
+          "Expr-274"
+        ],
+        "premise": [
+          "Expr-232",
+          "Expr-236"
+        ],
+        "rule": "proposed guarded loop transport",
+        "scope": "Assumption-258",
+        "indices": [
+          5,
+          6
+        ],
+        "invariant_receipts": [
+          {
+            "index": 5,
+            "argument_class": "Expr-272",
+            "output_class": "Expr-272",
+            "input_class": "Expr-232"
+          },
+          {
+            "index": 6,
+            "argument_class": "Expr-274",
+            "output_class": "Expr-274",
+            "input_class": "Expr-236"
+          }
+        ]
+      },
+      {
+        "fact": [
+          "Expr-274",
+          "Expr-272"
+        ],
+        "premise": [
+          "Expr-236",
+          "Expr-232"
+        ],
+        "rule": "proposed guarded loop transport",
+        "scope": "Assumption-258",
+        "indices": [
+          6,
+          5
+        ],
+        "invariant_receipts": [
+          {
+            "index": 5,
+            "argument_class": "Expr-272",
+            "output_class": "Expr-272",
+            "input_class": "Expr-232"
+          },
+          {
+            "index": 6,
+            "argument_class": "Expr-274",
+            "output_class": "Expr-274",
+            "input_class": "Expr-236"
+          }
+        ]
+      },
+      {
+        "fact": [
+          "Expr-289",
+          "Expr-291"
+        ],
+        "premise": [
+          "Expr-272",
+          "Expr-274"
+        ],
+        "rule": "existing NoAlias If push",
+        "scope": "Assumption-287",
+        "indices": [
+          5,
+          6
+        ],
+        "invariant_receipts": []
+      },
+      {
+        "fact": [
+          "Expr-291",
+          "Expr-289"
+        ],
+        "premise": [
+          "Expr-274",
+          "Expr-272"
+        ],
+        "rule": "existing NoAlias If push",
+        "scope": "Assumption-287",
+        "indices": [
+          6,
+          5
+        ],
+        "invariant_receipts": []
+      },
+      {
+        "fact": [
+          "Expr-342",
+          "Expr-344"
+        ],
+        "premise": [
+          "Expr-272",
+          "Expr-274"
+        ],
+        "rule": "existing NoAlias If push",
+        "scope": "Assumption-327",
+        "indices": [
+          5,
+          6
+        ],
+        "invariant_receipts": []
+      },
+      {
+        "fact": [
+          "Expr-344",
+          "Expr-342"
+        ],
+        "premise": [
+          "Expr-274",
+          "Expr-272"
+        ],
+        "rule": "existing NoAlias If push",
+        "scope": "Assumption-327",
+        "indices": [
+          6,
+          5
+        ],
+        "invariant_receipts": []
+      }
+    ]
+  },
+  "ancestry": {
+    "false_branch_to_loop": [
+      {
+        "id": "function-54-Single",
+        "op": "Single",
+        "children": [
+          "function-112-Get"
+        ],
+        "eclass": "Expr-395",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 0,
+        "selected_class": "Expr-394"
+      },
+      {
+        "id": "function-24-Bop",
+        "op": "Bop",
+        "children": [
+          "function-0-Print",
+          "function-123-Get",
+          "function-23-Bop"
+        ],
+        "eclass": "Expr-394",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 1,
+        "selected_class": "Expr-390"
+      },
+      {
+        "id": "function-52-Get",
+        "op": "Get",
+        "children": [
+          "function-0-DoWhile",
+          "primitive-i64-1"
+        ],
+        "eclass": "Expr-390",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 0,
+        "selected_class": "Expr-389"
+      }
+    ],
+    "loop_body_to_inner_if": [
+      {
+        "id": "function-45-Concat",
+        "op": "Concat",
+        "children": [
+          "function-159-SubTuple",
+          "function-6-If"
+        ],
+        "eclass": "Expr-388",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 1,
+        "selected_class": "Expr-387"
+      }
+    ],
+    "inner_true_branch_to_load": [
+      {
+        "id": "function-93-Concat",
+        "op": "Concat",
+        "children": [
+          "function-31-Single",
+          "function-368-SubTuple"
+        ],
+        "eclass": "Expr-4703",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 0,
+        "selected_class": "Expr-299"
+      },
+      {
+        "id": "function-34-SubTuple",
+        "op": "SubTuple",
+        "children": [
+          "function-20-Bop",
+          "primitive-i64-1",
+          "primitive-i64-1"
+        ],
+        "eclass": "Expr-299",
+        "cost": 1.0,
+        "subsumed": false,
+        "selected_child": 0,
+        "selected_class": "Expr-297"
+      }
+    ]
+  },
+  "false_eq_projection": {
+    "scope": "Assumption-216",
+    "source_i": "Expr-186",
+    "source_j": "Expr-189",
+    "same_mask": "Expr-187",
+    "local_i": "Expr-230",
+    "local_j": "Expr-234",
+    "local_mask": "Expr-228"
+  },
+  "target_NoAlias": [
+    "Expr-291",
+    "Expr-289"
+  ],
+  "consumer": {
+    "load": {
+      "op": "Bop",
+      "children": [
+        "function-0-Load",
+        "function-186-Get",
+        "function-1-Top"
+      ],
+      "eclass": "Expr-297",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "last_write": {
+      "op": "Top",
+      "children": [
+        "function-0-Write",
+        "function-96-Get",
+        "function-97-Get",
+        "function-0-Top"
+      ],
+      "eclass": "Expr-296",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "first_write": {
+      "op": "Top",
+      "children": [
+        "function-0-Write",
+        "function-95-Get",
+        "function-119-Get",
+        "function-120-Get"
+      ],
+      "eclass": "Expr-295",
+      "cost": 1.0,
+      "subsumed": false
+    },
+    "loaded_value": [
+      {
+        "id": "function-36-Get",
+        "op": "Get",
+        "children": [
+          "function-20-Bop",
+          "primitive-i64-0"
+        ],
+        "eclass": "Expr-301",
+        "cost": 1.0,
+        "subsumed": false
+      }
+    ],
+    "replacement_value_class": "Expr-293"
+  },
+  "missing_premises": [
+    "false-Eq producer and context projection into private theory",
+    "semantic wrapper declarations and pre-materialized terms",
+    "checked same-live-region bounds/width/no-escape bridge",
+    "new guarded loop NoAlias transport, both indices invariant",
+    "frozen/one-shot lifetime for exported unscoped NoAlias"
+  ],
+  "noninvariant_loop_indices": [
+    0,
+    1,
+    3
+  ],
+  "generic_engine_executed": false,
+  "compiler_rules_executed": false,
+  "interpretation": "Exact graph joins prove rule-instance reachability; Python is not compiler execution."
+}

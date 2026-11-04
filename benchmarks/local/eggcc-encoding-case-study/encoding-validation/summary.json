@@ -1,0 +1,19 @@
+{
+  "status": "success",
+  "selected_tests": 2053,
+  "python": {
+    "passed": 256,
+    "skipped": 1,
+    "reason": "Optional Matplotlib export test; separately pinned24-test collector suite includes it"
+  },
+  "rust": {
+    "passed": 1797,
+    "failed": 0,
+    "ignored": 6,
+    "result_groups": 60
+  },
+  "gate": "make check",
+  "command_receipt": "benchmarks/local/eggcc-encoding-case-study/encoding-validation/make-check.json",
+  "stdout_sha256": "b2b088f02c9f4ff0eb14a8806a22f2ca6c169fb539b908740eb4f67bb4197cf1",
+  "stderr_sha256": "c518ae2a6f0b3518f17f7ded5cd745a2610d6c78cbe7dc986ddd9876e04cc24c"
+}

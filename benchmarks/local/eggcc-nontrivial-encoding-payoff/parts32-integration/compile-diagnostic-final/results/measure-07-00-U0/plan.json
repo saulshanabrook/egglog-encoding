@@ -1,0 +1,22 @@
+{
+  "phase": "measure",
+  "cycle": 7,
+  "position": 0,
+  "arm": "U0",
+  "argv": [
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "--with-context",
+    "--run-mode",
+    "optimize",
+    "--run-data-out",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-07-00-U0/run-data.json",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/fixtures/source.bril"
+  ],
+  "cwd": "/private/tmp/eggcc-parts32-candidate",
+  "timeout_s": 180,
+  "scoped_mode": "u0",
+  "run_data_out": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-07-00-U0/run-data.json",
+  "fresh_scoped_evidence_dir": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/compile-diagnostic-final/results/measure-07-00-U0/scoped-evidence",
+  "expected_stdout_sha256": "efc494a5aeda44028ae09c757f206140673e9b17e0a63ffc18dc5d13a85972fb",
+  "planned_utc": "2026-10-20T02:10:04.860518+00:00"
+}

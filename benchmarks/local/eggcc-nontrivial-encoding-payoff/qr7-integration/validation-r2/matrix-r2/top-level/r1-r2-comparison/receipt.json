@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/compare-matrix-r2.py"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "started_utc": "2026-10-20T04:58:04.886872Z",
+  "finished_utc": "2026-10-20T04:58:08.309762Z",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "timed_out": false,
+  "environment": {
+    "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+    "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD",
+    "INSTA_UPDATE",
+    "INSTA_FORCE_PASS"
+  ],
+  "raytracing_requested": false,
+  "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+  "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/compare-matrix-r2.py",
+  "script_sha256": "c72fdc9988ee149062ee4d44e9600880a30082037b21458574e0d93cbcd47d64",
+  "stdout_sha256": "c57c3f085fcad08fdebcc30735b33c7be2e0223ebb7cb7e933288b898ae4a842",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

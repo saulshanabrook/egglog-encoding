@@ -1,0 +1,48 @@
+# ARGS: 1 2 1 2 0 -9223372036854775808
+@main(a: int, b: int, c: int, d: int, z: int, w: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  two: int = const 2;
+  three: int = const 3;
+  b2: int = mul b two;
+  a2: int = mul a two;
+  b3: int = mul b three;
+  uab: int = add a b2;
+  vab: int = add a2 b3;
+  d2: int = mul d two;
+  c2: int = mul c two;
+  d3: int = mul d three;
+  ucd: int = add c d2;
+  vcd: int = add c2 d3;
+  key0: bool = eq uab ucd;
+  br key0 .key0_ok .different_key;
+.key0_ok:
+  key1: bool = eq vab vcd;
+  br key1 .key1_ok .different_key;
+.key1_ok:
+  cz: int = add c z;
+  aw: int = add a w;
+  mixed_same: bool = eq cz aw;
+  br mixed_same .equal_sum .different_sum;
+.different_sum:
+  tz: int = mul z two;
+  tw: int = mul w two;
+  target: bool = eq tz tw;
+  br target .unexpected .expected;
+.unexpected:
+  score: int = const 99;
+  print score;
+  ret;
+.expected:
+  score: int = const 7;
+  print score;
+  ret;
+.equal_sum:
+  score: int = const 5;
+  print score;
+  ret;
+.different_key:
+  score: int = const 3;
+  print score;
+  ret;
+}

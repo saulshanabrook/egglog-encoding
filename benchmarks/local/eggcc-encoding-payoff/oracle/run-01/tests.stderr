@@ -1,0 +1,12 @@
+test_exhaustive_eight_bit_arithmetic (__main__.OracleChecks.test_exhaustive_eight_bit_arithmetic) ... ok
+test_fixed_seed_i64_properties (__main__.OracleChecks.test_fixed_seed_i64_properties) ... ok
+test_i64_boundary_arithmetic (__main__.OracleChecks.test_i64_boundary_arithmetic) ... ok
+test_interval_claim_counterexamples (__main__.OracleChecks.test_interval_claim_counterexamples) ... ok
+test_predetermined_source_cases (__main__.OracleChecks.test_predetermined_source_cases) ... ok
+test_skipped_empty_is_not_missing (__main__.OracleChecks.test_skipped_empty_is_not_missing) ... ok
+test_unsupported_or_out_of_domain_is_not_output (__main__.OracleChecks.test_unsupported_or_out_of_domain_is_not_output) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.263s
+
+OK

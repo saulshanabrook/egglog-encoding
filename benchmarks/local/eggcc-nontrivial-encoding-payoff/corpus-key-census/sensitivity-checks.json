@@ -1,0 +1,41 @@
+{
+  "status": "passed",
+  "controls_excluded_from_corpus": [
+    {
+      "name": "qr7-positive",
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/source.bril",
+      "sha256": "408955db7a868d6a539512bdb2cc09a01fbb06ef39aa54b445d589293dc942c2",
+      "parse_gaps": 0,
+      "key_guard_candidates": 1,
+      "word32_constants": 0,
+      "bit_operations": 0
+    },
+    {
+      "name": "qr-mixed-divisor",
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-screen/different-divisor.bril",
+      "sha256": "bd293f158e17a40d8779556436c0738d59ea2ed22007f0e1591775c6f155a39e",
+      "parse_gaps": 0,
+      "key_guard_candidates": 0,
+      "word32_constants": 0,
+      "bit_operations": 0
+    },
+    {
+      "name": "word-shapes",
+      "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/corpus-key-census/controls/word-shapes.bril",
+      "sha256": "f64d21dfa7af112f1718475685108e6e680e872f14d2b4b1cec2bfc1c6d9fae8",
+      "parse_gaps": 0,
+      "key_guard_candidates": 0,
+      "word32_constants": 3,
+      "bit_operations": 3
+    }
+  ],
+  "independent_raw_regex_operation_counts": {
+    "div": 76,
+    "eq": 91,
+    "shl": 0,
+    "shr": 0,
+    "bitand": 1
+  },
+  "parsed_operation_counts_match_raw_regex": true,
+  "parser_is_not_ssa_or_control_flow_proof": true
+}

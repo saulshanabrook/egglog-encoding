@@ -1,0 +1,9 @@
+{
+  "completed_before_failure": "positive/u0 only",
+  "failure": "r2 eggcc could not find an adjacent tiger helper",
+  "original_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2",
+  "retained_path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2-attempt-01-missing-tiger",
+  "schema_version": 1,
+  "status": "retained-setup-failure",
+  "timing_collected": false
+}

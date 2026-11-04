@@ -1,0 +1,16 @@
+{
+  "status": "evidence verified; baseline remains buggy",
+  "valid_first_screen_runs": 32,
+  "localization_compiler_runs": 23,
+  "exported_pass_replay_runs": 10,
+  "retained_fixture_setup_failures": 1,
+  "reference_wrapped_product": -2,
+  "silent_mismatch_arms": [
+    "A",
+    "B",
+    "P-off"
+  ],
+  "active_processes": [],
+  "performance_claim": null,
+  "encoding_incremental_value_established": false
+}

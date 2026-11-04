@@ -1,0 +1,172 @@
+{
+  "fixtures_parser_or_native_validated": false,
+  "integers": "decimal strings preserve all 64 bits in JSON readers",
+  "interpreter_source_sha256": "dd991459c2baa77f52ba03a0533147c4b134a2da0ed343f105cb049e415f0491",
+  "rows": [
+    {
+      "answer_bool": true,
+      "case": "add-max",
+      "expected_prints": [
+        "true"
+      ],
+      "expected_stdout": "true\n",
+      "fixture": "fixtures/add-max.bril",
+      "fixture_sha256": "fd66c539d29bdf03a388994ca4a53c9f0c15ac3dc579a69741a700f2a5ff8a6c",
+      "input_i64": "9223372036854775807",
+      "program": "add-positive",
+      "selected_inner_point_present": true,
+      "shifted_i64": "-9223372036854775808"
+    },
+    {
+      "answer_bool": false,
+      "case": "add-max-minus-one",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/add-max-minus-one.bril",
+      "fixture_sha256": "927c77b3f0a2cff6eb53ac4df0c923349facb4c5e1286b98a0c5d01e14980f67",
+      "input_i64": "9223372036854775806",
+      "program": "add-positive",
+      "selected_inner_point_present": true,
+      "shifted_i64": "9223372036854775807"
+    },
+    {
+      "answer_bool": false,
+      "case": "add-two",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/add-two.bril",
+      "fixture_sha256": "e202d167934f240c85a8d6ca3a0ffbc8d954d5ebbce881b02c9085058bcc67ac",
+      "input_i64": "2",
+      "program": "add-positive",
+      "selected_inner_point_present": true,
+      "shifted_i64": "3"
+    },
+    {
+      "answer_bool": false,
+      "case": "add-one",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/add-one.bril",
+      "fixture_sha256": "60b634c46ea6e25795b2cc613e6221d654a4298a6e7dd16762b97b7561164c81",
+      "input_i64": "1",
+      "program": "add-positive",
+      "selected_inner_point_present": true,
+      "shifted_i64": "2"
+    },
+    {
+      "answer_bool": null,
+      "case": "add-zero-skipped",
+      "expected_prints": [],
+      "expected_stdout": "",
+      "fixture": "fixtures/add-zero-skipped.bril",
+      "fixture_sha256": "8e7bbf7581a3b1055eb4225e0570c65064144c520080afee6377354ec3fd94bf",
+      "input_i64": "0",
+      "program": "add-positive",
+      "selected_inner_point_present": false,
+      "shifted_i64": null
+    },
+    {
+      "answer_bool": null,
+      "case": "add-negative-one-skipped",
+      "expected_prints": [],
+      "expected_stdout": "",
+      "fixture": "fixtures/add-negative-one-skipped.bril",
+      "fixture_sha256": "06f760fe187fb5ee1c7748d895682b5135558fa226761f6133c212286d5ba932",
+      "input_i64": "-1",
+      "program": "add-positive",
+      "selected_inner_point_present": false,
+      "shifted_i64": null
+    },
+    {
+      "answer_bool": true,
+      "case": "sub-min",
+      "expected_prints": [
+        "true"
+      ],
+      "expected_stdout": "true\n",
+      "fixture": "fixtures/sub-min.bril",
+      "fixture_sha256": "ea45c09d586d036b12ceaa8284d0ad183e2bab0b634d9c6bf166ed6762275310",
+      "input_i64": "-9223372036854775808",
+      "program": "sub-negative",
+      "selected_inner_point_present": true,
+      "shifted_i64": "9223372036854775807"
+    },
+    {
+      "answer_bool": false,
+      "case": "sub-min-plus-one",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/sub-min-plus-one.bril",
+      "fixture_sha256": "60555aefcad90ec491498fb30af0e5270f9cd1707cc26fa674011b1af5a2cf30",
+      "input_i64": "-9223372036854775807",
+      "program": "sub-negative",
+      "selected_inner_point_present": true,
+      "shifted_i64": "-9223372036854775808"
+    },
+    {
+      "answer_bool": false,
+      "case": "sub-negative-two",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/sub-negative-two.bril",
+      "fixture_sha256": "763449d80624cca923c01c3e8a0ea9336479fff6307a36e49e043c52ad5c35ee",
+      "input_i64": "-2",
+      "program": "sub-negative",
+      "selected_inner_point_present": true,
+      "shifted_i64": "-3"
+    },
+    {
+      "answer_bool": false,
+      "case": "sub-negative-one",
+      "expected_prints": [
+        "false"
+      ],
+      "expected_stdout": "false\n",
+      "fixture": "fixtures/sub-negative-one.bril",
+      "fixture_sha256": "5c09d732b50d23bdd0793e4da8171285f4a2c368980c0c2e0575f26207d4a758",
+      "input_i64": "-1",
+      "program": "sub-negative",
+      "selected_inner_point_present": true,
+      "shifted_i64": "-2"
+    },
+    {
+      "answer_bool": null,
+      "case": "sub-zero-skipped",
+      "expected_prints": [],
+      "expected_stdout": "",
+      "fixture": "fixtures/sub-zero-skipped.bril",
+      "fixture_sha256": "8a2e09e9efdf3cfbca3650b193ca20b5790df5a18df4c74b457a0bd05254aa55",
+      "input_i64": "0",
+      "program": "sub-negative",
+      "selected_inner_point_present": false,
+      "shifted_i64": null
+    },
+    {
+      "answer_bool": null,
+      "case": "sub-one-skipped",
+      "expected_prints": [],
+      "expected_stdout": "",
+      "fixture": "fixtures/sub-one-skipped.bril",
+      "fixture_sha256": "51cfc1b95410d1f45c71512d0d66468f629e069f01c79eeb619c73f21765ef36",
+      "input_i64": "1",
+      "program": "sub-negative",
+      "selected_inner_point_present": false,
+      "shifted_i64": null
+    }
+  ],
+  "schema": "eggcc-payoff-exact-oracle-v1",
+  "semantic_domain": "signed i64; exact integer Add/Sub reduced modulo 2^64; signed LessThan",
+  "source_lines": "dag_in_context/src/interpreter.rs:239-244",
+  "source_object": "a0bbec127f83249074a46af3fd6f6126c90fe0fb",
+  "status": "independent-expected-values-not-compiler-results"
+}

@@ -1,0 +1,167 @@
+[
+  {
+    "args": [
+      1,
+      2,
+      1,
+      2,
+      8
+    ],
+    "expected_stdout": "56\n",
+    "actual": {
+      "source": "56\n",
+      "optimized": "56\n",
+      "manual": "56\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      0,
+      0,
+      0,
+      8
+    ],
+    "expected_stdout": "54\n",
+    "actual": {
+      "source": "54\n",
+      "optimized": "54\n",
+      "manual": "54\n"
+    }
+  },
+  {
+    "args": [
+      0,
+      1,
+      1,
+      1,
+      8
+    ],
+    "expected_stdout": "24\n",
+    "actual": {
+      "source": "24\n",
+      "optimized": "24\n",
+      "manual": "24\n"
+    }
+  },
+  {
+    "args": [
+      2147483648,
+      7,
+      2147483648,
+      7,
+      8
+    ],
+    "expected_stdout": "56\n",
+    "actual": {
+      "source": "56\n",
+      "optimized": "56\n",
+      "manual": "56\n"
+    }
+  },
+  {
+    "args": [
+      4294967295,
+      4294967295,
+      4294967295,
+      4294967295,
+      4
+    ],
+    "expected_stdout": "26\n",
+    "actual": {
+      "source": "26\n",
+      "optimized": "26\n",
+      "manual": "26\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      2,
+      1,
+      2,
+      0
+    ],
+    "expected_stdout": "0\n",
+    "actual": {
+      "source": "0\n",
+      "optimized": "0\n",
+      "manual": "0\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      2,
+      1,
+      2,
+      1
+    ],
+    "expected_stdout": "7\n",
+    "actual": {
+      "source": "7\n",
+      "optimized": "7\n",
+      "manual": "7\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      2,
+      1,
+      2,
+      1024
+    ],
+    "expected_stdout": "7168\n",
+    "actual": {
+      "source": "7168\n",
+      "optimized": "7168\n",
+      "manual": "7168\n"
+    }
+  },
+  {
+    "args": [
+      -1,
+      0,
+      0,
+      0,
+      8
+    ],
+    "expected_stdout": "-2\n",
+    "actual": {
+      "source": "-2\n",
+      "optimized": "-2\n",
+      "manual": "-2\n"
+    }
+  },
+  {
+    "args": [
+      4294967296,
+      0,
+      0,
+      0,
+      8
+    ],
+    "expected_stdout": "-2\n",
+    "actual": {
+      "source": "-2\n",
+      "optimized": "-2\n",
+      "manual": "-2\n"
+    }
+  },
+  {
+    "args": [
+      1,
+      2,
+      1,
+      2,
+      -1
+    ],
+    "expected_stdout": "-2\n",
+    "actual": {
+      "source": "-2\n",
+      "optimized": "-2\n",
+      "manual": "-2\n"
+    }
+  }
+]

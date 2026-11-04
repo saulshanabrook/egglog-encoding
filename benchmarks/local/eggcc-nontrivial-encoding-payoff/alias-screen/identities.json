@@ -1,0 +1,46 @@
+[
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/eggcc",
+    "sha256": "d86869982413d4561cf713cc769c96eb1c9bfefe46fa459a2692c53a7aa93cf0"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/bin/tiger",
+    "sha256": "130eaba8bb575e196b8e18898826356269efe6e28a56b9d3690ef42647d3b201"
+  },
+  {
+    "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/runtime/rt.bc",
+    "sha256": "c24564b983852848320eed8cd19cc02678ad781a821e6dff133489994c644f91"
+  },
+  {
+    "path": "/private/tmp/eggcc-nontrivial-encoding-payoff-u0/runtime/rt.o",
+    "sha256": "07123ecfab57014f9f227953c277fa53edca38c7c1e362ebf02ee5a44be62b84"
+  },
+  {
+    "path": "/opt/homebrew/opt/llvm@18/bin/clang",
+    "sha256": "e3ef8d5dd3ad518cf06a36ae39e3694504b66780250701cee024684feffe704b"
+  },
+  {
+    "path": "/opt/homebrew/opt/llvm@18/bin/opt",
+    "sha256": "b71b0930ccb80515577baadf82df431348fdaa68547594017db13e88f361ed70"
+  },
+  {
+    "path": "/opt/homebrew/opt/llvm@18/bin/llvm-objdump",
+    "sha256": "72f13fde2a4e83cd588e57b8bb79ac33fc83689376e1d9f7edeec483e9615076"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/source.bril",
+    "sha256": "f7b23a3797e7d8af439acbe4288e771ec26df63c850fcb1f73fda8e549adebf2"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/manual.bril",
+    "sha256": "7bff34c55074f302c1507591d19c19eb690a76d7938e40ccb5c6cfc95509a2bb"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/admission/manifest.json",
+    "sha256": "f32ff7a669197d1591663499356f9f0cb11b04485b61674f56c4755682afc3f1"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/alias-screen/run.py",
+    "sha256": "d890ec1099a85525ad9d9b19ccdaad91cceb9e787adbc0b31f38bea5cabafb77"
+  }
+]

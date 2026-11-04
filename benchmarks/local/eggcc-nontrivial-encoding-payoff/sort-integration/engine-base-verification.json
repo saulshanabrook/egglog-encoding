@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "base": "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5",
+  "argv": [
+    "git",
+    "-C",
+    "/Users/saul/p/egglog-encoding",
+    "ls-tree",
+    "-r",
+    "-z",
+    "392b6d6b48b5bc307a5b9c981c957fc0a09e23e5"
+  ],
+  "git_tree_stdout_sha256": "191471696b39d2cad571240cade934d57a96a06f05838e092c7bdd1ed7b20f56",
+  "retained_files_checked": 884,
+  "generated_logs_not_in_base": [
+    "egglog/output.G.csv.log",
+    "egglog/output.G.log",
+    "egglog/output.G3.csv.log",
+    "egglog/output.G3.log",
+    "egglog/output.R.csv.log",
+    "egglog/output.R.log",
+    "egglog/output.R3.csv.log",
+    "egglog/output.R3.log"
+  ],
+  "new_source_not_in_base": [
+    "egglog-experimental/tests/injectivity_disequality/oracle.rs"
+  ],
+  "source_differences_from_base": [
+    "egglog-experimental/README.md",
+    "egglog-experimental/src/disequality.rs",
+    "egglog-experimental/tests/injectivity/injectivity-disequality.egg",
+    "egglog-experimental/tests/injectivity_disequality.rs"
+  ],
+  "changed_and_new_source_hashes_equal_frozen_parts32": {
+    "egglog-experimental/README.md": "f9c5dee2c2f1f83f517b78c772690bfefb2d108b4f34bbb421720a97485ce318",
+    "egglog-experimental/src/disequality.rs": "38d4a2184650929d0316d9ff7a6e5756b5b4538cff8bb095227b360e2283a277",
+    "egglog-experimental/tests/injectivity/injectivity-disequality.egg": "97c5934e91f82a3ffd9209f30dde7ba9b5707b1c364e5b2ad0962c44e6ebb6ee",
+    "egglog-experimental/tests/injectivity_disequality.rs": "3da93594215cf562380d0dd9c2391dcf5e184ff3214e60dac80b8c303816251c",
+    "egglog-experimental/tests/injectivity_disequality/oracle.rs": "18dbe43bf36f530752bca6fd7fbc66222cd3b12d4a3073fe2cef1177a86674ec"
+  },
+  "unchanged_code_and_manifest_files_at_base": 871,
+  "scope": "selected Rust dependency source and manifests; unchanged root Python code is outside the copied dependency closure"
+}

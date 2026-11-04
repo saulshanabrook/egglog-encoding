@@ -1,0 +1,36 @@
+{
+  "baseline": {
+    "instruction_count": 91,
+    "internal_backward_branch_count": 2,
+    "modes": [
+      "bridge-off",
+      "cancellation-off",
+      "consumer-off",
+      "identity-off",
+      "off",
+      "primitive-only",
+      "query-off",
+      "seed-only",
+      "transport-off",
+      "u0"
+    ],
+    "process_main_instruction_sha256": "66d827e619ee132afed2d8ea3878a084cd184fee24b0b912a93519cdee24bcf0"
+  },
+  "winning": {
+    "instruction_count": 55,
+    "internal_backward_branch_count": 0,
+    "modes": [
+      "encoding",
+      "key-rescue",
+      "manual",
+      "x-rescue"
+    ],
+    "process_main_instruction_sha256": "8118a0fa625e0f98210d68a42f26122abe209a0a1ddf09425b0c26b006f17360"
+  }
+}
+{
+  "case_count": 37,
+  "native_output_count": 177,
+  "execution_content_equivalent": true,
+  "exact_timed_macho_file_identity": false
+}

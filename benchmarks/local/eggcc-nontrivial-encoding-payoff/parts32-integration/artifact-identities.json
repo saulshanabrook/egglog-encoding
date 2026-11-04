@@ -1,0 +1,46 @@
+[
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/run.py",
+    "sha256": "6f973293fab836e96a4c5a47283cbd1e1954cb7f4d1f02d7ab639e1a6acd4d33"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/matrix.py",
+    "sha256": "66fc42797a8f8f05c6de154b6c2d493cc6717b883ff737b6d81aeddd5fe877fb"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/inspect-final.py",
+    "sha256": "c4c61ffd05cb1be3089ec89cfe2338a53c863900f5c92aefba9a4dbd280b8ba6"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/freeze-final.py",
+    "sha256": "bd9f433bdba9dfbb41e92b91cc1753ba922b767280642c74295c76f288c8cbe9"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/report.md",
+    "sha256": "73a2c4051aac84595e5c0386550362d1cc8db82bedcf4a4eedef20b54ae67eaa"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/reproduce.md",
+    "sha256": "5b94c2aac9336f01b46fa98b5d3e44bec1f7dcbee942f429f922a41fe79d7452"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/validation.json",
+    "sha256": "929c59af416e2cc37dc927943b9baaaff07e74a9292416955847df7f9dbfb37d"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/failure-ledger.json",
+    "sha256": "db71f688a4d358f170be04581edf448af4c2ca8d45e66c737873cbd79d50ddcd"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/prospective-timing-design-final.json",
+    "sha256": "2b310ee5fc8de9e64b6b91ac48660fa1bcbeffb29e52ad3e96b67e5e20657620"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/compile-command-map.json",
+    "sha256": "c2dd1d1f0cd47389379e1b378270635405eaf2d3e37aa1b6911643b9be4570e9"
+  },
+  {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/parts32-integration/final-reviewed/inspection.json",
+    "sha256": "db0f59763235a18f4de9731a74a471af5eb4adef04077f1ad99964a3bb331096"
+  }
+]

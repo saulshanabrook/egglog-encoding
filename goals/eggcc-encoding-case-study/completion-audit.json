@@ -1,0 +1,260 @@
+{
+  "status": "complete_with_documented_gate_limitations",
+  "completed_utc": "2026-10-17T19:56:07.916562+00:00",
+  "objective": "goals/eggcc-encoding-case-study/goal.md",
+  "facts": [
+    {
+      "id": "research-deliverable",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/rerun.md",
+          "sha256": "4cada77d5675d54b004bf3f78c70e2c5ae36cfe00804f312cbba612bd1e3eb41"
+        }
+      ],
+      "assessment": "Research dossier, source patches, inputs, raw observations and figures delivered; no paper edits."
+    },
+    {
+      "id": "isolated-baselines",
+      "automatedVerification": true,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/inventory.json",
+          "sha256": "ec2c7b71cac7e12bc422e2dece7e6a2a70065c62eaab8ed3532c55b7da741d2f"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/preservation/verification.json",
+          "sha256": "18512e7ccffdc0cc1f1f4c46910b7dbcf091ca9e74ec202fda551a070795e869"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/engine-only-checkpoint.json",
+          "sha256": "3d505b2832d365390d53f3f1a29c3a816b351e25a357151f0c99a8ebdfcfab73"
+        }
+      ],
+      "assessment": "Isolated source, manifests/locks/dependency metadata, common Rust1.91.0 and frozen native binaries; all8365 preserved file states/statuses match."
+    },
+    {
+      "id": "candidate-coverage",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/summary.md",
+          "sha256": "2203b22b404f294236109258704ee1ec26da781959d20f731f05885ec7a4991f"
+        }
+      ],
+      "assessment": "Constructor laws, top-level guards, active NoAlias and optional points-to analysis assessed; rejected leads retained."
+    },
+    {
+      "id": "semantic-justification",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/harness/semantic-review.md",
+          "sha256": "c0a82827cb7c7bbb5a1d9777036b0ff58c933aceafe5ce48c4436db84bc1af05"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/report-review.md",
+          "sha256": "866749a4ba1dbbe8a48bb4e648db53840e95d7d5f484b0eb1be227d1a51829c6"
+        }
+      ],
+      "assessment": "Manual semantic justification for immutable descriptors, state-only integer allocation prefixes, bounded offsets and co-liveness; post-normalization audited. No general proof claim."
+    },
+    {
+      "id": "integration-scope",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/full.patch",
+          "sha256": "7ab6605cedbdb7e6e44fe7b4a6f1768033b1cb83bb7c4f3ad5aee391f64cb08c"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/harness/prototype-review.md",
+          "sha256": "cfe8984430463cf0b488bf369c41b6ce6f0bf73ab0b5a3c6958cab2365ed5a15"
+        }
+      ],
+      "assessment": "Opt-in default-off compiler integration only; original passes/native extraction retained, state-scoped witnesses, no global NoAlias or unrelated source fixes."
+    },
+    {
+      "id": "case-correctness",
+      "automatedVerification": true,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/runs.json",
+          "sha256": "763e3392688ce1df8c379f8ed1fb1948517c015aaaa286b0ad43e8b61f87e26f"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/failfast/runs.json",
+          "sha256": "cea04eb3315515ee0dadd3085f2aaee4768b486146d9a27505a706439a4b9722"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/correctness.json",
+          "sha256": "6fdb8746afb878cc84603e01dc11125e47369cf81f992e37dccdfbe6e14e90fb"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/gates.json",
+          "sha256": "d8dc0978fa7d4dcb25cf078b50f73922a8ab57bded216575c49ffdbb3108124d"
+        }
+      ],
+      "assessment": "16+14 expected semantic outcomes; final18 interpreted +18 emitted runs; guard/native counts nonzero and all3passes. Official broad Make limits explicitly recorded below."
+    },
+    {
+      "id": "bug-claims",
+      "automatedVerification": true,
+      "status": "not-applicable",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        }
+      ],
+      "assessment": "No real compiler bug claimed. Invalid annotation/corruption controls explicitly seeded; all study manifests real_bug=null."
+    },
+    {
+      "id": "optimization-claims",
+      "automatedVerification": true,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/correctness.json",
+          "sha256": "6fdb8746afb878cc84603e01dc11125e47369cf81f992e37dccdfbe6e14e90fb"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/transformations/receipt.json",
+          "sha256": "4bb3a9aec3764d26f2c2f98a0d8f33ec50915e0373c27d84bfec314c54eaf21f"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/transformation-verification.json",
+          "sha256": "4812e548966359fc5c99bbec6d3087ac3dd6ebc612fd22db2cec438151fede27"
+        }
+      ],
+      "assessment": "Actual native3pass load removal with output17; alias controls preserve99. Fresh emitted programs reproduce exact prior bytes; only a small source-derived case claimed."
+    },
+    {
+      "id": "performance-evidence",
+      "automatedVerification": true,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/engine-control/results.json",
+          "sha256": "d339b1efe91e6695746ae835378f150b8570d4f684873680c57a1b4a5d2aa9ad"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/feature-control/results.json",
+          "sha256": "26ee4c10f8305ee6dc03f6ed2cc940f8e49bc154b74e0cd70607a171fbbd11c1"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/results.json",
+          "sha256": "e5f1488226642873d6867210d1d7855bee6a9085513bd97f83b4f1e5e12bba55"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        }
+      ],
+      "assessment": "Ten observations per endpoint/case; per-case wall/wait4 child RSS and variability. Main/fresh cohorts separate, regressions/neutral results retained. No speedup or generated-program runtime claim."
+    },
+    {
+      "id": "reproducible-artifacts",
+      "automatedVerification": true,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/rerun.md",
+          "sha256": "4cada77d5675d54b004bf3f78c70e2c5ae36cfe00804f312cbba612bd1e3eb41"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/final-verification.json",
+          "sha256": "874cebcc222f9e9a79e4862cac8c0d92ee356a914cfdd480b9b828b07bcb6f17"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/encoding-study/checkpoint.json",
+          "sha256": "b899869be9cee6063d5f20be6c1c89de8216208e9f4a863641d1d028f3022548"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/feature-control/figure-qa/receipt.json",
+          "sha256": "966f41c4f0ac3cc43a8b1efe29a11d82ddabe3127aecf41a83bc985205ba60e0"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/reproduction/figure-qa/receipt.json",
+          "sha256": "ea13d75fbb2927fb32a47eeb7a0d6799e339287708b3b373bb40e11bb3e8ab5d"
+        }
+      ],
+      "assessment": "All3 collector verifies pass; source/input/native/receipt hashes match; fresh artifact directory run from/tmp; all figures/tables independently regenerate byte-identically and PDFs inspected."
+    },
+    {
+      "id": "negative-result",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        }
+      ],
+      "assessment": "Investigated scope finds no new bug, production workload gain or stable performance advantage. Invalid candidates rejected without an impossibility claim."
+    },
+    {
+      "id": "fallback-example",
+      "automatedVerification": true,
+      "status": "not-applicable",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/retarget/prototype/final/correctness.json",
+          "sha256": "6fdb8746afb878cc84603e01dc11125e47369cf81f992e37dccdfbe6e14e90fb"
+        }
+      ],
+      "assessment": "A justified actual EggCC optimization emerged, so no separate standalone fallback was needed. The small compiler-integrated illustration is explicitly source-derived, not a production workload."
+    },
+    {
+      "id": "proof-boundary",
+      "automatedVerification": false,
+      "status": "satisfied",
+      "evidence": [
+        {
+          "path": "/Users/saul/p/egglog-encoding/goals/eggcc-encoding-case-study/report.md",
+          "sha256": "fc4ccf1a18c94b5848b46f9fb0a9e2e6c8a412b97f6a86bf7261d5423f8a82e6"
+        },
+        {
+          "path": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-encoding-case-study/semantic/summary.md",
+          "sha256": "2203b22b404f294236109258704ee1ec26da781959d20f731f05885ec7a4991f"
+        }
+      ],
+      "assessment": "Ordinary execution; NEE/EE semantic checks. No asserted-disequality compiler workload comparison, new proof support, Lean work or paper edits."
+    }
+  ],
+  "required_work_remaining": [],
+  "official_gate_limits": {
+    "eggcc_make_test": "exit2:13 golden bodies reproduce identically before the feature in engine-only B; root executions2455 and DAG66 pass; no snapshots accepted",
+    "eggcc_make_nits": "exit2:unchanged Rust1.91 Clippy lints attributed to baseline; formatting/Prettier pass and narrow diagnostic Clippy passes",
+    "encoding_make_check": "success:256 Python and1797 Rust tests pass; optional plot covered by separate pinned24-test suite"
+  },
+  "reviews": [
+    "harness/semantic-review.md",
+    "harness/prototype-review.md",
+    "semantic/report-review.md"
+  ],
+  "measurement_scope": "Compiler process wall and normalized wait4 child rusage peak RSS; interpreted checks/warmups/diagnostics excluded. No generated-program runtime or stable query advantage claim.",
+  "source_state": "Isolated local uncommitted worktrees; complete patches and frozen executables retained; primary author checkouts preserved."
+}

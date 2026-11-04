@@ -1,0 +1,67 @@
+# ARGS: 5 12 8
+# QR7 key equality establishes x=y before the store/load loop.
+@main(x: int, y: int, n: int) {
+  zero: int = const 0;
+  one: int = const 1;
+  seven: int = const 7;
+  size: int = const 64;
+  limit: int = const 10000000;
+  x_lo: bool = ge x zero;
+  x_hi: bool = lt x size;
+  y_lo: bool = ge y zero;
+  y_hi: bool = lt y size;
+  n_lo: bool = ge n zero;
+  n_hi: bool = le n limit;
+  x_ok: bool = and x_lo x_hi;
+  y_ok: bool = and y_lo y_hi;
+  n_ok: bool = and n_lo n_hi;
+  xy_ok: bool = and x_ok y_ok;
+  valid: bool = and xy_ok n_ok;
+  br valid .valid .invalid;
+.invalid:
+  invalid_result: int = const -9;
+  print invalid_result;
+  ret;
+.valid:
+  qx: int = div x seven;
+  qy: int = div y seven;
+  same_q: bool = eq qx qy;
+  br valid .equal_quotient .different_quotient;
+.different_quotient:
+  quotient_result: int = const -1;
+  print quotient_result;
+  ret;
+.equal_quotient:
+  px: int = mul qx seven;
+  py: int = mul qy seven;
+  rx: int = sub x px;
+  ry: int = sub y py;
+  same_r: bool = eq rx ry;
+  br same_r .equal_key .different_remainder;
+.different_remainder:
+  remainder_result: int = const -2;
+  print remainder_result;
+  ret;
+.equal_key:
+  p: ptr<int> = alloc size;
+  pi: ptr<int> = ptradd p x;
+  pj: ptr<int> = ptradd p y;
+  sentinel: int = const -3;
+  store pj sentinel;
+  count: int = const 0;
+  sum: int = const 0;
+  jmp .header;
+.header:
+  more: bool = lt count n;
+  br more .body .done;
+.body:
+  store pi count;
+  value: int = load pj;
+  sum: int = add sum value;
+  count: int = add count one;
+  jmp .header;
+.done:
+  free p;
+  print sum;
+  ret;
+}

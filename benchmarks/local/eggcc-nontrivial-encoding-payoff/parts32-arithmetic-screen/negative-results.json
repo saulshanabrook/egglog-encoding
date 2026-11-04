@@ -1,0 +1,72 @@
+[
+  {
+    "kind": "missing-word-disequality",
+    "args": [
+      0,
+      0,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "missing-low-equality",
+    "args": [
+      0,
+      1,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "wrong-mask",
+    "args": [
+      0,
+      2147483648,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "wrong-divisor",
+    "args": [
+      0,
+      4294967296,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  },
+  {
+    "kind": "unequal-divisors",
+    "args": [
+      281474976710656,
+      4294967296,
+      1
+    ],
+    "expected_stdout": "99\n",
+    "invalid_manual_stdout": "7\n",
+    "actual": {
+      "source": "99\n",
+      "optimized": "99\n"
+    }
+  }
+]

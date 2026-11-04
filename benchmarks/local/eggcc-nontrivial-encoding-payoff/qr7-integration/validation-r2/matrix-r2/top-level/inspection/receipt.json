@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding",
+  "started_utc": "2026-10-20T04:53:58.316772Z",
+  "finished_utc": "2026-10-20T04:53:59.086816Z",
+  "timeout_s": 3600,
+  "exit_code": 0,
+  "timed_out": false,
+  "environment": {
+    "QR7_BINARY": "/private/tmp/eggcc-qr7-candidate-nits-r2-target/release/eggcc",
+    "QR7_OUTPUT_ROOT": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/validation-r2/matrix-r2",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "absent_environment": [
+    "EGGLOG_BENCH_MEMORY_GUARD",
+    "INSTA_UPDATE",
+    "INSTA_FORCE_PASS"
+  ],
+  "raytracing_requested": false,
+  "r2_binary_sha256": "046efff7fcc7ea3a1e31ff8e35ccad32001967b75f97e4f2c1efaef0413b6333",
+  "script": "/Users/saul/p/egglog-encoding/benchmarks/local/eggcc-nontrivial-encoding-payoff/qr7-integration/inspect.py",
+  "script_sha256": "46791f0ee7f17da78cc2169f4dc23bacc754a9b923213e00fe22b2f6161bd04c",
+  "stdout_sha256": "5c755df497e7196264598a0159d68914da6b7d47d965f4ec6ed9010f80762be9",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -1,0 +1,33 @@
+{
+  "stage": "interview",
+  "title": "Find an EggCC bug or a measured speedup",
+  "goalSlug": "eggcc-encoding-payoff",
+  "questions": [
+    {
+      "id": "encoding-contribution",
+      "prompt": "Must the successful case use injectivity and disequality together?",
+      "description": "The previous study used both but added no detection power or speedup. This choice determines whether a genuine payoff using only one encoding can close the stronger goal.",
+      "answerMode": "single-custom",
+      "recommendedAnswer": "Prefer both together, but allow either encoding if it exposes a genuine compiler bug or produces a measured speedup.",
+      "recommendedOptionIds": ["prefer-both"],
+      "options": [
+        {"id": "prefer-both", "label": "Prefer both; either may qualify"},
+        {"id": "require-both", "label": "Require both in the successful case"}
+      ],
+      "required": true
+    },
+    {
+      "id": "speedup-outcomes",
+      "prompt": "Which measured speedups can satisfy the goal?",
+      "description": "Select either or both. Compiler time means a matched end-to-end compilation workload; isolated rule timings or an optimization with no demonstrated performance benefit will not qualify.",
+      "answerMode": "multi-custom",
+      "recommendedAnswer": "Accept either faster generated programs or faster end-to-end compilation, with correct outputs and repeated matched measurements.",
+      "recommendedOptionIds": ["program-runtime", "compiler-time"],
+      "options": [
+        {"id": "program-runtime", "label": "Faster generated programs"},
+        {"id": "compiler-time", "label": "Faster end-to-end compilation"}
+      ],
+      "required": true
+    }
+  ]
+}
