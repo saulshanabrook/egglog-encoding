@@ -1,0 +1,126 @@
+[
+  {
+    "case": "eggcc-palindrome--statewalk",
+    "capture": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-palindrome--statewalk/complete/3d199ccd1efc34bbd281cadcc0cd6133331aa1585950c01a5ad6195ed31bb9e9/attempt-0001/capture-result.json",
+    "capture_sha256": "4eeca4197d97014f25aeaf8717c1a5c84ee864d977c79dfd2c912aaa9489bee1",
+    "native_execution": false,
+    "sessions": [
+      {
+        "session": 0,
+        "kind": "optimization",
+        "replay_sha256": "0b0e3e34b9d0c1a979859cd17851a956bb890e1ef589623f4c963784d537a5da",
+        "lookup_status": "structural-fallback",
+        "fallback_reason": "native sorts or source input/erased-field grounding is missing; retain every structural constraint",
+        "checks": 3,
+        "observer_rows": 0
+      },
+      {
+        "session": 1,
+        "kind": "reconstruction",
+        "replay_sha256": "67716c80633ba1d07d711adfeac9fd4e34457fa43d0a07f2cbacf61b7e19dce3",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 3,
+        "observer_rows": 0
+      },
+      {
+        "session": 2,
+        "kind": "optimization",
+        "replay_sha256": "c4e0af44397b4805e158defa29c0a6186e98572a1c58f677fd07e38368f5e98b",
+        "lookup_status": "existing-row-dag",
+        "fallback_reason": null,
+        "checks": 3,
+        "observer_rows": 339
+      },
+      {
+        "session": 3,
+        "kind": "reconstruction",
+        "replay_sha256": "d2ba46856e6be655564ecc56eeb71a18c9f8490c8bf6349f4be484d94befd591",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 3,
+        "observer_rows": 0
+      },
+      {
+        "session": 4,
+        "kind": "optimization",
+        "replay_sha256": "527e1476007287ac690cf42d3ea73961ba8301c515ac70f18503f0336624e835",
+        "lookup_status": "existing-row-dag",
+        "fallback_reason": null,
+        "checks": 3,
+        "observer_rows": 819
+      },
+      {
+        "session": 5,
+        "kind": "reconstruction",
+        "replay_sha256": "3bfe1fa431e4787ae5121a2d3bbc27ef4e3f46f8cde0df75359078cd008658e0",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 3,
+        "observer_rows": 0
+      }
+    ]
+  },
+  {
+    "case": "eggcc-bitwise-ops--statewalk",
+    "capture": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/f6fa81b0f48cd1f778d23e9b5bad5d2736254652b8a607438ac40b01158fb757/attempt-0001/capture-result.json",
+    "capture_sha256": "550a28188b3c84709b880365040a3e676dd9c13f34b06f5991ce3bcab8d74752",
+    "native_execution": false,
+    "sessions": [
+      {
+        "session": 0,
+        "kind": "optimization",
+        "replay_sha256": "f5914ef6a87935e9fef312612073a28865e94b5188a6d3ea2b0b10a7ade27309",
+        "lookup_status": "structural-fallback",
+        "fallback_reason": "native sorts or source input/erased-field grounding is missing; retain every structural constraint",
+        "checks": 6,
+        "observer_rows": 0
+      },
+      {
+        "session": 1,
+        "kind": "reconstruction",
+        "replay_sha256": "30aab24b5daa24feee6d2cc53ba6931093191f5dce2d33d3ee1bfd4d52e94f80",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 6,
+        "observer_rows": 0
+      },
+      {
+        "session": 2,
+        "kind": "optimization",
+        "replay_sha256": "b73d205970304920b5d8f41936a380340efbec1493efd67bd6fab3510eb7e7d1",
+        "lookup_status": "existing-row-dag",
+        "fallback_reason": null,
+        "checks": 6,
+        "observer_rows": 375
+      },
+      {
+        "session": 3,
+        "kind": "reconstruction",
+        "replay_sha256": "7b840105334af085dc1e49e7345969ea87307e0f62c8b0d573a935850947253b",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 6,
+        "observer_rows": 0
+      },
+      {
+        "session": 4,
+        "kind": "optimization",
+        "replay_sha256": "03e165a95e8ea7f1a6a62ff0b1cebf45c2d0cf640678180e0b8292f88166fb2a",
+        "lookup_status": "existing-row-dag",
+        "fallback_reason": null,
+        "checks": 6,
+        "observer_rows": 941
+      },
+      {
+        "session": 5,
+        "kind": "reconstruction",
+        "replay_sha256": "0925e1620ee328f3c71ac89d10e1e3138f131371b9256105aad5e5d5181c839c",
+        "lookup_status": null,
+        "fallback_reason": null,
+        "checks": 6,
+        "observer_rows": 0
+      }
+    ]
+  }
+]

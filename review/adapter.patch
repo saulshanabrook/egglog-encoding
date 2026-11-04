@@ -1,0 +1,773 @@
+--- a/scripts/eggcc_churchroad_complete.py
++++ b/scripts/eggcc_churchroad_complete.py
+@@ -470,6 +470,25 @@
+     return facts, roots
+ 
+ 
++def _eggcc_tree(tokens: list[str]) -> list[Any]:
++    """Parse one balanced tokenized form without interpreting atoms or literals."""
++    stack: list[list[Any]] = [[]]
++    for token in tokens:
++        if token == "(":
++            stack.append([])
++        elif token == ")":
++            value = stack.pop()
++            stack[-1].append(value)
++        else:
++            stack[-1].append(token)
++    return list(stack[0][0])
++
++
++def _eggcc_text(tree: Any) -> str:
++    """Render only the validated observation syntax, preserving literal tokens."""
++    return tree if isinstance(tree, str) else "(" + " ".join(_eggcc_text(value) for value in tree) + ")"
++
++
+ def eggcc_source_anchors(graph: dict[str, Any], selection_program: str, source: str) -> tuple[str, dict[str, Any]]:
+     """Observe uniquely grounded initializer values without adding target terms.
+ 
+@@ -478,18 +497,7 @@
+     Unsupported source expressions retain the structural query path.
+     """
+     forms = egglog_forms(source)
+-    trees = []
+-    for _, _, tokens in forms:
+-        stack: list[list[Any]] = [[]]
+-        for token in tokens:
+-            if token == "(":
+-                stack.append([])
+-            elif token == ")":
+-                value = stack.pop()
+-                stack[-1].append(value)
+-            else:
+-                stack[-1].append(token)
+-        trees.append(stack[0][0])
++    trees = [_eggcc_tree(tokens) for _, _, tokens in forms]
+     plan: dict[str, Any] = {
+         "status": "structural-fallback",
+         "reason": None,
+@@ -917,6 +925,274 @@
+     return "\n".join(queries), roots
+ 
+ 
++def eggcc_dag_lookups(
++    source: str,
++    graph: dict[str, Any],
++    selection_program: str,
++    checks: str,
++    roots: list[dict[str, Any]],
++    anchors: dict[str, Any],
++) -> tuple[str, str, dict[str, Any]]:
++    """Decompose exact selected DAG queries into existing-constructor lookups.
++
++    Constructor functional dependencies and grounded source handles make each
++    observed value unique. Strict no-merge tables fail if that invariant breaks.
++    Each depth runs once after its dependencies; every selected entry must reach
++    its root. Missing grounding keeps the entire original query, never a subset.
++    These ordinary observations have no validated proof-encoding interpretation.
++    """
++    prefix = "reproduction_lookup_"
++    plan: dict[str, Any] = {
++        "status": "structural-fallback",
++        "reason": None,
++        "source_prefix_sha256": hashlib.sha256(source.encode()).hexdigest(),
++        "original_checks_sha256": hashlib.sha256(checks.encode()).hexdigest(),
++        "proof_compatibility": {
++            "status": "unvalidated",
++            "ordinary_only": True,
++            "reason": "strict no-merge observation functions are unsupported by proof encoding",
++        },
++        "requests": [],
++    }
++    forms = egglog_forms(source)
++    if any(token.startswith(prefix) for _, _, tokens in forms for token in tokens):
++        raise CaptureError("source collides with a reproduction lookup name")
++    selections = tiger_selections(selection_program)
++    check_forms = egglog_forms(checks)
++    if len(selections) != len(roots) or len(check_forms) != len(roots):
++        raise CaptureError("lookup translation must retain every selected root request and check")
++    for selection in selections:
++        reachable = set()
++        pending = [len(selection) - 1]
++        while pending:
++            index = pending.pop()
++            if index not in reachable:
++                reachable.add(index)
++                pending.extend(selection[index][1])
++        if reachable != set(range(len(selection))):
++            raise CaptureError("disconnected selected entries cannot be discarded by lookup translation")
++    classes = graph.get("class_data", {})
++    if any("type" not in classes.get(node["eclass"], {}) for node in graph["nodes"].values()) or any(
++        root.get("witness", {}).get("input", {}).get("mode") != "source-handle"
++        or any(field["handle"] is None for field in root.get("witness", {}).get("erased_fields", []))
++        for root in roots
++    ):
++        plan["reason"] = (
++            "native sorts or source input/erased-field grounding is missing; retain every structural constraint"
++        )
++        return "", checks, plan
++    signatures: dict[str, tuple[list[str], str]] = {}
++    for _, _, tokens in forms:
++        tree = _eggcc_tree(tokens)
++        constructor_declarations = []
++        if tree[0] == "datatype":
++            for variant in tree[2:]:
++                stop = next((i for i, value in enumerate(variant[1:]) if str(value).startswith(":")), len(variant) - 1)
++                constructor_declarations.append((variant[0], variant[1 : stop + 1], tree[1]))
++        elif tree[0] == "constructor":
++            constructor_declarations.append((tree[1], tree[2], tree[3]))
++        for name, arguments, sort in constructor_declarations:
++            if name in signatures or not all(isinstance(value, str) for value in [*arguments, sort]):
++                raise CaptureError("duplicate or opaque constructor signature in lookup source")
++            signatures[name] = (arguments, sort)
++    nodes = graph["nodes"]
++    rows: dict[tuple[str, tuple[str, ...]], str] = {}
++    for node in nodes.values():
++        if node["op"] not in signatures:
++            continue
++        inputs, output = signatures[node["op"]]
++        try:
++            child_classes = tuple(nodes[child]["eclass"] for child in node["children"])
++            sorts = [classes[class_id]["type"] for class_id in child_classes]
++            output_sort = classes[node["eclass"]]["type"]
++        except KeyError as error:
++            raise CaptureError("lookup constructor row has missing typed graph metadata") from error
++        if sorts != inputs or output_sort != output:
++            raise CaptureError("lookup constructor row has inconsistent arity or sort")
++        key = (node["op"], child_classes)
++        if key in rows and rows[key] != node["eclass"]:
++            raise CaptureError("ambiguous native constructor FD in lookup graph")
++        rows[key] = node["eclass"]
++    handles = {}
++    for class_id, handle in anchors["classes"].items():
++        if class_id not in classes or classes[class_id]["type"] != handle["sort"]:
++            raise CaptureError("source handle has inconsistent native sort")
++        lookup = handle["lookup"]
++        if lookup in handles:
++            raise CaptureError("source lookup aliases conflicting native identities")
++        handles[lookup] = (class_id, handle["sort"])
++    # Literal entries have no table and remain exact body equalities wherever
++    # referenced. Constructor entries retain their request/index even if the
++    # same native node or class occurs at another selected index.
++    requests: list[dict[str, Any]] = []
++    observer_sorts = set()
++    literal = re.compile(r'"(?:[^"\\]|\\.)*"|true|false|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?')
++    for request, ((start, end, tokens), selection, root) in enumerate(zip(check_forms, selections, roots, strict=True)):
++        variable_prefix = f"reproduction_{request}_"
++        query = _eggcc_tree(tokens)
++        last_variable = f"{variable_prefix}s{len(selection) - 1}"
++        final = query[-1]
++        if (
++            query[0] != "check"
++            or not isinstance(final, list)
++            or len(final) != 3
++            or final[0] != "="
++            or final[2] != last_variable
++            or not isinstance(final[1], str)
++            or not re.fullmatch(variable_prefix + r"seed\d+", final[1])
++        ):
++            raise CaptureError("lookup translation found an unknown root equality")
++        selected = {}
++        bindings = {}
++        for fact in query[1:-1]:
++            if not isinstance(fact, list) or len(fact) != 3 or fact[0] != "=" or not isinstance(fact[1], str):
++                raise CaptureError("lookup translation found an unknown query constraint")
++            if match := re.fullmatch(variable_prefix + r"s(\d+)", fact[1]):
++                index = int(match[1])
++                if fact[1] != f"{variable_prefix}s{index}":
++                    raise CaptureError("lookup selected variable has a noncanonical index")
++                if index in selected:
++                    raise CaptureError("duplicate selected constraint in lookup query")
++                selected[index] = fact
++            else:
++                if fact[1] in bindings or _eggcc_text(fact[2]) not in handles:
++                    raise CaptureError("lookup query has an unknown or missing source anchor")
++                bindings[fact[1]] = fact
++        if set(selected) != set(range(len(selection))) or final[1] not in bindings:
++            raise CaptureError("lookup query does not constrain every selected index and input")
++        input_fact = bindings[final[1]]
++        input_lookup = _eggcc_text(input_fact[2])
++        if root["witness"]["input"]["handle"]["lookup"] != input_lookup or handles[input_lookup][0] != root["eclass"]:
++            raise CaptureError("lookup query input differs from its original source identity")
++        entries = []
++        used_bindings = {final[1]}
++        for index, (node_id, children) in enumerate(selection):
++            if node_id not in nodes:
++                raise CaptureError("lookup selection names a missing native graph node")
++            node = nodes[node_id]
++            sort = classes[node["eclass"]]["type"]
++            fact = selected[index]
++            if isinstance(fact[2], str):
++                if node["children"] or children or not literal.fullmatch(node["op"]) or fact[2] != node["op"]:
++                    raise CaptureError("lookup literal differs from the exact selected value")
++                entries.append({"fact": fact, "sort": sort, "depth": -1, "literal": True})
++                continue
++            if not isinstance(fact[2], list) or not fact[2] or node["op"] not in signatures:
++                raise CaptureError("lookup selected operator is not a declared constructor")
++            inputs, output = signatures[node["op"]]
++            expected_arity = {"Arg": 2, "Empty": 2, "Const": 3}.get(node["op"], len(inputs))
++            if sort != output or fact[2][0] != node["op"] or len(fact[2]) != len(inputs) + 1:
++                raise CaptureError("lookup selected constructor has inconsistent fields or sort")
++            kept = {"Arg": [], "Empty": [], "Const": [0]}.get(node["op"], list(range(len(inputs))))
++            if len(inputs) != expected_arity or len(kept) != len(children):
++                raise CaptureError("lookup selected constructor has an unknown field projection")
++            substitutions = dict(zip(kept, children, strict=True))
++            dependencies = []
++            for position, (argument, original_child, expected_sort) in enumerate(
++                zip(fact[2][1:], node["children"], inputs, strict=True)
++            ):
++                if position in substitutions:
++                    child = substitutions[position]
++                    if (
++                        argument != f"{variable_prefix}s{child}"
++                        or entries[child]["sort"] != expected_sort
++                        or nodes[selection[child][0]]["eclass"] != nodes[original_child]["eclass"]
++                    ):
++                        raise CaptureError("lookup selected edge differs from its typed native provenance")
++                    dependencies.append(entries[child]["depth"])
++                else:
++                    if not isinstance(argument, str) or argument not in bindings:
++                        raise CaptureError("lookup erased field has no grounded source anchor")
++                    identity = handles[_eggcc_text(bindings[argument][2])]
++                    if identity != (nodes[original_child]["eclass"], expected_sort):
++                        raise CaptureError("lookup erased field differs from its typed source identity")
++                    used_bindings.add(argument)
++            entries.append({"fact": fact, "sort": sort, "depth": 1 + max(dependencies, default=-1), "literal": False})
++            observer_sorts.add(sort)
++        if used_bindings != set(bindings):
++            raise CaptureError("lookup translation would discard an original-field constraint")
++        if selection[-1][0] != root["node"] or entries[-1]["literal"]:
++            raise CaptureError("lookup selected root differs from the native request")
++        requests.append({"entries": entries, "bindings": bindings, "input": input_fact, "final": final})
++        plan["requests"].append(
++            {
++                "request": request,
++                "selected_nodes": len(selection),
++                "selected_facts_sha256": hashlib.sha256(
++                    "\n".join(_eggcc_text(selected[i]) for i in range(len(selection))).encode()
++                ).hexdigest(),
++                "original_query_sha256": hashlib.sha256(checks[start:end].encode()).hexdigest(),
++            }
++        )
++    tables = {sort: prefix + f"value_{i}" for i, sort in enumerate(sorted(observer_sorts))}
++    rules = []
++    root_checks = []
++    counts: Counter[str] = Counter()
++    depths = set()
++    for request, data in enumerate(requests):
++        entries, bindings = data["entries"], data["bindings"]
++        request_rules = []
++        for index, entry in enumerate(entries):
++            if entry["literal"]:
++                continue
++            fact = entry["fact"]
++            body = []
++            for variable in dict.fromkeys(fact[2][1:]):
++                if variable in bindings:
++                    body.append(bindings[variable])
++                else:
++                    child_index = int(variable.removeprefix(f"reproduction_{request}_s"))
++                    child_entry = entries[child_index]
++                    body.append(
++                        child_entry["fact"]
++                        if child_entry["literal"]
++                        else ["=", variable, [tables[child_entry["sort"]], str(request), str(child_index)]]
++                    )
++            body.append(fact)
++            rule = [
++                "rule",
++                body,
++                [["set", [tables[entry["sort"]], str(request), str(index)], fact[1]]],
++                ":ruleset",
++                prefix + f"depth_{entry['depth']}",
++                ":internal-include-subsumed",
++                ":name",
++                json.dumps(prefix + f"rule_{request}_{index}"),
++            ]
++            request_rules.append(_eggcc_text(rule))
++            counts[tables[entry["sort"]]] += 1
++            depths.add(entry["depth"])
++        rules.extend(request_rules)
++        last = entries[-1]
++        root_check = _eggcc_text(
++            [
++                "check",
++                data["input"],
++                ["=", last["fact"][1], [tables[last["sort"]], str(request), str(len(entries) - 1)]],
++                data["final"],
++            ]
++        )
++        root_checks.append(root_check)
++        plan["requests"][request].update(
++            root_check_sha256=hashlib.sha256(root_check.encode()).hexdigest(),
++            lookup_rules_sha256=hashlib.sha256("\n".join(request_rules).encode()).hexdigest(),
++            root_observer={"table": tables[last["sort"]], "key": [request, len(entries) - 1], "sort": last["sort"]},
++        )
++    declarations = [f"(function {name} (i64 i64) {sort} :no-merge)" for sort, name in tables.items()]
++    declarations.extend(f"(ruleset {prefix}depth_{depth})" for depth in sorted(depths))
++    runs = [f"(run {prefix}depth_{depth} 1)" for depth in sorted(depths)]
++    suffix = "\n" + "\n".join(declarations + rules + runs) + "\n"
++    translated = "\n".join(root_checks) + "\n"
++    plan.update(
++        status="existing-row-dag",
++        tables=tables,
++        expected_rows=dict(counts),
++        lookup_program_sha256=hashlib.sha256(suffix.encode()).hexdigest(),
++        root_checks_sha256=hashlib.sha256(translated.encode()).hexdigest(),
++    )
++    return suffix, translated, plan
++
++
+ def eggcc_sessions(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+     """Pair completed native passes and their fresh reconstruction graphs.
+ 
+@@ -960,6 +1236,17 @@
+         checks, roots = eggcc_output_checks(
+             result["graph"], result["program"], batch, seed_program, source_anchors=source_anchors
+         )
++        lookup_program, checks, selection_lookups = eggcc_dag_lookups(
++            replay_program, result["graph"], result["program"], checks, roots, source_anchors
++        )
++        if selection_lookups["status"] == "existing-row-dag":
++            for root, request in zip(roots, selection_lookups["requests"], strict=True):
++                witness = root["witness"]
++                witness.update(
++                    selection_lookup=request,
++                    structural_query_fact_count=witness["query_fact_count"],
++                    query_fact_count=3,
++                )
+         reconstructed_checks = []
+         reconstructed_roots = []
+         output_names = []
+@@ -987,6 +1274,8 @@
+                 "program": original["program"],
+                 "replay_program": replay_program,
+                 "source_anchors": source_anchors,
++                "lookup_program": lookup_program,
++                "selection_lookups": selection_lookups,
+                 "checks": checks,
+                 "roots": roots,
+                 "events": [start["sequence"], tiger["sequence"], end["sequence"]],
+--- a/scripts/suite_capture_eggcc_churchroad.py
++++ b/scripts/suite_capture_eggcc_churchroad.py
+@@ -712,6 +712,9 @@
+                             if session["kind"] == "optimization"
+                             else session["program"]
+                         )
++                        # Compatibility rewrites only the six original no-merge
++                        # helpers. Append strict observer functions afterwards.
++                        content += session.get("lookup_program", "")
+                     else:
+                         chunks = []
+                         check_positions = []
+@@ -744,7 +747,7 @@
+                     session_record = {
+                         key: value
+                         for key, value in session.items()
+-                        if key not in {"program", "replay_program", "checks", "parts"}
++                        if key not in {"program", "replay_program", "lookup_program", "checks", "parts"}
+                     }
+                     session_record.update(
+                         session=index,
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -5,6 +5,7 @@
+ import json
+ import re
+ from pathlib import Path
++from typing import Any
+ 
+ import pytest
+ 
+@@ -16,6 +17,7 @@
+     WitnessQuery,
+     churchroad_selection_check,
+     churchroad_sessions,
++    eggcc_dag_lookups,
+     eggcc_output_checks,
+     eggcc_seed_query,
+     eggcc_sessions,
+@@ -306,6 +308,7 @@
+     sessions = eggcc_sessions(events)
+     assert sessions[0]["program"] == source
+     assert sessions[0]["replay_program"] == replay
++    assert sessions[0]["selection_lookups"]["status"] == "existing-row-dag"
+     assert sessions[0]["source_anchors"] == plan
+     assert plan["original_program_sha256"] == hashlib.sha256(source.encode()).hexdigest()
+     assert plan["replay_program_sha256"] == hashlib.sha256(replay.encode()).hexdigest()
+@@ -418,6 +421,325 @@
+     assert len(plan["observation_tables"]) == 3
+     with pytest.raises(CaptureError, match="source collides"):
+         eggcc_source_anchors(graph, trace, source + "(relation reproduction_anchor_0 ())")
++
++
++def egglog_trees(source: str) -> list[list[Any]]:
++    """Read generated syntax for independent body/action and dependency assertions."""
++    trees = []
++    for _, _, tokens in egglog_forms(source):
++        stack: list[list[Any]] = [[]]
++        for token in tokens:
++            if token == "(":
++                stack.append([])
++            elif token == ")":
++                value = stack.pop()
++                stack[-1].append(value)
++            else:
++                stack[-1].append(token)
++        assert len(stack) == 1 and len(stack[0]) == 1
++        trees.append(stack[0][0])
++    return trees
++
++
++@pytest.fixture
++def eggcc_lookup_inputs(anchorable_eggcc: tuple) -> tuple[str, dict, str, str, list[dict], dict]:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"]
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    return replay, graph, trace, checks, roots, anchors
++
++
++def test_eggcc_dag_lookups_preserve_exact_typed_constraints_and_only_observe(eggcc_lookup_inputs: tuple) -> None:
++    source, graph, trace, checks, roots, anchors = eggcc_lookup_inputs
++    original_roots = copy.deepcopy(roots)
++    suffix, root_checks, plan = eggcc_dag_lookups(*eggcc_lookup_inputs)
++    assert roots == original_roots
++    assert plan["status"] == "existing-row-dag" and plan["reason"] is None
++    assert plan["original_checks_sha256"] == hashlib.sha256(checks.encode()).hexdigest()
++    assert plan["source_prefix_sha256"] == hashlib.sha256(source.encode()).hexdigest()
++    assert plan["lookup_program_sha256"] == hashlib.sha256(suffix.encode()).hexdigest()
++    assert plan["root_checks_sha256"] == hashlib.sha256(root_checks.encode()).hexdigest()
++    assert plan["proof_compatibility"]["status"] == "unvalidated"
++    assert plan["proof_compatibility"]["ordinary_only"] is True
++    forms = egglog_trees(suffix)
++    assert {form[0] for form in forms} == {"function", "ruleset", "rule", "run"}
++    declarations = [form for form in forms if form[0] == "function"]
++    tables = {form[3]: form[1] for form in declarations}
++    assert set(tables) == {"BaseType", "Type", "Constant", "Expr"}
++    assert tables == plan["tables"]
++    assert all(form == ["function", form[1], ["i64", "i64"], form[3], ":no-merge"] for form in declarations)
++    original_tokens = {token for _, _, tokens in egglog_forms(source) for token in tokens}
++    assert not set(tables.values()) & original_tokens
++    rules = [form for form in forms if form[0] == "rule"]
++    assert len(rules) == 10  # Five nonliteral nodes for each of two alias-root requests.
++    original_queries = egglog_trees(checks)
++    selected = {
++        fact[1]: fact
++        for query in original_queries
++        for fact in query[1:-1]
++        if re.fullmatch(r"reproduction_\d+_s\d+", fact[1])
++    }
++    selected_constructors = {name: fact for name, fact in selected.items() if isinstance(fact[2], list)}
++    assert {rule[1][-1][1]: rule[1][-1] for rule in rules} == selected_constructors
++    runs = [form for form in forms if form[0] == "run"]
++    assert all(len(form) == 3 and form[2] == "1" for form in runs)
++    execution_order = {form[1]: index for index, form in enumerate(runs)}
++    observations = {}
++    rule_order = {}
++    for rule in rules:
++        assert ":internal-include-subsumed" in rule
++        fact = rule[1][-1]
++        match = re.fullmatch(r"reproduction_(\d+)_s(\d+)", fact[1])
++        assert match is not None
++        request, index = map(int, match.groups())
++        node_id = tiger_selections(trace)[request][index][0]
++        sort = graph["class_data"][graph["nodes"][node_id]["eclass"]]["type"]
++        key = [tables[sort], str(request), str(index)]
++        assert rule[2] == [["set", key, fact[1]]]
++        assert tuple(key) not in observations
++        observations[tuple(key)] = fact[1]
++        rule_order[tuple(key)] = execution_order[rule[rule.index(":ruleset") + 1]]
++    expected_keys = {
++        (tables[sort], str(request), str(index))
++        for request in range(2)
++        for index, sort in ((1, "BaseType"), (2, "Type"), (4, "Constant"), (5, "Expr"), (6, "Expr"))
++    }
++    assert set(observations) == expected_keys
++    assert plan["expected_rows"] == {
++        tables[sort]: count for sort, count in {"BaseType": 2, "Type": 2, "Constant": 2, "Expr": 4}.items()
++    }
++    for rule in rules:
++        parent_key = tuple(rule[2][0][1])
++        for fact in rule[1][:-1]:
++            value = fact[2]
++            if isinstance(value, list) and value[0] in tables.values():
++                assert observations[tuple(value)] == fact[1]
++                assert rule_order[tuple(value)] < rule_order[parent_key]
++    for request in range(2):
++        prefix = f"reproduction_{request}_"
++        by_variable = {rule[1][-1][1]: rule for rule in rules}
++        literal = ["=", prefix + "s3", "2"]
++        assert literal in by_variable[prefix + "s4"][1]
++        root = by_variable[prefix + "s6"]
++        assert root[1][-1][2] == ["Function", prefix + "s0", prefix + "s2", prefix + "s2", prefix + "s5"]
++        assert sum(fact[1] == prefix + "s2" for fact in root[1][:-1]) == 1
++        assert ["=", prefix + "s0", '"main"'] in root[1]
++        erased_bindings = [fact for fact in original_queries[request][1:-1] if re.fullmatch(prefix + r"o\d+", fact[1])]
++        assert len(erased_bindings) == 2
++        assert all(fact in by_variable[prefix + "s5"][1] for fact in erased_bindings)
++        root_query = egglog_trees(root_checks)[request]
++        assert root_query == [
++            "check",
++            original_queries[request][1],
++            ["=", prefix + "s6", [tables["Expr"], str(request), "6"]],
++            original_queries[request][-1],
++        ]
++        metadata = plan["requests"][request]
++        assert metadata["request"] == request and metadata["selected_nodes"] == 7
++        assert metadata["selected_facts_sha256"] == original_roots[request]["witness"]["selected_facts_sha256"]
++        assert metadata["root_observer"] == {"table": tables["Expr"], "key": [request, 6], "sort": "Expr"}
++        before_start, before_end, _ = egglog_forms(checks)[request]
++        after_start, after_end, _ = egglog_forms(root_checks)[request]
++        assert metadata["original_query_sha256"] == hashlib.sha256(checks[before_start:before_end].encode()).hexdigest()
++        assert metadata["root_check_sha256"] == hashlib.sha256(root_checks[after_start:after_end].encode()).hexdigest()
++        request_rules = [
++            suffix[start:end]
++            for start, end, tokens in egglog_forms(suffix)
++            if tokens[1] == "rule" and any(token.startswith(prefix + "s") for token in tokens)
++        ]
++        assert metadata["lookup_rules_sha256"] == hashlib.sha256("\n".join(request_rules).encode()).hexdigest()
++
++
++def test_eggcc_dag_lookups_keep_distinct_indices_for_the_same_native_class(eggcc_lookup_inputs: tuple) -> None:
++    source, graph, trace, checks, roots, anchors = copy.deepcopy(eggcc_lookup_inputs)
++    trace = trace.replace(
++        f"; reproduction-node {b'output'.hex()} 0 2 2 5",
++        f"; reproduction-node {b'base'.hex()} 1\n; reproduction-node {b'output'.hex()} 0 2 6 5",
++    )
++    for request, root in enumerate(roots):
++        prefix = f"reproduction_{request}_"
++        checks = checks.replace(prefix + "s6", prefix + "s7")
++        checks = checks.replace(
++            f"(= {prefix}s7 (Function {prefix}s0 {prefix}s2 {prefix}s2",
++            f"(= {prefix}s6 (Base {prefix}s1))\n  (= {prefix}s7 (Function {prefix}s0 {prefix}s2 {prefix}s6",
++        )
++        root["selected_nodes"] = 8
++    suffix, _, plan = eggcc_dag_lookups(source, graph, trace, checks, roots, anchors)
++    type_table = plan["tables"]["Type"]
++    rules = [form for form in egglog_trees(suffix) if form[0] == "rule"]
++    assert {tuple(rule[2][0][1][1:]) for rule in rules if rule[2][0][1][0] == type_table} == {
++        ("0", "2"),
++        ("0", "6"),
++        ("1", "2"),
++        ("1", "6"),
++    }
++    assert plan["expected_rows"][type_table] == 4
++    for request in range(2):
++        prefix = f"reproduction_{request}_"
++        root_rule = next(rule for rule in rules if rule[1][-1][1] == prefix + "s7")
++        assert ["=", prefix + "s2", [type_table, str(request), "2"]] in root_rule[1]
++        assert ["=", prefix + "s6", [type_table, str(request), "6"]] in root_rule[1]
++
++
++@pytest.mark.parametrize("constructor", ["Arg", "Empty"])
++def test_eggcc_dag_lookups_ground_both_erased_fields_of_leaf_expressions(
++    anchorable_eggcc: tuple, constructor: str
++) -> None:
++    graph, _, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"].replace(
++        "(Function String", f"({constructor} Type Assumption) (Function String"
++    )
++    graph["nodes"]["const2"].update(op=constructor, children=["base", "ctx"])
++    selected = [("primitive-name", []), ("type", []), ("base", [1]), ("const2", []), ("output", [0, 2, 2, 3])]
++    trace = (
++        "\n".join(
++            [
++                "; reproduction-selection-begin",
++                *(
++                    f"; reproduction-node {node.encode().hex()}" + "".join(f" {child}" for child in children)
++                    for node, children in selected
++                ),
++                "; reproduction-selection-end\n",
++            ]
++        )
++        * 2
++    )
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, _, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    assert plan["status"] == "existing-row-dag"
++    for request, query in enumerate(egglog_trees(checks)):
++        prefix = f"reproduction_{request}_"
++        erased = [fact for fact in query[1:] if re.fullmatch(prefix + r"o\d+", fact[1])]
++        rule = next(form for form in egglog_trees(suffix) if form[0] == "rule" and form[1][-1][1] == prefix + "s3")
++        assert len(erased) == 2 and rule[1][:-1] == erased
++        assert rule[1][-1] in query and rule[1][-1][2][0] == constructor
++
++
++@pytest.mark.parametrize(
++    "mutation",
++    [
++        "type",
++        "fd-conflict",
++        "projection",
++        "retained-child",
++        "literal",
++        "forward",
++        "cycle",
++        "unknown-operator",
++        "unknown-field",
++        "extra-fact",
++        "duplicate-variable",
++        "noncanonical-selected-variable",
++        "noncanonical-root-variable",
++        "root-equality",
++        "namespace",
++    ],
++)
++def test_eggcc_dag_lookups_reject_changed_or_ambiguous_constraints(eggcc_lookup_inputs: tuple, mutation: str) -> None:
++    source, graph, trace, checks, roots, anchors = copy.deepcopy(eggcc_lookup_inputs)
++    if mutation == "type":
++        graph["class_data"]["Type-1"]["type"] = "Assumption"
++    elif mutation == "fd-conflict":
++        graph["nodes"]["conflicting-type"] = {"op": "IntT", "children": [], "eclass": "BaseType-other"}
++        graph["class_data"]["BaseType-other"] = {"type": "BaseType"}
++    elif mutation == "projection":
++        trace = trace.replace(f"; reproduction-node {b'const2'.hex()} 4", f"; reproduction-node {b'const2'.hex()} 4 2")
++    elif mutation == "retained-child":
++        graph["nodes"]["const2"]["children"][0] = "int1"
++    elif mutation == "literal":
++        checks = checks.replace("(= reproduction_0_s3 2)", "(= reproduction_0_s3 3)")
++    elif mutation in {"forward", "cycle"}:
++        child = 6 if mutation == "forward" else 4
++        trace = trace.replace(f"; reproduction-node {b'int2'.hex()} 3", f"; reproduction-node {b'int2'.hex()} {child}")
++    elif mutation == "unknown-operator":
++        graph["nodes"]["int2"]["op"] = "MysteryInt"
++        checks = checks.replace("(Int reproduction_", "(MysteryInt reproduction_")
++    elif mutation == "unknown-field":
++        source = source.replace("(Const Constant Type Assumption)", "(Const Constant Type Assumption Type)")
++        graph["nodes"]["const2"]["children"].append("base")
++    elif mutation == "extra-fact":
++        checks = checks.replace("(check", "(check (= ignored 23)", 1)
++    elif mutation == "duplicate-variable":
++        checks = checks.replace("(check", "(check (= reproduction_0_s3 2)", 1)
++    elif mutation == "noncanonical-selected-variable":
++        checks = checks.replace("(= reproduction_0_s2 (Base", "(= reproduction_0_s02 (Base", 1)
++    elif mutation == "noncanonical-root-variable":
++        checks = checks.replace("(= reproduction_0_s6 (Function", "(= reproduction_0_s06 (Function", 1)
++    elif mutation == "root-equality":
++        checks = checks.replace(
++            "(= reproduction_0_seed4 reproduction_0_s6)", "(= reproduction_0_seed4 reproduction_0_s5)"
++        )
++    else:
++        source += "\n(function reproduction_lookup_value_0 () Expr :no-merge)"
++    with pytest.raises(CaptureError):
++        eggcc_dag_lookups(source, graph, trace, checks, roots, anchors)
++
++
++def test_eggcc_dag_lookups_reject_disconnected_selected_facts(eggcc_lookup_inputs: tuple) -> None:
++    source, graph, trace, checks, roots, anchors = copy.deepcopy(eggcc_lookup_inputs)
++    trace = trace.replace(
++        f"; reproduction-node {b'output'.hex()}",
++        f"; reproduction-node {b'primitive-one'.hex()}\n; reproduction-node {b'output'.hex()}",
++    )
++    for request, root in enumerate(roots):
++        prefix = f"reproduction_{request}_"
++        checks = checks.replace(prefix + "s6", prefix + "s7")
++        checks = checks.replace(f"(= {prefix}s7 (Function", f"(= {prefix}s6 1)\n  (= {prefix}s7 (Function")
++        root["selected_nodes"] = 8
++    with pytest.raises(CaptureError, match="disconnected"):
++        eggcc_dag_lookups(source, graph, trace, checks, roots, anchors)
++
++
++@pytest.mark.parametrize("missing", ["all-types", "one-type", "root-anchor", "erased-anchor"])
++def test_eggcc_dag_lookup_fallback_retains_every_structural_fact(anchorable_eggcc: tuple, missing: str) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"]
++    if missing == "all-types":
++        graph.pop("class_data")
++    elif missing == "one-type":
++        graph["class_data"].pop("Type-1")
++    elif missing == "root-anchor":
++        source += "\n(push)\n(pop)\n"
++    else:
++        graph["nodes"]["derived-ctx"] = {"op": "Derived", "children": ["derived-ctx"], "eclass": "Assumption-derived"}
++        graph["class_data"]["Assumption-derived"] = {"type": "Assumption"}
++        graph["nodes"]["const2"]["children"][2] = "derived-ctx"
++    events[0]["payload"]["program"] = source
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, unchanged, plan = eggcc_dag_lookups(source, graph, trace, checks, roots, anchors)
++    assert suffix == "" and unchanged == checks
++    assert plan["status"] == "structural-fallback" and plan["reason"]
++    assert egglog_trees(unchanged) == egglog_trees(checks)
++    if missing == "erased-anchor":
++        assert "Derived" in unchanged
++    session = eggcc_sessions(events)[0]
++    assert session["replay_program"] == replay
++    assert session["checks"] == checks
++    assert session["selection_lookups"]["status"] == "structural-fallback"
++
++
++def test_eggcc_dag_session_keeps_prefix_and_binds_each_alias_contract(anchorable_eggcc: tuple) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"] + "\n(subsume (IntT))\n"
++    events[0]["payload"]["program"] = source
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, final_checks, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    session, reconstructed = eggcc_sessions(events)
++    assert session["program"] == source
++    assert session["replay_program"] == replay
++    assert session["lookup_program"] == suffix
++    assert session["checks"] == final_checks
++    assert session["selection_lookups"] == plan
++    assert "selection_lookups" not in reconstructed
++    for root, original, request in zip(session["roots"], roots, plan["requests"], strict=True):
++        assert root["witness"]["input"] == original["witness"]["input"]
++        assert root["witness"]["selection_lookup"] == request
++        assert root["witness"]["structural_query_fact_count"] == original["witness"]["query_fact_count"]
++        assert root["witness"]["query_fact_count"] == 3
+ 
+ 
+ def test_native_event_files_must_be_contiguous_and_complete(tmp_path: Path, native_eggcc: tuple) -> None:
+@@ -544,6 +866,14 @@
+     parent_status: str,
+ ) -> None:
+     *_, events = anchorable_eggcc
++    # Exercise the actual compatibility adapter: its six original no-merge
++    # helpers must change, while the appended observer declarations must not.
++    events[0]["payload"]["program"] = (
++        "(sort ExprSetPrim (Set Expr))\n"
++        "(datatype Pointees (NoPointees))\n"
++        + "".join(f"(function {name} () i64 :no-merge)\n" for name in sorted(capture.EGGCC_HELPERS))
++        + events[0]["payload"]["program"]
++    )
+     checkout = tmp_path / "checkout"
+     checkout.mkdir()
+     (checkout / "source.bril").write_text("actual input")
+@@ -573,7 +903,6 @@
+         return PilotProcessResult(status, 0 if status == "success" else 1, 0.01, 0, stdout, stderr, None)  # type: ignore[arg-type]
+ 
+     monkeypatch.setattr(capture, "run_bounded_command", run)
+-    monkeypatch.setattr(capture, "adapt_eggcc", lambda source, **_: source)
+     if parent_status == "materialization-failure":
+ 
+         def incomplete(events: list[dict]) -> list[dict]:
+@@ -609,10 +938,24 @@
+         assert record["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
+         session = record["sessions"][0]
+         assert Path(session["raw"]).read_text() == events[0]["payload"]["program"]
+-        assert Path(session["replay"]).read_text().startswith(eggcc_sessions(events)[0]["replay_program"] + "\n")
++        generated = eggcc_sessions(events)[0]
++        prefix = capture.adapt_eggcc(generated["replay_program"], typing_oracle=False)
++        materialized = Path(session["replay"]).read_text()
++        assert materialized == prefix + generated["lookup_program"] + "\n" + generated["checks"]
++        assert prefix.count(":merge old") == len(capture.EGGCC_HELPERS) + 3
++        assert materialized.count(":no-merge") == len(session["selection_lookups"]["tables"])
+         assert session["source_anchors"]["status"] == "source-anchored"
+         assert len(session["source_anchors"]["observation_tables"]) == 3
+-        assert "replay_program" not in session
++        assert "replay_program" not in session and "lookup_program" not in session
++        assert session["output_contract"]["roots"] == session["roots"]
++        assert all(root["witness"]["query_fact_count"] == 3 for root in session["roots"])
++        for check in session["output_contract"]["checks"]:
++            all_tokens = [tokens for _, _, tokens in egglog_forms(materialized)]
++            assert all_tokens[check["command"]] == check["tokens"]
++            assert (
++                check["prefix_sha256"]
++                == hashlib.sha256(json.dumps(all_tokens[: check["command"]]).encode()).hexdigest()
++            )
+         assert session["source_anchors"]["original_program_sha256"] == session["raw_sha256"].removeprefix("sha256:")
+     elif parent_status == "materialization-failure":
+         assert record["source_completion"]["parent_completed"]

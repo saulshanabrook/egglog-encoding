@@ -1,0 +1,49 @@
+{
+  "native_execution": false,
+  "root_edits": false,
+  "commits": false,
+  "pytest": {
+    "status": "passed",
+    "tests": 114,
+    "files": [
+      "tests/test_suite_capture_eggcc_churchroad.py",
+      "tests/test_reproduction_prepare_eggcc.py",
+      "tests/test_reproduction_continue_churchroad.py",
+      "tests/test_reproduction_validation.py",
+      "tests/test_reproduction_inventory.py"
+    ]
+  },
+  "focused_capture_tests": 64,
+  "ruff_check": "passed",
+  "ruff_format_check": "passed",
+  "mypy": "passed-three-owned-files",
+  "offline_captures": [
+    "Orders dd29cd session000-005",
+    "Palindrome 3d199ccd session000-005",
+    "Bitwise f6fa81b0 session000-005"
+  ],
+  "orders_session004": {
+    "lookup_commands": 829,
+    "comparison": "exact token equality with sealed native-passed diagnostic"
+  },
+  "independent_review": {
+    "status": "no-outstanding-blockers",
+    "fixed_issue": "noncanonical selected-variable index spelling rejected; child and root regression tests added"
+  },
+  "baseline_sha256": {
+    "scripts/eggcc_churchroad_complete.py": "c812a7659d3e0a1cfe56348759d28f8f3bba89de32c0d4401153320621e54e0b",
+    "scripts/suite_capture_eggcc_churchroad.py": "f7ea649c1fe3efacf4ae97799e01cb4768ba7ef87b586497e7b71d1d67c8b214",
+    "tests/test_suite_capture_eggcc_churchroad.py": "ad60904db7418b41b83f368febf68df7734320d80765819201ce3bf328ccfaed"
+  },
+  "result_sha256": {
+    "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+    "scripts/suite_capture_eggcc_churchroad.py": "344c648d2f271bf20bc4c1f1f15b5526271cdee1e9b457d298bc582a4660fe4f",
+    "tests/test_suite_capture_eggcc_churchroad.py": "b02cac6ed0736de8b5bef3ceaeeeb4325e4a42c8475150235000911002667a55"
+  },
+  "patch_sha256": "eec6d99e1a9be4d4935ed98decf0c655bf78e7b70cedde736f2d934b43eff228",
+  "limitations": [
+    "ordinary-only; proof encoding unvalidated/unsupported for no-merge observers",
+    "root owns fresh native replay and negative-control validation after integration",
+    "whole-query structural fallback retains all constraints when source grounding or native sorts are unavailable"
+  ]
+}

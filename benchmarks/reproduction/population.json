@@ -1,0 +1,359 @@
+{
+  "eggcc": {
+    "paper": "https://ztatlock.net/pubs/2026-oopsla-eggcc/2026-oopsla-eggcc.pdf",
+    "source_revision": "16be0063133ef0b8ba21cd75ee377002dc3ecbed",
+    "expected_sources": 96,
+    "configurations": [
+      {
+        "id": "statewalk",
+        "scope": "all",
+        "native_options": [],
+        "basis": "Sections 8.1-8.3; default full optimization, with-context for Fenwick per infra/profile.py"
+      },
+      {
+        "id": "gurobi",
+        "scope": "bril-polybench",
+        "native_options": [
+          "--tiger-ilp",
+          "--ilp-solver",
+          "gurobi"
+        ],
+        "basis": "Section 8.2, Figures 10-11; selected output feeds later passes"
+      },
+      {
+        "id": "no-hacker",
+        "scope": "fenwick",
+        "native_options": [
+          "--with-context",
+          "--no-hacker-rules"
+        ],
+        "basis": "Section 8.3, Figure 12"
+      }
+    ],
+    "artifact_alternatives": {
+      "cbc": [
+        "--tiger-ilp",
+        "--ilp-solver",
+        "cbc"
+      ],
+      "sequential": [
+        "--eggcc-schedule",
+        "sequential"
+      ]
+    },
+    "excluded_units": "9,610 regionalized extraction problems are internal extraction inputs; downstream LLVM/clang optimization and runtime samples add no Egglog computation."
+  },
+  "hardboiled": {
+    "paper": "https://arxiv.org/pdf/2512.02371v2",
+    "source_revision": "b99cf0c6400e954a278f697bf3a0596ac3fa4f25",
+    "expected_paper_gpu_configurations": 29,
+    "artifact_extras": [
+      "hardboiled-resize-up"
+    ],
+    "amx_cells": [
+      {
+        "schedule": "reference",
+        "layout": "VNNI",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "reference",
+        "layout": "standard",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "loop-reordering",
+        "layout": "VNNI",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "loop-reordering",
+        "layout": "standard",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "preload-A",
+        "layout": "VNNI",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "preload-A",
+        "layout": "standard",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "preload-B",
+        "layout": "VNNI",
+        "supported": true,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "preload-B",
+        "layout": "standard",
+        "supported": false,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "software-pipelining",
+        "layout": "VNNI",
+        "supported": false,
+        "source_mapping": "unresolved"
+      },
+      {
+        "schedule": "software-pipelining",
+        "layout": "standard",
+        "supported": false,
+        "source_mapping": "unresolved"
+      }
+    ],
+    "mapping_requirement": "Map the seven supported Table I cells to the five published executables and configurations; five executables alone do not prove seven cells."
+  },
+  "misaal": {
+    "paper": "https://hydride.cs.illinois.edu/files/2025/04/MISAAL-PLDI-Camera-Ready-3.pdf",
+    "source_revision": "c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4",
+    "repair_revision": "44ff893445d664cd87f52b08a138260ed2015ba8",
+    "targets": [
+      "arm",
+      "hexagon",
+      "x86"
+    ],
+    "paper_rows": [
+      {
+        "paper": "sobel3x3",
+        "source_generator": "sobel3x3"
+      },
+      {
+        "paper": "sobel5x5",
+        "source_generator": "sobel5x5"
+      },
+      {
+        "paper": "dilate3x3",
+        "source_generator": "dilate3x3"
+      },
+      {
+        "paper": "dilate5x5",
+        "source_generator": "dilate5x5"
+      },
+      {
+        "paper": "dilate7x7",
+        "source_generator": "dilate7x7"
+      },
+      {
+        "paper": "blur3x3",
+        "source_generator": "blur3x3"
+      },
+      {
+        "paper": "blur5x5",
+        "source_generator": "blur5x5"
+      },
+      {
+        "paper": "blur7x7",
+        "source_generator": "blur7x7"
+      },
+      {
+        "paper": "median3x3",
+        "source_generator": "median3x3"
+      },
+      {
+        "paper": "gaussian3x3",
+        "source_generator": "gaussian3x3"
+      },
+      {
+        "paper": "gaussian5x5",
+        "source_generator": "gaussian5x5"
+      },
+      {
+        "paper": "gaussian7x7",
+        "source_generator": "gaussian7x7"
+      },
+      {
+        "paper": "l2norm",
+        "source_generator": "l2norm"
+      },
+      {
+        "paper": "conv_nn",
+        "source_generator": "conv_nn"
+      },
+      {
+        "paper": "conv3x3a16",
+        "source_generator": "conv3x3a16"
+      },
+      {
+        "paper": "depthwise_conv",
+        "source_generator": "depthwise_conv"
+      },
+      {
+        "paper": "avgpool",
+        "source_generator": "average_pool"
+      },
+      {
+        "paper": "maxpool",
+        "source_generator": "max_pool"
+      },
+      {
+        "paper": "fullyconnected",
+        "source_generator": "fully_connected"
+      },
+      {
+        "paper": "add",
+        "source_generator": "add"
+      },
+      {
+        "paper": "mul",
+        "source_generator": "mul"
+      },
+      {
+        "paper": "softmax",
+        "source_generator": "softmax"
+      },
+      {
+        "paper": "matmul[b=1]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "matmul[b=2]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "matmul[b=4]",
+        "source_generator": "batched_matmul_256_32bit"
+      },
+      {
+        "paper": "avgpool+add",
+        "source_generator": "average_pool_add"
+      },
+      {
+        "paper": "maxpool+add",
+        "source_generator": "max_pool_add"
+      },
+      {
+        "paper": "M+B",
+        "source_generator": "matmul_256_32bit_bias_add"
+      },
+      {
+        "paper": "M+B+R",
+        "source_generator": "matmul_256_32bit_bias_add_relu"
+      },
+      {
+        "paper": "M+B+G",
+        "source_generator": "matmul_256_32bit_bias_add_gelu"
+      },
+      {
+        "paper": "M+B+E",
+        "source_generator": "matmul_256_32bit_bias_add_add"
+      },
+      {
+        "paper": "M+B+R+M",
+        "source_generator": "matmul_bias_relu_matmul"
+      },
+      {
+        "paper": "M+B+G+M",
+        "source_generator": "matmul_bias_gelu_matmul"
+      }
+    ],
+    "expected_paper_cells": 99,
+    "expected_generators": 93,
+    "alias_basis": "Table 4 and benchmark test-run.cpp: batch sizes 1,2,4 share batched_matmul_256_32bit generator; runtime buffer dimensions do not generate new Egglog inputs."
+  },
+  "churchroad": {
+    "paper": "https://woset-workshop.github.io/PDFs/2024/7_Scaling_Program_Synthesis_Ba.pdf",
+    "source_revision": "9f82ca23b273a5a500cc6a1ca60b30d3c33c5721",
+    "paper_example_alias": "churchroad-wide_mul",
+    "alias_basis": "tests/integration_tests/wide_mul.v declares unsigned 16x32 multiply with 32-bit output, matching WOSET section II.",
+    "required_integration_tests": [
+      "churchroad-simple_mul",
+      "churchroad-wide_mul"
+    ],
+    "later_evaluation": {
+      "repository": "https://github.com/gussmith23/churchroad-evaluation",
+      "revision": "af615fa460667a08228a7e8f7e3d345b310e39ac",
+      "classification": "artifact-extra",
+      "reason": "README dates environment to June 2025; separate from WOSET 2024 population.",
+      "sources": [
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_8_8_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_8_16_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_16_16_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_32_32_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_16_32_48_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_18_18_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_18_36_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_18_25_43_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_32_32_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_32_64_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_48_80_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_32_64_96_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_64_64_64_bit.sv",
+        "benchmarks/mul/0_stage/mul_0_stage_unsigned_64_64_128_bit.sv",
+        "benchmarks/mul/1_stage/mul_1_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/2_stage/mul_2_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/mul/3_stage/mul_3_stage_unsigned_8_16_24_bit.sv",
+        "benchmarks/muladd/muladd_unsigned_0stage_16_16_32_32.v",
+        "benchmarks/muladd/muladd_0_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_1_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_2_stage_signed_8_8_8_8_bit.sv",
+        "benchmarks/muladd/muladd_0_stage_signed_32_32_32_32_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_8_8_16_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_16_16_32_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_32_32_64_bit.sv",
+        "benchmarks/mac/mac_0_stage_unsigned_64_64_128_bit.sv"
+      ]
+    },
+    "non_egglog": "Rosette solver comparison and device simulation are not standalone Egglog workloads."
+  },
+  "dialegg": {
+    "paper": "https://azizzayed.com/publications/dialegg/zayedcgo24.pdf",
+    "source_revision": "4d0d522e98c15becdc5e7d711348cb0891ff0d44",
+    "expected_runtime_parents": 15,
+    "expected_timer_parents": 9,
+    "runtime_programs": [
+      "image_conversion",
+      "vector_norm",
+      "polynomial",
+      "2mm",
+      "3mm"
+    ],
+    "runtime_passes": {
+      "eqsat": [
+        "--eq-sat"
+      ],
+      "canonicalize-eqsat": [
+        "--canonicalize",
+        "--eq-sat"
+      ],
+      "eqsat-canonicalize": [
+        "--eq-sat",
+        "--canonicalize"
+      ]
+    },
+    "timer_nmm": [
+      2,
+      3,
+      10,
+      20,
+      40,
+      80
+    ],
+    "artifact_extra_nmm": [
+      160
+    ],
+    "non_egglog": "Canonicalization-only, hand-written MLIR optimization, native execution, and repeated timing samples do not add Egglog workloads."
+  },
+  "speq": {
+    "paper": "https://www.paramathic.com/wp-content/uploads/2024/04/REV_PLDI_rev2.pdf",
+    "source_revision": "00bd6254b3832d94558b7c38a394ea03d01a2763",
+    "artifact": "https://zenodo.org/records/10963236",
+    "expected_applications": 10,
+    "missing_exact_inputs": [
+      "speq-tpal",
+      "speq-tsvc2"
+    ],
+    "missing_requirement": "Recover actual application source/IR and registration/setup; reference programs do not substitute for paper inputs."
+  }
+}

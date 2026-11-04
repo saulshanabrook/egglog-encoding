@@ -1,0 +1,9 @@
+{
+  "root": "/Users/saul/p/egglog-encoding",
+  "mirror": "/Users/saul/p/wt/egglog-encoding/eggcc-dag-existing-lookups",
+  "owned_files": {
+    "scripts/eggcc_churchroad_complete.py": "c812a7659d3e0a1cfe56348759d28f8f3bba89de32c0d4401153320621e54e0b",
+    "scripts/suite_capture_eggcc_churchroad.py": "f7ea649c1fe3efacf4ae97799e01cb4768ba7ef87b586497e7b71d1d67c8b214",
+    "tests/test_suite_capture_eggcc_churchroad.py": "ad60904db7418b41b83f368febf68df7734320d80765819201ce3bf328ccfaed"
+  }
+}
