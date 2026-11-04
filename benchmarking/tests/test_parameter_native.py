@@ -32,10 +32,10 @@ def test_native_command_uses_the_physical_input(treatment: Treatment, tmp_path: 
     assert targets.workload_command(binary, logical, treatment) == expected
     with pytest.raises(ValueError, match="native .in"):
         targets.workload_command(binary, replace(logical, binary_inputs=()), treatment)
-    with pytest.raises(ValueError, match="only supported by egglog"):
-        targets.workload_command(binary, native, treatment, "ee")
-    with pytest.raises(ValueError, match="only supported by egglog"):
-        models.EndpointRequest(make_target().request, treatment, "ee")
+    with pytest.raises(ValueError, match="only the ee disequality encoding is supported"):
+        targets.workload_command(binary, native, treatment, "nee")
+    with pytest.raises(ValueError, match="only the ee disequality encoding is supported"):
+        models.EndpointRequest(make_target().request, treatment, "nee")
     args = benchmark.parse_benchmark_args([str(native.absolute_path), "--treatment", treatment])
     assert benchmark.endpoint_requests(args)[1].treatment == treatment
 

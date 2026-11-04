@@ -8,11 +8,11 @@
       ],
       "treatments": [
         "egg-de",
-        "egg-nee",
+        "egg-ee",
         "off"
       ],
       "checks": [
-        "egg-ee",
+        "egg-nee",
         "egg-oee",
         "term",
         "proof-testing"

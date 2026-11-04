@@ -29,7 +29,7 @@ def make_record(
     binary_sha256: str = "sha256:bin",
     file_sha256: str = "sha256:file",
     treatment: models.Treatment = "off",
-    disequality_encoding: models.DisequalityEncoding = "nee",
+    disequality_encoding: models.DisequalityEncoding = "ee",
     timeout_sec: int = 120,
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES,
     target_label: str | None = None,

@@ -19,8 +19,7 @@ mod runtime;
 /// An e-graph with the slotted runtime and egglog's built-in schedule semantics.
 /// Evaluate [`Compiler::compile`]'s output with this graph.
 pub fn new_egraph() -> egglog::EGraph {
-    let mut graph =
-        crate::new_experimental_egraph_with_options(false, crate::DisequalityEncoding::default());
+    let mut graph = crate::new_experimental_egraph_with_options(false);
     register(&mut graph);
     graph
 }

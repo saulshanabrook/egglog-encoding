@@ -34,7 +34,7 @@ def test_strict_outcomes_are_separate_and_safety_stops_halt_before_next_workload
         return processes.PilotProcessResult(status, 0, 0.5, prefix, prefix, "diagnostic result")  # type: ignore[arg-type]
 
     monkeypatch.setattr(validation, "run_bounded_command", run)
-    code = validation.main(["--binary", str(binary), "--disequality-encoding", "ee"])
+    code = validation.main(["--binary", str(binary)])
     assert code == (0 if status == "success" else 1)
     safety = status in {"resource-stopped", "memory-limit", "timed-out"}
     assert len(commands) == (1 if status == "resource-stopped" else 2)
@@ -91,7 +91,7 @@ def test_atomic_outcome_write_preserves_metadata_and_unchanged_timestamp(tmp_pat
         "fact_directory_sha256": "",
         "binary_sha256": "sha256:bin",
         "timeout_sec": 300,
-        "disequality_encoding": "nee",
+        "disequality_encoding": "ee",
         "kind": "validation",
         "policy": suites.VALIDATION_POLICY,
         "status": "failure",
@@ -134,7 +134,7 @@ def test_concurrent_outcome_writer_cannot_erase_history(
         "fact_directory_sha256": "",
         "binary_sha256": "sha256:bin",
         "timeout_sec": 300,
-        "disequality_encoding": "nee",
+        "disequality_encoding": "ee",
         "kind": "validation",
         "policy": suites.VALIDATION_POLICY,
         "status": "success",

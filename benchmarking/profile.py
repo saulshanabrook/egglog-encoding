@@ -67,7 +67,7 @@ class ProfileRequest:
     mode: ProfileMode
     open_after: bool
     force_run: bool
-    disequality_encoding: DisequalityEncoding = "nee"
+    disequality_encoding: DisequalityEncoding = "ee"
     top: int = DEFAULT_PROFILE_TOP
     show_summary: bool = True
     output_format: OutputFormat = "rich"
@@ -81,7 +81,6 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
         description="Record or reuse a cached Samply CPU profile for one benchmark workload.",
     )
     parser.add_argument("file", help="benchmark workload file to profile")
-    parser.add_argument("--disequality-encoding", choices=("nee", "ee"), default="nee")
     parser.add_argument(
         "--target",
         default=".",
@@ -160,7 +159,7 @@ def profile_cache_path(
     file_sha256: str,
     treatment: Treatment,
     mode: ProfileMode,
-    disequality_encoding: DisequalityEncoding = "nee",
+    disequality_encoding: DisequalityEncoding = "ee",
 ) -> Path:
     return (
         profiles_dir
@@ -318,9 +317,6 @@ def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
     files = resolve_files([str(args.file)], invocation_cwd)
     treatment = cast(Treatment, str(args.treatment))
-    disequality_encoding = cast(DisequalityEncoding, args.disequality_encoding)
-    if TREATMENT_SPECS[treatment].binary_name != "egglog-experimental" and disequality_encoding != "nee":
-        raise ValueError("disequality encoding selection is only supported by egglog treatments")
     file = files[0].for_binary(TREATMENT_SPECS[treatment].binary_name)
     validate_binary_workload(file, treatment)
     if args.iterations is not None:
@@ -335,7 +331,7 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         file=file,
         target_request=parse_target(str(args.target)),
         treatment=treatment,
-        disequality_encoding=disequality_encoding,
+        disequality_encoding="ee",
         timeout_sec=int(args.timeout_sec),
         memory_limit_bytes=args.memory_limit_bytes,
         profiles_dir=profiles_dir,

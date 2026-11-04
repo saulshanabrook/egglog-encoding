@@ -237,13 +237,9 @@ The baseline and candidate may share a binary, as the default proof-overhead
 comparison does, but their endpoint identities—binary SHA-256, treatment,
 disequality encoding and allocator cap—must differ.
 
-For disequality programs, `--disequality-encoding {nee,ee}` selects the candidate
-encoding and `--compare-disequality-encoding {nee,ee}` selects the baseline.
-Both default to `nee`. Encodings may be compared with the same binary and
-treatment. See the [parameter-analysis guide](benchmarks/disequality/README.md)
-for semantics, provenance, and comparison commands. The native `egg-de`,
-`egg-ee`, `egg-nee`, and `egg-oee` treatments use their corresponding `.in`
-input and fixed encoding; `--disequality-encoding` applies only to Egglog.
+Disequality programs use equality embedding (EE). The native parameter-analysis
+treatments use their own `.in` input and fixed encoding; they do not support
+Egglog proof modes.
 
 ### Files
 
@@ -286,9 +282,9 @@ corpus:
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
-| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under NE and EE |
+| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under EE |
 
-The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
+The [disequality workload](benchmarks/disequality/README.md) uses equality embedding (EE).
 Its full-size proof runs require minutes and substantial memory, so the default
 suite is no longer a quick check. Use explicit file paths for a smaller subset
 or `--rounds 1` for an initial diagnostic.

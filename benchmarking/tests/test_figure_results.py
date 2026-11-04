@@ -98,7 +98,7 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                 "binary_sha256": "current",
                 "file_sha256": label,
                 "treatment": treatment,
-                "disequality_encoding": "nee",
+                "disequality_encoding": "ee",
             }
             indices = [i * 10 + j * 3 + k for k in range(3)]
             inputs.append(
@@ -383,7 +383,7 @@ def test_recording_alias_manifest_validation_failure_vetoes_exported_successes(
                         "file_sha256": file.sha256,
                         "family": "eggcc",
                         "label": "case",
-                        "validation_failures": {"sha256:bin/nee": "Strict failure"},
+                        "validation_failures": {"sha256:bin/ee": "Strict failure"},
                     }
                 ],
                 "unavailable_cases": [],

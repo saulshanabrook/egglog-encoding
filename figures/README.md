@@ -39,7 +39,7 @@ before copying it, and remove obsolete artifacts explicitly when needed.
 
 | Figure | Comparison |
 | --- | --- |
-| `disequality-runtime` | Runtime/RSS boxplots with outliers for native DE, native NEE and relation-based Egglog NEE; proofs off |
+| `disequality-runtime` | Runtime/RSS boxplots with outliers for native DE, native EE and Egglog EE; proofs off |
 | `math-runtime` | Twelve-round Math; Egg/Egglog off/checked proofs; time, peak RSS and within-engine overhead |
 | `corpus-congruence-cdf` | Congruence-only time and peak-RSS overhead across the application replays |
 | `corpus-proof-recording-cdf` | Recording-only proof time and peak-RSS overhead across the same replays; strict correctness coverage retained |
@@ -113,7 +113,7 @@ ordinary/candidate table counts. Rust executes that case, rejecting unexpected
 passes and other failures. Figure timings include these known table-size cases;
 only the figure-local timing inputs omit `expected-failure` exclusions.
 All correctness checks and their exact expectations remain unchanged.
-The disequality catalog retains EE/OEE under correctness-only `checks`.
+The disequality catalog retains native NEE/OEE under correctness-only `checks`.
 Timed `proofs`/`proof-extraction` aliases inherit `proof-testing` oracles and
 exclusions; native Egg aliases similarly inherit `egg-proof-testing`.
 Rust normalizes these names before registration and ignore filtering. Figure

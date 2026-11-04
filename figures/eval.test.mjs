@@ -15,7 +15,7 @@ const input = (id, treatment, changes={}) => ({logical_id:id, label:id, family:'
   binary_sha256:'current', memory_limit_bytes:null, treatment, exclusion:null, validation_failures:{}, ...changes});
 function group(id, treatment, values, changes={}) {
   const key={binary_sha256:'current',file_sha256:id,treatment,
-    disequality_encoding:'nee'};
+    disequality_encoding:'ee'};
   return {key,labels:['figures'],samples:values.map((value,index)=>({...key,row_index:index,
     started_at:new Date(Date.UTC(2026,9,1,0,0,index)).toISOString(),status:'success',timeout_sec:300,
     wall_sec:value,max_rss_bytes:value===null?null:value*1048576,...changes}))};
@@ -118,7 +118,7 @@ test('missing or zero RSS and strict validation veto only affected boxes and est
   const result=await evaluate('math-runtime',inputs,groups);
   assert.deepEqual(find(result,'ratio_points').map(p=>[p.datum.metric,p.datum.ratio]),[['Runtime',2],['Runtime',2]]);
   assert.equal(result.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.fill==='#d9d9d9').length,6);
-  const strict=await evaluate('math-runtime',inputs.map(p=>({...p,validation_failures:{'current/nee':'Known strict failure'}})),
+  const strict=await evaluate('math-runtime',inputs.map(p=>({...p,validation_failures:{'current/ee':'Known strict failure'}})),
     treatments.map((t,i)=>group('a',t,[i%2?4:2,i%2?4:2])));
   assert.equal(strict.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.fill==='#d9d9d9').length,6);
   assert.deepEqual(find(strict,'ratio_points').map(p=>[p.datum.engine,p.datum.metric]),[['Egg','Runtime'],['Egg','Peak RSS']]);
@@ -143,8 +143,8 @@ test('all figure designs preserve missing conditions and render without warnings
 });
 
 test('disequality standard boxes show only native 1.5-IQR outliers, retaining all three treatments',async()=>{
-  assert.deepEqual(figures['disequality-runtime'].treatments,['egg-de','egg-nee','off']);
-  assert.ok(['egg-ee','egg-oee'].every(t=>figures['disequality-runtime'].checks.includes(t)));
+  assert.deepEqual(figures['disequality-runtime'].treatments,['egg-de','egg-ee','off']);
+  assert.ok(['egg-nee','egg-oee'].every(t=>figures['disequality-runtime'].checks.includes(t)));
   const treatments=figures['disequality-runtime'].treatments;
   const groups=treatments.map((t,i)=>group('a',t,[1,1,1,1,1,1,1,1,1,100].map(v=>v*(i+1))));
   const result=await evaluate('disequality-runtime',treatments.map(t=>input('a',t)),groups,10);
@@ -239,7 +239,7 @@ test('CDF recording aliases retain strict vetoes and baseline-wall cohort with m
     assert.equal(find(result,'cdf_coverage').length,0);
     assert.doesNotMatch(result.svg,/failed,|missing|excluded|not established/);
     assert.equal(find(result,'cdf_points').length,0,'compact ratios need no overview');
-    const vetoed=inputs.map(i=>({...i,validation_failures:{'current/nee':'Known strict failure'}}));
+    const vetoed=inputs.map(i=>({...i,validation_failures:{'current/ee':'Known strict failure'}}));
     const strict=await evaluate(`corpus-${name}-cdf`,vetoed,groups);
     assert.equal(find(strict,'cdf_points_zoom').length,name==='proof-recording'?0:4);
     groups[0].samples[0].max_rss_bytes=null;
@@ -429,7 +429,7 @@ test('CDF titles distinguish congruence, recording-only and full checked proof w
     assert.ok(result.svg.includes(title),`missing explicit title for ${treatment}`);
     assert.ok(result.svg.includes(subtitle),`missing work boundary for ${treatment}`);
     assert.ok(find(result,'cdf_points_zoom').every(p=>p.datum.mode===mode&&p.datum.ratio===2));
-    const vetoed=await evaluate('corpus-proof-recording-cdf',inputs.map(i=>({...i,validation_failures:{'current/nee':'Strict failure'}})),groups,2,null,treatments);
+    const vetoed=await evaluate('corpus-proof-recording-cdf',inputs.map(i=>({...i,validation_failures:{'current/ee':'Strict failure'}})),groups,2,null,treatments);
     assert.equal(find(vetoed,'cdf_points_zoom').length,treatment==='term'?2:0,'both timed proof modes retain the strict veto');
   }
 });

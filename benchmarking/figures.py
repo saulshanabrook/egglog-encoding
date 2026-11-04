@@ -364,7 +364,7 @@ def render_figures(
                         if excluded is not None:
                             rows = ()
                     validation_issue = (
-                        info["validation_failures"].get(f"{key.binary_sha256}/nee", "")
+                        info["validation_failures"].get(f"{key.binary_sha256}/{key.disequality_encoding}", "")
                         if info and correctness_mode == "proof-testing"
                         else ""
                     )

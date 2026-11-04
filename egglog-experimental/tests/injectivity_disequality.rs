@@ -1,26 +1,24 @@
 //! Read-only disequality witnesses, including storage and scope regressions.
 
 use egglog::EGraph;
-use egglog_experimental::{DisequalityEncoding, new_experimental_egraph_with_options};
+use egglog_experimental::new_experimental_egraph_for_proofs;
 
-fn for_encodings(program: &str, mut verify: impl FnMut(&mut EGraph, DisequalityEncoding)) {
-    for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
-        let mut graph = new_experimental_egraph_with_options(false, encoding);
-        graph
-            .parse_and_run_program(None, program)
-            .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
-        verify(&mut graph, encoding);
-    }
+fn with_program(program: &str, mut verify: impl FnMut(&mut EGraph)) {
+    let mut graph = new_experimental_egraph_for_proofs();
+    graph
+        .parse_and_run_program(None, program)
+        .unwrap_or_else(|error| panic!("{error}"));
+    verify(&mut graph);
 }
 
 #[test]
 fn native_fields_supply_witnesses_without_assertion_tables_or_pair_storage() {
-    for_encodings(
+    with_program(
         "(datatype Input (A) (B))
          (datatype Output (Num i64 :injective) (Mixed Input i64 Input i64 :injective))
          (Num 1) (Num 2)
          (Mixed (A) 1 (B) 2) (Mixed (A) 9 (B) 2) (Mixed (A) 1 (B) 9)",
-        |graph, encoding| {
+        |graph| {
             let rows = graph.num_tuples();
             let tables = graph.get_function_names();
             assert!(!tables.iter().any(|name| name.starts_with("@disequality")));
@@ -34,7 +32,7 @@ fn native_fields_supply_witnesses_without_assertion_tables_or_pair_storage() {
                      (fail (check (known-disequal? (Num 1) (Num 1))))
                      (fail (check (known-disequal? (A) (B))))",
                 )
-                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
+                .unwrap_or_else(|error| panic!("{error}"));
             assert_eq!(graph.num_tuples(), rows);
             assert_eq!(graph.get_function_names(), tables);
         },
@@ -43,7 +41,7 @@ fn native_fields_supply_witnesses_without_assertion_tables_or_pair_storage() {
 
 #[test]
 fn explicit_eq_fields_propagate_at_each_position_and_respect_opt_in() {
-    for_encodings(
+    with_program(
         "(datatype Term (A) (B) (C) (Pair Term Term :injective) (Other Term Term))
          (constructor Mixed (i64 Term i64 Term) Term :injective)
          (Pair (A) (C)) (Pair (B) (C)) (Pair (C) (A)) (Pair (C) (B))
@@ -51,7 +49,7 @@ fn explicit_eq_fields_propagate_at_each_position_and_respect_opt_in() {
          (Mixed 1 (A) 2 (C)) (Mixed 1 (B) 2 (C))
          (Mixed 1 (C) 2 (A)) (Mixed 1 (C) 2 (B))
          (disequal (A) (B))",
-        |graph, encoding| {
+        |graph| {
             let rows = graph.num_tuples();
             graph
                 .parse_and_run_program(
@@ -64,7 +62,7 @@ fn explicit_eq_fields_propagate_at_each_position_and_respect_opt_in() {
                      (fail (check (known-disequal? (Pair (A) (C)) (Pair (C) (A)))))
                      (fail (check (known-disequal? (A) (C))))",
                 )
-                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
+                .unwrap_or_else(|error| panic!("{error}"));
             assert_eq!(graph.num_tuples(), rows);
         },
     );
@@ -72,13 +70,13 @@ fn explicit_eq_fields_propagate_at_each_position_and_respect_opt_in() {
 
 #[test]
 fn reverse_witnesses_are_unary_only_and_cross_sort() {
-    for_encodings(
+    with_program(
         "(datatype Input (A) (B) (C) (D) (E) (G))
          (datatype Output (F Input :injective) (Pair Input Input :injective) (Other Input))
          (disequal (F (B)) (F (A)))
          (disequal (Pair (C) (E)) (Pair (D) (G)))
          (disequal (Other (C)) (Other (D)))",
-        |graph, encoding| {
+        |graph| {
             let rows = graph.num_tuples();
             graph
                 .parse_and_run_program(
@@ -88,7 +86,7 @@ fn reverse_witnesses_are_unary_only_and_cross_sort() {
                      (fail (check (known-disequal? (C) (D))))
                      (fail (check (known-disequal? (E) (G))))",
                 )
-                .unwrap_or_else(|error| panic!("{encoding:?}: {error}"));
+                .unwrap_or_else(|error| panic!("{error}"));
             assert_eq!(graph.num_tuples(), rows);
         },
     );
@@ -96,7 +94,7 @@ fn reverse_witnesses_are_unary_only_and_cross_sort() {
 
 #[test]
 fn queries_without_marked_constructors_or_assertion_tables_remain_valid() {
-    for_encodings("(datatype Term (A) (B)) (A) (B)", |graph, _| {
+    with_program("(datatype Term (A) (B)) (A) (B)", |graph| {
         graph
             .parse_and_run_program(
                 None,
@@ -113,10 +111,10 @@ fn queries_without_marked_constructors_or_assertion_tables_remain_valid() {
 
 #[test]
 fn recursive_search_terminates_without_growing_the_egraph() {
-    for_encodings(
+    with_program(
         "(datatype Term (A) (B) (Wrap Term :injective) (Num i64 :injective))
          (union (A) (Wrap (A))) (union (B) (Wrap (B)))",
-        |graph, _| {
+        |graph| {
             let rows = graph.num_tuples();
             graph
                 .parse_and_run_program(None, "(fail (check (known-disequal? (A) (B))))")
@@ -139,12 +137,12 @@ fn recursive_search_terminates_without_growing_the_egraph() {
         "(disequal (A) (B))".into(),
         format!("(disequal {left} {right})"),
     ] {
-        for_encodings(
+        with_program(
             &format!(
                 "(datatype Term (A) (B) (Wrap Term :injective))
                  (let left {left}) (let right {right}) {assertion}"
             ),
-            |graph, _| {
+            |graph| {
                 let rows = graph.num_tuples();
                 graph
                     .parse_and_run_program(
@@ -162,7 +160,7 @@ fn recursive_search_terminates_without_growing_the_egraph() {
 
 #[test]
 fn metadata_and_assertions_follow_pop_and_failed_declarations() {
-    for_encodings("(datatype Term (A) (B))", |graph, _| {
+    with_program("(datatype Term (A) (B))", |graph| {
         graph
             .parse_and_run_program(
                 None,
@@ -191,14 +189,14 @@ fn metadata_and_assertions_follow_pop_and_failed_declarations() {
 #[test]
 fn subsumed_rows_and_current_canonical_ids_supply_witnesses() {
     for assertion in ["(disequal a b)", "(disequal fa fb)"] {
-        for_encodings(
+        with_program(
             &format!(
                 "(datatype Term (A) (B) (C) (D) (F Term :injective))
                  (let a (A)) (let b (B)) (let fa (F a)) (let fb (F b))
                  (subsume (F a)) {assertion}
                  (union a (C)) (union b (D))"
             ),
-            |graph, _| {
+            |graph| {
                 let rows = graph.num_tuples();
                 graph
                     .parse_and_run_program(
@@ -215,7 +213,7 @@ fn subsumed_rows_and_current_canonical_ids_supply_witnesses() {
 
 #[test]
 fn predicate_is_usable_in_a_naive_rule_body() {
-    for_encodings(
+    with_program(
         "(datatype Term (Num i64 :injective))
          (Num 1) (Num 2)
          (relation Found (Term Term))
@@ -224,64 +222,60 @@ fn predicate_is_usable_in_a_naive_rule_body() {
          (run 1)
          (check (Found (Num 1) (Num 2)))
          (fail (check (Found (Num 1) (Num 1))))",
-        |_, _| {},
+        |_| {},
     );
 }
 
 #[test]
 fn predicate_requires_two_values_of_the_same_eq_sort() {
-    for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
-        for source in [
-            "(check (known-disequal? 1 2))",
-            "(datatype A (X)) (datatype B (Y)) (check (known-disequal? (X) (Y)))",
-            "(datatype A (X)) (check (known-disequal? (X)))",
-            "(sort Items (Vec i64)) (check (known-disequal? (vec-of 1) (vec-of 2)))",
-        ] {
-            assert!(
-                new_experimental_egraph_with_options(false, encoding)
-                    .parse_and_run_program(None, source)
-                    .is_err(),
-                "{encoding:?}: {source}"
-            );
-        }
+    for source in [
+        "(check (known-disequal? 1 2))",
+        "(datatype A (X)) (datatype B (Y)) (check (known-disequal? (X) (Y)))",
+        "(datatype A (X)) (check (known-disequal? (X)))",
+        "(sort Items (Vec i64)) (check (known-disequal? (vec-of 1) (vec-of 2)))",
+    ] {
+        assert!(
+            new_experimental_egraph_for_proofs()
+                .parse_and_run_program(None, source)
+                .is_err(),
+            "{source}"
+        );
     }
 }
 
 #[test]
 fn new_query_is_rejected_by_term_and_proof_encoding() {
-    for encoding in [DisequalityEncoding::Nee, DisequalityEncoding::Ee] {
-        for proofs in [false, true] {
-            let graph = new_experimental_egraph_with_options(false, encoding);
-            let mut graph = if proofs {
-                graph.with_proofs_enabled().with_proof_testing()
-            } else {
-                graph.with_term_encoding_enabled()
-            };
-            let error = graph
-                .parse_and_run_program(
-                    None,
-                    "(datatype Term (Num i64 :injective))
-                     (relation Found (Term Term))
-                     (rule ((= x (Num a)) (= y (Num b)) (known-disequal? x y))
-                           ((Found x y)) :naive)",
-                )
-                .unwrap_err();
-            assert!(
-                matches!(&error, egglog::Error::UnsupportedProofCommand { .. })
-                    && error.to_string().contains("lacks a validator"),
-                "{encoding:?}, proofs={proofs}: {error}"
-            );
-        }
+    for proofs in [false, true] {
+        let graph = new_experimental_egraph_for_proofs();
+        let mut graph = if proofs {
+            graph.with_proofs_enabled().with_proof_testing()
+        } else {
+            graph.with_term_encoding_enabled()
+        };
+        let error = graph
+            .parse_and_run_program(
+                None,
+                "(datatype Term (Num i64 :injective))
+                 (relation Found (Term Term))
+                 (rule ((= x (Num a)) (= y (Num b)) (known-disequal? x y))
+                       ((Found x y)) :naive)",
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, egglog::Error::UnsupportedProofCommand { .. })
+                && error.to_string().contains("lacks a validator"),
+            "proofs={proofs}: {error}"
+        );
     }
 }
 
 #[test]
 fn keep_best_preserves_constructor_annotation_metadata() {
-    for_encodings(
+    with_program(
         "(datatype Term (Num i64 :injective))
          (Num 1) (Num 2)
          (keep-best \"Num\")
          (check (known-disequal? (Num 1) (Num 2)))",
-        |_, _| {},
+        |_| {},
     );
 }

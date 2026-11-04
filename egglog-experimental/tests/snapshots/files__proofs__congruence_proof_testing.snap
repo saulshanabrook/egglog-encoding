@@ -1,21 +1,35 @@
 ---
 source: egglog-experimental/tests/files.rs
+assertion_line: 59
 expression: snapshot
 ---
 (
-(let t (@disequality-ne-Term (f (A)) (f (B))))
-(Rule
-  (= (@disequality-contradiction) (@disequality-contradiction))
-  (name "@@disequality-ne-self-Term")
-  (premises
-    (Congr
-      (= t (@disequality-ne-Term (f (A)) (f (A))))
-      (Fiat (= t t))
-      (Congr
-        (= (f (B)) (f (A)))
-        (Fiat (= (f (B)) (f (B))))
-        (Sym (= (B) (A)) (Fiat (= (A) (B))))
-        0)
-      1))
-  (substitution (x (f (A)))))
+(let t (@disequality-eq-Term (f (A)) (f (B))))
+(let t_1 (@disequality-eq-Term (f (A)) (f (A))))
+(let prf
+  (Sym
+                (= t_1 t)
+                (Congr
+                  (= t t_1)
+                  (Fiat (= t t))
+                  (Congr
+                    (= (f (B)) (f (A)))
+                    (Fiat (= (f (B)) (f (B))))
+                    (Sym (= (B) (A)) (Fiat (= (A) (B))))
+                    0)
+                  1)))
+(let prf_1 (Fiat (= t (@disequality-false))))
+(Trans
+  (= (@disequality-true) (@disequality-false))
+  (Trans
+    (= (@disequality-true) t)
+    (Sym
+      (= (@disequality-true) t_1)
+      (Rule
+        (= t_1 (@disequality-true))
+        (name "@@disequality-ee-reflexive-left-Term")
+        (premises (Trans (= t_1 (@disequality-false)) prf prf_1))
+        (substitution (x (f (A))) (y (f (A))))))
+    prf)
+  prf_1)
 )

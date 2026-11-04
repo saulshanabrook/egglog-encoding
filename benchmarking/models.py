@@ -16,6 +16,7 @@ from .engines import TREATMENT_SPECS, Treatment
 from .native_memory import NATIVE_LIMIT_BYTES
 
 Status = Literal["success", "timed-out", "memory-limited", "failure"]
+# NEE remains a provenance tag for historical cache rows, never a new request.
 DisequalityEncoding = Literal["nee", "ee"]
 DetailLevel = Literal["summary", "files", "phases", "rulesets"]
 ExclusionKind = Literal["resource", "unsupported", "expected-failure"]
@@ -77,7 +78,7 @@ class FileSpec:
     def exclusion_for(
         self,
         treatment: Treatment,
-        encoding: DisequalityEncoding = "nee",
+        encoding: DisequalityEncoding = "ee",
         *,
         memory_limit_bytes: int | None,
     ) -> Exclusion | None:
@@ -173,12 +174,12 @@ class EndpointRequest:
 
     target: TargetRequest
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "nee"
+    disequality_encoding: DisequalityEncoding = "ee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
     def __post_init__(self) -> None:
-        if TREATMENT_SPECS[self.treatment].binary_name != "egglog-experimental" and self.disequality_encoding != "nee":
-            raise ValueError("disequality encoding selection is only supported by egglog treatments")
+        if self.disequality_encoding != "ee":
+            raise ValueError("only the ee disequality encoding is supported")
         if not TREATMENT_SPECS[self.treatment].allocator_limit:
             object.__setattr__(self, "memory_limit_bytes", None)
         if self.memory_limit_bytes is not None and self.memory_limit_bytes < 1:
@@ -196,7 +197,7 @@ class BenchmarkEndpoint:
     target: TargetRow
     binary_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "nee"
+    disequality_encoding: DisequalityEncoding = "ee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
     def __post_init__(self) -> None:

@@ -49,8 +49,6 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     """Parse the public pair-only benchmark command."""
 
     parser = argparse.ArgumentParser(description="Collect or reuse one engine benchmark comparison.")
-    parser.add_argument("--disequality-encoding", choices=("nee", "ee"), default="nee")
-    parser.add_argument("--compare-disequality-encoding", choices=("nee", "ee"), default="nee")
     parser.add_argument("files", nargs="*", help="workload files to benchmark")
     parser.add_argument(
         "--target",
@@ -148,14 +146,12 @@ def endpoint_requests(args: argparse.Namespace) -> tuple[EndpointRequest, Endpoi
     baseline = EndpointRequest(
         baseline_target,
         cast(Treatment, str(args.compare_treatment)),
-        args.compare_disequality_encoding,
-        args.memory_limit_bytes,
+        memory_limit_bytes=args.memory_limit_bytes,
     )
     candidate = EndpointRequest(
         candidate_target,
         cast(Treatment, str(args.treatment)),
-        args.disequality_encoding,
-        args.memory_limit_bytes,
+        memory_limit_bytes=args.memory_limit_bytes,
     )
     if baseline == candidate:
         raise ValueError("baseline and candidate endpoints must be different")

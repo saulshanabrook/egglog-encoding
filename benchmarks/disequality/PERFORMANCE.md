@@ -1,7 +1,7 @@
 # What the disequality benchmark measures
 
-The parameter-analysis benchmark compares two Egglog disequality encodings,
-their proof overhead, and the four native implementations supplied by the
+The parameter-analysis benchmark compares Egglog equality embedding (EE),
+its proof overhead, and the four native implementations supplied by the
 authors of [Dis-Equality Graphs](https://doi.org/10.1145/3704913). It uses one
 fixed author-supplied corpus, not the paper's full parameter sweep.
 
@@ -27,16 +27,14 @@ Egglog proof validity; strict proof checking remains a separate validation.
 
 ## Why encoding overhead differs from proof overhead
 
-Both [compiler passes](../../egglog-experimental/src/disequality.rs) lower
+The [compiler pass](../../egglog-experimental/src/disequality.rs) lowers
 disequality to ordinary egglog before term or proof encoding, without changing
-union-find. NE stores a relation between terms and detects a self-edge after
-congruence. EE creates equality terms in a private truth sort; its propagation
+union-find. EE creates equality terms in a private truth sort; its propagation
 rules make `true` and `false` equal when a contradiction is found.
 
-The same source program exercises these different representations. An NE-versus-EE
-comparison holds the input, executable, and proof treatment fixed. A proof-overhead
-comparison instead holds the encoding fixed and changes the proof treatment.
-Changing both at once cannot attribute a difference to either one alone.
+A proof-overhead comparison holds this encoding fixed and changes the proof
+treatment. Native comparisons also change the engine and representation, so
+their differences cannot be attributed to proof recording alone.
 
 The [runner](../../benchmarking/processes.py) measures the whole engine process.
 For Egglog this includes source reading and parsing, typechecking, compiler
@@ -53,7 +51,7 @@ contradiction. A cheap final check can coexist with expensive proof recording.
 
 ## What a successful proof run establishes
 
-The default `proofs` treatment records proof information without extracting or
+The `proofs` treatment records proof information without extracting or
 checking the final proof. `proof-extraction` also materializes and simplifies
 the proof; `proof-testing` additionally verifies it. A recording-only timing
 therefore does not measure the cost of returning a checked proof.
@@ -63,7 +61,7 @@ egglog program, including the encoding rules. It is not a separate proof that
 the disequality compiler pass implements the paper's semantics. The
 [small-fixture tests](../../egglog-experimental/tests/disequality.rs) cover
 consistent inputs, congruence, multiple sorts, and rule-generated disequalities
-under both encodings.
+under EE.
 
 ## What the measurements do not establish
 
@@ -81,7 +79,7 @@ discards them. The proof-checking history is still retained. Removing those
 redundant copies does not remove the memory cost of that history or the proof
 database.
 
-Those measurements are historical observations, not expected runtimes or a
-ranking of NE and EE. In particular, the full-size EE proof timing was stopped
+Those measurements concern the earlier NE/EE implementation, not expected
+runtimes for the current EE-only compiler. In particular, the full-size EE proof timing was stopped
 before completion; it supplies neither a runtime comparison nor evidence that
 EE proof checking fails.

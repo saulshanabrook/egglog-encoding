@@ -87,7 +87,7 @@ class BenchmarkRunPlan:
     required_rows: int
     cached_statuses: tuple[Status, ...]
     missing_observations: int
-    disequality_encoding: DisequalityEncoding = "nee"
+    disequality_encoding: DisequalityEncoding = "ee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
 
@@ -501,7 +501,7 @@ def run_process(
     file_spec: FileSpec,
     treatment: Treatment,
     timeout_sec: int,
-    disequality_encoding: DisequalityEncoding = "nee",
+    disequality_encoding: DisequalityEncoding = "ee",
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES,
 ) -> ProcessObservation:
     """Run one measured workload and read the summary it emitted on success."""
@@ -582,7 +582,7 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         if bound is not None:
             required_outputs.append("--memory-limit-bytes")
         if binary_name in ("egglog-experimental", "slotted-reference"):
-            if any(run.disequality_encoding != "nee" for run in binary_runs):
+            if binary_name == "egglog-experimental":
                 required_outputs.append("--disequality-encoding")
             required_outputs.extend(
                 flag for run in binary_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
@@ -611,12 +611,12 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
 def collection_label(
     file_spec: FileSpec,
     treatment: Treatment,
-    disequality_encoding: DisequalityEncoding = "nee",
+    disequality_encoding: DisequalityEncoding = "ee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
-    encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
+    encoding = f"/{disequality_encoding}" if disequality_encoding != "ee" else ""
     return f"{filename} · {treatment}{encoding}"
 
 

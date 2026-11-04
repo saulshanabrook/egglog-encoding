@@ -97,7 +97,7 @@ class CacheKey:
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "nee"
+    disequality_encoding: DisequalityEncoding = "ee"
 
     @classmethod
     def for_endpoint(cls, endpoint: BenchmarkEndpoint, file_spec: FileSpec) -> CacheKey:

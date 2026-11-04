@@ -60,10 +60,10 @@ def test_runtime_discovers_entire_cache_and_retargets_all_sections(tmp_path: Pat
     files = cast(list[dict[str, JsonValue]], selectors["files"])
 
     assert {endpoint["label"] for endpoint in endpoints} == {
-        "alternative · abc123 · proofs/nee",
-        "baseline · abc123 · off/nee",
-        "candidate · abc123 · proofs/nee",
-        "historical · abc123 · term/nee",
+        "alternative · abc123 · proofs/ee",
+        "baseline · abc123 · off/ee",
+        "candidate · abc123 · proofs/ee",
+        "historical · abc123 · term/ee",
     }
     assert {file["label"] for file in files} == {"one.egg", "two.egg", "three.egg"}
     assert selectors["timeouts_sec"] == [60, 120]
@@ -338,7 +338,7 @@ def test_initial_html_uses_native_provenance_file_order_and_selector_labels(tmp_
     assert endpoints[:2] == [
         {
             "id": initial_scope["baseline_endpoint_id"],
-            "label": "feedface0001 dirty · off/nee",
+            "label": "feedface0001 dirty · off/ee",
             "target": "feedface0001",
             "git_sha": "feedface0001",
             "dirty": True,
@@ -346,7 +346,7 @@ def test_initial_html_uses_native_provenance_file_order_and_selector_labels(tmp_
         },
         {
             "id": initial_scope["candidate_endpoint_id"],
-            "label": "working-candidate · feedface0002 · proofs/nee",
+            "label": "working-candidate · feedface0002 · proofs/ee",
             "target": "working-candidate",
             "git_sha": "feedface0002",
             "dirty": False,
