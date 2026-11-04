@@ -625,7 +625,6 @@ def test_fresh_failure_stops_only_its_condition(
         file: models.FileSpec,
         treatment: models.Treatment,
         _timeout: int,
-        _encoding: models.DisequalityEncoding,
         _memory_limit_bytes: int | None,
     ) -> collection.ProcessObservation:
         calls.append((file.display_path, treatment))
@@ -739,7 +738,7 @@ def test_fresh_plan_names_samples_and_timeout_without_a_second_progress_counter(
     assert "3 samples/condition" in text
     assert "timeout 120s" in text
     assert all(len(line) <= width for line in stream.getvalue().splitlines())
-    assert collection.collection_label(plan.runs[0].file, "proofs", "ee") == "file.egg · proofs"
+    assert collection.collection_label(plan.runs[0].file, "proofs") == "file.egg · proofs"
 
 
 def test_collect_rows_appends_process_and_ruleset_timing_together(
@@ -805,8 +804,8 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
         collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
     assert calls == [
-        ("--timing-summary", "--memory-limit-bytes", "--disequality-encoding"),
-        ("--timing-summary", "--memory-limit-bytes", "--disequality-encoding", "--proof-extraction"),
+        ("--timing-summary", "--memory-limit-bytes"),
+        ("--timing-summary", "--memory-limit-bytes", "--proof-extraction"),
     ]
 
 
@@ -849,7 +848,7 @@ def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.Monkey
     collection.preflight_collection(plan, 120)
 
     assert calls == [
-        (egglog_binary, ("--timing-summary", "--memory-limit-bytes", "--disequality-encoding", "--proof-testing")),
+        (egglog_binary, ("--timing-summary", "--memory-limit-bytes", "--proof-testing")),
         (egg_binary, ("--timing-summary", "--memory-limit-bytes")),
     ]
 
@@ -1317,7 +1316,6 @@ def test_eta_uses_workload_history_without_reusing_old_binary_results(tmp_path: 
     [
         {"file_sha256": "other"},
         {"treatment": "proofs"},
-        {"disequality_encoding": "nee"},
         {"status": "failure"},
         {"wall_sec": None},
         {"wall_sec": 0},

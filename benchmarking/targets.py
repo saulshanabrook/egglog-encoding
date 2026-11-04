@@ -287,12 +287,9 @@ def workload_command(
     binary_path: Path,
     file_spec: FileSpec,
     treatment: Treatment,
-    disequality_encoding: str = "ee",
 ) -> list[str]:
     specification = TREATMENT_SPECS[treatment]
     file_spec = file_spec.for_binary(specification.binary_name)
-    if disequality_encoding != "ee":
-        raise ValueError("only the ee disequality encoding is supported")
     if specification.binary_name != "egglog-experimental":
         validate_binary_workload(file_spec, treatment)
         if specification.binary_name == "slotted-reference":
@@ -303,8 +300,6 @@ def workload_command(
     return [
         str(binary_path),
         *EGGLOG_FLAGS,
-        "--disequality-encoding",
-        "ee",
         *specification.flags,
         str(file_spec.absolute_path),
     ]

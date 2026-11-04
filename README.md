@@ -234,8 +234,8 @@ fully cached runs; raw `label=` lookup still follows recorded observations.
 One invocation cannot assign the same label and engine to different binaries.
 
 The baseline and candidate may share a binary, as the default proof-overhead
-comparison does, but their endpoint identities—binary SHA-256, treatment,
-disequality encoding and allocator cap—must differ.
+comparison does, but their endpoint identities—binary SHA-256 and treatment—must
+differ.
 
 Disequality programs use equality embedding (EE). The native parameter-analysis
 treatments use their own `.in` input and fixed encoding; they do not support
@@ -566,8 +566,8 @@ The snapshot is refreshed even when all requested observations are cached.
 Unchanged output keeps its modification time. For another report path, `.jsonl`
 becomes `-grouped.json`; other names gain `-grouped.json`.
 
-Cache reuse is keyed by binary SHA-256, physical input file SHA-256, treatment,
-and disequality encoding. Target source, path, revision, dirty state, labels,
+Cache reuse is keyed by binary SHA-256, physical input file SHA-256, and treatment.
+Target source, path, revision, dirty state, labels,
 and display paths are provenance. Time and memory guards are per-attempt limits,
 not cache identities. Allocator startup settings stay fixed with or without a cap.
 

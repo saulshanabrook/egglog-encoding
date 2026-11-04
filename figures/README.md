@@ -123,7 +123,7 @@ measurements too.
 
 The shared collection progress estimates remaining time across all missing runs.
 `ETA ~` prefers current-binary cached and newly measured durations, then the
-latest successful timing for the same input, facts, treatment and encoding across
+latest successful timing for the same input and treatment across
 binary versions. Historical timings affect estimates only; sample selection still
 requires the requested executable identity. Truly unseen conditions use the
 remaining plan's known mean, or a rough one-second guess until a timing is
@@ -146,7 +146,7 @@ recorded observations. Source targets are checked and rebound on each figure
 invocation. An ordinary comparison that assigns the same label/engine to two
 different binaries is rejected before launch. The raw
 `.reports.jsonl` remains append-only. The shared selector matches the current
-executable, physical input file hash, treatment, and encoding. Resource failures
+executable, physical input file hash, and treatment. Resource failures
 are selected under the shared retry rule; successes remain reusable when guards
 change. It binds their original row
 indices into the Vega-Lite specifications. They never borrow missing measurements

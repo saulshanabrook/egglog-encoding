@@ -24,7 +24,7 @@
     {"calculate": "[datum.groups, [null]]", "as": "batches"},
     {"flatten": [ "batches" ], "as": [ "candidates" ]},
     {"flatten": [ "candidates" ], "as": [ "group" ]},
-    {"filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.disequality_encoding === 'ee')"},
+    {"filter": "!isValid(datum.group) || indexof(datum.group.labels, target_label) >= 0"},
     {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.treatment + '/' + datum.group.key.binary_sha256 : ''", "as": "group_id"},
     {
       "aggregate": [{"op": "values", "as": "observed"}]

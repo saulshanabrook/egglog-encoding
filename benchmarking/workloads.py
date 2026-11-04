@@ -58,7 +58,6 @@ def resolve_files(
                 "reason",
                 "evidence",
                 "treatments",
-                "disequality_encoding",
                 "memory_limit_bytes",
                 "expected_table_sizes",
             }
@@ -66,7 +65,6 @@ def resolve_files(
             or rule["kind"] not in ("resource", "unsupported", "expected-failure")
             or not isinstance(rule.get("treatments", []), list)
             or any(t not in TREATMENTS for t in rule.get("treatments", []))
-            or rule.get("disequality_encoding") not in (None, "nee", "ee")
             or (
                 "memory_limit_bytes" in rule
                 and (

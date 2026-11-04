@@ -42,7 +42,7 @@ consistent inputs to exit successfully.
 Outputs are written under `figures/output/eval/`, including the PDF, SVG, PNG,
 results JSON, numeric TeX macros, and TeX table. Automatic cache reuse collects
 only missing observations, refreshes the grouped snapshot and renders changed
-figures. The specification selects the `figures` label, EE encoding tag, and
+figures. The specification selects the `figures` label and
 configured physical inputs. Boxplots show medians and interquartile ranges,
 with 1.5-IQR whiskers and outlier points. Exports retain arithmetic means and
 95% intervals, including ratios against native DE. Missing or failed conditions

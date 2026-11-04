@@ -24,7 +24,7 @@ from .test_figures import catalog_fixture
 def test_export_statistics_match_shared_executed_vega_fixture() -> None:
     fixture = json.loads(Path(__file__).with_name("figure_statistics.json").read_text())
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 6, "report_schema_version": 8},
+        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
         "fixture",
     )
     result = figure_results("slotted-runtime", fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -54,7 +54,7 @@ def test_exports_preserve_invalid_missing_and_unbounded_results_and_escape_tex()
         item["label"] = r"case_100% & cost$#{}~^\end"
     fixture["groups"][0]["samples"][0]["max_rss_bytes"] = float("nan")
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 6, "report_schema_version": 8},
+        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
         "fixture",
     )
     result = figure_results("slotted-runtime", fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -98,7 +98,6 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                 "binary_sha256": "current",
                 "file_sha256": label,
                 "treatment": treatment,
-                "disequality_encoding": "ee",
             }
             indices = [i * 10 + j * 3 + k for k in range(3)]
             inputs.append(
@@ -129,7 +128,7 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                 }
             )
     grouped = GroupedReport(
-        {"groups": groups, "exclusions": {}, "grouped_schema_version": 6, "report_schema_version": 8}, "fixture"
+        {"groups": groups, "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9}, "fixture"
     )
     result = figure_results("corpus-proof-recording-cdf", inputs, grouped, 3, 4.302652729749462)
     for metric in ("runtime", "memory"):
@@ -148,7 +147,7 @@ def test_shared_corpus_fixture_matches_export_counts_and_bound_view_layout(
 ) -> None:
     fixture = json.loads(Path(__file__).with_name("figure_statistics.json").read_text())["corpus"]
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 6, "report_schema_version": 8},
+        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
         "fixture",
     )
     result = figure_results("corpus-proof-recording-cdf", fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -383,7 +382,7 @@ def test_recording_alias_manifest_validation_failure_vetoes_exported_successes(
                         "file_sha256": file.sha256,
                         "family": "eggcc",
                         "label": "case",
-                        "validation_failures": {"sha256:bin/ee": "Strict failure"},
+                        "validation_failures": {"sha256:bin": "Strict failure"},
                     }
                 ],
                 "unavailable_cases": [],

@@ -31,7 +31,6 @@ struct Ignore {
     file: String,
     #[serde(default)]
     treatments: Vec<String>,
-    disequality_encoding: Option<String>,
     kind: String,
     reason: String,
     evidence: String,
@@ -285,10 +284,6 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             let expected_failure = policy.iter().find(|rule| {
                 rule.kind == "expected-failure"
                     && rule.treatments.iter().any(|treatment| treatment == mode)
-                    && rule
-                        .disequality_encoding
-                        .as_deref()
-                        .is_none_or(|value| value == "ee")
                     && root
                         .join("benchmarks")
                         .join(&rule.file)
@@ -677,11 +672,6 @@ fn main() {
                 .is_none_or(|limit| limit > 0 && rule.kind == "resource")
         );
         assert!(
-            rule.disequality_encoding
-                .as_ref()
-                .is_none_or(|value| matches!(value.as_str(), "nee" | "ee"))
-        );
-        assert!(
             !Path::new(&rule.file).is_absolute()
                 && !Path::new(&rule.file)
                     .components()
@@ -742,10 +732,6 @@ fn main() {
             let mut matching = ignores.iter().enumerate().filter(|(_, rule)| {
                 rule.matched.contains(&file)
                     && (rule.treatments.is_empty() || rule.treatments.contains(mode))
-                    && rule
-                        .disequality_encoding
-                        .as_ref()
-                        .is_none_or(|value| value == "ee")
                     && rule
                         .memory_limit_bytes
                         .is_none_or(|bound| memory_limit_bytes.is_some_and(|limit| limit <= bound))

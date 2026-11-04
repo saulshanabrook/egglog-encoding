@@ -89,7 +89,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "fact_directory_sha256": "",
                 "binary_sha256": binary_hash,
                 "timeout_sec": args.timeout_sec,
-                "disequality_encoding": "ee",
                 "kind": "validation",
                 "policy": VALIDATION_POLICY,
                 "status": "success",
@@ -101,7 +100,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_directory = Path(tempfile.mkdtemp(dir=directory, prefix="run-"))
             outcome["evidence"] = run_directory.relative_to(manifest.path.parent).as_posix()
             command = [str(binary), "--mode", "no-messages", "-j", "1", "--proof-testing"]
-            command.extend(("--disequality-encoding", "ee"))
             command.append(str(path))
             result = run_bounded_command(
                 command, root, run_directory / "proof-testing", timeout_sec=args.timeout_sec, native_limit=True

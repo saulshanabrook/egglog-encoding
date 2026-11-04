@@ -72,7 +72,7 @@ def test_collects_checked_and_off_once_and_renders_cached_reports(
     exclusions = {
         "sha256:archived-file": (
             models.Exclusion(
-                "expected-failure", "known count bug outside initial nightly selection", "issue", ("term",), "ee"
+                "expected-failure", "known count bug outside initial nightly selection", "issue", ("term",)
             ),
         )
     }

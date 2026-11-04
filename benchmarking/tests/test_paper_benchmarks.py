@@ -109,7 +109,6 @@ def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) ->
         "file_sha256": item["sha256"],
         "binary_sha256": "sha256:engine",
         "timeout_sec": 300,
-        "disequality_encoding": "ee",
         "kind": "validation",
         "policy": "proof-testing-v1",
         "status": "failure",
@@ -119,11 +118,11 @@ def test_strict_metadata_is_identity_bound_and_can_be_cleared(tmp_path: Path) ->
     path.parent.mkdir()
     path.write_text(json.dumps([outcome]))
     assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {
-        "sha256:engine/ee": "Strict replay failed",
+        "sha256:engine": "Strict replay failed",
     }
     path.write_text(json.dumps([outcome, {**outcome, "timeout_sec": 120, "reason": "timed out after 120 seconds"}]))
     assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {
-        "sha256:engine/ee": "Strict replay failed",
+        "sha256:engine": "Strict replay failed",
     }
     path.write_text(json.dumps([outcome, {**outcome, "status": "success", "reason": None, "timeout_sec": 120}]))
     assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == {}
@@ -146,7 +145,6 @@ def test_legacy_resource_outcomes_do_not_veto_checked_results(tmp_path: Path, re
         "file_sha256": item["sha256"],
         "binary_sha256": "sha256:engine",
         "timeout_sec": 300,
-        "disequality_encoding": "ee",
         "kind": "validation",
         "policy": "proof-testing-v1",
         "status": "failure",
@@ -156,7 +154,7 @@ def test_legacy_resource_outcomes_do_not_veto_checked_results(tmp_path: Path, re
     path.parent.mkdir()
     original = json.dumps([outcome])
     path.write_text(original)
-    expected = {} if resource else {"sha256:engine/ee": reason}
+    expected = {} if resource else {"sha256:engine": reason}
     assert _figure_inventory(tmp_path)["workloads"][0]["validation_failures"] == expected
     assert path.read_text() == original
 

@@ -14,8 +14,7 @@ const {figures} = JSON.parse(await readFile(new URL('catalog.json', import.meta.
 const input = (id, treatment, changes={}) => ({logical_id:id, label:id, family:'eggcc', file_sha256:id,
   binary_sha256:'current', memory_limit_bytes:null, treatment, exclusion:null, validation_failures:{}, ...changes});
 function group(id, treatment, values, changes={}) {
-  const key={binary_sha256:'current',file_sha256:id,treatment,
-    disequality_encoding:'ee'};
+  const key={binary_sha256:'current',file_sha256:id,treatment};
   return {key,labels:['figures'],samples:values.map((value,index)=>({...key,row_index:index,
     started_at:new Date(Date.UTC(2026,9,1,0,0,index)).toISOString(),status:'success',timeout_sec:300,
     wall_sec:value,max_rss_bytes:value===null?null:value*1048576,...changes}))};
@@ -33,7 +32,7 @@ async function evaluate(name, inputs, groups, rounds=2, boundSpec=null, treatmen
   const logger=vega.logger(vega.Warn,undefined,(...args)=>warnings.push(args));
   const runtime=compile(spec,{logger}).spec;
   const loader=vega.loader();
-  loader.load=async()=>JSON.stringify({grouped_schema_version:5,report_schema_version:8,groups});
+  loader.load=async()=>JSON.stringify({grouped_schema_version:7,report_schema_version:9,groups});
   const view=new vega.View(vega.parse(runtime),{renderer:'none',loader,logger});
   try {
     await view.runAsync();
@@ -118,7 +117,7 @@ test('missing or zero RSS and strict validation veto only affected boxes and est
   const result=await evaluate('math-runtime',inputs,groups);
   assert.deepEqual(find(result,'ratio_points').map(p=>[p.datum.metric,p.datum.ratio]),[['Runtime',2],['Runtime',2]]);
   assert.equal(result.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.fill==='#d9d9d9').length,6);
-  const strict=await evaluate('math-runtime',inputs.map(p=>({...p,validation_failures:{'current/ee':'Known strict failure'}})),
+  const strict=await evaluate('math-runtime',inputs.map(p=>({...p,validation_failures:{'current':'Known strict failure'}})),
     treatments.map((t,i)=>group('a',t,[i%2?4:2,i%2?4:2])));
   assert.equal(strict.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.fill==='#d9d9d9').length,6);
   assert.deepEqual(find(strict,'ratio_points').map(p=>[p.datum.engine,p.datum.metric]),[['Egg','Runtime'],['Egg','Peak RSS']]);
@@ -239,7 +238,7 @@ test('CDF recording aliases retain strict vetoes and baseline-wall cohort with m
     assert.equal(find(result,'cdf_coverage').length,0);
     assert.doesNotMatch(result.svg,/failed,|missing|excluded|not established/);
     assert.equal(find(result,'cdf_points').length,0,'compact ratios need no overview');
-    const vetoed=inputs.map(i=>({...i,validation_failures:{'current/ee':'Known strict failure'}}));
+    const vetoed=inputs.map(i=>({...i,validation_failures:{'current':'Known strict failure'}}));
     const strict=await evaluate(`corpus-${name}-cdf`,vetoed,groups);
     assert.equal(find(strict,'cdf_points_zoom').length,name==='proof-recording'?0:4);
     groups[0].samples[0].max_rss_bytes=null;
@@ -429,7 +428,7 @@ test('CDF titles distinguish congruence, recording-only and full checked proof w
     assert.ok(result.svg.includes(title),`missing explicit title for ${treatment}`);
     assert.ok(result.svg.includes(subtitle),`missing work boundary for ${treatment}`);
     assert.ok(find(result,'cdf_points_zoom').every(p=>p.datum.mode===mode&&p.datum.ratio===2));
-    const vetoed=await evaluate('corpus-proof-recording-cdf',inputs.map(i=>({...i,validation_failures:{'current/ee':'Strict failure'}})),groups,2,null,treatments);
+    const vetoed=await evaluate('corpus-proof-recording-cdf',inputs.map(i=>({...i,validation_failures:{'current':'Strict failure'}})),groups,2,null,treatments);
     assert.equal(find(vetoed,'cdf_points_zoom').length,treatment==='term'?2:0,'both timed proof modes retain the strict veto');
   }
 });

@@ -137,8 +137,8 @@ or modify the JSONL.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets. Require self-contained files without
   `(include ...)` or `(input ...)`; expand external inputs before benchmarking.
-- Cache identity includes binary SHA-256, physical file SHA-256, treatment and
-  disequality encoding. Reuse completed successes independently of time/memory
+- Cache identity includes binary SHA-256, physical file SHA-256, and treatment.
+  Reuse completed successes independently of time/memory
   guards. `select_records` centrally retries timeouts only after raising the
   timeout, and memory-limited outcomes only after raising/removing the memory
   guard. Ordinary failures require force-run. Classify outcomes once at launch;
@@ -153,8 +153,8 @@ or modify the JSONL.
   their exact expectations. Complete successful samples bypass cap-specific
   resource deferrals; unsupported configurations remain excluded.
 - The baseline and candidate must have different endpoint cache identities
-  (binary SHA-256, treatment, and disequality encoding). They may use the same
-  binary when treatment or encoding differs.
+  (binary SHA-256 and treatment). They may use the same binary when treatment
+  differs.
 - A request must not contain duplicate file hashes; those
   selectors would address the same cached workload observations twice.
 

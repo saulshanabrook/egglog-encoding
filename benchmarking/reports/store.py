@@ -17,7 +17,6 @@ from typing import Final, Literal, TypedDict, cast
 from ..engines import TREATMENT_SPECS
 from ..models import (
     BenchmarkEndpoint,
-    DisequalityEncoding,
     Exclusion,
     FileSpec,
     Status,
@@ -25,11 +24,11 @@ from ..models import (
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[8]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 8
+type ReportSchemaVersion = Literal[9]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 9
 
-type GroupedSchemaVersion = Literal[6]
-GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 6
+type GroupedSchemaVersion = Literal[7]
+GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 7
 
 type TimingSummarySchemaVersion = Literal[4]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
@@ -81,7 +80,6 @@ class ReportRecord(TypedDict):
     file_path: str
     file_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding
     timeout_sec: int
     wall_sec: float | None
     max_rss_bytes: int | None
@@ -97,7 +95,6 @@ class CacheKey:
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "ee"
 
     @classmethod
     def for_endpoint(cls, endpoint: BenchmarkEndpoint, file_spec: FileSpec) -> CacheKey:
@@ -108,7 +105,6 @@ class CacheKey:
             binary_sha256=endpoint.binary_sha256,
             file_sha256=file_spec.sha256,
             treatment=endpoint.treatment,
-            disequality_encoding=endpoint.disequality_encoding,
         )
 
 
@@ -165,11 +161,10 @@ class GroupedKey(TypedDict):
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding
 
 
 class GroupedSample(ReportRecord):
-    """The full JSONL observation, including disequality encoding, plus its row index."""
+    """The full JSONL observation plus its row index."""
 
     row_index: int
 
@@ -384,9 +379,7 @@ def select_observations(
     """Apply reviewed exclusions and both resource budgets at one boundary."""
 
     rows = store.latest_records(CacheKey.for_endpoint(endpoint, file), rounds, timeout_sec, endpoint.memory_limit_bytes)
-    excluded = file.exclusion_for(
-        endpoint.treatment, endpoint.disequality_encoding, memory_limit_bytes=endpoint.memory_limit_bytes
-    )
+    excluded = file.exclusion_for(endpoint.treatment, memory_limit_bytes=endpoint.memory_limit_bytes)
     # A recorded resource bound guards fresh work, not already completed samples.
     if (
         excluded is not None
@@ -420,7 +413,6 @@ def _record_key(record: ReportRecord) -> CacheKey:
         binary_sha256=record["binary_sha256"],
         file_sha256=record["file_sha256"],
         treatment=record["treatment"],
-        disequality_encoding=record["disequality_encoding"],
     )
 
 

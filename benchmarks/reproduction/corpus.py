@@ -19,7 +19,6 @@ class CorpusOutcome(TypedDict):
     fact_directory_sha256: str
     binary_sha256: str
     timeout_sec: int
-    disequality_encoding: Literal["nee", "ee"]
     kind: Literal["validation", "safety"]
     policy: str
     status: Literal["success", "failure", "deferred"]

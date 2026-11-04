@@ -25,7 +25,7 @@ from rich.text import Text
 from . import samply_analysis
 from .config import DEFAULT_TIMEOUT_SEC
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_binary_workload
-from .models import DisequalityEncoding, FileSpec, TargetRequest
+from .models import FileSpec, TargetRequest
 from .native_memory import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES, add_memory_limit_options, native_memory_command
 from .processes import run_command, terminate_process_group
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
@@ -35,7 +35,7 @@ DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_PROFILE_SECONDS = 10
 DEFAULT_PROFILE_TOP = 15
 MAX_PROFILE_ITERATIONS = 10_000
-PROFILE_CACHE_VERSION = "v5"
+PROFILE_CACHE_VERSION = "v6"
 PROFILE_SAMPLY_RATE_HZ = 1000
 OutputFormat = Literal["rich", "markdown"]
 
@@ -67,7 +67,6 @@ class ProfileRequest:
     mode: ProfileMode
     open_after: bool
     force_run: bool
-    disequality_encoding: DisequalityEncoding = "ee"
     top: int = DEFAULT_PROFILE_TOP
     show_summary: bool = True
     output_format: OutputFormat = "rich"
@@ -159,14 +158,13 @@ def profile_cache_path(
     file_sha256: str,
     treatment: Treatment,
     mode: ProfileMode,
-    disequality_encoding: DisequalityEncoding = "ee",
 ) -> Path:
     return (
         profiles_dir
         / PROFILE_CACHE_VERSION
         / profile_hash_component(binary_sha256)
         / profile_hash_component(file_sha256)
-        / f"{treatment}-{disequality_encoding}-{mode.cache_label}.json.gz"
+        / f"{treatment}-{mode.cache_label}.json.gz"
     )
 
 
@@ -331,7 +329,6 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         file=file,
         target_request=parse_target(str(args.target)),
         treatment=treatment,
-        disequality_encoding="ee",
         timeout_sec=int(args.timeout_sec),
         memory_limit_bytes=args.memory_limit_bytes,
         profiles_dir=profiles_dir,
@@ -354,19 +351,13 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
         raise ValueError(f"target {target.row.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
     native_limit = TREATMENT_SPECS[request.treatment].allocator_limit
-    workload = workload_command(binary_path, request.file, request.treatment, request.disequality_encoding)
-    treatment_label = (
-        f"{request.treatment} ({request.disequality_encoding})"
-        if TREATMENT_SPECS[request.treatment].binary_name == "egglog-experimental"
-        else request.treatment
-    )
+    workload = workload_command(binary_path, request.file, request.treatment)
     artifact = profile_cache_path(
         request.profiles_dir,
         binary_sha256,
         request.file.sha256,
         request.treatment,
         request.mode,
-        request.disequality_encoding,
     )
     profile: dict[str, Any] | None = None
     cache_status: Literal["hit", "recorded"] = "recorded"
@@ -388,7 +379,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
                     ("Calibrating", "bold"),
                     " ",
                     request.file.display_path,
-                    f" {treatment_label} for {request.mode.profile_seconds}s",
+                    f" {request.treatment} for {request.mode.profile_seconds}s",
                 )
             )
             calibration = run_command(
@@ -417,7 +408,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
         assert iterations is not None
         name = profile_name(
             request.file,
-            treatment_label,
+            request.treatment,
             request.mode,
             iterations,
             binary_sha256,
@@ -456,7 +447,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
             artifact=display_artifact,
             cache_status=cache_status,
             workload=request.file.display_path,
-            treatment=treatment_label,
+            treatment=request.treatment,
             top=request.top,
             cpu_summary=summary,
         )

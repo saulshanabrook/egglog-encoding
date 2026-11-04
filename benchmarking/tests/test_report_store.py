@@ -103,7 +103,7 @@ def test_runtime_contract_changes_require_a_report_schema_bump() -> None:
         "math_arguments": engines.MATH_WORKLOAD_ARGUMENTS,
     }
     digest = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
-    assert (REPORT_SCHEMA_VERSION, digest) == (8, "55fb51fdcf87c331b11844821ce472d7ca0dfa2e46d9a5fee1cd5d58f0c23134"), (
+    assert (REPORT_SCHEMA_VERSION, digest) == (9, "55fb51fdcf87c331b11844821ce472d7ca0dfa2e46d9a5fee1cd5d58f0c23134"), (
         "Bump the report schema version and update this contract digest"
     )
 

@@ -200,9 +200,9 @@ def test_profile_uses_ee_and_reuses_its_cached_artifact(
 
         assert len(calibrated) == len(recorded) == 1
         captured = capsys.readouterr()
-        assert "| Treatment | off (ee) |" in captured.out
+        assert "| Treatment | off |" in captured.out
         if index == 0:
-            assert "off (ee) for 10s" in " ".join(captured.err.split())
+            assert "off for 10s" in " ".join(captured.err.split())
         else:
             assert "Profile cache hit" in captured.err
 
@@ -212,13 +212,11 @@ def test_profile_uses_ee_and_reuses_its_cached_artifact(
         "no-messages",
         "-j",
         "1",
-        "--disequality-encoding",
-        "ee",
         str(file.absolute_path),
     ]
     assert calibrated[0] == recorded[0]["workload"] == expected
     assert recorded[0]["iterations"] == 6
-    assert "off (ee)" in recorded[0]["name"]
+    assert "off" in recorded[0]["name"]
 
 
 def test_profile_egg_treatment_uses_egg_binary_for_execution_identity_and_summary(
@@ -401,9 +399,9 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
         profile_runner.ProfileMode(None, 10),
     )
 
-    base = Path(".profiles") / "v5" / ("a" * 64) / ("b" * 64)
-    assert explicit == base / "proofs-ee-i5.json.gz"
-    assert automatic == base / "proofs-ee-auto10s.json.gz"
+    base = Path(".profiles") / "v6" / ("a" * 64) / ("b" * 64)
+    assert explicit == base / "proofs-i5.json.gz"
+    assert automatic == base / "proofs-auto10s.json.gz"
 
 
 def test_profile_display_path_is_relative_inside_invocation_directory(tmp_path: Path) -> None:

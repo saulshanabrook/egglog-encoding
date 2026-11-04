@@ -96,8 +96,6 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "no-messages",
         "-j",
         "1",
-        "--disequality-encoding",
-        "ee",
         str(file_spec.absolute_path),
     ]
     assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "proofs") == [
@@ -106,8 +104,6 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "no-messages",
         "-j",
         "1",
-        "--disequality-encoding",
-        "ee",
         "--proofs",
         str(file_spec.absolute_path),
     ]
@@ -117,8 +113,6 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "no-messages",
         "-j",
         "1",
-        "--disequality-encoding",
-        "ee",
         "--proof-extraction",
         str(file_spec.absolute_path),
     ]
@@ -128,8 +122,6 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "no-messages",
         "-j",
         "1",
-        "--disequality-encoding",
-        "ee",
         "--proof-testing",
         str(file_spec.absolute_path),
     ]

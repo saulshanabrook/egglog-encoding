@@ -351,7 +351,6 @@ def record_memory_outcome(
         "fact_directory_sha256": workload.get("facts_sha256", ""),
         "binary_sha256": f"sha256:{identity['engine_sha256']}",
         "timeout_sec": int(identity["timeout_sec"]),
-        "disequality_encoding": "ee",
         "kind": "safety",
         "policy": f"native-memory-limit-v1:{identity['native_limit_bytes']}",
         "status": "success" if status == "success" else "deferred",
@@ -467,7 +466,7 @@ def reproduce(
                 if case.get("validation") == validation_identity and name not in case.get("memory_limits", {}):
                     continue
                 workload = next(row for row in manifest["workloads"] if row["file"] == name)
-                command = [str(engine), "--disequality-encoding", "ee", str(directory / name)]
+                command = [str(engine), str(directory / name)]
                 identity = {
                     **validation_identity,
                     "replay_sha256": sha256_file(directory / name),
@@ -513,7 +512,6 @@ def reproduce(
                         "fact_directory_sha256": workload.get("facts_sha256", ""),
                         "binary_sha256": f"sha256:{validation_identity['engine_sha256']}",
                         "timeout_sec": int(timeout_sec),
-                        "disequality_encoding": "ee",
                         "kind": "safety",
                         "policy": SAFETY_POLICY,
                         "status": "deferred",
@@ -557,7 +555,7 @@ def reproduce(
                 capture_path = attempt / "capture.json"
                 capture_path.write_text(json.dumps(captured, indent=2) + "\n")
                 case.update(capture=str(capture_path.relative_to(ROOT)), capture_sha256=sha256_file(capture_path))
-                command = [str(engine), "--disequality-encoding", "ee", str(replay.resolve())]
+                command = [str(engine), str(replay.resolve())]
                 identity = {**validation_identity, "replay_sha256": sha256_file(replay), "facts_sha256": ""}
                 saved = case.get("memory_limit")
                 if reproduction_validation.retained_memory_limit(saved, command, identity):

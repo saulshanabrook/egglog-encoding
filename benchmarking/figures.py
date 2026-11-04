@@ -114,7 +114,7 @@ def _figure_inventory(root: Path, selected: Sequence[FileSpec] | None = None) ->
         item = workloads.get(outcome["file_sha256"])
         if item is None or outcome["kind"] != "validation" or outcome["policy"] != VALIDATION_POLICY:
             continue
-        key = f"{outcome['binary_sha256']}/{outcome['disequality_encoding']}"
+        key = outcome["binary_sha256"]
         if outcome["status"] == "success":
             item["validation_failures"].pop(key, None)
         elif outcome["reason"] not in (
@@ -364,7 +364,7 @@ def render_figures(
                         if excluded is not None:
                             rows = ()
                     validation_issue = (
-                        info["validation_failures"].get(f"{key.binary_sha256}/{key.disequality_encoding}", "")
+                        info["validation_failures"].get(key.binary_sha256, "")
                         if info and correctness_mode == "proof-testing"
                         else ""
                     )
