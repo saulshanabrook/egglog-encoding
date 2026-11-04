@@ -1,0 +1,44 @@
+; Positive control for the new audited schedule, separate from the preserved
+; original 16-process-outcome semantic checkpoint.
+(include "source/exact-local-rejection-setup.egg")
+(let $undeclared-state (Get (Arg $ty (InFunc "undeclared")) 0))
+(let $undeclared-alloc (Alloc 99 (Const (Int 4) $ty (InFunc "undeclared"))
+                            $undeclared-state (PointerT (IntT))))
+(let $multi-type (TupleT (TCons (StateT) (TCons (IntT) (TNil)))))
+(FunctionHasType "multi" $multi-type (Base (StateT)))
+(let $multi-state (Get (Arg $multi-type (InFunc "multi")) 0))
+(let $multi-alloc (Alloc 100 (Const (Int 4) $multi-type (InFunc "multi"))
+                       $multi-state (PointerT (IntT))))
+(fail (check (= (Get $load 0) $old)))
+(push)
+(include "source/exact-local-audited-query-schedule.egg")
+(check (DidExactOptimization "query"))
+(check (= (Get $load 0) $old))
+(fail (check (= (Get $load 0) $new)))
+(fail (check (NoAlias $p $p)))
+(fail (check (ConflictingKey pointer)))
+(fail (check (ConflictingOrdinal conflicting-state)))
+(fail (check (FreshState $undeclared-state name count)))
+(fail (check (FreshState $multi-state name count)))
+(fail (check (ExactLocalAddress (Get $undeclared-alloc 0) origin key capacity)))
+(fail (check (ExactLocalAddress (Get $multi-alloc 0) origin key capacity)))
+(pop)
+(push)
+(run-schedule
+  (saturate
+    (saturate exact-addresses injectivity exact-audit)
+    peepholes
+    interval-analysis
+    mem-simple
+    (saturate exact-addresses injectivity exact-audit)
+    exact-manual-pairs
+    exact-manual-consumer
+    exact-audit))
+(check (DidExactOptimization "manual"))
+(check (= (Get $load 0) $old))
+(fail (check (= (Get $load 0) $new)))
+(fail (check (ManualNoAlias $p $p $state)))
+(fail (check (NoAlias $p $p)))
+(fail (check (ConflictingKey pointer)))
+(fail (check (ConflictingOrdinal conflicting-state)))
+(pop)

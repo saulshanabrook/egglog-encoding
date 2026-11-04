@@ -1,0 +1,4 @@
+; Expected process failure: seeded corruption, not a production bug.
+(datatype Constant (Int i64 :injective))
+(union (Int 1) (Int 2))
+(run-schedule (saturate injectivity))

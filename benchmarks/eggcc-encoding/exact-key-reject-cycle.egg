@@ -1,0 +1,8 @@
+; Seeded state = allocation-successor equality. Unaudited ordinal saturation
+; can keep discovering larger counts. Interleave audit after each step instead.
+(include "source/exact-local-rejection-setup.egg")
+(union $initial (Get $a0 1))
+(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
+(run-schedule
+  (repeat 4 exact-addresses injectivity exact-audit)
+  exact-query)

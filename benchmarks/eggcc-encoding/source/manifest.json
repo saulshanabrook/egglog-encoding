@@ -1,0 +1,70 @@
+{
+  "origin": "https://github.com/egraphs-good/eggcc",
+  "revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+  "copies": [
+    {
+      "fixture_path": "source/schema.egg",
+      "fixture_sha256": "cbf82f3ddb22f60f364ee59e9ecf15ff2bd468f1d561ccb48e93e65a1fd0144b",
+      "origin": "dag_in_context/src/schema.egg",
+      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "origin_sha256": "cbf82f3ddb22f60f364ee59e9ecf15ff2bd468f1d561ccb48e93e65a1fd0144b",
+      "ranges": null,
+      "modification": "none"
+    },
+    {
+      "fixture_path": "source/mem_simple.egg",
+      "fixture_sha256": "0940158a93383a76733b29512645453e5052d92e899f8130ec284ab7460e98fb",
+      "origin": "dag_in_context/src/optimizations/mem_simple.egg",
+      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "origin_sha256": "0940158a93383a76733b29512645453e5052d92e899f8130ec284ab7460e98fb",
+      "ranges": null,
+      "modification": "none"
+    },
+    {
+      "fixture_path": "source/interval-bounds.egg",
+      "fixture_sha256": "9c560ad4eeb5c45888d5a15e8c6012c19386a96e7c5f6b91e37fef8563e51420",
+      "origin": "dag_in_context/src/interval_analysis.egg",
+      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "origin_sha256": "ff363e2c10c57c2f3f79005d1f883f98091b3a32d023f43265b2ccbb89ce2647",
+      "ranges": [
+        [
+          1,
+          10
+        ],
+        [
+          34,
+          46
+        ]
+      ],
+      "modification": "source ranges concatenated with one provenance comment"
+    },
+    {
+      "fixture_path": "source/resolved.egg",
+      "fixture_sha256": "52a4787f288c57e3eccfe200404751d84fb786691ecae17dba7dd08842be6a1a",
+      "origin": "dag_in_context/src/optimizations/memory.egg",
+      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "origin_sha256": "64261a909deffc8843acf71a901e013894b0db83d44e90dc31201bf964129c9e",
+      "ranges": [
+        [
+          88,
+          145
+        ]
+      ],
+      "modification": "source ranges concatenated with one provenance comment"
+    },
+    {
+      "fixture_path": "source/constant-guard.egg",
+      "fixture_sha256": "2ad03cae392a3d65ba7c98df76320cda35de54a52832add6007d5be16aa1af42",
+      "origin": "dag_in_context/src/type_analysis.egg",
+      "origin_revision": "15ee7cbabe70d3b2e72d796bcf81cc2604626e7b",
+      "origin_sha256": "9924928fa7927189c36f0b65b1cd68d5914850b7fc9e6cfe00f118e39a7c81de",
+      "ranges": [
+        [
+          41,
+          45
+        ]
+      ],
+      "modification": "source ranges concatenated with one provenance comment"
+    }
+  ]
+}

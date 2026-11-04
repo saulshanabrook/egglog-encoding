@@ -1,0 +1,88 @@
+; Reduced source-derived law audit, not a compiler capture.
+; Origin: eggcc 15ee7cbabe70d3b2e72d796bcf81cc2604626e7b.
+; Declarations: schema.egg:13-77,140-172; Int/Bool alone gain :injective.
+(datatype Constant (Int i64 :injective) (Bool bool :injective))
+(datatype Type (IntType))
+(datatype Assumption (InFunc String) (DeadBranch))
+(datatype Expr)
+(constructor Const (Constant Type Assumption) Expr)
+(constructor Empty (Type Assumption) Expr)
+(constructor Single (Expr) Expr)
+(constructor Concat (Expr Expr) Expr)
+(constructor Get (Expr i64) Expr)
+(datatype BinaryOp (Add) (Mul))
+(constructor Bop (BinaryOp Expr Expr) Expr)
+(datatype TernaryOp (Select))
+(constructor Top (TernaryOp Expr Expr Expr) Expr)
+(ruleset always-run)
+(ruleset canon)
+(ruleset peepholes)
+
+; Exact laws: canonicalize.egg:4-5,42-51; util.egg:59;
+; peepholes.egg:47. They already refute blanket constructor injectivity.
+(rewrite (Bop (Add) x y) (Bop (Add) y x) :ruleset canon)
+(rewrite (Bop (Mul) x y) (Bop (Mul) y x) :ruleset canon)
+(rewrite (Concat (Concat a b) c)
+         (Concat a (Concat b c)) :ruleset always-run)
+(rewrite (Concat (Empty ty ctx) x) x :ruleset always-run)
+(rewrite (Concat x (Empty ty ctx)) x :ruleset always-run)
+(rule ((Single expr))
+      ((union (Get (Single expr) 0) expr)) :ruleset always-run)
+(rewrite (Top (Select) pred x x) x :ruleset peepholes)
+
+(let ty (IntType))
+(let ctx (InFunc "main"))
+(let one (Const (Int 1) ty ctx))
+(let two (Const (Int 2) ty ctx))
+(let three (Const (Int 3) ty ctx))
+(let true-pred (Const (Bool true) ty ctx))
+(let false-pred (Const (Bool false) ty ctx))
+(let a (Single one))
+(let b (Single two))
+(let c (Single three))
+(let empty (Empty ty ctx))
+(Concat (Concat a b) c)
+(Concat empty a) (Concat a empty)
+(Bop (Add) one two) (Bop (Add) two one)
+(Top (Select) true-pred three three) (Top (Select) false-pred three three)
+(run-schedule (saturate always-run canon peepholes))
+(check (= (Concat (Concat a b) c) (Concat a (Concat b c))))
+(fail (check (= (Concat a b) a)))
+(fail (check (= c (Concat b c))))
+(check (= (Concat empty a) (Concat a empty)))
+(fail (check (= empty a)))
+(check (= (Bop (Add) one two) (Bop (Add) two one)))
+(fail (check (= one two)))
+(check (= (Top (Select) true-pred three three) (Top (Select) false-pred three three)))
+(fail (check (= true-pred false-pred)))
+
+; Single equality already cancels using the existing Get left inverse.
+(union (Single one) (Single two))
+(run-schedule (saturate always-run))
+(check (= one two))
+; Unmarked Const does not export that seeded equality to literal data.
+(fail (check (= (Int 1) (Int 2))))
+
+; Literal wrappers have a sound value interpretation and primitive witnesses.
+(Int 1) (Int 2) (Bool true) (Bool false)
+(check (known-disequal? (Int 1) (Int 2)))
+(check (known-disequal? (Bool true) (Bool false)))
+; Different constructor names provide no disjointness in this query.
+(fail (check (known-disequal? (Int 1) (Bool true))))
+(disequal (Int 1) (Int 2))
+(fail (check-contradiction))
+
+; Hypothetical unsound global Const cancellation must not cross dead contexts.
+; This union models permitted vacuous equality in an unreachable branch;
+; it is not a discovered compiler fault or a production-origin capture.
+(union (Const (Int 1) ty (DeadBranch)) (Const (Int 2) ty (DeadBranch)))
+(run-schedule (saturate injectivity))
+(fail (check (= (Int 1) (Int 2))))
+(fail (check-contradiction))
+
+; Injectivity is scheduled, not performed by queries. Seeded literal corruption
+; is rejected only when equality propagation runs.
+(push)
+(union (Int 1) (Int 2))
+(check-contradiction)
+(pop)

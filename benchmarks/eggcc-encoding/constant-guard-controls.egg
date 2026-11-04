@@ -1,0 +1,15 @@
+; Baseline source guard preserves its contextual restriction.
+(include "source/schema.egg")
+(include "source/constant-guard.egg")
+(let ty (TupleT (TNil)))
+(let top (InFunc "main"))
+(let inputs (Empty ty top))
+(let predicate (Const (Bool true) ty top))
+(let unreachable (InIf false predicate inputs))
+; Seeded vacuous branch equality, not a captured compiler fault.
+(union (Const (Int 17) ty unreachable) (Const (Int 99) ty unreachable))
+(run-schedule (saturate error-checking))
+(check (= (Const (Int 17) ty unreachable) (Const (Int 99) ty unreachable)))
+(fail (check (= (Int 17) (Int 99))))
+(fail (check (= (Const (Int 17) ty top) (Const (Int 99) ty top))))
+(fail (check (known-disequal? (Const (Int 17) ty top) (Const (Int 99) ty top))))

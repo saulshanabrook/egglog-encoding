@@ -1,0 +1,8 @@
+; Seeded corruption of immutable key data. Equality injectivity must reject it
+; before a consumer can exploit the incompatible primitive payloads.
+(include "source/exact-local-rejection-setup.egg")
+(union (LocalCell "main" 0 0) (LocalCell "main" 1 0))
+(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
+(run-schedule
+  (repeat 4 exact-addresses injectivity exact-audit)
+  exact-query)

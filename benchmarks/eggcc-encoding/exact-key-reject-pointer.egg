@@ -1,0 +1,8 @@
+; Seeded invalid pointer equality. Audit must reject it within four single-step
+; propagation rounds and before any consumer executes.
+(include "source/exact-local-rejection-setup.egg")
+(union $p $q)
+(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
+(run-schedule
+  (repeat 4 exact-addresses injectivity exact-audit)
+  exact-query)

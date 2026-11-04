@@ -1,0 +1,133 @@
+; Source-derived falsifier for injective mutable points-to records.
+; The proposed annotations below are deliberately invalid in this analysis.
+; Expected contradiction is a rejected axiom, not a discovered eggcc bug.
+(include "source/schema.egg")
+(include "source/interval-bounds.egg")
+(datatype IntOrInfinity (Infinity) (NegInfinity) (I i64 :injective))
+(datatype IntInterval (MkIntInterval IntOrInfinity IntOrInfinity :injective))
+(datatype List<i64+IntInterval>
+  (Nil-List<i64+IntInterval>)
+  (Cons-List<i64+IntInterval> i64 IntInterval List<i64+IntInterval> :injective))
+(datatype PtrPointees (PointsTo List<i64+IntInterval> :injective) (PointsAnywhere))
+(datatype List<PtrPointees>
+  (Nil-List<PtrPointees>)
+  (Cons-List<PtrPointees> PtrPointees List<PtrPointees> :injective))
+(datatype Pointees
+  (TuplePointsTo List<PtrPointees> :injective)
+  (PtrPointsTo PtrPointees :injective))
+(include "source/resolved.egg")
+(relation HasType (Expr Type))
+(relation PointerishType (Type))
+
+; Exact source: memory.egg:38-41,212,272-275,289-296.
+(constructor UnwrapPtrPointsTo (Pointees) PtrPointees)
+(rewrite (UnwrapPtrPointsTo (PtrPointsTo x)) x :ruleset memory-helpers)
+(constructor PointsToCells (Expr Pointees) Pointees :unextractable)
+(rewrite (PointsToCells (Arg ty_ ctx) aps)
+         aps
+         :when ((HasType (Arg ty_ ctx) ty) (PointerishType ty))
+         :ruleset memory-helpers)
+
+; Exact finite arithmetic/list rules from memory.rs:119,126,140-144,279-301.
+(constructor AddIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
+(rewrite (AddIntOrInfinity (I x) (I y)) (I (+ x y)) :ruleset always-run)
+(constructor AddIntInterval (IntInterval IntInterval) IntInterval)
+(rewrite (AddIntInterval (MkIntInterval lo1 hi1) (MkIntInterval lo2 hi2))
+         (MkIntInterval (AddIntOrInfinity lo1 lo2)
+                        (AddIntOrInfinity hi1 hi2)) :ruleset always-run)
+(constructor AddIntIntervalToAll (IntInterval List<i64+IntInterval>) List<i64+IntInterval>)
+(rewrite (AddIntIntervalToAll _ (Nil-List<i64+IntInterval>))
+         (Nil-List<i64+IntInterval>) :ruleset always-run)
+(rewrite (AddIntIntervalToAll x (Cons-List<i64+IntInterval> allocid offset tl))
+         (Cons-List<i64+IntInterval> allocid (AddIntInterval x offset)
+           (AddIntIntervalToAll x tl)) :ruleset always-run)
+(constructor AddIntIntervalToPtrPointees (IntInterval PtrPointees) PtrPointees)
+(rewrite (AddIntIntervalToPtrPointees interval (PointsAnywhere))
+         (PointsAnywhere) :ruleset always-run)
+(rewrite (AddIntIntervalToPtrPointees interval (PointsTo l))
+         (PointsTo (AddIntIntervalToAll interval l)) :ruleset always-run)
+
+; Exact finite intersection/validity rules: memory.rs:110,117,135-138,239-246.
+; They witness that unequal interval records can overlap.
+(constructor MaxIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
+(rewrite (MaxIntOrInfinity (I x) (I y)) (I (max x y)) :ruleset always-run)
+(constructor MinIntOrInfinity (IntOrInfinity IntOrInfinity) IntOrInfinity)
+(rewrite (MinIntOrInfinity (I x) (I y)) (I (min x y)) :ruleset always-run)
+(constructor IntersectIntInterval (IntInterval IntInterval) IntInterval)
+(rewrite (IntersectIntInterval (MkIntInterval lo1 hi1) (MkIntInterval lo2 hi2))
+         (MkIntInterval (MaxIntOrInfinity lo1 lo2) (MinIntOrInfinity hi1 hi2))
+         :ruleset always-run)
+(datatype MyBool (MyTrue) (MyFalse))
+(constructor IntIntervalValid (IntInterval) MyBool)
+(rewrite (IntIntervalValid (MkIntInterval (I lo) (I hi)))
+         (MyTrue) :when ((<= lo hi)) :ruleset always-run)
+(rewrite (IntIntervalValid (MkIntInterval (I lo) (I hi)))
+         (MyFalse) :when ((> lo hi)) :ruleset always-run)
+
+(rewrite (PointsToCells (Bop (PtrAdd) x e) aps)
+         (PtrPointsTo
+           (AddIntIntervalToPtrPointees
+             (MkIntInterval (I lo) (I hi))
+             (UnwrapPtrPointsTo (PointsToCells x aps))))
+         :when ((= lo (either-unwrap-left (maybe-unwrap (lo-bound e))))
+                (= hi (either-unwrap-left (maybe-unwrap (hi-bound e)))))
+         :ruleset memory-helpers)
+
+(let ctx (InFunc "main"))
+(let ptrty (Base (PointerT (IntT))))
+(let p (Arg ptrty ctx))
+(let i (Arg (Base (IntT)) ctx))
+(HasType p ptrty)
+(PointerishType ptrty)
+(let aps (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0))
+    (Nil-List<i64+IntInterval>)))))
+(let shifted (Bop (PtrAdd) p i))
+(let result (PointsToCells shifted aps))
+(let wide (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 1) (I 2))
+    (Nil-List<i64+IntInterval>)))))
+(let narrow (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 1) (I 1))
+    (Nil-List<i64+IntInterval>)))))
+(set (lo-bound i) (maybe-some (either-left 1)))
+(set (hi-bound i) (maybe-some (either-left 2)))
+(run-schedule (saturate always-run memory-helpers))
+(check (= result wide))
+(check (Resolved-Pointees wide))
+(check (Resolved-Pointees narrow))
+(check (known-disequal? wide narrow))
+(let overlap (IntersectIntInterval (MkIntInterval (I 1) (I 2))
+                                   (MkIntInterval (I 1) (I 1))))
+(IntIntervalValid overlap)
+(run-schedule (saturate always-run))
+(check (= overlap (MkIntInterval (I 1) (I 1))))
+(check (= (IntIntervalValid overlap) (MyTrue)))
+
+; A witness from a known differing field would even bypass unresolved tails.
+; This shows the potential attraction, not semantic approval of the annotations.
+(constructor PendingTail () List<i64+IntInterval>)
+(let partial0 (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0)) (PendingTail)))))
+(let partial1 (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 1)) (PendingTail)))))
+(check (known-disequal? partial0 partial1))
+(fail (check (Resolved-Pointees partial0)))
+(fail (check (Resolved-Pointees partial1)))
+(constructor OtherPendingTail () List<i64+IntInterval>)
+(let unknown (PtrPointsTo (PointsTo
+  (Cons-List<i64+IntInterval> 0 (MkIntInterval (I 0) (I 0)) (OtherPendingTail)))))
+(fail (check (known-disequal? partial0 unknown)))
+
+; Materialize the hypothetical structural witness to expose its conflict.
+(disequal wide narrow)
+(fail (check-contradiction))
+; A legitimate source bound refinement uses the existing min merge.
+(set (hi-bound i) (maybe-some (either-left 1)))
+(run-schedule (saturate always-run memory-helpers))
+(check (= (hi-bound i) (maybe-some (either-left 1))))
+(check (= result narrow))
+(check (= wide narrow))
+(check-contradiction)
+; The companion analysis-record-refinement-cancel.egg schedules cancellation
+; and must fail: it forces 1 = 2 at a primitive field.

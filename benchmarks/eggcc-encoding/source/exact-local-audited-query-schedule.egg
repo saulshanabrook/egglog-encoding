@@ -1,0 +1,12 @@
+; Each exact-addresses item is ONE propagation step. Audits must occur INSIDE
+; its saturation loop so a cyclic state cannot indefinitely add ordinals.
+; Consumers run only after this audited propagation reaches a fixed point.
+(run-schedule
+  (saturate
+    (saturate exact-addresses injectivity exact-audit)
+    peepholes
+    interval-analysis
+    mem-simple
+    (saturate exact-addresses injectivity exact-audit)
+    exact-query
+    exact-audit))

@@ -1,0 +1,24 @@
+; Exact source ranges: interval_analysis.egg:1-10,34-46.
+(ruleset interval-analysis)
+(ruleset interval-rewrite)
+
+(sort IntOrBool (Either i64 bool))
+;; A none bound is dead code, so any value can be chosen.
+(sort Bound (Maybe IntOrBool))
+
+; bound tables
+(function lo-bound (Expr) Bound :merge (maybe-either-i64-bool-max old new))
+(function hi-bound (Expr) Bound :merge (maybe-either-i64-bool-min old new))
+(rule ((= lhs (Const (Int x) ty ctx)))
+      (
+        (set (lo-bound lhs) (maybe-some (either-left x)))
+        (set (hi-bound lhs) (maybe-some (either-left x)))
+      )
+      :ruleset interval-analysis)
+
+(rule ((= lhs (Const (Bool x) ty ctx)))
+      (
+        (set (lo-bound lhs) (maybe-some (either-right x)))
+        (set (hi-bound lhs) (maybe-some (either-right x)))
+      )
+      :ruleset interval-analysis)

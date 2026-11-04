@@ -1,0 +1,121 @@
+; Proposed analysis declaration/rule snapshot, not production eggcc source.
+; Proposed restricted analysis over real eggcc constructors and memory rules.
+; Input pattern derives from memory.rs:439-469 (two allocations/two stores/load).
+; This is a replay, not yet an actual compiler optimization result.
+(include "source/schema.egg")
+(include "source/interval-bounds.egg")
+(include "source/mem_simple.egg")
+
+; New immutable structural data. No annotation is placed on Expr or mutable
+; analysis records. Static Alloc ids are intentionally absent from these keys.
+(datatype AddressKey (LocalCell String i64 i64 :injective))
+(relation FreshState (Expr String i64))
+(relation LocalAllocation (Expr String i64 i64))
+(relation LiveAllocation (Expr Expr String i64))
+(relation ExactLocalAddress (Expr Expr AddressKey i64))
+(relation ConflictingKey (Expr))
+(relation ConflictingOrdinal (Expr))
+(ruleset exact-addresses)
+(ruleset exact-query)
+(ruleset exact-manual-pairs)
+(ruleset exact-manual-consumer)
+(relation DidExactOptimization (String))
+(relation ManualNoAlias (Expr Expr Expr))
+(relation HasArgType (Expr Type))
+(relation ContextOf (Expr Assumption))
+(ruleset peepholes)
+; Exact source normalization: peepholes.egg:12-13,23-30,55-57.
+(rewrite (Bop (Add) (Const (Int j) ty ctx) (Const (Int i) ty ctx))
+         (Const (Int (+ i j)) ty ctx) :ruleset peepholes)
+(rule ((= expr (Bop (Sub) x x)) (HasArgType expr ty) (ContextOf expr ctx))
+      ((union expr (Const (Int 0) ty ctx))) :ruleset peepholes)
+(rewrite (Bop (PtrAdd) (Bop (PtrAdd) p x) y)
+         (Bop (PtrAdd) p (Bop (Add) x y)) :ruleset peepholes)
+
+; Enforced domain: one function input state, direct positive constant-sized
+; allocations, and constant-integer stores. All other effect nodes stop it.
+(rule ((FunctionHasType name (TupleT (TCons (StateT) (TNil))) output-type)
+       (= state (Get (Arg (TupleT (TCons (StateT) (TNil))) (InFunc name)) 0)))
+      ((FreshState state name 0)) :ruleset exact-addresses)
+(rule ((FreshState state name ordinal)
+       (= allocation (Alloc id (Const (Int size) ty (InFunc name)) state pointerty))
+       (> size 0)
+       (< ordinal 9223372036854775807))
+      ((FreshState (Get allocation 1) name (+ ordinal 1))
+       (LocalAllocation allocation name ordinal size)
+       (LiveAllocation (Get allocation 1) allocation name ordinal)
+       (ExactLocalAddress (Get allocation 0) allocation (LocalCell name ordinal 0) size))
+      :ruleset exact-addresses)
+(rule ((= allocation (Alloc id amount state pointerty))
+       (LocalAllocation allocation name ordinal size)
+       (LiveAllocation state previous name previous-ordinal))
+      ((LiveAllocation (Get allocation 1) previous name previous-ordinal))
+      :ruleset exact-addresses)
+(rule ((FreshState state name next)
+       (= pointer-key (LocalCell name ordinal offset))
+       (ExactLocalAddress pointer origin pointer-key size)
+       (LiveAllocation state origin name ordinal)
+       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state)))
+      ((FreshState write name next)) :ruleset exact-addresses)
+(rule ((FreshState write name next)
+       (= write (Top (Write) pointer (Const (Int value) ty (InFunc name)) state))
+       (LiveAllocation state origin name ordinal))
+      ((LiveAllocation write origin name ordinal)) :ruleset exact-addresses)
+
+; These guards establish 0 <= offset+delta < size before the action adds.
+; Thus addition is representable, and no host/runtime wraparound is assumed.
+(rule ((ExactLocalAddress pointer origin (LocalCell name ordinal offset) size)
+       (= shifted (Bop (PtrAdd) pointer (Const (Int delta) ty (InFunc name))))
+       (>= delta (- 0 offset))
+       (< delta (- size offset)))
+      ((ExactLocalAddress shifted origin (LocalCell name ordinal (+ offset delta)) size))
+      :ruleset exact-addresses)
+
+; Audit consistency after source transformations. These checks do not conceal
+; conflicting keys by filtering raw pointer e-class IDs in the consumer.
+(rule ((ExactLocalAddress pointer origin key1 size1)
+       (ExactLocalAddress pointer origin2 key2 size2)
+       (known-disequal? key1 key2))
+      ((ConflictingKey pointer)) :ruleset exact-addresses :naive)
+(rule ((FreshState state name i) (FreshState state name j) (!= i j))
+      ((ConflictingOrdinal state)) :ruleset exact-addresses)
+
+; Query consumer: source mem_simple.egg:71-81 with the NoAlias premise replaced
+; by exact live-key premises. The graph read requires :naive.
+(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
+       (= load (Bop (Load) load-addr write))
+       (FreshState state name next)
+       (ExactLocalAddress write-addr write-origin write-key write-size)
+       (ExactLocalAddress load-addr load-origin load-key load-size)
+       (= write-key (LocalCell name write-ordinal write-offset))
+       (= load-key (LocalCell name load-ordinal load-offset))
+       (LiveAllocation state write-origin name write-ordinal)
+       (LiveAllocation state load-origin name load-ordinal)
+       (known-disequal? write-key load-key))
+      ((let new-load (Bop (Load) load-addr state))
+       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
+       (union (Get load 0) (Get new-load 0))
+       (DidExactOptimization "query")) :ruleset exact-query :naive)
+
+; Equivalent manual comparison uses exactly the same key/liveness domain.
+(rule ((FreshState state name next)
+       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
+       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
+       (LiveAllocation state p-origin name pi)
+       (LiveAllocation state q-origin name qi) (!= pi qi))
+      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
+(rule ((FreshState state name next)
+       (ExactLocalAddress p p-origin (LocalCell name pi po) psize)
+       (ExactLocalAddress q q-origin (LocalCell name qi qo) qsize)
+       (LiveAllocation state p-origin name pi)
+       (LiveAllocation state q-origin name qi) (!= po qo))
+      ((ManualNoAlias p q state)) :ruleset exact-manual-pairs)
+(rule ((= write (Top (Write) write-addr (Const (Int value) ty (InFunc name)) state))
+       (= load (Bop (Load) load-addr write))
+       (FreshState state name next)
+       (ManualNoAlias write-addr load-addr state))
+      ((let new-load (Bop (Load) load-addr state))
+       (union (Get load 1) (Top (Write) write-addr (Const (Int value) ty (InFunc name)) (Get new-load 1)))
+       (union (Get load 0) (Get new-load 0))
+       (DidExactOptimization "manual")) :ruleset exact-manual-consumer)
+

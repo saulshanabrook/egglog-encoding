@@ -1,0 +1,12 @@
+; Seeded equality between terminal states of separate length-one and length-two
+; allocation chains. Neither terminal is an ancestor of the other: this is an
+; acyclic unequal-count merge, not merely the cyclic control below.
+(include "source/exact-local-rejection-setup.egg")
+(let $short (Alloc 10 $size $initial (PointerT (IntT))))
+(let $long0 (Alloc 20 $size $initial (PointerT (IntT))))
+(let $long1 (Alloc 21 $size (Get $long0 1) (PointerT (IntT))))
+(union (Get $short 1) (Get $long1 1))
+(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
+(run-schedule
+  (repeat 4 exact-addresses injectivity exact-audit)
+  exact-query)

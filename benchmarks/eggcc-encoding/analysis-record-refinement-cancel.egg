@@ -1,0 +1,4 @@
+; Expected process failure after a legitimate source-derived refinement.
+; These are deliberately rejected annotations, not a compiler fault.
+(include "analysis-record-refinement.egg")
+(run-schedule (saturate injectivity))

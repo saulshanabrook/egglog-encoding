@@ -1,0 +1,4 @@
+; Expected process failure from the actual baseline source guard.
+(include "constant-guard-controls.egg")
+(union (Const (Int 17) ty top) (Const (Int 99) ty top))
+(run-schedule (saturate error-checking))

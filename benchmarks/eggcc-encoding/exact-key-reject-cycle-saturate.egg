@@ -1,0 +1,6 @@
+; The same cyclic fault under the actual unbounded-but-audited fixed-point
+; schedule. It must panic promptly, not reach a timeout or the consumer sentinel.
+(include "source/exact-local-rejection-setup.egg")
+(union $initial (Get $a0 1))
+(rule () ((panic "consumer reached before invariant rejection")) :ruleset exact-query)
+(include "source/exact-local-audited-query-schedule.egg")

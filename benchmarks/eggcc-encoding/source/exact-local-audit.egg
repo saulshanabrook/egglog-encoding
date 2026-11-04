@@ -1,0 +1,13 @@
+; Fail-fast assertions for the proposed restricted exact-local analysis.
+; They inspect the just-updated tables directly; no one-round marker delay.
+(ruleset exact-audit)
+(rule ((ExactLocalAddress pointer origin key1 size1)
+       (ExactLocalAddress pointer origin2 key2 size2)
+       (known-disequal? key1 key2))
+      ((panic "exact-address rejection: pointer has incompatible keys"))
+      :ruleset exact-audit :naive)
+(rule ((FreshState state name i)
+       (FreshState state name j)
+       (!= i j))
+      ((panic "exact-address rejection: state has unequal ordinal counts"))
+      :ruleset exact-audit)

@@ -1,0 +1,13 @@
+; Bounded diagnostic control, intentionally omitting the audit and consumers.
+; It demonstrates why ordinal propagation must not saturate before auditing.
+(include "source/exact-local-rejection-setup.egg")
+(union $initial (Get $a0 1))
+(run-schedule (repeat 4 exact-addresses))
+(check (FreshState $initial "main" 0))
+(check (FreshState $initial "main" 1))
+(check (FreshState $initial "main" 2))
+(check (FreshState $initial "main" 3))
+(fail (check (FreshState $initial "main" 4)))
+(check (ConflictingOrdinal $initial))
+(check (ConflictingKey $p))
+(fail (check (DidExactOptimization mode)))

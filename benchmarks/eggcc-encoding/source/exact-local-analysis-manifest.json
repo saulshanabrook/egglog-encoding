@@ -1,0 +1,8 @@
+{
+  "origin_fixture": "exact-local-address-keys.egg",
+  "origin_sha256": "6201e363a637ca21097dedeaf56146a2f2fde60f5b8d22a0096010954a881e3e",
+  "selection": "prefix before top-level (let ty ...), preserving declaration/rule text",
+  "copy": "source/exact-local-analysis.egg",
+  "copy_sha256": "f543addb14514ae81803ca7be4338a045d0370382c0d3ced0efa677d4f50375a",
+  "modification": "Add FunctionHasType exact state-only input guard to the root-seeding rule, matching the approved compiler prototype contract."
+}
