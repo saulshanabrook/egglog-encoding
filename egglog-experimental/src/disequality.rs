@@ -44,12 +44,16 @@
 //! (check (known-disequal? (Num 1) (Num 2)))
 //! ```
 //!
-//! The query combines stored disequalities with structural implications for
-//! `:injective` constructors, without saturation. A differing corresponding
-//! argument can establish unequal results at any arity. Unequal results can
-//! establish unequal arguments only for a marked unary constructor with an
-//! equality-sort argument. There is no reverse rule for multiple arguments,
-//! inequality from missing equality, or disjointness between constructor names.
+//! The query combines stored disequalities with two structural implications,
+//! without saturation. For a `:injective` constructor, a differing corresponding
+//! argument can establish unequal results. For a constructor whether marked or
+//! unmarked, unequal results can establish unequal arguments at one position
+//! when every other position is already equal. This reverse rule is ordinary
+//! congruence's contrapositive; it does not require injectivity. Unary reverse
+//! inference has no sibling guard. The reverse fragment requires a unionable
+//! equality-sort output and focused argument, with primitive or unionable
+//! equality-sort siblings; containers and custom function tables are excluded.
+//! There is no inequality from missing equality or disjointness between names.
 //! Subsumed constructor rows participate. The query has no validator and
 //! currently supports ordinary execution only, without term/proof encoding.
 //!
@@ -103,8 +107,8 @@
 //! relation keys, while EE compares the existing `Eq_S` result with `F`.
 //! A stored self-disequality is observable even when the operands are equal.
 //!
-//! Structural search reads the scoped marked-constructor names recorded by
-//! `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
+//! Structural search reads constructor schemas and the scoped marked-constructor
+//! names recorded by `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
 //! right)` goals. Each pair is sorted before insertion into a per-call visited
 //! set, so orientation changes and cycles do not cause repeated exploration.
 //! Runtime values do not carry the primitive's resolved root sort; the search
@@ -114,20 +118,28 @@
 //! For a result pair, indexed reads find existing rows of the same marked
 //! constructor. Their row cross-product supplies one alternative per argument:
 //! a native primitive mismatch is a witness, and an equality-sort field adds a
-//! child-pair goal. For a unary equality-sort argument pair, read-only
-//! constructor lookups add the existing parent-result pair as a reverse goal.
+//! child-pair goal. For an equality-sort argument pair, a transient index of
+//! existing constructor rows finds same-constructor parents at the same argument
+//! position. When every other child column matches, their result pair becomes a
+//! reverse goal. These siblings use the committed graph's canonical values;
+//! queries do not run injectivity to make additional siblings equal. Private
+//! disequality representation constructors are excluded from reverse indexing,
+//! so these implications do not depend on the NEE/EE storage layout.
 //! Each queued alternative suffices to establish the goal it came from; a
 //! path to a stored fact or primitive mismatch is a finite witness. A cycle
 //! with no such endpoint establishes nothing.
 //!
 //! The search creates no constructor applications, unions, or persistent
-//! derived-pair cache. Only its queue, visited pairs, and fetched row groups are
-//! temporary. Worst-case work can still include many value pairs and matching
-//! row cross-products. Ordinary assertion storage and private contradiction
+//! derived-pair cache. Its queue, visited pairs, parent index and fetched row
+//! groups are temporary. Index construction scans eligible rows on each
+//! structural query; worst-case work also includes many value pairs and
+//! matching row cross-products. This is not unrestricted disequality closure:
+//! for example, two unresolved argument positions remain unsupported even when
+//! they repeat the same pair. Ordinary assertion storage and private contradiction
 //! normalization remain separate from this demand-driven search.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     str::FromStr,
     sync::Arc,
 };
@@ -136,8 +148,8 @@ use egglog::{
     ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
     ReadPrim, ReadState, TypeError, TypeInfo, Value,
     ast::{
-        Action, Actions, Command, Expr, Fact, Macro, ParseError, Parser, Rule, RuleEvalMode,
-        RunConfig, Schedule, Schema, Sexp, Span,
+        Action, Actions, Command, Expr, Fact, FunctionSubtype, Macro, ParseError, Parser, Rule,
+        RuleEvalMode, RunConfig, Schedule, Schema, Sexp, Span,
     },
     constraint::{Constraint, TypeConstraint},
     sort::S,
@@ -245,7 +257,7 @@ impl ReadPrim for KnownDisequal {
 }
 
 /// Search typed, unordered pair goals against the current committed graph.
-/// Every edge is a sound same-constructor forward or unary reverse implication;
+/// Every edge is a sound marked forward or sibling-guarded reverse implication;
 /// any path to a stored assertion or native primitive mismatch is a witness.
 /// The per-call visited set terminates cycles, and all row/parent lookups are
 /// read-only, including subsumed rows. See the module explanation for costs.
@@ -273,25 +285,63 @@ fn known_disequal<'db>(
             sorts.insert(sort.to_owned());
         }
     }
-    let mut names = Vec::new();
+    let mut marked = HashSet::new();
     if state
         .table_size(crate::injectivity::MARKED_CONSTRUCTORS)
         .is_some()
     {
         state.function_entries(crate::injectivity::MARKED_CONSTRUCTORS, |entry| {
-            names.push(state.value_to_base::<S>(entry.inputs[0]).0);
+            marked.insert(state.value_to_base::<S>(entry.inputs[0]).0);
         })?;
     }
     let mut constructors = Vec::new();
-    for name in &names {
+    for name in state.tables() {
+        if state.table_subtype(name) != Some(FunctionSubtype::Constructor) {
+            continue;
+        }
         let schema = state.constructor_schema(name)?;
+        let injective = marked.contains(name);
+        // Reverse congruence is independent of injectivity. Keep its first
+        // fragment scalar and independent of NE/EE representation tables.
+        let reverse = !name.starts_with("@disequality-")
+            && state.is_sort_unionable(schema.output()) == Some(true)
+            && schema.input.iter().any(|input| input.is_eq_sort())
+            && schema.input.iter().all(|input| {
+                !input.is_container_sort()
+                    && (!input.is_eq_sort() || state.is_sort_unionable(input) == Some(true))
+            });
+        if !injective && !reverse {
+            continue;
+        }
         sorts.insert(schema.output().name().to_owned());
         for sort in &schema.input {
             if sort.is_eq_sort() {
                 sorts.insert(sort.name().to_owned());
             }
         }
-        constructors.push((name.as_str(), schema));
+        constructors.push((name, schema, injective, reverse));
+    }
+    // Index existing applications by each equality-sort child for this call.
+    // Rows are retained once; index entries reference their position and include
+    // subsumed applications. No parent application or derived pair is stored.
+    let mut applications = Vec::new();
+    let mut parents: HashMap<(&str, Value), Vec<(usize, usize)>> = HashMap::new();
+    for (constructor, &(name, schema, _, reverse)) in constructors.iter().enumerate() {
+        if !reverse {
+            continue;
+        }
+        state.constructor_enodes(name, |node| {
+            let application = applications.len();
+            applications.push((constructor, node.children.to_vec(), node.eclass));
+            for (position, (&child, input)) in node.children.iter().zip(&schema.input).enumerate() {
+                if input.is_eq_sort() {
+                    parents
+                        .entry((input.name(), child))
+                        .or_default()
+                        .push((application, position));
+                }
+            }
+        })?;
     }
     // ReadPrim does not receive its resolved input type. Eq-sort IDs share one
     // global counter (as in unstable-subst), so probing another sort cannot
@@ -308,8 +358,8 @@ fn known_disequal<'db>(
         if asserted_disequal(state, encoding, &sort, left, right)? {
             return Ok(true);
         }
-        for &(name, schema) in &constructors {
-            if schema.output().name() == sort {
+        for &(name, schema, injective, _) in &constructors {
+            if injective && schema.output().name() == sort {
                 let mut left_rows = Vec::new();
                 let mut right_rows = Vec::new();
                 state.constructor_enodes_for_eclass(name, left, |node| {
@@ -330,17 +380,29 @@ fn known_disequal<'db>(
                     }
                 }
             }
-            if let [input] = schema.input.as_slice()
-                && input.name() == sort
-                && input.is_eq_sort()
-            {
-                // Constructor lookup is read-only and includes subsumed rows.
-                // Missing applications supply no reverse implication.
-                if let (Some(a), Some(b)) = (
-                    state.eclass_of(name, RawValues(vec![left]))?,
-                    state.eclass_of(name, RawValues(vec![right]))?,
-                ) {
-                    pending.push_back((schema.output().name().to_owned(), a, b));
+        }
+        if let (Some(left_parents), Some(right_parents)) = (
+            parents.get(&(sort.as_str(), left)),
+            parents.get(&(sort.as_str(), right)),
+        ) {
+            for &(a, position) in left_parents {
+                let (constructor, a_children, a_result) = &applications[a];
+                for &(b, other_position) in right_parents {
+                    let (other_constructor, b_children, b_result) = &applications[b];
+                    if constructor == other_constructor
+                        && position == other_position
+                        && a_children
+                            .iter()
+                            .zip(b_children)
+                            .enumerate()
+                            .all(|(index, (a, b))| index == position || a == b)
+                    {
+                        pending.push_back((
+                            constructors[*constructor].1.output().name().to_owned(),
+                            *a_result,
+                            *b_result,
+                        ));
+                    }
                 }
             }
         }

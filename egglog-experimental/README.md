@@ -65,14 +65,29 @@ finite witness and is undefined otherwise. For example:
 For two existing applications of the same marked constructor, any unequal
 corresponding arguments establish unequal results. Primitive arguments use native
 `!=`; equality-sort arguments use asserted `(disequal ...)` facts or recursive
-witnesses. For a marked unary constructor with an equality-sort argument, known
-unequal results also establish unequal arguments. Multiple-argument constructors
-have no reverse rule.
+witnesses. For any constructor, marked or unmarked, unequal results establish
+unequal arguments at one position when every other argument is already equal:
+
+```lisp
+(datatype Input (Common) (Left) (Right))
+(datatype Output (Pair Input Input))
+(disequal (Pair (Common) (Left)) (Pair (Common) (Right)))
+(check (known-disequal? (Left) (Right)))
+```
+
+This reverse rule follows from congruence and needs no injectivity annotation.
+It accepts a unionable equality-sort output and focused argument with primitive
+or unionable equality-sort siblings. Containers and custom function tables are
+outside this fragment. Two unresolved positions do not select one unequal pair,
+and different constructor names supply no disjointness witness. Only marked
+constructors propagate unequal arguments forward to unequal results.
 
 Queries read the current graph without creating constructor applications or
 storing derived disequality pairs. They need no saturation; equality propagation
-still requires scheduling `injectivity`. Unknown equality supplies no inequality
-witness. Cycles terminate, although a query can visit many value pairs. Use
+still requires scheduling `injectivity`. Queries use committed sibling equalities
+and do not jointly close equality and disequality. Unknown equality supplies no
+inequality witness. Cycles terminate, although each structural query scans
+eligible rows into a transient parent index and can visit many value pairs. Use
 `:naive` for rules whose bodies call this predicate, because its reads extend
 beyond the rule's explicit table atoms. The new query currently supports ordinary
 execution only; term encoding and proof testing reject it. See the executable
