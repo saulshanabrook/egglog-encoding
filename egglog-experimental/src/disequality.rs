@@ -92,12 +92,12 @@
 //! A stored self-disequality is observable even when the operands are equal.
 //!
 //! Structural search reads the scoped marked-constructor names recorded by
-//! `injectivity.rs`. Its breadth-first queue contains typed `(sort, left,
-//! right)` goals. Each pair is sorted before insertion into a per-call visited
-//! set, so orientation changes and cycles do not cause repeated exploration.
-//! Runtime values do not carry the primitive's resolved root sort; the search
-//! probes relevant schemas, relying on globally distinct equality-sort IDs.
-//! Goals reached through constructor schemas have exact input/output sorts.
+//! `injectivity.rs`. Its breadth-first queue contains `(left, right)` goals.
+//! Each pair is sorted before insertion into a per-call visited set, so
+//! orientation changes and cycles do not cause repeated exploration. Equality
+//! sorts share one global ID counter: probing another equality sort's tables
+//! cannot match these values. Only equality-sort values enter the queue;
+//! primitive fields are compared directly, never used as reverse-lookup keys.
 //!
 //! For a result pair, indexed reads find existing rows of the same marked
 //! constructor. Their row cross-product supplies one alternative per argument:
@@ -115,7 +115,7 @@
 //! normalization remain separate from this demand-driven search.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -206,22 +206,20 @@ impl ReadPrim for KnownDisequal {
     }
 }
 
-/// Search typed, unordered pair goals against the current committed graph.
+/// Search unordered equality-sort pairs against the current committed graph.
 /// Every edge is a sound same-constructor forward or unary reverse implication;
 /// any path to a stored assertion or native primitive mismatch is a witness.
 /// The per-call visited set terminates cycles, and all row/parent lookups are
 /// read-only, including subsumed rows. See the module explanation for costs.
 fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Result<bool, Error> {
-    let mut sorts = BTreeSet::new();
+    let mut assertion_tables = Vec::new();
     // The common explicit-assertion case needs no structural search.
     for name in state.tables() {
         if name == "@disequality-eq" || name.starts_with("@disequality-eq-") {
-            let schema = state.constructor_schema(name)?;
-            let sort = schema.input[0].name();
-            if asserted_disequal(state, sort, lhs, rhs)? {
+            if asserted_disequal(state, name, lhs, rhs)? {
                 return Ok(true);
             }
-            sorts.insert(sort.to_owned());
+            assertion_tables.push(name);
         }
     }
     let mut names = Vec::new();
@@ -235,54 +233,44 @@ fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Re
     }
     let mut constructors = Vec::new();
     for name in &names {
-        let schema = state.constructor_schema(name)?;
-        sorts.insert(schema.output().name().to_owned());
-        for sort in &schema.input {
-            if sort.is_eq_sort() {
-                sorts.insert(sort.name().to_owned());
-            }
-        }
-        constructors.push((name.as_str(), schema));
+        constructors.push((name.as_str(), state.constructor_schema(name)?));
     }
-    // ReadPrim does not receive its resolved input type. Eq-sort IDs share one
-    // global counter (as in unstable-subst), so probing another sort cannot
-    // match the root pair. Descendant and parent goals have exact schema types.
-    let mut pending: VecDeque<_> = sorts.into_iter().map(|sort| (sort, lhs, rhs)).collect();
+    // All queued values are equality-sort IDs from the same global counter.
+    let mut pending = VecDeque::from([(lhs, rhs)]);
     let mut visited = HashSet::new();
-    while let Some((sort, mut left, mut right)) = pending.pop_front() {
+    while let Some((mut left, mut right)) = pending.pop_front() {
         if left > right {
             std::mem::swap(&mut left, &mut right);
         }
-        if !visited.insert((sort.clone(), left, right)) {
+        if !visited.insert((left, right)) {
             continue;
         }
-        if asserted_disequal(state, &sort, left, right)? {
-            return Ok(true);
+        for name in &assertion_tables {
+            if asserted_disequal(state, name, left, right)? {
+                return Ok(true);
+            }
         }
         for &(name, schema) in &constructors {
-            if schema.output().name() == sort {
-                let mut left_rows = Vec::new();
-                let mut right_rows = Vec::new();
-                state.constructor_enodes_for_eclass(name, left, |node| {
-                    left_rows.push(node.children.to_vec())
-                })?;
-                state.constructor_enodes_for_eclass(name, right, |node| {
-                    right_rows.push(node.children.to_vec())
-                })?;
-                for a in &left_rows {
-                    for b in &right_rows {
-                        for ((&a, &b), input) in a.iter().zip(b).zip(&schema.input) {
-                            if input.is_eq_sort() {
-                                pending.push_back((input.name().to_owned(), a, b));
-                            } else if a != b {
-                                return Ok(true);
-                            }
+            let mut left_rows = Vec::new();
+            let mut right_rows = Vec::new();
+            state.constructor_enodes_for_eclass(name, left, |node| {
+                left_rows.push(node.children.to_vec())
+            })?;
+            state.constructor_enodes_for_eclass(name, right, |node| {
+                right_rows.push(node.children.to_vec())
+            })?;
+            for a in &left_rows {
+                for b in &right_rows {
+                    for ((&a, &b), input) in a.iter().zip(b).zip(&schema.input) {
+                        if input.is_eq_sort() {
+                            pending.push_back((a, b));
+                        } else if a != b {
+                            return Ok(true);
                         }
                     }
                 }
             }
             if let [input] = schema.input.as_slice()
-                && input.name() == sort
                 && input.is_eq_sort()
             {
                 // Constructor lookup is read-only and includes subsumed rows.
@@ -291,7 +279,7 @@ fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Re
                     state.eclass_of(name, RawValues(vec![left]))?,
                     state.eclass_of(name, RawValues(vec![right]))?,
                 ) {
-                    pending.push_back((schema.output().name().to_owned(), a, b));
+                    pending.push_back((a, b));
                 }
             }
         }
@@ -299,25 +287,21 @@ fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Re
     Ok(false)
 }
 
-/// Probe existing equality-to-false in either orientation.
-/// Missing lazy support is an empty set of assertions, not a declaration error;
-/// these reads never create an equality term or assertion row.
+/// Probe an existing assertion table for equality-to-false in either orientation.
+/// These tables are installed with FALSE's declaration; a missing FALSE row
+/// means no stored assertions. These reads never create terms or assertion rows.
 fn asserted_disequal(
     state: &ReadState<'_, '_>,
-    sort: &str,
+    name: &str,
     lhs: Value,
     rhs: Value,
 ) -> Result<bool, Error> {
-    let name = equality_name(sort);
-    if state.table_size(&name).is_none() || state.table_size(FALSE).is_none() {
-        return Ok(false);
-    }
     let Some(false_value) = state.eclass_of(FALSE, RawValues(vec![]))? else {
         return Ok(false);
     };
     Ok(
-        state.eclass_of(&name, RawValues(vec![lhs, rhs]))? == Some(false_value)
-            || state.eclass_of(&name, RawValues(vec![rhs, lhs]))? == Some(false_value),
+        state.eclass_of(name, RawValues(vec![lhs, rhs]))? == Some(false_value)
+            || state.eclass_of(name, RawValues(vec![rhs, lhs]))? == Some(false_value),
     )
 }
 
@@ -401,15 +385,13 @@ impl CommandMacro for LowerDisequality {
         types: &TypeInfo,
     ) -> Result<Vec<Command>, Error> {
         let expanded = crate::fresh_macro::FreshMacro::new().transform(command, symbols, types)?;
-        let needs_inference = expanded
-            .iter()
-            .any(|c| matches!(c, Command::Rule { rule } if contains_disequal(&rule.head)));
+        let expanded_fresh = expanded.len() > 1;
         let mut local_types = std::borrow::Cow::Borrowed(types);
         let mut result = Vec::new();
         for command in expanded {
             // FreshMacro emits a constructor before its rule. Make that signature
             // visible to this pass without installing anything in the live graph.
-            if needs_inference
+            if expanded_fresh
                 && let Command::Constructor {
                     span,
                     name,
@@ -451,7 +433,7 @@ impl LowerDisequality {
         let mut sorts = BTreeMap::new();
         let mut support_span = None;
         Self::lower_command(&mut command, symbols, types, &mut sorts, &mut support_span)?;
-        let Some(span) = support_span else {
+        let Some(span) = sorts.values().next().cloned().or(support_span) else {
             return Ok(vec![command]);
         };
         let mut commands = Vec::new();
@@ -468,17 +450,11 @@ impl LowerDisequality {
             });
             commands.push(constructor(&span, TRUE.into(), vec![], TRUTH));
             commands.push(constructor(&span, FALSE.into(), vec![], TRUTH));
-            commands.extend(equality_rules(&span, TRUTH));
+            commands.extend(equality_rules(&span, TRUTH, symbols));
         }
         for (sort, span) in sorts {
             if types.get_func_type(&equality_name(&sort)).is_none() {
-                commands.extend(equality_rules(&span, &sort));
-            }
-        }
-        // Proof history survives pop, so a reinstalled rule needs a fresh identity.
-        for generated in &mut commands {
-            if let Command::Rule { rule } = generated {
-                rule.name = symbols.fresh(&rule.name);
+                commands.extend(equality_rules(&span, &sort, symbols));
             }
         }
         commands.push(command);
@@ -561,9 +537,6 @@ impl LowerDisequality {
             }
             _ => {}
         }
-        if let Some(span) = sorts.values().next() {
-            *support_span = Some(span.clone());
-        }
         Ok(())
     }
 }
@@ -598,18 +571,12 @@ fn lower_typed_actions(
 
 /// Use union's operand constraints without ever executing the inferred action.
 fn union_probe(actions: &Actions) -> Actions {
-    egglog::ast::GenericActions(
-        actions
-            .0
-            .iter()
-            .map(|action| match action {
-                Action::Expr(span, Expr::Call(_, head, args)) if head == PLACEHOLDER => {
-                    Action::Union(span.clone(), args[0].clone(), args[1].clone())
-                }
-                _ => action.clone(),
-            })
-            .collect(),
-    )
+    actions.clone().visit_actions(&mut |action| match action {
+        Action::Expr(span, Expr::Call(_, head, mut args)) if head == PLACEHOLDER => {
+            Action::Union(span, args.remove(0), args.remove(0))
+        }
+        action => action,
+    })
 }
 
 /// Declared calls already determine their result sort. Avoid solving the full
@@ -660,79 +627,46 @@ fn constructor(span: &Span, name: String, input: Vec<String>, output: &str) -> C
     }
 }
 
-fn rule(span: &Span, name: String, body: Vec<Fact>, head: Vec<Action>) -> Command {
-    Command::Rule {
-        rule: Rule {
-            span: span.clone(),
-            name: format!("@disequality-{name}"),
-            ruleset: RULESET.into(),
-            body,
-            head: Actions::new(head),
-            eval_mode: RuleEvalMode::Seminaive,
-            no_decomp: false,
-            include_subsumed: false,
-        },
-    }
-}
-
-fn equality_rules(span: &Span, sort: &str) -> Vec<Command> {
+fn equality_rules(span: &Span, sort: &str, symbols: &mut SymbolGen) -> Vec<Command> {
     let eq = equality_name(sort);
     let x = Expr::Var(span.clone(), "x".into());
     let y = Expr::Var(span.clone(), "y".into());
     let t = Expr::Call(span.clone(), TRUE.into(), vec![]);
     let f = Expr::Call(span.clone(), FALSE.into(), vec![]);
     let xy = Expr::Call(span.clone(), eq.clone(), vec![x.clone(), y.clone()]);
-    vec![
-        constructor(span, eq.clone(), vec![sort.into(), sort.into()], TRUTH),
-        rule(
-            span,
-            format!("ee-lift-{sort}"),
-            vec![Fact::Eq(span.clone(), xy.clone(), t.clone())],
-            vec![Action::Union(span.clone(), x.clone(), y.clone())],
-        ),
-        rule(
-            span,
-            format!("ee-symmetry-{sort}"),
-            vec![Fact::Eq(span.clone(), xy.clone(), f.clone())],
-            vec![Action::Union(
-                span.clone(),
-                Expr::Call(span.clone(), eq.clone(), vec![y.clone(), x.clone()]),
-                f.clone(),
-            )],
-        ),
-        rule(
-            span,
-            format!("ee-double-negation-{sort}"),
-            vec![Fact::Eq(
-                span.clone(),
-                Expr::Call(
-                    span.clone(),
-                    equality_name(TRUTH),
-                    vec![xy.clone(), f.clone()],
-                ),
-                f.clone(),
-            )],
-            vec![Action::Union(span.clone(), x.clone(), y.clone())],
-        ),
-        rule(
-            span,
-            format!("ee-reflexive-left-{sort}"),
-            vec![Fact::Eq(span.clone(), xy.clone(), f.clone())],
-            vec![Action::Union(
-                span.clone(),
-                Expr::Call(span.clone(), eq.clone(), vec![x.clone(), x]),
-                t.clone(),
-            )],
-        ),
-        rule(
-            span,
-            format!("ee-reflexive-right-{sort}"),
-            vec![Fact::Eq(span.clone(), xy, f)],
-            vec![Action::Union(
-                span.clone(),
-                Expr::Call(span.clone(), eq, vec![y.clone(), y]),
-                t,
-            )],
-        ),
-    ]
+    let yx = Expr::Call(span.clone(), eq.clone(), vec![y.clone(), x.clone()]);
+    let xx = Expr::Call(span.clone(), eq.clone(), vec![x.clone(), x.clone()]);
+    let yy = Expr::Call(span.clone(), eq.clone(), vec![y.clone(), y.clone()]);
+    let not_xy = Expr::Call(
+        span.clone(),
+        equality_name(TRUTH),
+        vec![xy.clone(), f.clone()],
+    );
+    // Each row is a name, an equality premise, and the resulting union.
+    let rules = [
+        ("lift", [xy.clone(), t.clone()], [x.clone(), y.clone()]),
+        ("symmetry", [xy.clone(), f.clone()], [yx, f.clone()]),
+        ("double-negation", [not_xy, f.clone()], [x, y]),
+        ("reflexive-left", [xy.clone(), f.clone()], [xx, t.clone()]),
+        ("reflexive-right", [xy, f], [yy, t]),
+    ];
+    let mut commands = vec![constructor(span, eq, vec![sort.into(), sort.into()], TRUTH)];
+    commands.extend(
+        rules
+            .into_iter()
+            .map(|(name, [lhs, rhs], [left, right])| Command::Rule {
+                rule: Rule {
+                    span: span.clone(),
+                    // Proof history survives pop, so reinstalled rules need fresh names.
+                    name: symbols.fresh(&format!("@disequality-ee-{name}-{sort}")),
+                    ruleset: RULESET.into(),
+                    body: vec![Fact::Eq(span.clone(), lhs, rhs)],
+                    head: Actions::singleton(Action::Union(span.clone(), left, right)),
+                    eval_mode: RuleEvalMode::Seminaive,
+                    no_decomp: false,
+                    include_subsumed: false,
+                },
+            }),
+    );
+    commands
 }

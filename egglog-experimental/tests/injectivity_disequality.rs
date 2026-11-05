@@ -1,6 +1,6 @@
 //! Read-only disequality witnesses, including storage and scope regressions.
 
-use egglog::EGraph;
+use egglog::{EGraph, RawValues, Read};
 use egglog_experimental::new_experimental_egraph_for_proofs;
 
 fn with_program(program: &str, mut verify: impl FnMut(&mut EGraph)) {
@@ -87,6 +87,64 @@ fn reverse_witnesses_are_unary_only_and_cross_sort() {
                      (fail (check (known-disequal? (E) (G))))",
                 )
                 .unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(graph.num_tuples(), rows);
+        },
+    );
+}
+
+#[test]
+fn primitive_inputs_do_not_supply_reverse_witnesses_for_overlapping_eq_ids() {
+    with_program(
+        "(datatype Input (A) (B))
+         (datatype Output (Num i64 :injective)) (A) (B)",
+        |graph| {
+            let a = graph
+                .read(|state| state.eclass_of("A", RawValues(vec![])))
+                .unwrap()
+                .unwrap();
+            let b = graph
+                .read(|state| state.eclass_of("B", RawValues(vec![])))
+                .unwrap()
+                .unwrap();
+            // Deliberately collide primitive inputs with the equality IDs.
+            let left = graph.value_to_base::<i64>(a);
+            let right = graph.value_to_base::<i64>(b);
+            assert_eq!(graph.base_to_value(left), a);
+            assert_eq!(graph.base_to_value(right), b);
+            graph
+                .parse_and_run_program(None, &format!("(disequal (Num {left}) (Num {right}))"))
+                .unwrap();
+            let rows = graph.num_tuples();
+            graph
+                .parse_and_run_program(
+                    None,
+                    &format!(
+                        "(check (known-disequal? (Num {left}) (Num {right})))
+                 (fail (check (known-disequal? (A) (B))))"
+                    ),
+                )
+                .unwrap();
+            assert_eq!(graph.num_tuples(), rows);
+        },
+    );
+}
+
+#[test]
+fn an_unfired_disequality_rule_does_not_supply_a_witness() {
+    with_program(
+        "(datatype Term (A) (B)) (A) (B)
+         (ruleset later) (rule () ((disequal (A) (B))) :ruleset later)",
+        |graph| {
+            assert!(
+                graph
+                    .read(|state| state.eclass_of("@disequality-false", RawValues(vec![])))
+                    .unwrap()
+                    .is_none()
+            );
+            let rows = graph.num_tuples();
+            graph
+                .parse_and_run_program(None, "(fail (check (known-disequal? (A) (B))))")
+                .unwrap();
             assert_eq!(graph.num_tuples(), rows);
         },
     );
