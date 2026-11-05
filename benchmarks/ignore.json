@@ -31,6 +31,15 @@
     "memory_limit_bytes": 10737418240
   },
   {
+    "file": "disequality/parameter-analysis.egg",
+    "treatments": [
+      "proof-testing"
+    ],
+    "kind": "resource",
+    "reason": "Strict NEE proofs for the full parameter-analysis input exceed the local 10 GiB allocator/address-space cap in a fresh process. This configuration is deferred from the artifact correctness claim across profiles; uncapped validation has not been established. A smaller input does not certify this workload.",
+    "evidence": "2026-10-31 fresh CLI exit 86 after 370.01 s; peak RSS 6001508352 bytes; binary sha256:ec35c542b3cd098e039aa1524a922f6cc2a915da86e109a1f9ca28403818975a; input sha256:5aa2025d8c0056378264a0609f0651af442ea958c3cd2ae1ea31f91f958961bd. Saved capture: benchmarks/local/validation/parameter-strict-isolation-probe.json. Remove this entry only after validating the full configuration on a suitable machine. A fresh release CLI probe also exited86 after344.01s, peakRSS4614504448B, binarysha256:987a778042da6ac8529764015983e7e0e35dd04d676beb9528906d8b957ddd05; same input/cap. Saved capture: benchmarks/local/validation/parameter-strict-production-probe.json. This is diagnostic evidence, not a paper timing observation."
+  },
+  {
     "file": "corpus/eggcc/cholesky_decomp-statewalk-call-03.egg",
     "treatments": [
       "term"

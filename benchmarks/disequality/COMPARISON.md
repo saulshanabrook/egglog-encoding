@@ -1,7 +1,7 @@
 # Parameter-analysis implementation comparison
 
-The paper figure compares the authors' native DE and EE implementations with
-Egglog EE, with proofs off. Native NEE/OEE remain correctness checks.
+The paper figure compares the authors' native DE and NEE implementations with
+relation-based Egglog NEE, with proofs off. Native EE/OEE remain correctness checks.
 The author-supplied [native corpus](parameter-analysis.in) is canonical. Its checked-in
 [Egglog translation](parameter-analysis.egg) contains the same six fixed numeral
 constraints, 100,000 equality pairs, and 10,000 disequality pairs in author order,

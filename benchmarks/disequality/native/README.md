@@ -112,5 +112,5 @@ cargo test --locked -p egglog-experimental --test paper -- parameter-analysis.eg
 
 The same trial retains the native contradiction and consistent canaries from the
 former standalone Python gate, using frozen inputs in `../correctness/`.
-`egglog-experimental/tests/disequality.rs` exercises both Egglog NEE and EE with
-ordinary, term and proof modes; the paper catalog selects NEE for the full workload.
+`egglog-experimental/tests/disequality.rs` exercises relation-based Egglog NEE
+with ordinary, term and proof modes. It is the sole Egglog disequality encoding.

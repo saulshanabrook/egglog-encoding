@@ -1,21 +1,22 @@
 # Disequality encoding and a proof benchmark
 
-This experiment compares Egglog equality embedding (EE), its proof overhead,
+This experiment compares relation-based Egglog NEE, its proof overhead,
 and the authors' four native implementations from
 [Dis-Equality Graphs](https://doi.org/10.1145/3704913). The author-supplied native
 input is canonical; the checked-in Egglog program is its deterministic
 translation. This is a fixed-workload comparison, not a reproduction of the
 paper's parameter sweep or published timings.
 
-## Equality embedding
+## Relation-based NEE
 
-`(disequal a b)` uses the paper's five-rule equality embedding (EE):
-inequality becomes `eq(a,b) = false`, with lifting, symmetry, double-negation,
-and left/right reflexivity rules. A separate equality embedding handles the
-private truth sort; equating its `true` and `false` is the contradiction.
+`(disequal a b)` inserts an ordered pair into a private relation for the operands'
+equality sort. Congruence rebuilding canonicalizes the endpoints; a self-edge
+derives a contradiction. The paper's NEE uses a private `ne` term; the relation
+preserves contradiction detection without making its result a unionable equality
+class. No symmetry rule is needed for self-edge detection.
 
 `(disequal ...)` also works in rule heads. `(check-contradiction)` saturates the
-private encoding ruleset, then checks `true = false` directly.
+private encoding ruleset, then checks its zero-argument contradiction relation.
 Ordinary `(run ...)` does not run that private ruleset. The encoding lowers to
 ordinary egglog before term/proof encoding, without changing union-find.
 Existing core restrictions still apply: `begin` blocks are normal-mode only;
@@ -58,11 +59,13 @@ Old observations on the previous seed-selected fixture are not measurements of
 this corpus. Builds and conversion are outside the measured whole-process time;
 reading, parsing, graph execution, checking, and shutdown remain included.
 
-```sh
-# EE: checked proofs versus ordinary execution.
-./bench.py benchmarks/disequality/parameter-analysis.egg
+The full-input strict-proof comparison is explicitly deferred in
+[the shared exclusion file](../ignore.json): fresh processes exceeded the local
+10 GiB allocator/address-space cap, and uncapped validation is unestablished.
+The recording-only comparison remains available:
 
-# EE: proof recording versus ordinary execution.
+```sh
+# NEE: proof recording versus ordinary execution.
 ./bench.py benchmarks/disequality/parameter-analysis.egg --treatment proofs
 ```
 
@@ -75,7 +78,7 @@ They do not emit Egglog phase timings. See the
 ## Small examples and snapshots
 
 `egglog-experimental/tests/disequality/` contains a congruence example and a
-rule-head/multiple-sort example. Each has a runnable EE desugared snapshot.
+rule-head/multiple-sort example. Each has a runnable NEE desugared snapshot.
 Their integration test checks all five execution modes and verifies that the
 snapshots match the compiler output. Regenerate only these small snapshots with:
 

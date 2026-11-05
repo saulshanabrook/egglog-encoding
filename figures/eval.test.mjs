@@ -142,11 +142,14 @@ test('all figure designs preserve missing conditions and render without warnings
 });
 
 test('disequality standard boxes show only native 1.5-IQR outliers, retaining all three treatments',async()=>{
-  assert.deepEqual(figures['disequality-runtime'].treatments,['egg-de','egg-ee','off']);
-  assert.ok(['egg-nee','egg-oee'].every(t=>figures['disequality-runtime'].checks.includes(t)));
+  assert.deepEqual(figures['disequality-runtime'].treatments,['egg-de','egg-nee','off']);
+  assert.deepEqual(figures['disequality-runtime'].checks,['egg-ee','egg-oee','term','proof-testing']);
   const treatments=figures['disequality-runtime'].treatments;
   const groups=treatments.map((t,i)=>group('a',t,[1,1,1,1,1,1,1,1,1,100].map(v=>v*(i+1))));
   const result=await evaluate('disequality-runtime',treatments.map(t=>input('a',t)),groups,10);
+  const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
+  for(const condition of ['DE · Disegg','NEE · Egg','NEE · Egglog'])
+    assert.ok(labels.includes(condition),`missing explicit condition label ${condition}`);
   const outliers=result.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.mark.marktype==='symbol');
   assert.equal(find(result,'absolute_runs').length,0,'there must be no all-run overlay');
   assert.equal(outliers.length,6,'one generated outlier per treatment and metric');

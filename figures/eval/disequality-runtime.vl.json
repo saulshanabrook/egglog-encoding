@@ -1,6 +1,6 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-  "description": "Runtime and peak RSS distributions for native DE, native EE and Egglog EE. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and native-DE ratio intervals remain in companion exports.",
+  "description": "Runtime and peak RSS distributions for native DE, native NEE and relation-based Egglog NEE. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and native-DE ratio intervals remain in companion exports.",
   "data": {
     "url": "../../.reports-grouped.json",
     "format": {"type": "json"}
@@ -64,7 +64,7 @@
       "groupby": ["input_id", "metric"]
     },
     {
-      "calculate": "{'egg-de':'DE · Disegg', 'egg-ee':'EE · Egg', 'off':'EE · Egglog'}[datum.input.treatment] || datum.input.treatment",
+      "calculate": "{'egg-de':'DE · Disegg', 'egg-nee':'NEE · Egg', 'off':'NEE · Egglog'}[datum.input.treatment] || datum.input.treatment",
       "as": "condition"
     },
     {"calculate": "datum.condition + ': ' + datum.issue", "as": "summary"},
@@ -139,7 +139,7 @@
         "type": "nominal",
         "title": null,
         "axis": {"labelLimit": 180, "minExtent": 112, "maxExtent": 112},
-        "scale": {"domain": [ "DE · Disegg", "EE · Egg", "EE · Egglog" ]}
+        "scale": {"domain": [ "DE · Disegg", "NEE · Egg", "NEE · Egglog" ]}
       }
     }
   },

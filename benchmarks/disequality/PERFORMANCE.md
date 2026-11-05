@@ -1,6 +1,6 @@
 # What the disequality benchmark measures
 
-The parameter-analysis benchmark compares Egglog equality embedding (EE),
+The parameter-analysis benchmark compares relation-based Egglog NEE,
 its proof overhead, and the four native implementations supplied by the
 authors of [Dis-Equality Graphs](https://doi.org/10.1145/3704913). It uses one
 fixed author-supplied corpus, not the paper's full parameter sweep.
@@ -29,8 +29,8 @@ Egglog proof validity; strict proof checking remains a separate validation.
 
 The [compiler pass](../../egglog-experimental/src/disequality.rs) lowers
 disequality to ordinary egglog before term or proof encoding, without changing
-union-find. EE creates equality terms in a private truth sort; its propagation
-rules make `true` and `false` equal when a contradiction is found.
+union-find. NEE stores an ordered pair in a private relation per equality sort
+and detects a self-edge after congruence rebuilding.
 
 A proof-overhead comparison holds this encoding fixed and changes the proof
 treatment. Native comparisons also change the engine and representation, so
@@ -61,7 +61,9 @@ egglog program, including the encoding rules. It is not a separate proof that
 the disequality compiler pass implements the paper's semantics. The
 [small-fixture tests](../../egglog-experimental/tests/disequality.rs) cover
 consistent inputs, congruence, multiple sorts, and rule-generated disequalities
-under EE.
+under relation-based NEE. Full-input strict NEE proofs exceeded the local
+10 GiB allocator/address-space cap and remain explicitly deferred in
+[the shared exclusion file](../ignore.json); uncapped validation is unestablished.
 
 ## What the measurements do not establish
 
@@ -80,6 +82,6 @@ redundant copies does not remove the memory cost of that history or the proof
 database.
 
 Those measurements concern the earlier NE/EE implementation, not expected
-runtimes for the current EE-only compiler. In particular, the full-size EE proof timing was stopped
-before completion; it supplies neither a runtime comparison nor evidence that
-EE proof checking fails.
+runtimes for the current NEE-only compiler. In particular, the historical
+full-size EE proof timing was stopped before completion; it supplies neither a
+runtime comparison nor evidence that EE proof checking fails.

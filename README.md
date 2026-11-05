@@ -237,9 +237,9 @@ The baseline and candidate may share a binary, as the default proof-overhead
 comparison does, but their endpoint identities—binary SHA-256 and treatment—must
 differ.
 
-Disequality programs use equality embedding (EE). The native parameter-analysis
-treatments use their own `.in` input and fixed encoding; they do not support
-Egglog proof modes.
+Disequality programs use relation-based NEE, with a private relation per equality
+sort. The native parameter-analysis treatments use their own `.in` input and
+fixed encoding; they do not support Egglog proof modes.
 
 ### Files
 
@@ -282,12 +282,12 @@ corpus:
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
-| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under EE |
+| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived under relation-based NEE; full-input strict proof testing is deferred |
 
-The [disequality workload](benchmarks/disequality/README.md) uses equality embedding (EE).
-Its full-size proof runs require minutes and substantial memory, so the default
-suite is no longer a quick check. Use explicit file paths for a smaller subset
-or `--rounds 1` for an initial diagnostic.
+The [disequality workload](benchmarks/disequality/README.md) uses relation-based NEE.
+Its full-size strict proof runs exceeded the local memory cap and remain
+explicitly deferred in [the shared exclusion file](benchmarks/ignore.json).
+Use explicit file paths for a smaller subset or `--rounds 1` for an initial diagnostic.
 
 ### ParaBit proof-stress regression
 
