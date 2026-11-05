@@ -596,15 +596,14 @@ def test_cached_failure_stops_only_its_condition_until_forced(tmp_path: Path, st
     endpoints = (
         models.EndpointRequest(target.request, "off"),
         models.EndpointRequest(target.request, "proofs"),
-        models.EndpointRequest(target.request, "off", "ee"),
     )
     other_file = models.FileSpec("other.egg", ROOT / "other.egg", "sha256:other")
     benchmark_requests = tuple(collection.BenchmarkRequest(endpoint, (FILE_SPEC, other_file)) for endpoint in endpoints)
     (plan,) = collection.plan_collection(store, benchmark_requests, {target.request: target}, 3, 120, False)
-    assert [run.missing_observations for run in plan.runs] == [0, 3, 3, 3, 3, 3]
+    assert [run.missing_observations for run in plan.runs] == [0, 3, 3, 3]
     benchmark_requests = tuple(collection.BenchmarkRequest(endpoint, (FILE_SPEC,)) for endpoint in endpoints)
     (forced,) = collection.plan_collection(store, benchmark_requests, {target.request: target}, 3, 120, True)
-    assert [run.missing_observations for run in forced.runs] == [3, 3, 3]
+    assert [run.missing_observations for run in forced.runs] == [3, 3]
     assert store.row_count == 1
 
 
@@ -626,7 +625,6 @@ def test_fresh_failure_stops_only_its_condition(
         file: models.FileSpec,
         treatment: models.Treatment,
         _timeout: int,
-        _encoding: models.DisequalityEncoding,
         _memory_limit_bytes: int | None,
     ) -> collection.ProcessObservation:
         calls.append((file.display_path, treatment))
@@ -740,7 +738,7 @@ def test_fresh_plan_names_samples_and_timeout_without_a_second_progress_counter(
     assert "3 samples/condition" in text
     assert "timeout 120s" in text
     assert all(len(line) <= width for line in stream.getvalue().splitlines())
-    assert collection.collection_label(plan.runs[0].file, "proofs", "ee") == "file.egg · proofs/ee"
+    assert collection.collection_label(plan.runs[0].file, "proofs") == "file.egg · proofs"
 
 
 def test_collect_rows_appends_process_and_ruleset_timing_together(
@@ -1318,7 +1316,6 @@ def test_eta_uses_workload_history_without_reusing_old_binary_results(tmp_path: 
     [
         {"file_sha256": "other"},
         {"treatment": "proofs"},
-        {"disequality_encoding": "ee"},
         {"status": "failure"},
         {"wall_sec": None},
         {"wall_sec": 0},

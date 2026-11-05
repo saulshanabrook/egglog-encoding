@@ -71,7 +71,7 @@ def _render(
         args.rounds,
         args.timeout_sec,
     )
-    available = {(row["binary_sha256"], row["treatment"], row["disequality_encoding"]) for row in grouped.records}
+    available = {(row["binary_sha256"], row["treatment"]) for row in grouped.records}
     if comparison.baseline.cache_identity in available and comparison.candidate.cache_identity in available:
         write_interactive_report(grouped, comparison, args.output_dir / PAGE_NAME)
     else:

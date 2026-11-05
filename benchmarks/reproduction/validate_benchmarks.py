@@ -56,7 +56,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("files", nargs="*", help="manifest-relative inputs (default: every prepared input)")
     parser.add_argument("--binary", type=Path, help="existing controlled egglog executable")
     parser.add_argument("--timeout-sec", type=int, default=300)
-    parser.add_argument("--disequality-encoding", choices=("nee", "ee"), default="nee")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
     try:
@@ -90,7 +89,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "fact_directory_sha256": "",
                 "binary_sha256": binary_hash,
                 "timeout_sec": args.timeout_sec,
-                "disequality_encoding": args.disequality_encoding,
                 "kind": "validation",
                 "policy": VALIDATION_POLICY,
                 "status": "success",
@@ -102,8 +100,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_directory = Path(tempfile.mkdtemp(dir=directory, prefix="run-"))
             outcome["evidence"] = run_directory.relative_to(manifest.path.parent).as_posix()
             command = [str(binary), "--mode", "no-messages", "-j", "1", "--proof-testing"]
-            if args.disequality_encoding != "nee":
-                command.extend(("--disequality-encoding", args.disequality_encoding))
             command.append(str(path))
             result = run_bounded_command(
                 command, root, run_directory / "proof-testing", timeout_sec=args.timeout_sec, native_limit=True

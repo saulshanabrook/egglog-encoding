@@ -2,6 +2,9 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
-((Block 1)
+((@disequality-contradiction 0)
+ (@disequality-ne-Expr 0)
+ (@disequality-ne-Stmt 0)
+ (Block 1)
  (Leaf 2)
  (Return 1))

@@ -1,6 +1,6 @@
 ; Dis-Equality Graphs: contradiction after congruence, without a UF extension.
 ; https://programming-group.com/assets/pdf/papers/2025_Dis-Equality-Graphs.pdf
-; Works unchanged with --disequality-encoding nee or ee, including proof testing.
+; Uses NEE in ordinary, term, and proof-testing modes.
 (datatype Term (A) (B) (f Term))
 (disequal (f (A)) (f (B)))
 ; The constraints become contradictory only after the following union.

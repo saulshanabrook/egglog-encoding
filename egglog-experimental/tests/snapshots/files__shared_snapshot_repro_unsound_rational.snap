@@ -3,7 +3,10 @@ source: egglog-experimental/tests/files.rs
 assertion_line: 72
 expression: snapshot
 ---
-((Acos 0)
+((@disequality-contradiction 0)
+ (@disequality-ne-HerbieType 0)
+ (@disequality-ne-Math 0)
+ (Acos 0)
  (Add 1)
  (And 0)
  (Asin 0)

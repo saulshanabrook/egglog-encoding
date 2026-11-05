@@ -396,7 +396,7 @@ def test_incomplete_later_figure_preserves_entire_previous_bundle(
                 "label": "second",
                 "family": "eggcc",
                 "file_sha256": "second",
-                "validation_failures": {"sha256:bin/nee": "Strict proof failure"},
+                "validation_failures": {"sha256:bin": "Strict proof failure"},
             }
         ]
     with pytest.raises(ValueError, match="no figure outputs replaced"):

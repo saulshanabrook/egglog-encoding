@@ -36,7 +36,6 @@ from .engines import MATH_WORKLOAD_ARGUMENTS, TREATMENT_SPECS, validate_binary_w
 from .models import (
     BenchmarkEndpoint,
     BuiltBinary,
-    DisequalityEncoding,
     EndpointRequest,
     FileSpec,
     ResolvedTarget,
@@ -87,7 +86,6 @@ class BenchmarkRunPlan:
     required_rows: int
     cached_statuses: tuple[Status, ...]
     missing_observations: int
-    disequality_encoding: DisequalityEncoding = "nee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
 
@@ -147,7 +145,6 @@ def resolve_requests(
         for file in request.files:
             excluded = file.exclusion_for(
                 request.endpoint.treatment,
-                request.endpoint.disequality_encoding,
                 memory_limit_bytes=request.endpoint.memory_limit_bytes,
             )
             if excluded is not None:
@@ -165,7 +162,6 @@ def resolve_requests(
             if (
                 file.exclusion_for(
                     request.endpoint.treatment,
-                    request.endpoint.disequality_encoding,
                     memory_limit_bytes=request.endpoint.memory_limit_bytes,
                 )
                 is None
@@ -210,7 +206,6 @@ def plan_collection(
             target.row,
             target.binary_sha256_for(request.endpoint.treatment),
             request.endpoint.treatment,
-            request.endpoint.disequality_encoding,
             request.endpoint.memory_limit_bytes,
         )
         endpoints = scopes.setdefault((target, request.files), [])
@@ -240,7 +235,6 @@ def plan_collection(
                 required_rows=rounds,
                 cached_statuses=cached,
                 missing_observations=missing,
-                disequality_encoding=endpoint.disequality_encoding,
                 memory_limit_bytes=endpoint.memory_limit_bytes,
             )
         )
@@ -483,7 +477,6 @@ def label_has_enough_rows(
             target.row,
             target.binary_sha256_for(request.treatment),
             request.treatment,
-            request.disequality_encoding,
             request.memory_limit_bytes,
         )
         for file in files_by_endpoint[request] if files_by_endpoint is not None else files:
@@ -501,7 +494,6 @@ def run_process(
     file_spec: FileSpec,
     treatment: Treatment,
     timeout_sec: int,
-    disequality_encoding: DisequalityEncoding = "nee",
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES,
 ) -> ProcessObservation:
     """Run one measured workload and read the summary it emitted on success."""
@@ -509,7 +501,7 @@ def run_process(
     file_spec = file_spec.for_binary(TREATMENT_SPECS[treatment].binary_name)
     with tempfile.TemporaryDirectory(prefix="egglog-benchmark-") as directory:
         summary_path = Path(directory) / "timing-summary.json"
-        workload = workload_command(binary_path, file_spec, treatment, disequality_encoding)
+        workload = workload_command(binary_path, file_spec, treatment)
         controlled = TREATMENT_SPECS[treatment].allocator_limit
         allocator_env = NATIVE_ALLOCATOR_ENV if controlled else {}
         if not controlled:
@@ -582,8 +574,6 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         if bound is not None:
             required_outputs.append("--memory-limit-bytes")
         if binary_name in ("egglog-experimental", "slotted-reference"):
-            if any(run.disequality_encoding != "nee" for run in binary_runs):
-                required_outputs.append("--disequality-encoding")
             required_outputs.extend(
                 flag for run in binary_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
             )
@@ -611,13 +601,11 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
 def collection_label(
     file_spec: FileSpec,
     treatment: Treatment,
-    disequality_encoding: DisequalityEncoding = "nee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
-    encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
-    return f"{filename} · {treatment}{encoding}"
+    return f"{filename} · {treatment}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -697,7 +685,6 @@ def flat_report_record(
         "file_path": run.file.display_path,
         "file_sha256": run.file.sha256,
         "treatment": run.treatment,
-        "disequality_encoding": run.disequality_encoding,
         "timeout_sec": timeout_sec,
         "wall_sec": result.timing.wall_sec,
         "max_rss_bytes": result.timing.max_rss_bytes,
@@ -722,7 +709,7 @@ class CollectionETAColumn(ProgressColumn):
         super().__init__(table_column=Column(no_wrap=True))
         self.remaining: dict[CacheKey, int] = {}
         self.durations: dict[CacheKey, list[float]] = {}
-        self.hints: dict[tuple[str, Treatment, DisequalityEncoding], tuple[tuple[datetime, int], float]] = {}
+        self.hints: dict[tuple[str, Treatment], tuple[tuple[datetime, int], float]] = {}
         self.active: tuple[CacheKey, float] | None = None
         for row_index, record in enumerate(store.records):
             wall = record["wall_sec"]
@@ -731,7 +718,6 @@ class CollectionETAColumn(ProgressColumn):
             identity = (
                 record["file_sha256"],
                 record["treatment"],
-                record["disequality_encoding"],
             )
             order = (datetime.fromisoformat(record["started_at"]), row_index)
             prior = self.hints.get(identity)
@@ -743,7 +729,6 @@ class CollectionETAColumn(ProgressColumn):
                     target.row,
                     target.binary_sha256_for(run.treatment),
                     run.treatment,
-                    run.disequality_encoding,
                     run.memory_limit_bytes,
                 ),
                 run.file,
@@ -771,7 +756,7 @@ class CollectionETAColumn(ProgressColumn):
         }
         for key, count in self.remaining.items():
             if count and key not in means:
-                hint = self.hints.get((key.file_sha256, key.treatment, key.disequality_encoding))
+                hint = self.hints.get((key.file_sha256, key.treatment))
                 if hint is not None:
                     means[key] = hint[1]
         fallback = sum(means.values()) / len(means) if means else 1.0
@@ -835,7 +820,6 @@ def collect_rows(
                         target.row,
                         target.binary_sha256_for(run.treatment),
                         run.treatment,
-                        run.disequality_encoding,
                         run.memory_limit_bytes,
                     ),
                     run.file,
@@ -843,11 +827,7 @@ def collect_rows(
                 if round_index >= run.missing_observations or key in stopped:
                     continue
                 observation_number = completed_observations + 1
-                label = collection_label(
-                    run.file,
-                    run.treatment,
-                    run.disequality_encoding,
-                )
+                label = collection_label(run.file, run.treatment)
                 if len(plans) > 1:
                     label = f"{target.row.display_label} · {label}"
                 estimate.active = (key, progress.tasks[0].elapsed or 0.0)
@@ -870,7 +850,6 @@ def collect_rows(
                     run.file,
                     run.treatment,
                     timeout_sec,
-                    run.disequality_encoding,
                     run.memory_limit_bytes,
                 )
                 store.append(

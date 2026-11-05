@@ -16,7 +16,6 @@ from .engines import TREATMENT_SPECS, Treatment
 from .native_memory import NATIVE_LIMIT_BYTES
 
 Status = Literal["success", "timed-out", "memory-limited", "failure"]
-DisequalityEncoding = Literal["nee", "ee"]
 DetailLevel = Literal["summary", "files", "phases", "rulesets"]
 ExclusionKind = Literal["resource", "unsupported", "expected-failure"]
 
@@ -54,7 +53,6 @@ class Exclusion:
     reason: str
     evidence: str
     treatments: tuple[Treatment, ...] = ()
-    disequality_encoding: DisequalityEncoding | None = None
     memory_limit_bytes: int | None = None
 
     @classmethod
@@ -77,7 +75,6 @@ class FileSpec:
     def exclusion_for(
         self,
         treatment: Treatment,
-        encoding: DisequalityEncoding = "nee",
         *,
         memory_limit_bytes: int | None,
     ) -> Exclusion | None:
@@ -85,8 +82,6 @@ class FileSpec:
         matched = None
         for rule in self.exclusions:
             if rule.treatments and treatment not in rule.treatments:
-                continue
-            if rule.disequality_encoding is not None and rule.disequality_encoding != encoding:
                 continue
             if rule.memory_limit_bytes is not None and (
                 memory_limit_bytes is None or memory_limit_bytes > rule.memory_limit_bytes
@@ -173,12 +168,9 @@ class EndpointRequest:
 
     target: TargetRequest
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "nee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
     def __post_init__(self) -> None:
-        if TREATMENT_SPECS[self.treatment].binary_name != "egglog-experimental" and self.disequality_encoding != "nee":
-            raise ValueError("disequality encoding selection is only supported by egglog treatments")
         if not TREATMENT_SPECS[self.treatment].allocator_limit:
             object.__setattr__(self, "memory_limit_bytes", None)
         if self.memory_limit_bytes is not None and self.memory_limit_bytes < 1:
@@ -196,7 +188,6 @@ class BenchmarkEndpoint:
     target: TargetRow
     binary_sha256: str
     treatment: Treatment
-    disequality_encoding: DisequalityEncoding = "nee"
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
 
     def __post_init__(self) -> None:
@@ -210,14 +201,10 @@ class BenchmarkEndpoint:
         return cls(**{**data, "target": TargetRow(**data["target"])})
 
     @property
-    def cache_identity(self) -> tuple[str, Treatment, DisequalityEncoding]:
+    def cache_identity(self) -> tuple[str, Treatment]:
         """Return the endpoint coordinates shared by all of its file keys."""
 
-        return (
-            self.binary_sha256,
-            self.treatment,
-            self.disequality_encoding,
-        )
+        return self.binary_sha256, self.treatment
 
 
 @dataclass(frozen=True)

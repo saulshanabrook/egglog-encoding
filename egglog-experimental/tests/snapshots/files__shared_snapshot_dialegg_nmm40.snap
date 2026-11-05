@@ -2,7 +2,12 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
-((ArrayAttr 0)
+((@disequality-contradiction 0)
+ (@disequality-ne-Attr 0)
+ (@disequality-ne-AttrPair 0)
+ (@disequality-ne-Op 0)
+ (@disequality-ne-Type 0)
+ (ArrayAttr 0)
  (Blk 0)
  (Complex 0)
  (DenseFPElementsAttr 0)

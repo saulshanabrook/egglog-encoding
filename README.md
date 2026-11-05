@@ -234,16 +234,12 @@ fully cached runs; raw `label=` lookup still follows recorded observations.
 One invocation cannot assign the same label and engine to different binaries.
 
 The baseline and candidate may share a binary, as the default proof-overhead
-comparison does, but their endpoint identities—binary SHA-256, treatment,
-disequality encoding and allocator cap—must differ.
+comparison does, but their endpoint identities—binary SHA-256 and treatment—must
+differ.
 
-For disequality programs, `--disequality-encoding {nee,ee}` selects the candidate
-encoding and `--compare-disequality-encoding {nee,ee}` selects the baseline.
-Both default to `nee`. Encodings may be compared with the same binary and
-treatment. See the [parameter-analysis guide](benchmarks/disequality/README.md)
-for semantics, provenance, and comparison commands. The native `egg-de`,
-`egg-ee`, `egg-nee`, and `egg-oee` treatments use their corresponding `.in`
-input and fixed encoding; `--disequality-encoding` applies only to Egglog.
+Disequality programs use relation-based NEE, with a private relation per equality
+sort. The native parameter-analysis treatments use their own `.in` input and
+fixed encoding; they do not support Egglog proof modes.
 
 ### Files
 
@@ -286,12 +282,12 @@ corpus:
 | Churchroad | The paper's 16-by-32-bit wide multiply with its prelude and driver mapping rules materialized; the saturating schedule is bounded to 17 cycles, calibrated as a roughly one-second normal-mode workload | The multiply expansion and its two-input and three-input DSP proposals are checked |
 | DialEgg | Generated NMM-40 scaling workload with `base.egg` materialized | An alternative matrix-chain association is checked |
 | SpEQ | Four artifact-preserved programs that still match the artifact's GEMV/histogram reference rules, recorded using egglog-python's native command log | Each input is checked equal to its extracted reference call (or enclosing expression) |
-| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived and supports proof extraction/checking under NE and EE |
+| Disequality parameter analysis | Author-supplied native corpus converted to Egglog: 100K equality pairs, 10K disequality pairs, and six fixed numeral constraints in the original order | The contradiction is derived under relation-based NEE; full-input strict proof testing is deferred |
 
-The [disequality workload](benchmarks/disequality/README.md) uses NE by default.
-Its full-size proof runs require minutes and substantial memory, so the default
-suite is no longer a quick check. Use explicit file paths for a smaller subset
-or `--rounds 1` for an initial diagnostic.
+The [disequality workload](benchmarks/disequality/README.md) uses relation-based NEE.
+Its full-size strict proof runs exceeded the local memory cap and remain
+explicitly deferred in [the shared exclusion file](benchmarks/ignore.json).
+Use explicit file paths for a smaller subset or `--rounds 1` for an initial diagnostic.
 
 ### ParaBit proof-stress regression
 
@@ -570,8 +566,8 @@ The snapshot is refreshed even when all requested observations are cached.
 Unchanged output keeps its modification time. For another report path, `.jsonl`
 becomes `-grouped.json`; other names gain `-grouped.json`.
 
-Cache reuse is keyed by binary SHA-256, physical input file SHA-256, treatment,
-and disequality encoding. Target source, path, revision, dirty state, labels,
+Cache reuse is keyed by binary SHA-256, physical input file SHA-256, and treatment.
+Target source, path, revision, dirty state, labels,
 and display paths are provenance. Time and memory guards are per-attempt limits,
 not cache identities. Allocator startup settings stay fixed with or without a cap.
 

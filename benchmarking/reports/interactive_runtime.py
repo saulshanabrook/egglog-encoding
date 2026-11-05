@@ -18,7 +18,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
-from ..engines import TREATMENT_SPECS
 from ..models import (
     BenchmarkEndpoint,
     ComparisonSpec,
@@ -455,7 +454,6 @@ def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:
         ),
         record["binary_sha256"],
         record["treatment"],
-        record["disequality_encoding"],
         record["memory_limit_bytes"],
     )
 
@@ -477,7 +475,6 @@ def _record_endpoint_id(record: ReportRecord) -> str:
         "endpoint",
         record["binary_sha256"],
         record["treatment"],
-        record["disequality_encoding"],
     )
 
 
@@ -487,12 +484,7 @@ def _endpoint_label(endpoint: BenchmarkEndpoint) -> str:
     target = endpoint.target.display_label
     git = f"{short_git_sha}{dirty}"
     target_and_git = git if target == short_git_sha else f"{target} · {git}"
-    encoding = (
-        f"/{endpoint.disequality_encoding}"
-        if TREATMENT_SPECS[endpoint.treatment].binary_name == "egglog-experimental"
-        else ""
-    )
-    return f"{target_and_git} · {endpoint.treatment}{encoding}"
+    return f"{target_and_git} · {endpoint.treatment}"
 
 
 def _file_id(file: FileSpec) -> str:

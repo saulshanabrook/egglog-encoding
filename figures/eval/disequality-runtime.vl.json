@@ -1,6 +1,6 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-  "description": "Runtime and peak RSS distributions for native DE, native NEE and Egglog NEE. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and native-DE ratio intervals remain in companion exports.",
+  "description": "Runtime and peak RSS distributions for native DE, native NEE and relation-based Egglog NEE. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and native-DE ratio intervals remain in companion exports.",
   "data": {
     "url": "../../.reports-grouped.json",
     "format": {"type": "json"}
@@ -25,7 +25,7 @@
     {"calculate": "[datum.groups, [null]]", "as": "batches"},
     {"flatten": [ "batches" ], "as": [ "candidates" ]},
     {"flatten": [ "candidates" ], "as": [ "group" ]},
-    {"filter": "!isValid(datum.group) || (indexof(datum.group.labels, target_label) >= 0 && datum.group.key.disequality_encoding === 'nee')"},
+    {"filter": "!isValid(datum.group) || indexof(datum.group.labels, target_label) >= 0"},
     {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.treatment + '/' + datum.group.key.binary_sha256 : ''", "as": "group_id"},
     {
       "aggregate": [{"op": "values", "as": "observed"}]
@@ -41,7 +41,7 @@
     {"calculate": "datum.eligible_group ? datum.group.samples : []", "as": "observations"},
     {"calculate": "datum.eligible_group ? datum.input.selected_row_indices : []", "as": "sample_indices"},
     {"calculate": "length(datum.sample_indices)", "as": "sample_n"},
-    {"calculate": "datum.input.validation_issue || (indexof(['proofs','proof-extraction','proof-testing'], datum.input.treatment) >= 0 && datum.eligible_group && datum.input.validation_failures ? datum.input.validation_failures[datum.group.key.binary_sha256 + '/nee'] || '' : '')", "as": "validation_issue"},
+    {"calculate": "datum.input.validation_issue || (indexof(['proofs','proof-extraction','proof-testing'], datum.input.treatment) >= 0 && datum.eligible_group && datum.input.validation_failures ? datum.input.validation_failures[datum.group.key.binary_sha256] || '' : '')", "as": "validation_issue"},
     {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
     {"flatten": [ "runs" ], "as": [ "row_index" ]},
     {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},

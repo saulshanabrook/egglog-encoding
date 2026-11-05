@@ -1,10 +1,8 @@
 # Parameter-analysis implementation comparison
 
-The paper figure runs the authors' DE, EE, NEE, and OEE implementations and
-relation-based Egglog NEE, with proofs off. Egglog NEE uses the existing `nee`
-selector (called NE in the source); the separate Egglog EE encoding remains
-available through the ordinary benchmark CLI. The author-supplied
-[native corpus](parameter-analysis.in) is canonical. Its checked-in
+The paper figure compares the authors' native DE and NEE implementations with
+relation-based Egglog NEE, with proofs off. Native EE/OEE remain correctness checks.
+The author-supplied [native corpus](parameter-analysis.in) is canonical. Its checked-in
 [Egglog translation](parameter-analysis.egg) contains the same six fixed numeral
 constraints, 100,000 equality pairs, and 10,000 disequality pairs in author order,
 followed by a contradiction check. The four native drivers are unchanged.
@@ -32,8 +30,8 @@ observations are reused. Cargo dependency resolution and release builds happen
 automatically, outside measurement. Each measured interval spans the complete
 engine process, including input reading, expression parsing, and shutdown.
 The native CSV timers start after file reading and line-splitting, so the figure
-uses external whole-process time for all five configurations. The timeout is
-300 seconds. No proofs or proof checks run.
+uses external whole-process time for all three timed configurations. The shared
+timeout defaults to 500 seconds. Correctness checks run separately from these timings.
 
 Native rows identify the `.in` file and its hash; Egglog rows identify the `.egg`
 file and its hash. Each row also identifies the executable that actually ran.
@@ -41,10 +39,12 @@ There is no conversion or input preparation during collection. The corpus's
 normal native output reports a contradiction; the native programs also permit
 consistent inputs to exit successfully.
 
-Outputs are `figures/eval/disequality-runtime.pdf`, `.svg`, and `.png`.
-Automatic cache reuse collects only missing observations, refreshes the grouped
-snapshot and renders changed figures. The specification selects the `figures`
-label and configured physical inputs. Dots show selected process executions;
-complete samples show their arithmetic mean and 95% Student-t confidence
-interval. Missing or failed conditions remain visible. See the
-[figure guide](../../figures/README.md) for selection and provenance details.
+Outputs are written under `figures/output/eval/`, including the PDF, SVG, PNG,
+results JSON, numeric TeX macros, and TeX table. Automatic cache reuse collects
+only missing observations, refreshes the grouped snapshot and renders changed
+figures. The specification selects the `figures` label and
+configured physical inputs. Boxplots show medians and interquartile ranges,
+with 1.5-IQR whiskers and outlier points. Exports retain arithmetic means and
+95% intervals, including ratios against native DE. Missing or failed conditions
+stop export. See the [figure guide](../../figures/README.md) for selection and
+provenance details.

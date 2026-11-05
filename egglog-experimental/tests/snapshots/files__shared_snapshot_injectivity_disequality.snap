@@ -1,0 +1,20 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+((@disequality-contradiction 0)
+ (@disequality-ne-Term 16)
+ (A 1)
+ (B 1)
+ (C 1)
+ (D 1)
+ (EqL 1)
+ (EqR 1)
+ (Num 2)
+ (Pair 6)
+ (Plain 2)
+ (U1 1)
+ (U2 1)
+ (V1 1)
+ (V2 1)
+ (Wrap 3))

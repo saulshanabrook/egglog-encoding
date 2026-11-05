@@ -1,7 +1,7 @@
 //! Paper coverage is driven by the figure catalog and the shared ignore file.
 //! Each trial runs in an isolated process with the existing local allocator cap.
 use egglog::{CommandOutput, Read};
-use egglog_experimental::{DisequalityEncoding, EGraph, new_experimental_egraph_with_options};
+use egglog_experimental::{EGraph, new_experimental_egraph_with_options};
 use libtest_mimic::Trial;
 use serde::Deserialize;
 use std::{
@@ -31,7 +31,6 @@ struct Ignore {
     file: String,
     #[serde(default)]
     treatments: Vec<String>,
-    disequality_encoding: Option<String>,
     kind: String,
     reason: String,
     evidence: String,
@@ -59,13 +58,8 @@ struct Observations {
     comparison_in_root_class: Vec<Option<bool>>,
 }
 
-fn observe(
-    file: &Path,
-    mode: &str,
-    encoding: DisequalityEncoding,
-    expected: Option<&Observations>,
-) -> Observations {
-    let mut graph = new_experimental_egraph_with_options(mode == "off", encoding);
+fn observe(file: &Path, mode: &str, expected: Option<&Observations>) -> Observations {
+    let mut graph = new_experimental_egraph_with_options(mode == "off");
     graph.set_num_threads(1);
     graph = match mode {
         "off" => graph,
@@ -226,7 +220,6 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
         }
         return;
     }
-    let encoding = DisequalityEncoding::Nee;
     let policy: Vec<Ignore> = serde_json::from_str(
         &std::fs::read_to_string(root.join("benchmarks/ignore.json")).unwrap(),
     )
@@ -262,7 +255,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
         }
         eprintln!("Validating {mode}");
         let reference = if mode == "off" { "term" } else { "off" };
-        let observed = observe(file, mode, encoding, observations.get(reference));
+        let observed = observe(file, mode, observations.get(reference));
         observations.insert(mode, observed);
     }
     for mode in ["term", "proof-testing"] {
@@ -291,10 +284,6 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             let expected_failure = policy.iter().find(|rule| {
                 rule.kind == "expected-failure"
                     && rule.treatments.iter().any(|treatment| treatment == mode)
-                    && rule
-                        .disequality_encoding
-                        .as_deref()
-                        .is_none_or(|value| value == "nee")
                     && root
                         .join("benchmarks")
                         .join(&rule.file)
@@ -368,8 +357,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 (&counts.0, Some(counts.1)),
                 "native Math constructor/class counts differ"
             );
-            let mut graph =
-                new_experimental_egraph_with_options(policy == ProofMode::Off, encoding);
+            let mut graph = new_experimental_egraph_with_options(policy == ProofMode::Off);
             graph.set_num_threads(1);
             if policy == ProofMode::Check {
                 graph = graph.with_proofs_enabled().with_proof_testing();
@@ -684,11 +672,6 @@ fn main() {
                 .is_none_or(|limit| limit > 0 && rule.kind == "resource")
         );
         assert!(
-            rule.disequality_encoding
-                .as_ref()
-                .is_none_or(|value| matches!(value.as_str(), "nee" | "ee"))
-        );
-        assert!(
             !Path::new(&rule.file).is_absolute()
                 && !Path::new(&rule.file)
                     .components()
@@ -749,10 +732,6 @@ fn main() {
             let mut matching = ignores.iter().enumerate().filter(|(_, rule)| {
                 rule.matched.contains(&file)
                     && (rule.treatments.is_empty() || rule.treatments.contains(mode))
-                    && rule
-                        .disequality_encoding
-                        .as_ref()
-                        .is_none_or(|value| value == "nee")
                     && rule
                         .memory_limit_bytes
                         .is_none_or(|bound| memory_limit_bytes.is_some_and(|limit| limit <= bound))

@@ -63,10 +63,7 @@ impl UserDefinedCommand for KeepBestCommand {
         // staging a `remove` per row, which is what we used to do here.
         let all_funcs: Vec<String> = egraph.get_function_names();
         for name in &all_funcs {
-            // Injectivity markers describe declarations, not collected data.
-            if name != crate::injectivity::MARKED_CONSTRUCTORS {
-                egraph.clear_function(name)?;
-            }
+            egraph.clear_function(name)?;
         }
 
         // Step 4: re-insert the selected tuples. Evaluate each extracted term

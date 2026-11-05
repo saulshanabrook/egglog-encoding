@@ -35,7 +35,6 @@
     "treatments": [
       "proof-testing"
     ],
-    "disequality_encoding": "nee",
     "kind": "resource",
     "reason": "Strict NEE proofs for the full parameter-analysis input exceed the local 10 GiB allocator/address-space cap in a fresh process. This configuration is deferred from the artifact correctness claim across profiles; uncapped validation has not been established. A smaller input does not certify this workload.",
     "evidence": "2026-10-31 fresh CLI exit 86 after 370.01 s; peak RSS 6001508352 bytes; binary sha256:ec35c542b3cd098e039aa1524a922f6cc2a915da86e109a1f9ca28403818975a; input sha256:5aa2025d8c0056378264a0609f0651af442ea958c3cd2ae1ea31f91f958961bd. Saved capture: benchmarks/local/validation/parameter-strict-isolation-probe.json. Remove this entry only after validating the full configuration on a suitable machine. A fresh release CLI probe also exited86 after344.01s, peakRSS4614504448B, binarysha256:987a778042da6ac8529764015983e7e0e35dd04d676beb9528906d8b957ddd05; same input/cap. Saved capture: benchmarks/local/validation/parameter-strict-production-probe.json. This is diagnostic evidence, not a paper timing observation."
@@ -45,7 +44,6 @@
     "treatments": [
       "term"
     ],
-    "disequality_encoding": "nee",
     "kind": "expected-failure",
     "reason": "Known Smaller count bug (#164): 777 rows in ordinary mode, 785 in term mode.",
     "evidence": "https://github.com/saulshanabrook/egglog-encoding/issues/164. Actual input sha256:0502b1f9162548d0326384e59e4b6c311daea0186b9cd3495fe0aabb0dfe15a7. All other source table counts and all eight extracted terms/costs match; full ordinary/strict certificate checks passed. Approved as a narrow expected failure by the user on 2026-10-31.",
@@ -61,7 +59,6 @@
     "treatments": [
       "term"
     ],
-    "disequality_encoding": "nee",
     "kind": "expected-failure",
     "reason": "Known Smaller count bug (#164): 2301 rows in ordinary mode, 2312 in term mode.",
     "evidence": "https://github.com/saulshanabrook/egglog-encoding/issues/164. Manually reproduced additional configuration of the same count defect under the user instruction to track merge-related count differences as known bugs. Input sha256:4be8c849046d66d44b148907b453273c66a9aa8bfc75589e21d4615e48cc281b. Captures: benchmarks/local/validation/nussinov03-repro.json and nussinov03-prefix.json.",
@@ -77,7 +74,6 @@
     "treatments": [
       "proof-testing"
     ],
-    "disequality_encoding": "nee",
     "kind": "expected-failure",
     "reason": "Known Smaller count bug (#164): 2301 rows in ordinary mode, 2312 in strict proof-testing.",
     "evidence": "https://github.com/saulshanabrook/egglog-encoding/issues/164. Manually reproduced additional configuration of the same count defect under the user instruction to track merge-related count differences as known bugs. Input sha256:4be8c849046d66d44b148907b453273c66a9aa8bfc75589e21d4615e48cc281b. Captures: benchmarks/local/validation/nussinov03-repro.json and nussinov03-prefix.json.",

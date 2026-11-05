@@ -63,28 +63,44 @@ Executable examples cover [mixed arguments](tests/injectivity/injectivity-basic.
 [recursive propagation](tests/injectivity/injectivity-recursive.egg), and
 [mutually recursive datatypes](tests/injectivity/injectivity-datatypes.egg).
 
-`(known-disequal? left right)` queries known disequality on demand. Both operands
-must have the same equality sort; the predicate returns `Unit` when it finds a
-finite witness and is undefined otherwise. For example:
+`(known-disequal? left right)` queries the stored disequality relation. Both
+operands must have the same unionable equality sort. The query returns `Unit`
+when the pair is present and is undefined otherwise. Run `injectivity` to
+propagate disequalities before querying them:
 
 ```lisp
 (datatype Term (Num i64 :injective))
 (Num 1) (Num 2)
+(run-schedule (saturate injectivity))
 (check (known-disequal? (Num 1) (Num 2)))
 ```
 
-For two existing applications of the same marked constructor, any unequal
-corresponding arguments establish unequal results. Primitive arguments use native
-`!=`; equality-sort arguments use asserted `(disequal ...)` facts or recursive
-witnesses. For a marked unary constructor with an equality-sort argument, known
-unequal results also establish unequal arguments. Multiple-argument constructors
-have no reverse rule.
+For existing applications of the same marked constructor, any unequal
+corresponding arguments establish unequal results. Primitive fields use native
+`!=`; equality-sort fields use the stored disequality relations. For every
+constructor, including unmarked ones, unequal results establish an unequal
+unionable equality-sort argument when all other corresponding fields are equal.
+This downward rule follows from congruence; only upward disequality propagation
+and equality decomposition require `:injective`. Unmarked constructors retain
+support for container and non-unionable fields as guards. Different constructor
+names imply no disjointness. Subsumed constructor rows participate.
 
-Queries read the current graph without creating constructor applications or
-storing derived disequality pairs. They need no saturation; equality propagation
-still requires scheduling `injectivity`. Unknown equality supplies no inequality
-witness. Cycles terminate, although a query can visit many value pairs. Use
-`:naive` for rules whose bodies call this predicate, because its reads extend
-beyond the rule's explicit table atoms. The new query currently supports ordinary
-execution only; term encoding and proof testing reject it. See the executable
-[disequality query example](tests/injectivity/injectivity-disequality.egg).
+Propagation inserts derived pairs into ordinary per-sort relations. It does not
+create constructor applications. Queries perform no graph search or hidden
+saturation: new assertions, constructor rows, or unions may require another
+`injectivity` run before all consequences are available, including the reverse
+orientation of an asserted pair. Saturation is finite for a fixed graph, but it
+can store quadratically many pairs.
+
+These rules are sound but incomplete for logical disequality. For example,
+`Pair(a,a) != Pair(b,b)` entails `a != b`: assuming `a = b` would make the two
+results equal by congruence. Neither one-field downward rule can derive that
+pair because each requires the other field already equal. An absent relation
+row therefore means unknown. Saturating the generated rules reaches their
+fixed point, rather than enumerating every logical consequence.
+
+Queries in checks and rule bodies lower to ordinary relation atoms, so consumer
+rules use normal seminaive evaluation and queries support ordinary execution,
+term encoding, and proof testing. The query is supported in facts; using it in
+an action expression is rejected rather than inserting a disequality. See the
+executable [disequality query example](tests/injectivity/injectivity-disequality.egg).

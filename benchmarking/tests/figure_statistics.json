@@ -28,25 +28,25 @@
   ],
   "groups": [
     {
-      "key": {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee"},
+      "key": {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested"},
       "labels": ["figures"],
       "samples": [
-        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee", "row_index": 0, "started_at": "2026-10-01T00:00:00Z", "status": "success", "wall_sec": 20, "max_rss_bytes": 314572800},
-        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee", "row_index": 1, "started_at": "2026-10-01T00:00:01Z", "status": "success", "wall_sec": 999, "max_rss_bytes": 104856551424},
-        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee", "row_index": 2, "started_at": "2026-10-01T00:00:02Z", "status": "success", "wall_sec": 21, "max_rss_bytes": 317718528},
-        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee", "row_index": 3, "started_at": "2026-10-01T00:00:03Z", "status": "success", "wall_sec": 888, "max_rss_bytes": 93205823488},
-        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "disequality_encoding": "nee", "row_index": 4, "started_at": "2026-10-01T00:00:04Z", "status": "success", "wall_sec": 22, "max_rss_bytes": 320864256}
+        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "row_index": 0, "started_at": "2026-10-01T00:00:00Z", "status": "success", "wall_sec": 20, "max_rss_bytes": 314572800},
+        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "row_index": 1, "started_at": "2026-10-01T00:00:01Z", "status": "success", "wall_sec": 999, "max_rss_bytes": 104856551424},
+        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "row_index": 2, "started_at": "2026-10-01T00:00:02Z", "status": "success", "wall_sec": 21, "max_rss_bytes": 317718528},
+        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "row_index": 3, "started_at": "2026-10-01T00:00:03Z", "status": "success", "wall_sec": 888, "max_rss_bytes": 93205823488},
+        {"binary_sha256": "current", "file_sha256": "physical-0", "treatment": "slotted-ref-nested", "row_index": 4, "started_at": "2026-10-01T00:00:04Z", "status": "success", "wall_sec": 22, "max_rss_bytes": 320864256}
       ]
     },
     {
-      "key": {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee"},
+      "key": {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing"},
       "labels": ["figures"],
       "samples": [
-        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee", "row_index": 10, "started_at": "2026-10-01T00:00:10Z", "status": "success", "wall_sec": 60, "max_rss_bytes": 1572864000},
-        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee", "row_index": 11, "started_at": "2026-10-01T00:00:11Z", "status": "success", "wall_sec": 2997, "max_rss_bytes": 524282757120},
-        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee", "row_index": 12, "started_at": "2026-10-01T00:00:12Z", "status": "success", "wall_sec": 63, "max_rss_bytes": 1588592640},
-        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee", "row_index": 13, "started_at": "2026-10-01T00:00:13Z", "status": "success", "wall_sec": 2664, "max_rss_bytes": 466029117440},
-        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "disequality_encoding": "nee", "row_index": 14, "started_at": "2026-10-01T00:00:14Z", "status": "success", "wall_sec": 66, "max_rss_bytes": 1604321280}
+        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "row_index": 10, "started_at": "2026-10-01T00:00:10Z", "status": "success", "wall_sec": 60, "max_rss_bytes": 1572864000},
+        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "row_index": 11, "started_at": "2026-10-01T00:00:11Z", "status": "success", "wall_sec": 2997, "max_rss_bytes": 524282757120},
+        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "row_index": 12, "started_at": "2026-10-01T00:00:12Z", "status": "success", "wall_sec": 63, "max_rss_bytes": 1588592640},
+        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "row_index": 13, "started_at": "2026-10-01T00:00:13Z", "status": "success", "wall_sec": 2664, "max_rss_bytes": 466029117440},
+        {"binary_sha256": "current", "file_sha256": "physical-1", "treatment": "slotted-no-aliasing", "row_index": 14, "started_at": "2026-10-01T00:00:14Z", "status": "success", "wall_sec": 66, "max_rss_bytes": 1604321280}
       ]
     }
   ],
@@ -227,120 +227,120 @@
     ],
     "groups": [
       {
-        "key": {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "disequality_encoding": "nee", "row_index": 100, "started_at": "2026-10-01T00:01:40Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "disequality_encoding": "nee", "row_index": 101, "started_at": "2026-10-01T00:01:41Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "disequality_encoding": "nee", "row_index": 102, "started_at": "2026-10-01T00:01:42Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "row_index": 100, "started_at": "2026-10-01T00:01:40Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "row_index": 101, "started_at": "2026-10-01T00:01:41Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "off", "row_index": 102, "started_at": "2026-10-01T00:01:42Z", "status": "success", "wall_sec": 0.2, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 103, "started_at": "2026-10-01T00:01:43Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 104, "started_at": "2026-10-01T00:01:44Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 105, "started_at": "2026-10-01T00:01:45Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152}
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "row_index": 103, "started_at": "2026-10-01T00:01:43Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "row_index": 104, "started_at": "2026-10-01T00:01:44Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "boundary", "treatment": "proofs", "row_index": 105, "started_at": "2026-10-01T00:01:45Z", "status": "success", "wall_sec": 0.4, "max_rss_bytes": 2097152}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "disequality_encoding": "nee", "row_index": 106, "started_at": "2026-10-01T00:01:46Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "disequality_encoding": "nee", "row_index": 107, "started_at": "2026-10-01T00:01:47Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "disequality_encoding": "nee", "row_index": 108, "started_at": "2026-10-01T00:01:48Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "row_index": 106, "started_at": "2026-10-01T00:01:46Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "row_index": 107, "started_at": "2026-10-01T00:01:47Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "off", "row_index": 108, "started_at": "2026-10-01T00:01:48Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 109, "started_at": "2026-10-01T00:01:49Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 110, "started_at": "2026-10-01T00:01:50Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 111, "started_at": "2026-10-01T00:01:51Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152}
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "row_index": 109, "started_at": "2026-10-01T00:01:49Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "row_index": 110, "started_at": "2026-10-01T00:01:50Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "same-rank", "treatment": "proofs", "row_index": 111, "started_at": "2026-10-01T00:01:51Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "disequality_encoding": "nee", "row_index": 112, "started_at": "2026-10-01T00:01:52Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "disequality_encoding": "nee", "row_index": 113, "started_at": "2026-10-01T00:01:53Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "disequality_encoding": "nee", "row_index": 114, "started_at": "2026-10-01T00:01:54Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "row_index": 112, "started_at": "2026-10-01T00:01:52Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "row_index": 113, "started_at": "2026-10-01T00:01:53Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "off", "row_index": 114, "started_at": "2026-10-01T00:01:54Z", "status": "success", "wall_sec": 100, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 115, "started_at": "2026-10-01T00:01:55Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304},
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 116, "started_at": "2026-10-01T00:01:56Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304},
-          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 117, "started_at": "2026-10-01T00:01:57Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304}
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "row_index": 115, "started_at": "2026-10-01T00:01:55Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304},
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "row_index": 116, "started_at": "2026-10-01T00:01:56Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304},
+          {"binary_sha256": "current", "file_sha256": "slow", "treatment": "proofs", "row_index": 117, "started_at": "2026-10-01T00:01:57Z", "status": "success", "wall_sec": 400, "max_rss_bytes": 4194304}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "disequality_encoding": "nee", "row_index": 118, "started_at": "2026-10-01T00:01:58Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "disequality_encoding": "nee", "row_index": 119, "started_at": "2026-10-01T00:01:59Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "disequality_encoding": "nee", "row_index": 120, "started_at": "2026-10-01T00:02:00Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "row_index": 118, "started_at": "2026-10-01T00:01:58Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "row_index": 119, "started_at": "2026-10-01T00:01:59Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "off", "row_index": 120, "started_at": "2026-10-01T00:02:00Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 121, "started_at": "2026-10-01T00:02:01Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 122, "started_at": "2026-10-01T00:02:02Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 123, "started_at": "2026-10-01T00:02:03Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152}
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "row_index": 121, "started_at": "2026-10-01T00:02:01Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "row_index": 122, "started_at": "2026-10-01T00:02:02Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "failed", "treatment": "proofs", "row_index": 123, "started_at": "2026-10-01T00:02:03Z", "status": "failure", "wall_sec": 2, "max_rss_bytes": 2097152}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "disequality_encoding": "nee", "row_index": 124, "started_at": "2026-10-01T00:02:04Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "disequality_encoding": "nee", "row_index": 125, "started_at": "2026-10-01T00:02:05Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "disequality_encoding": "nee", "row_index": 126, "started_at": "2026-10-01T00:02:06Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "row_index": 124, "started_at": "2026-10-01T00:02:04Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "row_index": 125, "started_at": "2026-10-01T00:02:05Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "missing", "treatment": "off", "row_index": 126, "started_at": "2026-10-01T00:02:06Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "disequality_encoding": "nee", "row_index": 127, "started_at": "2026-10-01T00:02:07Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "disequality_encoding": "nee", "row_index": 128, "started_at": "2026-10-01T00:02:08Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "disequality_encoding": "nee", "row_index": 129, "started_at": "2026-10-01T00:02:09Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "row_index": 127, "started_at": "2026-10-01T00:02:07Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "row_index": 128, "started_at": "2026-10-01T00:02:08Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "off", "row_index": 129, "started_at": "2026-10-01T00:02:09Z", "status": "success", "wall_sec": 1, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 130, "started_at": "2026-10-01T00:02:10Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 131, "started_at": "2026-10-01T00:02:11Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 132, "started_at": "2026-10-01T00:02:12Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152}
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "row_index": 130, "started_at": "2026-10-01T00:02:10Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "row_index": 131, "started_at": "2026-10-01T00:02:11Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "excluded", "treatment": "proofs", "row_index": 132, "started_at": "2026-10-01T00:02:12Z", "status": "success", "wall_sec": 2, "max_rss_bytes": 2097152}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "disequality_encoding": "nee", "row_index": 133, "started_at": "2026-10-01T00:02:13Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "disequality_encoding": "nee", "row_index": 134, "started_at": "2026-10-01T00:02:14Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576},
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "disequality_encoding": "nee", "row_index": 135, "started_at": "2026-10-01T00:02:15Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576}
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "row_index": 133, "started_at": "2026-10-01T00:02:13Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "row_index": 134, "started_at": "2026-10-01T00:02:14Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576},
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "off", "row_index": 135, "started_at": "2026-10-01T00:02:15Z", "status": "success", "wall_sec": 0.199, "max_rss_bytes": 1048576}
         ]
       },
       {
-        "key": {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "disequality_encoding": "nee"},
+        "key": {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs"},
         "labels": ["figures"],
         "samples": [
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 136, "started_at": "2026-10-01T00:02:16Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 137, "started_at": "2026-10-01T00:02:17Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152},
-          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "disequality_encoding": "nee", "row_index": 138, "started_at": "2026-10-01T00:02:18Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152}
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "row_index": 136, "started_at": "2026-10-01T00:02:16Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "row_index": 137, "started_at": "2026-10-01T00:02:17Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152},
+          {"binary_sha256": "current", "file_sha256": "fast", "treatment": "proofs", "row_index": 138, "started_at": "2026-10-01T00:02:18Z", "status": "success", "wall_sec": 0.398, "max_rss_bytes": 2097152}
         ]
       }
     ],

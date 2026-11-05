@@ -41,12 +41,14 @@
 //! arguments are unioned; unequal primitive arguments panic. Container arguments
 //! are rejected. These rules also support term encoding and proof testing.
 //!
-//! `(known-disequal? left right)` reads known disequality without storing derived
-//! pairs. For marked constructors, it follows explicit equality-sort argument
-//! disequalities and native primitive differences forward at any arity, and
-//! result disequalities backward at unary constructors. Both operands must have
-//! the same equality sort. Use `:naive` in rules with this read predicate. The
-//! query currently supports ordinary execution only, without term/proof encoding.
+//! `(known-disequal? left right)` queries materialized disequality in checks
+//! and rule bodies. Run `injectivity` to propagate disequalities: marked
+//! constructors infer unequal existing outputs from unequal fields, and every
+//! ordinary constructor infers an unequal unionable equality-sort field from
+//! unequal outputs when all other fields agree. This propagation is incomplete.
+//! Both operands must have the same unionable equality sort. Queries expose
+//! ordinary relation dependencies, support seminaive rules and term/proof
+//! encoding, and never run propagation. Action expression uses are rejected.
 //!
 //! ## Generic containers and callbacks
 //!
@@ -128,7 +130,6 @@ mod type_constraints;
 pub use subst::Subst;
 mod greedy_dag_extract;
 mod secondary_map;
-pub use disequality::DisequalityEncoding;
 pub use greedy_dag_extract::{extract_best_greedy_dag, extract_variants_greedy_dag};
 
 mod set_cost;
@@ -163,23 +164,20 @@ pub use effsafe_extract::{
 
 /// Create an e-graph with all experimental extensions registered.
 pub fn new_experimental_egraph() -> EGraph {
-    new_experimental_egraph_with_options(true, DisequalityEncoding::default())
+    new_experimental_egraph_with_options(true)
 }
 
 /// Register extensions with core schedules so term/proof lowering can process them.
 pub fn new_experimental_egraph_for_proofs() -> EGraph {
-    new_experimental_egraph_with_options(false, DisequalityEncoding::default())
+    new_experimental_egraph_with_options(false)
 }
 
-/// Construct a graph with the selected disequality encoding. Disable the extended
+/// Construct an experimental graph. Disable the extended
 /// schedule interpreter when enabling term/proof encoding, which lowers schedules.
-pub fn new_experimental_egraph_with_options(
-    extended_run_schedule: bool,
-    disequality_encoding: DisequalityEncoding,
-) -> EGraph {
+pub fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
     let mut egraph = EGraph::default();
     add_experimental_extensions(&mut egraph, extended_run_schedule);
-    disequality::add_disequality_support(&mut egraph, disequality_encoding);
+    disequality::add_disequality_support(&mut egraph);
     egraph
 }
 
