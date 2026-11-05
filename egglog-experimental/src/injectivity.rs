@@ -24,9 +24,9 @@
 //! The shared `injectivity` ruleset exists on experimental graphs, but its
 //! rules run only when scheduled. `(run-schedule (saturate injectivity))`
 //! propagates equality through successive constructor layers. The generated
-//! equality rules support ordinary execution, term encoding, and proof testing.
-//! The separate `known-disequal?` read predicate supports ordinary execution
-//! only; its reference and witness-search explanation are in `disequality.rs`.
+//! rules support ordinary execution, term encoding, and proof testing. It also
+//! propagates structural disequalities, described in `disequality.rs`. Queries
+//! read the resulting relations without running the ruleset.
 //!
 //! # Encoding explanation
 //!
@@ -35,7 +35,7 @@
 //! and options with the flag cleared, then adds ordinary rules. Plain egglog
 //! rejects an unconsumed `:injective` flag rather than ignoring its semantics.
 //!
-//! For a marked `F`, every rule joins two existing rows on equal output:
+//! For a marked `F`, the equality rules join two existing rows on equal output:
 //!
 //! ```text
 //! F(a_0, ..., a_n) = F(b_0, ..., b_n)
@@ -48,27 +48,28 @@
 //! names are fresh so a declaration reinstated after `pop` has a distinct proof
 //! identity. Nullary marked constructors need no equality rule.
 //!
-//! The lazy hidden function `@injectivity-constructors : String -> Unit`
-//! records one constructor name per successful marked declaration. This is
-//! O(number of marked constructors) declaration metadata, used by the
-//! on-demand disequality search; it stores no derived value pairs. Declaring
-//! it with its first write lets term/proof lowering instrument both together.
-//! Its rows follow normal cloning and `push`/`pop`, failed declarations do not
-//! add markers, and `keep-best` preserves this table while compacting data.
+//! Additional rules join two existing rows and materialize unequal outputs
+//! from any unequal field. Native primitive differences seed those pairs;
+//! equality-sort fields use per-sort Ne relations. Conversely, unequal outputs
+//! yield an unequal equality-sort field when all other fields agree. Unmarked
+//! constructors receive neither direction. Relations are installed alongside
+//! marked declarations, including mutually recursive datatype fields, without
+//! storing constructor metadata or searching the graph at query time.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use egglog::{
     CommandMacro, EGraph, Error, TypeError, TypeInfo,
     ast::{
-        Action, Actions, Command, Expr, Fact, FunctionRole, Literal, ParseError, Rule,
-        RuleEvalMode, Schema, Span, Subdatatypes,
+        Action, Actions, Command, Expr, Fact, ParseError, Rule, RuleEvalMode, Schema, Span,
+        Subdatatypes,
     },
     span,
     util::{FreshGen, SymbolGen},
 };
-
-pub(crate) const MARKED_CONSTRUCTORS: &str = "@injectivity-constructors";
 
 pub(crate) fn add_injectivity_support(egraph: &mut EGraph) {
     // Install once, outside user push/pop scopes, even if no constructor is marked.
@@ -116,7 +117,7 @@ impl CommandMacro for LowerInjectivity {
         }
 
         let mut rules = Vec::new();
-        let mut marked = Vec::new();
+        let mut disequality_sorts = BTreeMap::new();
         match &mut command {
             Command::Constructor {
                 span,
@@ -125,47 +126,43 @@ impl CommandMacro for LowerInjectivity {
                 injective,
                 ..
             } if *injective => {
-                rules.extend(injectivity_rules(
-                    span,
-                    name,
-                    &schema.input,
-                    symbols,
-                    types,
-                    &eq_sorts,
-                    &containers,
-                )?);
-                marked.push((span.clone(), name.clone()));
+                let (generated, sorts) =
+                    injectivity_rules(span, name, schema, symbols, types, &eq_sorts, &containers)?;
+                rules.extend(generated);
+                disequality_sorts.extend(sorts);
                 *injective = false;
             }
-            Command::Datatype { variants, .. } => {
+            Command::Datatype { name, variants, .. } => {
                 for variant in variants.iter_mut().filter(|v| v.injective) {
-                    rules.extend(injectivity_rules(
+                    let (generated, sorts) = injectivity_rules(
                         &variant.span,
                         &variant.name,
-                        &variant.types,
+                        &Schema::new(variant.types.clone(), name.clone()),
                         symbols,
                         types,
                         &eq_sorts,
                         &containers,
-                    )?);
-                    marked.push((variant.span.clone(), variant.name.clone()));
+                    )?;
+                    rules.extend(generated);
+                    disequality_sorts.extend(sorts);
                     variant.injective = false;
                 }
             }
             Command::Datatypes { datatypes, .. } => {
-                for (_, _, datatype) in datatypes {
+                for (_, sort, datatype) in datatypes {
                     if let Subdatatypes::Variants(variants) = datatype {
                         for variant in variants.iter_mut().filter(|v| v.injective) {
-                            rules.extend(injectivity_rules(
+                            let (generated, sorts) = injectivity_rules(
                                 &variant.span,
                                 &variant.name,
-                                &variant.types,
+                                &Schema::new(variant.types.clone(), sort.clone()),
                                 symbols,
                                 types,
                                 &eq_sorts,
                                 &containers,
-                            )?);
-                            marked.push((variant.span.clone(), variant.name.clone()));
+                            )?;
+                            rules.extend(generated);
+                            disequality_sorts.extend(sorts);
                             variant.injective = false;
                         }
                     }
@@ -175,52 +172,38 @@ impl CommandMacro for LowerInjectivity {
         }
         // Validate every marked signature before installing the declaration.
         let mut commands = vec![command];
-        // Declare lazily so term/proof encoding instruments the table together
-        // with its first write rather than seeing an unencoded startup table.
-        if !marked.is_empty() && types.get_func_type(MARKED_CONSTRUCTORS).is_none() {
-            commands.push(Command::Function {
-                span: span!(),
-                name: MARKED_CONSTRUCTORS.into(),
-                schema: Schema::new(vec!["String".into()], "Unit".into()),
-                merge: None,
-                hidden: true,
-                role: FunctionRole::Ordinary,
-                unextractable: true,
-                identity_vals: None,
-                cost: None,
-            });
-        }
+        commands.extend(crate::disequality::support_commands(
+            disequality_sorts,
+            None,
+            symbols,
+            types,
+        ));
         commands.extend(rules);
-        // Database metadata follows clone/push/pop and is written only after
-        // the declaration and its generated rules have installed successfully.
-        commands.extend(marked.into_iter().map(|(span, name)| {
-            Command::Action(Action::Set(
-                span.clone(),
-                MARKED_CONSTRUCTORS.into(),
-                vec![Expr::Lit(span.clone(), Literal::String(name))],
-                Expr::Lit(span, Literal::Unit),
-            ))
-        }));
         Ok(commands)
     }
 }
 
-/// Build the equal-output join, one combined equality-sort union head, and
-/// one independently guarded panic rule per primitive field. Sort validation
-/// happens before any declaration or marker is installed in the live graph.
+/// Build equality and disequality joins over existing rows of a marked
+/// constructor. Validate the whole signature before installing any declaration
+/// or support, including datatype fields not yet visible in TypeInfo.
 fn injectivity_rules(
     span: &Span,
     name: &str,
-    inputs: &[String],
+    schema: &Schema,
     symbols: &mut SymbolGen,
     types: &TypeInfo,
     eq_sorts: &HashSet<String>,
     containers: &HashSet<String>,
-) -> Result<Vec<Command>, Error> {
+) -> Result<(Vec<Command>, BTreeMap<String, Span>), Error> {
+    let inputs = &schema.input;
+    let output = schema.output();
+    let mut disequality_sorts = BTreeMap::new();
     let mut left = Vec::new();
     let mut right = Vec::new();
     let mut unions = Vec::new();
     let mut primitive_args = Vec::new();
+    let mut eq_args = Vec::new();
+    disequality_sorts.insert(output.clone(), span.clone());
     for (index, sort_name) in inputs.iter().enumerate() {
         let is_eq = if eq_sorts.contains(sort_name) {
             true
@@ -247,6 +230,8 @@ fn injectivity_rules(
         let lhs = Expr::Var(span.clone(), symbols.fresh("injectivity-left"));
         let rhs = Expr::Var(span.clone(), symbols.fresh("injectivity-right"));
         if is_eq {
+            disequality_sorts.insert(sort_name.clone(), span.clone());
+            eq_args.push(index);
             unions.push(Action::Union(span.clone(), lhs.clone(), rhs.clone()));
         } else {
             primitive_args.push((index, lhs.clone(), rhs.clone()));
@@ -256,26 +241,90 @@ fn injectivity_rules(
     }
     let body = vec![Fact::Eq(
         span.clone(),
-        Expr::Call(span.clone(), name.into(), left),
-        Expr::Call(span.clone(), name.into(), right),
+        Expr::Call(span.clone(), name.into(), left.clone()),
+        Expr::Call(span.clone(), name.into(), right.clone()),
     )];
     let mut heads = Vec::new();
     if !unions.is_empty() {
         heads.push((body.clone(), unions));
     }
-    for (index, lhs, rhs) in primitive_args {
+    for (index, lhs, rhs) in &primitive_args {
         let mut guarded_body = body.clone();
         guarded_body.push(Fact::Fact(Expr::Call(
             span.clone(),
             "!=".into(),
-            vec![lhs, rhs],
+            vec![lhs.clone(), rhs.clone()],
         )));
         heads.push((guarded_body, vec![Action::Panic(
             span.clone(),
             format!("injectivity violation in constructor `{name}`: unequal primitive argument {index}"),
         )]));
     }
-    Ok(heads
+    let lhs = Expr::Var(span.clone(), symbols.fresh("injectivity-output-left"));
+    let rhs = Expr::Var(span.clone(), symbols.fresh("injectivity-output-right"));
+    let rows = vec![
+        Fact::Eq(
+            span.clone(),
+            lhs.clone(),
+            Expr::Call(span.clone(), name.into(), left.clone()),
+        ),
+        Fact::Eq(
+            span.clone(),
+            rhs.clone(),
+            Expr::Call(span.clone(), name.into(), right.clone()),
+        ),
+    ];
+    let output_ne = Expr::Call(
+        span.clone(),
+        format!("@disequality-ne-{output}"),
+        vec![lhs.clone(), rhs.clone()],
+    );
+    // Any unequal field proves unequal existing outputs. Primitive differences
+    // seed output disequalities without allocating primitive Ne relations.
+    for (index, sort) in inputs.iter().enumerate() {
+        let mut body = rows.clone();
+        body.push(Fact::Fact(Expr::Call(
+            span.clone(),
+            if eq_args.contains(&index) {
+                format!("@disequality-ne-{sort}")
+            } else {
+                "!=".into()
+            },
+            vec![left[index].clone(), right[index].clone()],
+        )));
+        heads.push((body, vec![Action::Expr(span.clone(), output_ne.clone())]));
+    }
+    // An unequal result identifies a field only when every other field agrees.
+    // Reusing those variables guards both primitive and equality-sort fields.
+    for index in eq_args {
+        let mut matching = left.clone();
+        matching[index] = right[index].clone();
+        let body = vec![
+            Fact::Eq(
+                span.clone(),
+                lhs.clone(),
+                Expr::Call(span.clone(), name.into(), left.clone()),
+            ),
+            Fact::Eq(
+                span.clone(),
+                rhs.clone(),
+                Expr::Call(span.clone(), name.into(), matching),
+            ),
+            Fact::Fact(output_ne.clone()),
+        ];
+        heads.push((
+            body,
+            vec![Action::Expr(
+                span.clone(),
+                Expr::Call(
+                    span.clone(),
+                    format!("@disequality-ne-{}", inputs[index]),
+                    vec![left[index].clone(), right[index].clone()],
+                ),
+            )],
+        ));
+    }
+    let rules = heads
         .into_iter()
         .map(|(body, head)| Command::Rule {
             rule: Rule {
@@ -290,5 +339,6 @@ fn injectivity_rules(
                 include_subsumed: true,
             },
         })
-        .collect())
+        .collect();
+    Ok((rules, disequality_sorts))
 }

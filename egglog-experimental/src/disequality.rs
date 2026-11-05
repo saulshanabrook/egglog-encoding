@@ -1,4 +1,4 @@
-//! Relation-based disequality assertions and read-only structural witness queries.
+//! Relation-based disequality assertions, propagation, and read-only queries.
 //!
 //! # Reference
 //!
@@ -25,99 +25,74 @@
 //! (check-contradiction)
 //! ```
 //!
-//! ## On-demand query
+//! ## Queries and explicit propagation
 //!
 //! `(known-disequal? left right)` accepts two values of the same unionable
-//! equality sort. It returns `Unit` when a finite disequality witness is found
-//! and is undefined otherwise. The test is sound but incomplete: undefined
-//! denotes unknown and supplies no equality conclusion. It can be used in
-//! `check`, `fail (check ...)`, and rule bodies; such rules use `:naive` because
-//! the predicate reads tables beyond the body's explicit atoms. Direct primitive
-//! operands still use `!=`.
+//! equality sort. In query facts it returns `Unit` for a stored disequality and
+//! is undefined otherwise. Unknown supplies no equality conclusion. Use it in
+//! checks, rule bodies, rewrite conditions, and run-until conditions. Action
+//! expressions are rejected because ordinary relation calls there insert rows.
+//! Direct primitive comparisons use native `!=`.
 //!
 //! ```lisp
 //! (datatype Expr (Num i64 :injective))
 //! (Num 1) (Num 2)
+//! (fail (check (known-disequal? (Num 1) (Num 2))))
+//! (run-schedule (saturate injectivity))
 //! (check (known-disequal? (Num 1) (Num 2)))
 //! ```
 //!
-//! The query combines stored disequalities with structural implications for
-//! `:injective` constructors, without saturation. A differing corresponding
-//! argument can establish unequal results at any arity. Unequal results can
-//! establish unequal arguments only for a marked unary constructor with an
-//! equality-sort argument. There is no reverse rule for multiple arguments,
-//! inequality from missing equality, or disjointness between constructor names.
-//! Subsumed constructor rows participate. The query has no validator and
-//! currently supports ordinary execution only, without term/proof encoding.
+//! The `injectivity` ruleset materializes structural disequalities and symmetry
+//! only when scheduled. For the same marked constructor, one unequal field
+//! implies unequal existing outputs; primitive differences can seed this rule.
+//! Unequal outputs imply an unequal equality-sort field when every other
+//! corresponding field is equal. This includes unary constructors. There is
+//! no inequality from missing equality or different constructor names. These
+//! rules include subsumed rows and support ordinary, term, and proof modes.
 //!
 //! # Encoding explanation
 //!
-//! ## Lazy ordinary-language support
+//! Parsing represents an assertion with a private action placeholder. A command
+//! pass checks its operands using union's type constraints and replaces it with
+//! a per-sort relation insertion. The same pass uses a type-only query marker
+//! to infer query operands, then emits ordinary relation facts. Nested query
+//! expressions retain `Unit` by hoisting their relation fact. No marker reaches
+//! execution or proof encoding, and rule dependencies are visible to ordinary
+//! seminaive evaluation.
 //!
-//! Parsing first represents an assertion with a private placeholder action.
-//! The command pass enforces the same operand constraints as union and
-//! replaces it with a per-sort relation insertion. The first assertion use or
-//! contradiction check installs private support lazily; per-sort tables are
-//! added as needed. Rules receive fresh names when reinstalled after `pop`.
-//! The encoding uses ordinary egglog tables, actions, and rebuilding rather than
-//! a custom union-find extension.
+//! Each needed equality sort `S` has `Ne_S : (S, S)`, named
+//! `@disequality-ne-S`. Marked declarations install relations for their output
+//! and equality-sort input fields; assertion and query uses install other sorts
+//! lazily, including a valid empty relation for query-only use. Scoped relations
+//! and rules follow `push`/`pop`; fresh rule names preserve proof identities.
+//! Rebuilding canonicalizes relation operands after unions.
 //!
-//! ## Disequality relations (NEE)
+//! The `injectivity` ruleset contains symmetry and the structural joins. Those
+//! joins read existing constructor rows and insert only disequality pairs: they
+//! never create constructor applications. Materializing the closure can store
+//! quadratically many pairs, including primitive-seeded output pairs.
 //!
-//! Each needed sort `S` gets a private relation `Ne_S : (S, S)`, named
-//! `@disequality-ne-S`. An assertion inserts `Ne_S(left, right)`. Rebuilding
-//! canonicalizes the relation's operands after unions. Each sort gets one rule:
+//! Each sort also gets a rule in the separate private `@disequality` ruleset:
 //!
 //! ```text
 //! Ne_S(x, x) -> @disequality-contradiction()
 //! ```
 //!
-//! The contradiction check tests this nullary relation after saturating the
-//! private ruleset. Assertion storage does not itself union user values.
-//!
-//! ## Finite witness search
-//!
-//! The read predicate first probes existing encoded facts in either
-//! orientation; absent lazy support means no stored witness.
-//! A stored self-disequality is observable even when the operands are equal.
-//!
-//! Structural search reads the scoped marked-constructor names recorded by
-//! `injectivity.rs`. Its breadth-first queue contains `(left, right)` goals.
-//! Each pair is sorted before insertion into a per-call visited set, so
-//! orientation changes and cycles do not cause repeated exploration. Equality
-//! sorts share one global ID counter: probing another equality sort's tables
-//! cannot match these values. Only equality-sort values enter the queue;
-//! primitive fields are compared directly, never used as reverse-lookup keys.
-//!
-//! For a result pair, indexed reads find existing rows of the same marked
-//! constructor. Their row cross-product supplies one alternative per argument:
-//! a native primitive mismatch is a witness, and an equality-sort field adds a
-//! child-pair goal. For a unary equality-sort argument pair, read-only
-//! constructor lookups add the existing parent-result pair as a reverse goal.
-//! Each queued alternative suffices to establish the goal it came from; a
-//! path to a stored fact or primitive mismatch is a finite witness. A cycle
-//! with no such endpoint establishes nothing.
-//!
-//! The search creates no constructor applications, unions, or persistent
-//! derived-pair cache. Only its queue, visited pairs, and fetched row groups are
-//! temporary. Worst-case work can still include many value pairs and matching
-//! row cross-products. Ordinary assertion storage and private contradiction
-//! normalization remain separate from this demand-driven search.
+//! `(check-contradiction)` saturates only this private self-edge ruleset and
+//! checks the nullary contradiction relation. It does not run structural
+//! propagation. A stored self-disequality remains queryable, and assertions
+//! themselves do not union user values.
 
-use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use egglog::{
-    ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
-    ReadPrim, ReadState, TypeError, TypeInfo, Value,
+    ArcSort, AtomTerm, CommandMacro, Context, EGraph, Error, Primitive, PurePrim, PureState,
+    TypeError, TypeInfo, Value,
     ast::{
-        Action, Actions, Command, Expr, Fact, FunctionDecl, Macro, ParseError, Parser, Rule,
-        RuleEvalMode, RunConfig, Schedule, Sexp, Span,
+        Action, Actions, Command, Expr, Fact, FunctionDecl, Literal, Macro, ParseError, Parser,
+        ResolvedExpr, ResolvedFact, Rule, RuleEvalMode, RunConfig, Schedule, Sexp, Span,
     },
     constraint::{Constraint, TypeConstraint},
-    sort::S,
     util::{FreshGen, SymbolGen},
 };
 
@@ -128,7 +103,7 @@ const CONTRADICTION: &str = "@disequality-contradiction";
 /// Install syntax and its lowering pass before enabling term/proof encoding.
 /// Call once on a fresh graph.
 pub(crate) fn add_disequality_support(egraph: &mut EGraph) {
-    egraph.add_read_primitive(KnownDisequal, None);
+    egraph.add_pure_primitive(KnownDisequal, None);
     egraph.parser.add_action_macro(Arc::new(Disequal));
     egraph
         .parser
@@ -138,10 +113,9 @@ pub(crate) fn add_disequality_support(egraph: &mut EGraph) {
         .register(Arc::new(LowerDisequality));
 }
 
-/// Partial read predicate: `Unit` for a finite witness, undefined otherwise.
-/// Its same-unionable-equality-sort signature excludes direct primitive inputs.
-/// No validator is registered, so term/proof modes reject this predicate;
-/// assertions retain their existing mode support.
+/// Type-inference marker, always eliminated by the command pass before execution.
+/// Its signature enforces same-unionable-equality-sort query operands, including
+/// inference performed by FreshMacro before ordinary relation calls are emitted.
 #[derive(Clone)]
 struct KnownDisequal;
 
@@ -178,112 +152,86 @@ impl TypeConstraint for KnownDisequalConstraint {
     }
 }
 
-impl ReadPrim for KnownDisequal {
-    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
-        let [lhs, rhs] = args else {
-            unreachable!("known-disequal? arity is checked before execution")
-        };
-        match known_disequal(&state, *lhs, *rhs) {
-            Ok(true) => Some(state.base_to_value(())),
-            Ok(false) => None,
-            Err(error) => {
-                log::error!("known-disequal?: {error}");
-                None
-            }
-        }
+impl PurePrim for KnownDisequal {
+    fn apply<'a, 'db>(&self, _state: PureState<'a, 'db>, _args: &[Value]) -> Option<Value> {
+        // Direct Rust expression evaluation and indirect function targets can
+        // bypass command lowering. Fail as an ordinary undefined primitive.
+        None
     }
 }
 
-/// Search unordered equality-sort pairs against the current committed graph.
-/// Every edge is a sound same-constructor forward or unary reverse implication;
-/// any path to a stored assertion or native primitive mismatch is a witness.
-/// The per-call visited set terminates cycles, and all row/parent lookups are
-/// read-only, including subsumed rows. See the module explanation for costs.
-fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Result<bool, Error> {
-    let mut assertion_tables = Vec::new();
-    // The common explicit-assertion case needs no structural search.
-    for name in state.tables() {
-        if name.starts_with("@disequality-ne-") {
-            if asserted_disequal(state, name, lhs, rhs)? {
-                return Ok(true);
-            }
-            assertion_tables.push(name);
-        }
+/// Install the ordinary relation and its rules once per scoped sort. Structural
+/// rules and symmetry run explicitly in `injectivity`; contradiction checks only
+/// saturate the private self-edge ruleset.
+pub(crate) fn support_commands(
+    sorts: BTreeMap<String, Span>,
+    support_span: Option<Span>,
+    symbols: &mut SymbolGen,
+    types: &TypeInfo,
+) -> Vec<Command> {
+    let Some(span) = sorts.values().next().cloned().or(support_span) else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+    if types.get_func_type(CONTRADICTION).is_none() {
+        commands.push(Command::AddRuleset(span.clone(), RULESET.into()));
+        commands.push(Command::Relation {
+            span,
+            name: CONTRADICTION.into(),
+            inputs: vec![],
+        });
     }
-    let mut names = Vec::new();
-    if state
-        .table_size(crate::injectivity::MARKED_CONSTRUCTORS)
-        .is_some()
-    {
-        state.function_entries(crate::injectivity::MARKED_CONSTRUCTORS, |entry| {
-            names.push(state.value_to_base::<S>(entry.inputs[0]).0);
-        })?;
-    }
-    let mut constructors = Vec::new();
-    for name in &names {
-        constructors.push((name.as_str(), state.constructor_schema(name)?));
-    }
-    // All queued values are equality-sort IDs from the same global counter.
-    let mut pending = VecDeque::from([(lhs, rhs)]);
-    let mut visited = HashSet::new();
-    while let Some((mut left, mut right)) = pending.pop_front() {
-        if left > right {
-            std::mem::swap(&mut left, &mut right);
-        }
-        if !visited.insert((left, right)) {
+    for (sort, span) in sorts {
+        let name = format!("@disequality-ne-{sort}");
+        if types.get_func_type(&name).is_some() {
             continue;
         }
-        for name in &assertion_tables {
-            if asserted_disequal(state, name, left, right)? {
-                return Ok(true);
-            }
-        }
-        for &(name, schema) in &constructors {
-            let mut left_rows = Vec::new();
-            let mut right_rows = Vec::new();
-            state.constructor_enodes_for_eclass(name, left, |node| {
-                left_rows.push(node.children.to_vec())
-            })?;
-            state.constructor_enodes_for_eclass(name, right, |node| {
-                right_rows.push(node.children.to_vec())
-            })?;
-            for a in &left_rows {
-                for b in &right_rows {
-                    for ((&a, &b), input) in a.iter().zip(b).zip(&schema.input) {
-                        if input.is_eq_sort() {
-                            pending.push_back((a, b));
-                        } else if a != b {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
-            if let [input] = schema.input.as_slice()
-                && input.is_eq_sort()
-            {
-                // Constructor lookup is read-only and includes subsumed rows.
-                // Missing applications supply no reverse implication.
-                if let (Some(a), Some(b)) = (
-                    state.eclass_of(name, RawValues(vec![left]))?,
-                    state.eclass_of(name, RawValues(vec![right]))?,
-                ) {
-                    pending.push_back((a, b));
-                }
-            }
+        commands.push(Command::Relation {
+            span: span.clone(),
+            name: name.clone(),
+            inputs: vec![sort.clone(), sort.clone()],
+        });
+        let x = Expr::Var(span.clone(), "x".into());
+        let y = Expr::Var(span.clone(), "y".into());
+        for (suffix, ruleset, body, head, include_subsumed) in [
+            (
+                "self",
+                RULESET,
+                vec![Fact::Fact(Expr::Call(
+                    span.clone(),
+                    name.clone(),
+                    vec![x.clone(), x.clone()],
+                ))],
+                Expr::Call(span.clone(), CONTRADICTION.into(), vec![]),
+                false,
+            ),
+            (
+                "symmetric",
+                "injectivity",
+                vec![Fact::Fact(Expr::Call(
+                    span.clone(),
+                    name.clone(),
+                    vec![x.clone(), y.clone()],
+                ))],
+                Expr::Call(span.clone(), name, vec![y, x]),
+                true,
+            ),
+        ] {
+            commands.push(Command::Rule {
+                rule: Rule {
+                    span: span.clone(),
+                    name: symbols.fresh(&format!("@disequality-ne-{suffix}-{sort}")),
+                    ruleset: ruleset.into(),
+                    body,
+                    head: Actions::singleton(Action::Expr(span.clone(), head)),
+                    eval_mode: RuleEvalMode::Seminaive,
+                    no_decomp: false,
+                    include_subsumed,
+                },
+            });
         }
     }
-    Ok(false)
-}
-
-/// Probe an existing assertion relation in either orientation without adding rows.
-fn asserted_disequal(
-    state: &ReadState<'_, '_>,
-    name: &str,
-    lhs: Value,
-    rhs: Value,
-) -> Result<bool, Error> {
-    Ok(state.contains(name, RawValues(vec![lhs, rhs]))?
-        || state.contains(name, RawValues(vec![rhs, lhs]))?)
+    commands
 }
 
 struct Disequal;
@@ -352,7 +300,7 @@ struct LowerDisequality;
 
 impl CommandMacro for LowerDisequality {
     fn preserves_closed_constructor_action(&self, expression_head: Option<&str>) -> bool {
-        expression_head != Some(PLACEHOLDER)
+        !matches!(expression_head, Some(PLACEHOLDER | "known-disequal?"))
     }
 
     fn transform(
@@ -410,50 +358,7 @@ impl LowerDisequality {
         let mut sorts = BTreeMap::new();
         let mut support_span = None;
         Self::lower_command(&mut command, symbols, types, &mut sorts, &mut support_span)?;
-        let Some(span) = sorts.values().next().cloned().or(support_span) else {
-            return Ok(vec![command]);
-        };
-        let mut commands = Vec::new();
-        if types.get_func_type(CONTRADICTION).is_none() {
-            commands.push(Command::AddRuleset(span.clone(), RULESET.into()));
-            commands.push(Command::Relation {
-                span: span.clone(),
-                name: CONTRADICTION.into(),
-                inputs: vec![],
-            });
-        }
-        for (sort, span) in sorts {
-            let name = format!("@disequality-ne-{sort}");
-            if types.get_func_type(&name).is_some() {
-                continue;
-            }
-            commands.push(Command::Relation {
-                span: span.clone(),
-                name: name.clone(),
-                inputs: vec![sort.clone(), sort.clone()],
-            });
-            let x = Expr::Var(span.clone(), "x".into());
-            commands.push(Command::Rule {
-                rule: Rule {
-                    span: span.clone(),
-                    // Proof history survives pop, so reinstalled rules need fresh names.
-                    name: symbols.fresh(&format!("@disequality-ne-self-{sort}")),
-                    ruleset: RULESET.into(),
-                    body: vec![Fact::Fact(Expr::Call(
-                        span.clone(),
-                        name,
-                        vec![x.clone(), x],
-                    ))],
-                    head: Actions::singleton(Action::Expr(
-                        span.clone(),
-                        Expr::Call(span, CONTRADICTION.into(), vec![]),
-                    )),
-                    eval_mode: RuleEvalMode::Seminaive,
-                    no_decomp: false,
-                    include_subsumed: false,
-                },
-            });
-        }
+        let mut commands = support_commands(sorts, support_span, symbols, types);
         commands.push(command);
         Ok(commands)
     }
@@ -466,12 +371,15 @@ impl LowerDisequality {
         support_span: &mut Option<Span>,
     ) -> Result<(), Error> {
         match command {
-            Command::Rule { rule } if contains_disequal(&rule.head) => {
+            Command::Rule { rule }
+                if contains_disequal(&rule.head) || contains_query(&rule.body) =>
+            {
                 // Union has the same operand constraints as disequal. Use it only
                 // for inference, never execution, so head uses can constrain the body.
                 let mut probe = rule.clone();
                 probe.head = union_probe(&rule.head);
                 let resolved = types.typecheck_rule(symbols, &probe, false)?;
+                rule.body = lower_typed_facts(resolved.body, sorts);
                 lower_typed_actions(&mut rule.head, resolved.head, sorts);
             }
             Command::Action(action) if matches!(&*action, Action::Expr(_, Expr::Call(_, head, _)) if head == PLACEHOLDER) =>
@@ -526,19 +434,215 @@ impl LowerDisequality {
                 )?;
                 lower_typed_actions(actions, resolved, sorts);
             }
+            Command::Check(_, facts) | Command::Prove(_, facts) if contains_query(facts) => {
+                *facts = lower_typed_facts(types.typecheck_facts(symbols, facts)?, sorts);
+            }
+            Command::Rewrite(_, rewrite, _) | Command::BiRewrite(_, rewrite)
+                if contains_query(&rewrite.conditions) =>
+            {
+                let value = Expr::Var(rewrite.span.clone(), symbols.fresh("disequality-rewrite"));
+                let mut body = vec![Fact::Eq(
+                    rewrite.span.clone(),
+                    value.clone(),
+                    rewrite.lhs.clone(),
+                )];
+                body.extend(rewrite.conditions.clone());
+                let probe = Rule {
+                    span: rewrite.span.clone(),
+                    name: String::new(),
+                    ruleset: String::new(),
+                    body,
+                    head: Actions::singleton(Action::Union(
+                        rewrite.span.clone(),
+                        value,
+                        rewrite.rhs.clone(),
+                    )),
+                    eval_mode: RuleEvalMode::Seminaive,
+                    no_decomp: false,
+                    include_subsumed: false,
+                };
+                let resolved = types.typecheck_rule(symbols, &probe, false)?;
+                rewrite.conditions =
+                    lower_typed_facts(resolved.body.into_iter().skip(1).collect(), sorts);
+            }
             Command::Fail(_, commands) => {
                 for command in commands {
                     Self::lower_command(command, symbols, types, sorts, support_span)?;
                 }
             }
-            Command::RunSchedule(Schedule::Saturate(span, schedule)) if matches!(schedule.as_ref(), Schedule::Run(_, config) if config.ruleset == RULESET) =>
-            {
-                *support_span = Some(span.clone());
+            Command::RunSchedule(schedule) => {
+                lower_schedule(schedule, symbols, types, sorts, support_span)?;
             }
             _ => {}
         }
+        // Relation calls in actions insert rows. Never turn a read predicate
+        // into an insertion: every remaining occurrence is outside query facts.
+        let mut unsupported = None;
+        let mut inspect = |expr: Expr| {
+            if let Expr::Call(span, head, args) = &expr
+                && (head == "known-disequal?"
+                    || head == "unstable-fn"
+                        && matches!(args.first(), Some(Expr::Lit(_, Literal::String(name))) if name == "known-disequal?"))
+            {
+                unsupported = Some(span.clone());
+            }
+            expr
+        };
+        if let Command::UserDefined(_, name, args) = command {
+            for arg in args {
+                // Extended schedules lower their until expressions through
+                // Command::Check at execution time. Other expressions, such as
+                // eval actions or scheduler-builder arguments, must reject it.
+                let expression = if name == "run-schedule" {
+                    mask_schedule_queries(arg.clone())
+                } else {
+                    arg.clone()
+                };
+                let _ = expression.visit_exprs(&mut inspect);
+            }
+        } else {
+            let _ = command.clone().visit_exprs(&mut inspect);
+        }
+        if let Some(span) = unsupported {
+            return Err(ParseError(span, "known-disequal? is only supported in query facts (checks, rule bodies, rewrite conditions, or run-until conditions)".into()).into());
+        }
         Ok(())
     }
+}
+
+/// Exclude only extended scheduler conditions from the action-position scan.
+/// Those conditions are passed to Command::Check by the interpreter; schedule
+/// eval steps and forwarded command arguments still pass through the scan.
+fn mask_schedule_queries(expr: Expr) -> Expr {
+    let Expr::Call(span, name, mut args) = expr else {
+        return expr;
+    };
+    match name.as_str() {
+        "run" | "run-with" => {
+            let rest = if name == "run-with" {
+                match args.as_slice() {
+                    [Expr::Var(..), rest @ ..] => rest,
+                    _ => &[],
+                }
+            } else {
+                &args
+            };
+            let has_condition = match rest {
+                [Expr::Var(_, until), _] | [Expr::Var(_, _), Expr::Var(_, until), _] => {
+                    until == ":until"
+                }
+                _ => false,
+            };
+            if has_condition {
+                let condition = args.last_mut().unwrap();
+                *condition = Expr::Lit(condition.span(), Literal::Unit);
+            }
+        }
+        "seq" | "saturate" | "repeat" | "run-schedule" => {
+            args = args.into_iter().map(mask_schedule_queries).collect();
+        }
+        _ => {}
+    }
+    Expr::Call(span, name, args)
+}
+
+/// Infer each query as a whole, then expose its per-sort relation dependency.
+/// Reconstructing from typed expressions preserves local/global variable names
+/// while selecting the relation from the already-checked operand sort.
+fn lower_typed_facts(facts: Vec<ResolvedFact>, sorts: &mut BTreeMap<String, Span>) -> Vec<Fact> {
+    let mut lowered = Vec::new();
+    for fact in facts {
+        let fact = match fact {
+            ResolvedFact::Eq(span, lhs, rhs) => Fact::Eq(
+                span,
+                lower_typed_expr(lhs, sorts, &mut lowered),
+                lower_typed_expr(rhs, sorts, &mut lowered),
+            ),
+            ResolvedFact::Fact(expr) => Fact::Fact(lower_typed_expr(expr, sorts, &mut lowered)),
+        };
+        // A root known-disequal? call becomes a relation atom with no extra
+        // tautology; nested calls retain their original Unit expression type.
+        if !matches!(&fact, Fact::Fact(Expr::Lit(_, Literal::Unit))) {
+            lowered.push(fact);
+        }
+    }
+    lowered
+}
+
+fn lower_typed_expr(
+    expr: ResolvedExpr,
+    sorts: &mut BTreeMap<String, Span>,
+    facts: &mut Vec<Fact>,
+) -> Expr {
+    match expr {
+        ResolvedExpr::Var(span, var) => Expr::Var(span, var.name),
+        ResolvedExpr::Lit(span, literal) => Expr::Lit(span, literal),
+        ResolvedExpr::Call(span, call, args) => {
+            let args = args
+                .into_iter()
+                .map(|arg| lower_typed_expr(arg, sorts, facts))
+                .collect();
+            if call.name() == "known-disequal?" {
+                let egglog::ResolvedCall::Primitive(primitive) = call else {
+                    unreachable!("known-disequal? is an inference-only primitive")
+                };
+                let sort = primitive.input()[0].name();
+                sorts.insert(sort.into(), span.clone());
+                facts.push(Fact::Fact(Expr::Call(
+                    span.clone(),
+                    format!("@disequality-ne-{sort}"),
+                    args,
+                )));
+                Expr::Lit(span, Literal::Unit)
+            } else {
+                Expr::Call(span, call.name().into(), args)
+            }
+        }
+    }
+}
+
+fn contains_query(facts: &[Fact]) -> bool {
+    facts.iter().any(|fact| {
+        let mut found = false;
+        let _ = fact.clone().visit_exprs(&mut |expr| {
+            found |= matches!(&expr, Expr::Call(_, name, _) if name == "known-disequal?");
+            expr
+        });
+        found
+    })
+}
+
+fn lower_schedule(
+    schedule: &mut Schedule,
+    symbols: &mut SymbolGen,
+    types: &TypeInfo,
+    sorts: &mut BTreeMap<String, Span>,
+    support_span: &mut Option<Span>,
+) -> Result<(), Error> {
+    match schedule {
+        Schedule::Saturate(span, inner) => {
+            if matches!(inner.as_ref(), Schedule::Run(_, config) if config.ruleset == RULESET) {
+                *support_span = Some(span.clone());
+            }
+            lower_schedule(inner, symbols, types, sorts, support_span)?;
+        }
+        Schedule::Repeat(_, _, inner) => {
+            lower_schedule(inner, symbols, types, sorts, support_span)?
+        }
+        Schedule::Sequence(_, schedules) => {
+            for inner in schedules {
+                lower_schedule(inner, symbols, types, sorts, support_span)?;
+            }
+        }
+        Schedule::Run(_, config) => {
+            if let Some(facts) = &mut config.until
+                && contains_query(facts)
+            {
+                *facts = lower_typed_facts(types.typecheck_facts(symbols, facts)?, sorts);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Rewrite assertions with the operand sorts already checked by the union probe.

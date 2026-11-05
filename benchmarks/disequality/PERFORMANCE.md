@@ -30,7 +30,11 @@ Egglog proof validity; strict proof checking remains a separate validation.
 The [compiler pass](../../egglog-experimental/src/disequality.rs) lowers
 disequality to ordinary egglog before term or proof encoding, without changing
 union-find. NEE stores an ordered pair in a private relation per equality sort
-and detects a self-edge after congruence rebuilding.
+and detects a self-edge after congruence rebuilding. Marked injective constructors
+can eagerly propagate disequality through ordinary scheduled rules; queries read
+the resulting relations. This workload has no `:injective` declarations, so its
+timings do not measure structural propagation or the cost of materializing its
+derived pairs.
 
 A proof-overhead comparison holds this encoding fixed and changes the proof
 treatment. Native comparisons also change the engine and representation, so

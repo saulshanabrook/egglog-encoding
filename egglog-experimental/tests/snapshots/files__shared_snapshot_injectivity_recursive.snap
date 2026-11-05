@@ -2,6 +2,8 @@
 source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
-((Leaf 4)
+((@disequality-contradiction 0)
+ (@disequality-ne-Term 0)
+ (Leaf 4)
  (Other 2)
  (Wrap 4))

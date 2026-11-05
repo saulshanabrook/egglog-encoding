@@ -1,0 +1,101 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(
+(let t (@disequality-ne-Term (Num 1) (Num 2)))
+(Rule
+  (= t t)
+  (name "@injectivity-Num_1")
+  (premises
+    (Fiat (= (Num 1) (Num 1)))
+    (Fiat (= (Num 2) (Num 2)))
+    (Fiat (= () ())))
+  (substitution
+    (@injectivity-output-left (Num 1))
+    (@injectivity-left 1)
+    (@injectivity-output-right (Num 2))
+    (@injectivity-right 2)))
+)
+(
+(let t (@disequality-ne-Term (Pair (A) (C)) (Pair (B) (C))))
+(Rule
+  (= t t)
+  (name "@injectivity-Pair_1")
+  (premises
+    (Fiat (= (Pair (A) (C)) (Pair (A) (C))))
+    (Fiat (= (Pair (B) (C)) (Pair (B) (C))))
+    (Fiat (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (B)))))
+  (substitution
+    (@injectivity-output-left_1 (Pair (A) (C)))
+    (@injectivity-left_1 (A))
+    (@injectivity-left_2 (C))
+    (@injectivity-output-right_1 (Pair (B) (C)))
+    (@injectivity-right_1 (B))
+    (@injectivity-right_2 (C))))
+)
+(
+(let t (@disequality-ne-Term (Pair (C) (A)) (Pair (C) (B))))
+(Rule
+  (= t t)
+  (name "@injectivity-Pair_2")
+  (premises
+    (Fiat (= (Pair (C) (A)) (Pair (C) (A))))
+    (Fiat (= (Pair (C) (B)) (Pair (C) (B))))
+    (Fiat (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (B)))))
+  (substitution
+    (@injectivity-output-left_1 (Pair (C) (A)))
+    (@injectivity-left_1 (C))
+    (@injectivity-left_2 (A))
+    (@injectivity-output-right_1 (Pair (C) (B)))
+    (@injectivity-right_1 (C))
+    (@injectivity-right_2 (B))))
+)
+(
+(let t (@disequality-ne-Term (Wrap (C)) (Wrap (D))))
+(Rule
+  (= (@disequality-ne-Term (C) (D)) (@disequality-ne-Term (C) (D)))
+  (name "@injectivity-Wrap_2")
+  (premises
+    (Fiat (= (Wrap (C)) (Wrap (C))))
+    (Fiat (= (Wrap (D)) (Wrap (D))))
+    (Fiat (= t t)))
+  (substitution
+    (@injectivity-output-left_2 (Wrap (C)))
+    (@injectivity-left_3 (C))
+    (@injectivity-output-right_2 (Wrap (D)))
+    (@injectivity-right_3 (D))))
+)
+(
+(let t (@disequality-ne-Term (Pair (U1) (V1)) (Pair (U2) (V2))))
+(Fiat (= t t))
+)
+(
+(let t (@disequality-ne-Term (Pair (U1) (V1)) (Pair (U2) (V2))))
+(Rule
+  (= (@disequality-ne-Term (U1) (U2)) (@disequality-ne-Term (U1) (U2)))
+  (name "@injectivity-Pair_3")
+  (premises
+    (Fiat (= (Pair (U1) (V1)) (Pair (U1) (V1))))
+    (Congr
+      (= (Pair (U2) (V2)) (Pair (U2) (V1)))
+      (Fiat (= (Pair (U2) (V2)) (Pair (U2) (V2))))
+      (Sym (= (V2) (V1)) (Fiat (= (V1) (V2))))
+      1)
+    (Fiat (= t t)))
+  (substitution
+    (@injectivity-output-left_1 (Pair (U1) (V1)))
+    (@injectivity-left_1 (U1))
+    (@injectivity-left_2 (V1))
+    (@injectivity-output-right_1 (Pair (U2) (V2)))
+    (@injectivity-right_1 (U2))))
+)
+(
+(Sym
+  (= (EqL) (EqR))
+  (Rule
+    (= (EqR) (EqL))
+    (name "@injectivity-Wrap")
+    (premises (Fiat (= (Wrap (EqL)) (Wrap (EqR)))))
+    (substitution (@injectivity-left_3 (EqL)) (@injectivity-right_3 (EqR)))))
+)

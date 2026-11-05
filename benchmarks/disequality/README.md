@@ -13,7 +13,14 @@ paper's parameter sweep or published timings.
 equality sort. Congruence rebuilding canonicalizes the endpoints; a self-edge
 derives a contradiction. The paper's NEE uses a private `ne` term; the relation
 preserves contradiction detection without making its result a unionable equality
-class. No symmetry rule is needed for self-edge detection.
+class.
+
+For `:injective` constructors, the `injectivity` ruleset also materializes
+symmetric disequalities and propagates them through existing constructor rows.
+Run it explicitly before querying derived pairs with `known-disequal?`;
+queries themselves only read the per-sort relation. The parameter-analysis
+workload below has no marked constructors and does not exercise this structural
+propagation.
 
 `(disequal ...)` also works in rule heads. `(check-contradiction)` saturates the
 private encoding ruleset, then checks its zero-argument contradiction relation.

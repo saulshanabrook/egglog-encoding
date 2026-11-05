@@ -41,12 +41,13 @@
 //! arguments are unioned; unequal primitive arguments panic. Container arguments
 //! are rejected. These rules also support term encoding and proof testing.
 //!
-//! `(known-disequal? left right)` reads known disequality without storing derived
-//! pairs. For marked constructors, it follows explicit equality-sort argument
-//! disequalities and native primitive differences forward at any arity, and
-//! result disequalities backward at unary constructors. Both operands must have
-//! the same equality sort. Use `:naive` in rules with this read predicate. The
-//! query currently supports ordinary execution only, without term/proof encoding.
+//! `(known-disequal? left right)` queries materialized disequality in checks
+//! and rule bodies. Run `injectivity` to propagate disequalities through marked
+//! constructors: unequal fields imply unequal existing outputs, and unequal
+//! outputs imply an unequal equality-sort field when all other fields agree.
+//! Both operands must have the same unionable equality sort. Queries expose
+//! ordinary relation dependencies, support seminaive rules and term/proof
+//! encoding, and never run propagation. Action expression uses are rejected.
 //!
 //! ## Generic containers and callbacks
 //!
