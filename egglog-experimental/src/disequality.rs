@@ -1,4 +1,4 @@
-//! Equality-embedded disequality assertions and read-only structural witness queries.
+//! Relation-based disequality assertions and read-only structural witness queries.
 //!
 //! # Reference
 //!
@@ -9,7 +9,7 @@
 //! values use native `!=`; mismatched sorts, non-unionable sorts, primitive
 //! operands, and incorrect arity are errors. `disequal` is not a query predicate.
 //!
-//! Assertions use equality embedding (EE), which supports ordinary execution,
+//! Assertions use relation-based NEE, which supports ordinary execution,
 //! term encoding, and proof testing for commands supported by those modes.
 //!
 //! `(check-contradiction)` saturates the private `@disequality` ruleset and
@@ -56,39 +56,29 @@
 //!
 //! Parsing first represents an assertion with a private placeholder action.
 //! The command pass enforces the same operand constraints as union and
-//! replaces it with equality embedding. The first assertion use or
+//! replaces it with a per-sort relation insertion. The first assertion use or
 //! contradiction check installs private support lazily; per-sort tables are
 //! added as needed. Rules receive fresh names when reinstalled after `pop`.
 //! The encoding uses ordinary egglog tables, actions, and rebuilding rather than
-//! a custom union-find extension. EE performs ordinary unions, including
-//! unions of user values through its lifting rules.
+//! a custom union-find extension.
 //!
-//! ## Equality embedding (`ee`)
+//! ## Disequality relations (NEE)
 //!
-//! The private equality sort `Truth` and nullary constructors `T` and `F`
-//! abbreviate `@disequality-truth`, `@disequality-true`, and `@disequality-false`.
-//! Each needed sort `S` gets a constructor `Eq_S : (S, S) -> Truth`, named
-//! `@disequality-eq-S`; the special `Eq_Truth` is `@disequality-eq`.
-//! An assertion lowers to `union(Eq_S(a, b), F)`. Each `S`, including `Truth`,
-//! gets these five private rules (the right side denotes ordinary union):
+//! Each needed sort `S` gets a private relation `Ne_S : (S, S)`, named
+//! `@disequality-ne-S`. An assertion inserts `Ne_S(left, right)`. Rebuilding
+//! canonicalizes the relation's operands after unions. Each sort gets one rule:
 //!
 //! ```text
-//! Eq_S(x, y) = T                 -> union(x, y)
-//! Eq_S(x, y) = F                 -> union(Eq_S(y, x), F)
-//! Eq_Truth(Eq_S(x, y), F) = F     -> union(x, y)
-//! Eq_S(x, y) = F                 -> union(Eq_S(x, x), T)
-//! Eq_S(x, y) = F                 -> union(Eq_S(y, y), T)
+//! Ne_S(x, x) -> @disequality-contradiction()
 //! ```
 //!
-//! The third rule is the special equality-of-truth-values double-negation
-//! case. A contradiction is represented by `T = F`, which is what the
-//! contradiction check tests after saturating these rules.
+//! The contradiction check tests this nullary relation after saturating the
+//! private ruleset. Assertion storage does not itself union user values.
 //!
 //! ## Finite witness search
 //!
 //! The read predicate first probes existing encoded facts in either
-//! orientation; absent lazy support means no stored witness. It compares the
-//! existing `Eq_S` result with `F`.
+//! orientation; absent lazy support means no stored witness.
 //! A stored self-disequality is observable even when the operands are equal.
 //!
 //! Structural search reads the scoped marked-constructor names recorded by
@@ -123,8 +113,8 @@ use egglog::{
     ArcSort, AtomTerm, CommandMacro, Context, Core, EGraph, Error, Primitive, RawValues, Read,
     ReadPrim, ReadState, TypeError, TypeInfo, Value,
     ast::{
-        Action, Actions, Command, Expr, Fact, FunctionDecl, FunctionRole, Macro, ParseError,
-        Parser, Rule, RuleEvalMode, RunConfig, Schedule, Schema, Sexp, Span,
+        Action, Actions, Command, Expr, Fact, FunctionDecl, Macro, ParseError, Parser, Rule,
+        RuleEvalMode, RunConfig, Schedule, Sexp, Span,
     },
     constraint::{Constraint, TypeConstraint},
     sort::S,
@@ -133,9 +123,7 @@ use egglog::{
 
 const PLACEHOLDER: &str = "@disequal";
 const RULESET: &str = "@disequality";
-const TRUTH: &str = "@disequality-truth";
-const TRUE: &str = "@disequality-true";
-const FALSE: &str = "@disequality-false";
+const CONTRADICTION: &str = "@disequality-contradiction";
 
 /// Install syntax and its lowering pass before enabling term/proof encoding.
 /// Call once on a fresh graph.
@@ -215,7 +203,7 @@ fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Re
     let mut assertion_tables = Vec::new();
     // The common explicit-assertion case needs no structural search.
     for name in state.tables() {
-        if name == "@disequality-eq" || name.starts_with("@disequality-eq-") {
+        if name.starts_with("@disequality-ne-") {
             if asserted_disequal(state, name, lhs, rhs)? {
                 return Ok(true);
             }
@@ -287,22 +275,15 @@ fn known_disequal<'db>(state: &ReadState<'_, 'db>, lhs: Value, rhs: Value) -> Re
     Ok(false)
 }
 
-/// Probe an existing assertion table for equality-to-false in either orientation.
-/// These tables are installed with FALSE's declaration; a missing FALSE row
-/// means no stored assertions. These reads never create terms or assertion rows.
+/// Probe an existing assertion relation in either orientation without adding rows.
 fn asserted_disequal(
     state: &ReadState<'_, '_>,
     name: &str,
     lhs: Value,
     rhs: Value,
 ) -> Result<bool, Error> {
-    let Some(false_value) = state.eclass_of(FALSE, RawValues(vec![]))? else {
-        return Ok(false);
-    };
-    Ok(
-        state.eclass_of(name, RawValues(vec![lhs, rhs]))? == Some(false_value)
-            || state.eclass_of(name, RawValues(vec![rhs, lhs]))? == Some(false_value),
-    )
+    Ok(state.contains(name, RawValues(vec![lhs, rhs]))?
+        || state.contains(name, RawValues(vec![rhs, lhs]))?)
 }
 
 struct Disequal;
@@ -361,11 +342,7 @@ impl Macro<Vec<Command>> for CheckContradiction {
             )),
             Command::Check(
                 span.clone(),
-                vec![Fact::Eq(
-                    span.clone(),
-                    Expr::Call(span.clone(), TRUE.into(), vec![]),
-                    Expr::Call(span, FALSE.into(), vec![]),
-                )],
+                vec![Fact::Fact(Expr::Call(span, CONTRADICTION.into(), vec![]))],
             ),
         ])
     }
@@ -437,25 +414,45 @@ impl LowerDisequality {
             return Ok(vec![command]);
         };
         let mut commands = Vec::new();
-        if types.get_sort_by_name(TRUTH).is_none() {
+        if types.get_func_type(CONTRADICTION).is_none() {
             commands.push(Command::AddRuleset(span.clone(), RULESET.into()));
-            commands.push(Command::Sort {
+            commands.push(Command::Relation {
                 span: span.clone(),
-                name: TRUTH.into(),
-                presort_and_args: None,
-                uf: None,
-                container_rebuild: None,
-                proof_constructors: None,
-                unionable: true,
+                name: CONTRADICTION.into(),
+                inputs: vec![],
             });
-            commands.push(constructor(&span, TRUE.into(), vec![], TRUTH));
-            commands.push(constructor(&span, FALSE.into(), vec![], TRUTH));
-            commands.extend(equality_rules(&span, TRUTH, symbols));
         }
         for (sort, span) in sorts {
-            if types.get_func_type(&equality_name(&sort)).is_none() {
-                commands.extend(equality_rules(&span, &sort, symbols));
+            let name = format!("@disequality-ne-{sort}");
+            if types.get_func_type(&name).is_some() {
+                continue;
             }
+            commands.push(Command::Relation {
+                span: span.clone(),
+                name: name.clone(),
+                inputs: vec![sort.clone(), sort.clone()],
+            });
+            let x = Expr::Var(span.clone(), "x".into());
+            commands.push(Command::Rule {
+                rule: Rule {
+                    span: span.clone(),
+                    // Proof history survives pop, so reinstalled rules need fresh names.
+                    name: symbols.fresh(&format!("@disequality-ne-self-{sort}")),
+                    ruleset: RULESET.into(),
+                    body: vec![Fact::Fact(Expr::Call(
+                        span.clone(),
+                        name,
+                        vec![x.clone(), x],
+                    ))],
+                    head: Actions::singleton(Action::Expr(
+                        span.clone(),
+                        Expr::Call(span, CONTRADICTION.into(), vec![]),
+                    )),
+                    eval_mode: RuleEvalMode::Seminaive,
+                    no_decomp: false,
+                    include_subsumed: false,
+                },
+            });
         }
         commands.push(command);
         Ok(commands)
@@ -502,10 +499,13 @@ impl LowerDisequality {
                     return Err(TypeError::NonUnionableSort(left, span.clone()).into());
                 }
                 sorts.insert(left.name().into(), span.clone());
-                *action = Action::Union(
+                *action = Action::Expr(
                     span.clone(),
-                    Expr::Call(span.clone(), equality_name(left.name()), args.to_vec()),
-                    Expr::Call(span.clone(), FALSE.into(), vec![]),
+                    Expr::Call(
+                        span.clone(),
+                        format!("@disequality-ne-{}", left.name()),
+                        args.to_vec(),
+                    ),
                 );
             }
             Command::LetBegin(span, _, actions) if matches!(actions.0.last(), Some(Action::Expr(_, Expr::Call(_, head, _))) if head == PLACEHOLDER) =>
@@ -560,10 +560,13 @@ fn lower_typed_actions(
                 egglog::ast::ResolvedExpr::Lit(_, literal) => egglog::sort::literal_sort(&literal),
             };
             sorts.insert(sort.name().into(), span.clone());
-            *action = Action::Union(
+            *action = Action::Expr(
                 span.clone(),
-                Expr::Call(span.clone(), equality_name(sort.name()), args.to_vec()),
-                Expr::Call(span.clone(), FALSE.into(), vec![]),
+                Expr::Call(
+                    span.clone(),
+                    format!("@disequality-ne-{}", sort.name()),
+                    args.to_vec(),
+                ),
             );
         }
     }
@@ -604,69 +607,4 @@ fn contains_disequal(actions: &Actions) -> bool {
         .0
         .iter()
         .any(|a| matches!(a, Action::Expr(_, Expr::Call(_, head, _)) if head == PLACEHOLDER))
-}
-
-fn equality_name(sort: &str) -> String {
-    if sort == TRUTH {
-        "@disequality-eq".into()
-    } else {
-        format!("@disequality-eq-{sort}")
-    }
-}
-
-fn constructor(span: &Span, name: String, input: Vec<String>, output: &str) -> Command {
-    Command::Constructor {
-        span: span.clone(),
-        name,
-        schema: Schema::new(input, output.into()),
-        cost: None,
-        unextractable: true,
-        injective: false,
-        hidden: true,
-        role: FunctionRole::Ordinary,
-    }
-}
-
-fn equality_rules(span: &Span, sort: &str, symbols: &mut SymbolGen) -> Vec<Command> {
-    let eq = equality_name(sort);
-    let x = Expr::Var(span.clone(), "x".into());
-    let y = Expr::Var(span.clone(), "y".into());
-    let t = Expr::Call(span.clone(), TRUE.into(), vec![]);
-    let f = Expr::Call(span.clone(), FALSE.into(), vec![]);
-    let xy = Expr::Call(span.clone(), eq.clone(), vec![x.clone(), y.clone()]);
-    let yx = Expr::Call(span.clone(), eq.clone(), vec![y.clone(), x.clone()]);
-    let xx = Expr::Call(span.clone(), eq.clone(), vec![x.clone(), x.clone()]);
-    let yy = Expr::Call(span.clone(), eq.clone(), vec![y.clone(), y.clone()]);
-    let not_xy = Expr::Call(
-        span.clone(),
-        equality_name(TRUTH),
-        vec![xy.clone(), f.clone()],
-    );
-    // Each row is a name, an equality premise, and the resulting union.
-    let rules = [
-        ("lift", [xy.clone(), t.clone()], [x.clone(), y.clone()]),
-        ("symmetry", [xy.clone(), f.clone()], [yx, f.clone()]),
-        ("double-negation", [not_xy, f.clone()], [x, y]),
-        ("reflexive-left", [xy.clone(), f.clone()], [xx, t.clone()]),
-        ("reflexive-right", [xy, f], [yy, t]),
-    ];
-    let mut commands = vec![constructor(span, eq, vec![sort.into(), sort.into()], TRUTH)];
-    commands.extend(
-        rules
-            .into_iter()
-            .map(|(name, [lhs, rhs], [left, right])| Command::Rule {
-                rule: Rule {
-                    span: span.clone(),
-                    // Proof history survives pop, so reinstalled rules need fresh names.
-                    name: symbols.fresh(&format!("@disequality-ee-{name}-{sort}")),
-                    ruleset: RULESET.into(),
-                    body: vec![Fact::Eq(span.clone(), lhs, rhs)],
-                    head: Actions::singleton(Action::Union(span.clone(), left, right)),
-                    eval_mode: RuleEvalMode::Seminaive,
-                    no_decomp: false,
-                    include_subsumed: false,
-                },
-            }),
-    );
-    commands
 }

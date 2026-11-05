@@ -6,4 +6,7 @@ expression: snapshot
  (B 1)
  (Pair 1)
  (X 1)
- (Y 1))
+ (Y 1)
+ (___disequality-contradiction 1)
+ (___disequality-ne-Other 1)
+ (___disequality-ne-Term 1))

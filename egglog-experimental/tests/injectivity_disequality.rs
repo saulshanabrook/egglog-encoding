@@ -135,11 +135,9 @@ fn an_unfired_disequality_rule_does_not_supply_a_witness() {
         "(datatype Term (A) (B)) (A) (B)
          (ruleset later) (rule () ((disequal (A) (B))) :ruleset later)",
         |graph| {
-            assert!(
-                graph
-                    .read(|state| state.eclass_of("@disequality-false", RawValues(vec![])))
-                    .unwrap()
-                    .is_none()
+            assert_eq!(
+                graph.read(|state| state.table_size("@disequality-ne-Term")),
+                Some(0)
             );
             let rows = graph.num_tuples();
             graph

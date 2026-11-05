@@ -51,7 +51,7 @@ fn source_actions_keep_disequality_placeholder_lowering() {
 }
 
 #[test]
-fn equality_embedding_composes_with_proofs() {
+fn relation_disequality_composes_with_proofs() {
     for mode in 0..4 {
         let graph = new_experimental_egraph_for_proofs();
         let mut graph = match mode {
@@ -181,13 +181,15 @@ fn desugared_snapshots_and_cli_modes() {
             .collect::<Vec<_>>()
             .join("\n")
             + "\n";
-        assert!(!desugared.contains("disequality-contradiction"));
+        assert!(desugared.contains("disequality-contradiction"));
+        assert!(!desugared.contains("disequality-eq"));
+        assert!(!desugared.contains("disequality-truth"));
         assert!(!desugared.contains("truth-conflict"));
         let snapshot = path
             .parent()
             .unwrap()
             .join("snapshots")
-            .join(format!("{name}.ee.desugared.egg"));
+            .join(format!("{name}.nee.desugared.egg"));
         if std::env::var_os("UPDATE_DISEQUALITY_SNAPSHOTS").is_some() {
             std::fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
             std::fs::write(&snapshot, &desugared).unwrap();

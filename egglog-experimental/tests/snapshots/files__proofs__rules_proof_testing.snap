@@ -1,51 +1,23 @@
 ---
 source: egglog-experimental/tests/files.rs
-assertion_line: 59
 expression: snapshot
 ---
 (
-(let prf
-  (Fiat
-                      (= (@disequality-eq-Other (X) (Y)) (@disequality-false))))
-(let prf_1
-  (Sym
-                (= (@disequality-eq-Term (A) (A)) (@disequality-eq-Other (X) (Y)))
-                (Congr
-                  (=
-                    (@disequality-eq-Other (X) (Y))
-                    (@disequality-eq-Term (A) (A)))
-                  (Trans
-                    (=
-                      (@disequality-eq-Other (X) (Y))
-                      (@disequality-eq-Term (A) (B)))
-                    prf
-                    (Sym
-                      (= (@disequality-false) (@disequality-eq-Term (A) (B)))
-                      (Rule
-                        (= (@disequality-eq-Term (A) (B)) (@disequality-false))
-                        (name
-                          "(rule ((Pair a b))
-        ((union (@disequality-eq-Term a b) (@disequality-false)))
-           )")
-                        (premises (Fiat (= (Pair (A) (B)) (Pair (A) (B)))))
-                        (substitution (a (A)) (b (B))))))
-                  (Sym (= (B) (A)) (Fiat (= (A) (B))))
-                  1)))
-(Trans
-  (= (@disequality-true) (@disequality-false))
-  (Trans
-    (= (@disequality-true) (@disequality-eq-Other (X) (Y)))
-    (Sym
-      (= (@disequality-true) (@disequality-eq-Term (A) (A)))
+(Rule
+  (= (@disequality-contradiction) (@disequality-contradiction))
+  (name "@@disequality-ne-self-Term")
+  (premises
+    (Congr
+      (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (A)))
       (Rule
-        (= (@disequality-eq-Term (A) (A)) (@disequality-true))
-        (name "@@disequality-ee-reflexive-left-Term")
-        (premises
-          (Trans
-            (= (@disequality-eq-Term (A) (A)) (@disequality-false))
-            prf_1
-            prf))
-        (substitution (x (A)) (y (A)))))
-    prf_1)
-  prf)
+        (= (@disequality-ne-Term (A) (B)) (@disequality-ne-Term (A) (B)))
+        (name
+          "(rule ((Pair a b))
+      ((@disequality-ne-Term a b))
+         )")
+        (premises (Fiat (= (Pair (A) (B)) (Pair (A) (B)))))
+        (substitution (a (A)) (b (B))))
+      (Sym (= (B) (A)) (Fiat (= (A) (B))))
+      1))
+  (substitution (x (A))))
 )
