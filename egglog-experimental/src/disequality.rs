@@ -45,10 +45,16 @@
 //! The `injectivity` ruleset materializes structural disequalities and symmetry
 //! only when scheduled. For the same marked constructor, one unequal field
 //! implies unequal existing outputs; primitive differences can seed this rule.
-//! Unequal outputs imply an unequal equality-sort field when every other
-//! corresponding field is equal. This includes unary constructors. There is
-//! no inequality from missing equality or different constructor names. These
-//! rules include subsumed rows and support ordinary, term, and proof modes.
+//! For any ordinary constructor, unequal outputs imply an unequal unionable
+//! equality-sort field when every other corresponding field is equal. This
+//! includes unmarked unary constructors and follows from congruence. There is no
+//! inequality from missing equality or different constructor names. These rules
+//! include subsumed rows and support ordinary, term, and proof modes.
+//!
+//! This local propagation is incomplete for disequalities implied by congruence.
+//! For example, unequal `Pair(a, a)` and `Pair(b, b)` imply unequal `a` and `b`,
+//! but neither per-field rule fires until the other field is already equal.
+//! A failed query therefore does not show that the two values could be equal.
 //!
 //! # Encoding explanation
 //!
@@ -61,8 +67,8 @@
 //! seminaive evaluation.
 //!
 //! Each needed equality sort `S` has `Ne_S : (S, S)`, named
-//! `@disequality-ne-S`. Marked declarations install relations for their output
-//! and equality-sort input fields; assertion and query uses install other sorts
+//! `@disequality-ne-S`. Constructor declarations install relations for the sorts
+//! needed by their propagation rules; assertion and query uses install other sorts
 //! lazily, including a valid empty relation for query-only use. Scoped relations
 //! and rules follow `push`/`pop`; fresh rule names preserve proof identities.
 //! Rebuilding canonicalizes relation operands after unions.

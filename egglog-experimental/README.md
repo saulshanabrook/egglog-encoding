@@ -77,18 +77,27 @@ propagate disequalities before querying them:
 
 For existing applications of the same marked constructor, any unequal
 corresponding arguments establish unequal results. Primitive fields use native
-`!=`; equality-sort fields use the stored disequality relations. Unequal results
-establish unequal equality-sort arguments when all other corresponding fields
-are equal. This includes the unary case without additional equality guards.
-Different constructor names imply no disjointness, and unknown equality supplies
-no disequality fact. Subsumed constructor rows participate.
+`!=`; equality-sort fields use the stored disequality relations. For every
+constructor, including unmarked ones, unequal results establish an unequal
+unionable equality-sort argument when all other corresponding fields are equal.
+This downward rule follows from congruence; only upward disequality propagation
+and equality decomposition require `:injective`. Unmarked constructors retain
+support for container and non-unionable fields as guards. Different constructor
+names imply no disjointness. Subsumed constructor rows participate.
 
 Propagation inserts derived pairs into ordinary per-sort relations. It does not
 create constructor applications. Queries perform no graph search or hidden
 saturation: new assertions, constructor rows, or unions may require another
 `injectivity` run before all consequences are available, including the reverse
-orientation of an asserted pair. Saturation is finite
-for a fixed graph, but it can store quadratically many pairs.
+orientation of an asserted pair. Saturation is finite for a fixed graph, but it
+can store quadratically many pairs.
+
+These rules are sound but incomplete for logical disequality. For example,
+`Pair(a,a) != Pair(b,b)` entails `a != b`: assuming `a = b` would make the two
+results equal by congruence. Neither one-field downward rule can derive that
+pair because each requires the other field already equal. An absent relation
+row therefore means unknown. Saturating the generated rules reaches their
+fixed point, rather than enumerating every logical consequence.
 
 Queries in checks and rule bodies lower to ordinary relation atoms, so consumer
 rules use normal seminaive evaluation and queries support ordinary execution,

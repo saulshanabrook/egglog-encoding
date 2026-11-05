@@ -3,5 +3,7 @@ source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
 ((@GeneratedFreshTable 1)
+ (@disequality-contradiction 0)
+ (@disequality-ne-Math 0)
  (Let 2)
  (Var 2))

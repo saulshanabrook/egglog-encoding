@@ -1,6 +1,6 @@
 //! Eager disequality propagation, read-only queries, and encoding parity.
 
-use egglog::{EGraph, RawValues, Read};
+use egglog::{EGraph, RawValues, Read, ast::Command, span};
 use egglog_experimental::{
     new_experimental_egraph, new_experimental_egraph_for_proofs,
     new_experimental_egraph_with_proof_testing, new_experimental_egraph_with_term_encoding,
@@ -101,10 +101,9 @@ fn downward_propagation_requires_all_other_fields_equal() {
     run_in_each_mode(
         "(datatype Input (A) (B) (C) (D) (E) (G))
          (datatype Output (F Input :injective) (Pair Input Input :injective)
-                          (Mixed Input i64 Input :injective) (Other Input))
+                          (Mixed Input i64 Input :injective))
          (disequal (F (B)) (F (A)))
          (disequal (Pair (C) (E)) (Pair (D) (G)))
-         (disequal (Other (C)) (Other (D)))
          (disequal (Mixed (E) 1 (A)) (Mixed (G) 2 (A)))
          (run-schedule (saturate injectivity))
          (check (known-disequal? (A) (B)))
@@ -128,6 +127,162 @@ fn downward_propagation_requires_all_other_fields_equal() {
          (run-schedule (saturate injectivity))
          (check (known-disequal? (C) (D)))",
     );
+}
+
+#[test]
+fn unmarked_unary_declarations_propagate_only_when_scheduled() {
+    for declaration in [
+        "(sort Output) (constructor F (Input) Output)",
+        "(datatype Output (F Input))",
+        "(datatype* (Output (F Input)) (Recursive (Back Output Recursive)))",
+    ] {
+        run_in_each_mode(&format!(
+            "(datatype Input (A) (B))
+             {declaration}
+             (disequal (F (A)) (F (B)))
+             (fail (check (known-disequal? (A) (B))))
+             (run-schedule (saturate injectivity))
+             (check (known-disequal? (A) (B)))
+             (check (known-disequal? (B) (A)))"
+        ));
+    }
+}
+
+#[test]
+fn unmarked_nary_constructors_require_every_other_field_to_agree() {
+    run_in_each_mode(
+        "(datatype Input (A) (B) (C) (D) (E) (G))
+         (datatype Output (Pair Input Input) (Mixed i64 Input i64 Input))
+         (disequal (Pair (A) (C)) (Pair (B) (D)))
+         (disequal (Mixed 1 (E) 2 (C)) (Mixed 1 (G) 9 (C)))
+         (run-schedule (saturate injectivity))
+         (fail (check (known-disequal? (A) (B))))
+         (fail (check (known-disequal? (C) (D))))
+         (fail (check (known-disequal? (E) (G))))
+         (push)
+         (union (C) (D))
+         (run-schedule (saturate injectivity))
+         (check (known-disequal? (A) (B)))
+         (pop)
+         (fail (check (known-disequal? (A) (B))))
+         (disequal (Pair (C) (A)) (Pair (C) (B)))
+         (disequal (Mixed 1 (C) 2 (E)) (Mixed 1 (C) 2 (G)))
+         (run-schedule (saturate injectivity))
+         (check (known-disequal? (A) (B)))
+         (check (known-disequal? (E) (G)))",
+    );
+}
+
+#[test]
+fn unmarked_constructors_do_not_propagate_upward_or_decompose_equal_outputs() {
+    run_in_each_mode(
+        "(datatype Term (A) (B) (F Term) (Num i64))
+         (F (A)) (F (B)) (Num 1) (Num 2)
+         (disequal (A) (B))
+         (run-schedule (saturate injectivity))
+         (fail (check (known-disequal? (F (A)) (F (B)))))
+         (fail (check (known-disequal? (Num 1) (Num 2))))
+         (union (F (A)) (F (B)))
+         (union (Num 1) (Num 2))
+         (run-schedule (saturate injectivity))
+         (fail (check (= (A) (B))))
+         (fail (check-contradiction))",
+    );
+}
+
+#[test]
+fn unmarked_container_and_nonunionable_fields_are_equality_guards() {
+    for declaration in [
+        "(sort Items (Vec i64)) (datatype Output (WithItems Term Items Token))",
+        "(datatype* (Output (WithItems Term Items Token)) (sort Items (Vec i64)))",
+    ] {
+        for mode in MODES {
+            let mut graph = mode();
+            graph
+                .run_program(vec![Command::Sort {
+                    span: span!(),
+                    name: "Token".into(),
+                    presort_and_args: None,
+                    uf: None,
+                    container_rebuild: None,
+                    proof_constructors: None,
+                    unionable: false,
+                }])
+                .unwrap();
+            graph
+                .parse_and_run_program(
+                    None,
+                    &format!(
+                        "(datatype Term (A) (B) (C) (D))
+         (constructor T0 () Token) (constructor T1 () Token)
+         {declaration}
+         (disequal (WithItems (A) (vec-of 1 2) (T0))
+                   (WithItems (B) (vec-of 1 2) (T0)))
+         (disequal (WithItems (C) (vec-of 1) (T0))
+                   (WithItems (D) (vec-of 2) (T0)))
+         (disequal (WithItems (C) (vec-of 1) (T0))
+                   (WithItems (D) (vec-of 1) (T1)))
+         (run-schedule (saturate injectivity))
+         (check (known-disequal? (A) (B)))
+         (fail (check (known-disequal? (C) (D))))"
+                    ),
+                )
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn diagonal_disequality_is_a_known_limit_of_local_propagation() {
+    run_in_each_mode(
+        "(datatype Term (A) (B) (Pair Term Term))
+         (disequal (Pair (A) (A)) (Pair (B) (B)))
+         (run-schedule (saturate injectivity))
+         (fail (check (known-disequal? (A) (B))))
+         (push)
+         (union (A) (B))
+         (check-contradiction)
+         (pop)
+         (fail (check-contradiction))",
+    );
+}
+
+#[test]
+fn declarations_without_disequality_rules_do_not_install_support() {
+    let mut graph = new_experimental_egraph_for_proofs();
+    graph
+        .run_program(vec![Command::Sort {
+            span: span!(),
+            name: "Token".into(),
+            presort_and_args: None,
+            uf: None,
+            container_rebuild: None,
+            proof_constructors: None,
+            unionable: false,
+        }])
+        .unwrap();
+    graph
+        .parse_and_run_program(
+            None,
+            "(datatype Term (A) (Num i64) (Empty :injective))
+             (sort Items (Vec Term))
+             (constructor Container (Items) Term)
+             (constructor Internal (Term) Term :internal-role global)
+             (constructor Inert (Term) Token)
+             (constructor Marked (Term) Token :injective)
+             (relation Relation (Term))
+             (run-schedule (saturate injectivity))",
+        )
+        .unwrap();
+    for sort in ["Term", "Items", "Token", "i64", "@RelationSort"] {
+        assert!(
+            graph
+                .type_info()
+                .get_func_type(&format!("@disequality-ne-{sort}"))
+                .is_none(),
+            "unexpected Ne support for {sort}"
+        );
+    }
 }
 
 #[test]
@@ -270,12 +425,12 @@ fn scoped_rules_and_relations_follow_pop_and_failed_declarations() {
                 "(run-schedule (saturate injectivity))
                  (fail (check (known-disequal? (F (A)) (F (B)))))
                  (push)
-                 (datatype Scoped (X) (Y) (G Scoped :injective))
+                 (datatype Scoped (X) (Y) (G Scoped))
                  (disequal (G (X)) (G (Y)))
                  (run-schedule (saturate injectivity))
                  (check (known-disequal? (X) (Y)))
                  (pop)
-                 (datatype Scoped (X) (Y) (G Scoped :injective))
+                 (datatype Scoped (X) (Y) (G Scoped))
                  (G (X)) (G (Y))
                  (run-schedule (saturate injectivity))
                  (fail (check (known-disequal? (X) (Y))))",
@@ -297,6 +452,15 @@ fn subsumed_rows_and_current_canonical_ids_participate() {
              (check (known-disequal? (C) (D)))"
         ));
     }
+    run_in_each_mode(
+        "(datatype Term (A) (B) (C) (D) (F Term))
+         (let fa (F (A))) (let fb (F (B)))
+         (subsume (F (A)))
+         (disequal fa fb)
+         (union (A) (C)) (union (B) (D))
+         (run-schedule (saturate injectivity))
+         (check (known-disequal? (C) (D)))",
+    );
 }
 
 #[test]

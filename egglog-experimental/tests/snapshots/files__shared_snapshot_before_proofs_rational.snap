@@ -3,7 +3,9 @@ source: egglog-experimental/tests/files.rs
 assertion_line: 72
 expression: snapshot
 ---
-((Add 10)
+((@disequality-contradiction 0)
+ (@disequality-ne-Math 0)
+ (Add 10)
  (Const 2)
  (Sub 0)
  (Var 1))

@@ -42,9 +42,10 @@
 //! are rejected. These rules also support term encoding and proof testing.
 //!
 //! `(known-disequal? left right)` queries materialized disequality in checks
-//! and rule bodies. Run `injectivity` to propagate disequalities through marked
-//! constructors: unequal fields imply unequal existing outputs, and unequal
-//! outputs imply an unequal equality-sort field when all other fields agree.
+//! and rule bodies. Run `injectivity` to propagate disequalities: marked
+//! constructors infer unequal existing outputs from unequal fields, and every
+//! ordinary constructor infers an unequal unionable equality-sort field from
+//! unequal outputs when all other fields agree. This propagation is incomplete.
 //! Both operands must have the same unionable equality sort. Queries expose
 //! ordinary relation dependencies, support seminaive rules and term/proof
 //! encoding, and never run propagation. Action expression uses are rejected.

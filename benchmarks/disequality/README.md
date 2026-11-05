@@ -15,11 +15,12 @@ derives a contradiction. The paper's NEE uses a private `ne` term; the relation
 preserves contradiction detection without making its result a unionable equality
 class.
 
-For `:injective` constructors, the `injectivity` ruleset also materializes
-symmetric disequalities and propagates them through existing constructor rows.
-Run it explicitly before querying derived pairs with `known-disequal?`;
-queries themselves only read the per-sort relation. The parameter-analysis
-workload below has no marked constructors and does not exercise this structural
+The `injectivity` ruleset materializes symmetry and propagates unequal outputs
+down through existing constructor rows when every other field agrees. This
+works for unmarked constructors too; upward propagation still requires
+`:injective`. Run the ruleset explicitly before querying derived pairs with
+`known-disequal?`; queries only read the per-sort relation. The parameter-analysis
+workload below does not schedule this ruleset, so it does not exercise structural
 propagation.
 
 `(disequal ...)` also works in rule heads. `(check-contradiction)` saturates the
