@@ -1,14 +1,12 @@
-import EgglogSemantics.Provenance.Extract
-import EgglogSemantics.Proofs.Provenance.Model
+import EgglogSemantics.Provenance.Log
 
-/-! Extraction returns only certificates accepted by the relational checker. This
-statement is independent of the origin of the supplied firing log. -/
+/-! The proofs read off the log are checked. This holds whatever log is supplied. -/
 
 namespace Egglog.Provenance
 
-/-- Every successful entry of `extractEach` has been checked against its row. -/
-theorem extractEach_checked {P : Program} {terms : List Term} {t : Term} {pf : Proof}
-    (h : (t, some pf) ∈ extractEach P terms) : check P pf = some t := by
+/-- Every row's proof in `rowProofs` has been checked against it. -/
+theorem rowProofs_checked {P : Program} {terms : List Term} {t : Term} {pf : Proof}
+    (h : (t, some pf) ∈ rowProofs P terms) : check P pf = some t := by
   obtain ⟨row, _, hrow⟩ := List.mem_map.mp h
   have hpair := Prod.mk.inj hrow
   obtain rfl := hpair.1
@@ -19,11 +17,11 @@ theorem extractEach_checked {P : Program} {terms : List Term} {t : Term} {pf : P
     exact beq_iff_eq.mp hc
   · contradiction
 
-/-- Successful extraction checks every returned proof against the associated term. -/
-theorem extract_checked {P : Program} {terms : List Term} {facts : Facts}
-    (h : extract P terms = some facts) :
+/-- Every proof `proofs` returns is checked against its row. -/
+theorem proofs_checked {P : Program} {terms : List Term} {facts : Facts}
+    (h : proofs P terms = some facts) :
     ∀ tp ∈ facts, check P tp.2 = some tp.1 := by
-  unfold extract at h
+  unfold proofs at h
   split at h
   · contradiction
   · have aux : ∀ (xs : List (Term × Option Proof)) (ys : Facts),
@@ -42,11 +40,6 @@ theorem extract_checked {P : Program} {terms : List Term} {facts : Facts}
         rcases List.mem_cons.mp hm with rfl | hm
         · exact List.mem_cons.mpr (Or.inl (by cases x; simp_all))
         · exact List.mem_cons_of_mem _ (ih _ hys _ hm)
-    exact fun tp ht => extractEach_checked (aux _ _ h tp ht)
-
-/-- Extraction is sound in any interpretation closed under the checker rules. -/
-theorem extract_sound {P : Program} {terms : List Term} {facts : Facts} {H : Term → Prop}
-    (model : Model P H) (h : extract P terms = some facts) : ∀ tp ∈ facts, H tp.1 :=
-  fun tp ht => check_sound_in_model model (extract_checked h tp ht)
+    exact fun tp ht => rowProofs_checked (aux _ _ h tp ht)
 
 end Egglog.Provenance

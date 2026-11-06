@@ -16,12 +16,12 @@ private def eNum (n : Int) : Expr := .lit (.int n)
 private def cnst (n : String) : Term := .app n []
 
 /-- Global actions are runs of empty-query rules. -/
-private def global (as : List Action) : List Cmd := [.run [⟨[], as⟩]]
+private def global (as : List Action) : List Schedule := [.run [⟨[], as⟩]]
 
-example : ¬ WellScoped ⟨global [.expr (.var "v1")], []⟩ := by decide
-example : WellScoped ⟨global [.expr (.app "cwrap" [eNum 2])], []⟩ := by decide
-example : ¬ WellScoped ⟨global [.expr (.app "cwrap" [eNum 2])] ++
-    global [.expr (.app "cwrap" [.var "v1"])], []⟩ := by decide
+example : ¬ WellScoped ⟨Schedule.seqAll (global [.expr (.var "v1")]), []⟩ := by decide
+example : WellScoped ⟨Schedule.seqAll (global [.expr (.app "cwrap" [eNum 2])]), []⟩ := by decide
+example : ¬ WellScoped ⟨Schedule.seqAll (global [.expr (.app "cwrap" [eNum 2])] ++
+    global [.expr (.app "cwrap" [.var "v1"])]), []⟩ := by decide
 example : ¬ Rule.Scoped ⟨[.expr (.var "a")], []⟩ [] := by decide
 example : ¬ Rule.Scoped
     ⟨[.eq (.var "v1") (eNum 2)], [.expr (.app "cadd" [.var "v1", .var "v2"]) ]⟩ [] := by
@@ -58,12 +58,15 @@ example : Matches wrapped (.expr (.app "wrapper" [.app "b" []])) [] := by
   have h : Cong wrapped (.app "wrapper" [cnst "a"]) (.app "wrapper" [cnst "b"]) :=
     .congr (.direct (Set.mem_insert _ _))
       (.cons (.direct (Or.inr (Set.mem_insert _ _))) .nil)
-  exact .atom rfl (h.symm.trans h)
+  exact .atom (Lookup.of_eval rfl (by decide) rfl (h.symm.trans h)).2
 
 example : ValidEnv ["v1"] (Database.empty.addTerm (num 1)) [("v1", num 1)] := by
   refine ⟨by simp, ?_⟩
   intro b hb
   obtain rfl := List.mem_singleton.mp hb
+  have hd : (Database.empty.addTerm (num 1)).Diag :=
+    (show Database.empty.Diag from fun _ h => h.elim).addTerm _
+  rw [hd.reps_eq_terms]
   exact Database.mem_addTerm _ _
 
 example {db : Database} : evalAction [] db (.union (eNum 7) (eNum 7)) = none := rfl
@@ -80,6 +83,9 @@ private theorem swap_matches :
     QueryMatches preRun swapRule.query [("a", num 1), ("b", num 2)] := by
   refine ⟨⟨by decide, ?_⟩, ?_⟩
   · intro b hb
+    have hd : preRun.Diag :=
+      (show Database.empty.Diag from fun _ h => h.elim).addTerm _
+    rw [hd.reps_eq_terms]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
     rcases hb with rfl | rfl
     · exact preRun.subtermClosed add12 (Database.mem_addTerm _ _)
@@ -88,9 +94,10 @@ private theorem swap_matches :
         (.arg (by simp [add12]) (.refl _))
   · intro p hp
     obtain rfl := List.mem_singleton.mp hp
-    exact .atom rfl (.direct (Set.mem_insert _ _))
+    exact .atom (Lookup.of_eval rfl (by decide) rfl (.direct (Set.mem_insert _ _))).2
 
 example : add21 ∈ (RunRules [swapRule] preRun).terms := by
+  rw [RunRules.eq_pair]
   refine ⟨(add21, add21), Or.inr ?_, Or.inl (.refl _)⟩
   exact ⟨{(add21, add21)}, ⟨swapRule, by simp,
     [("a", num 1), ("b", num 2)], swap_matches, by simp [swapRule, Action.writes,
@@ -105,7 +112,7 @@ private def chainEqs : Finset (Term × Term) :=
 #guard (closureTotal chainTerms chainEqs).card = 9
 
 private def ruleProgram : Program :=
-  ⟨global [.expr (.app "Add" [eNum 1, eNum 2])] ++ [.run [swapRule]], []⟩
+  ⟨Schedule.seqAll (global [.expr (.app "Add" [eNum 1, eNum 2])] ++ [.run [swapRule]]), []⟩
 #guard WellScoped ruleProgram
 #guard (exec ruleProgram).map (fun d => d.terms.toFinset.card) = some 4
 #guard (exec ruleProgram).map (fun d => decide (add21 ∈ d.terms)) = some true
@@ -118,52 +125,60 @@ private def detectRule : Rule :=
   ⟨[.eq (.app "Wrapper" [.app "Add" [eNum 1, eNum 2]])
         (.app "Wrapper" [.app "Add" [eNum 2, eNum 1]])], [.expr (.app "success" [])]⟩
 private def wrapperProgram : Program :=
-  ⟨global [.expr (.app "Wrapper" [.app "Add" [eNum 1, eNum 2]])] ++
-    [.run [commuteRule, detectRule], .run [commuteRule, detectRule]], []⟩
+  ⟨Schedule.seqAll (global [.expr (.app "Wrapper" [.app "Add" [eNum 1, eNum 2]])] ++
+    [.run [commuteRule, detectRule], .run [commuteRule, detectRule]]), []⟩
 #guard (exec wrapperProgram).map (fun d => d.terms.contains (cnst "success")) = some true
 
 private def N (i : Int) : Expr := .app "N" [.lit (.int i)]
 private def trans : Rule :=
   ⟨[.expr (.app "E" [.var "a", .var "b"]), .expr (.app "E" [.var "b", .var "c"])],
     [.expr (.app "E" [.var "a", .var "c"])]⟩
-private def path (cs : List Cmd) : Program :=
-  ⟨global ((List.range 3).map fun i => Action.expr (.app "E" [N i, N (i+1)])) ++ cs, []⟩
+private def path (cs : List Schedule) : Program :=
+  ⟨Schedule.seqAll (global ((List.range 3).map fun i =>
+    Action.expr (.app "E" [N i, N (i+1)])) ++ cs), []⟩
 private def edges (p : Program) : Option Nat := (exec p).map fun d => d.rowCount "E"
 #guard edges (path []) = some 3
 #guard edges (path [.run [trans]]) = some 5
 #guard edges (path [.run [trans], .run [trans]]) = some 6
-#guard edges (path [.saturate [trans]]) = some 6
+#guard edges (path [.saturate (.run [trans])]) = some 6
 #guard edges (path [.run []]) = some 3
 
 /-- The interpreter may record a redundant spelling before structural saturation.
 Its successful result still witnesses the specification's semantic saturation. -/
 private def redundantSpellings : Program :=
-  ⟨global [.union (.app "a" []) (.app "b" []), .expr (.app "R" [.app "a" []])] ++
-    [.saturate [⟨[.expr (.app "R" [.var "x"])], [.expr (.app "R" [.app "b" []])]⟩]], []⟩
+  ⟨Schedule.seqAll (global [.union (.app "a" []) (.app "b" []), .expr (.app "R" [.app "a" []])] ++
+    [.saturate (.run [⟨[.expr (.app "R" [.var "x"])], [.expr (.app "R" [.app "b" []])]⟩])]), []⟩
 
-example : ∃ out, ProgramStep Database.empty redundantSpellings.commands out := by
-  have hs : (exec redundantSpellings).isSome = true := by decide +kernel
+example : ∃ out, Reach Database.empty redundantSpellings.schedule out := by
+  have hs : (exec redundantSpellings).isSome = true := by
+    simp only [exec, redundantSpellings, global, List.singleton_append, Schedule.seqAll,
+      execSchedule, execSchedule_saturate_run, Option.bind_some]
+    decide +kernel
   obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hs
   obtain ⟨out, hout, _⟩ := exec_programStep (by decide) (by decide) he
   exact ⟨out, hout⟩
 
-/-- A round deletes before writing, regardless of head-action order. -/
-private def deleteWrite : Program := ⟨global [.expr (.app "R" [N 0])] ++
-  global [.expr (.app "R" [N 0]), .delete (.app "R" [N 0])], []⟩
-#guard (exec deleteWrite).map (fun d => d.terms.contains (.app "R" [.app "N" [num 0]])) = some true
+/-- A subsumed row stays, and a head's writes and subsumptions commute. -/
+private def subsumeWrite : Program := ⟨Schedule.seqAll (global [.expr (.app "R" [N 0])] ++
+  global [.subsume "R" [N 0], .expr (.app "R" [N 0])]), []⟩
+#guard (exec subsumeWrite).map (fun d => d.terms.contains (.app "R" [.app "N" [num 0]]) &&
+  d.subsumed.contains (.app "R" [.app "N" [num 0]])) = some true
 
 private def diseq : Program :=
-  ⟨global [.expr (.app "A" []), .expr (.app "B" [])],
+  ⟨Schedule.seqAll (global [.expr (.app "A" []), .expr (.app "B" [])]),
     [.ne (.app "A" []) (.app "B" [])]⟩
 #guard (observe diseq).any ExecutionResult.succeeded
 private def failedDiseq : Program :=
-  ⟨diseq.commands ++ global [.union (.app "A" []) (.app "B" [])], diseq.check⟩
+  ⟨Schedule.seqAll ([diseq.schedule] ++ global [.union (.app "A" []) (.app "B" [])]), diseq.check⟩
 #guard (exec failedDiseq).isSome
 #guard (observe failedDiseq).any fun r => !r.succeeded
 
 /-- Commands finish successfully even when the final check fails. -/
 example : Eval Database.empty failedDiseq .checkFailed := by
-  have hn : (observe failedDiseq).any (fun r => !r.succeeded) = true := by decide +kernel
+  have hn : (observe failedDiseq).any (fun r => !r.succeeded) = true := by
+    simp only [observe, observeWith, failedDiseq, diseq, global, Schedule.seqAll,
+      List.singleton_append, execSchedule, Option.bind_some]
+    decide +kernel
   have hs : observe failedDiseq = some .checkFailed := by
     cases he : observe failedDiseq with
     | none => simp [he] at hn

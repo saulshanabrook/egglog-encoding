@@ -5,7 +5,7 @@ import EgglogSemantics.Proofs.Diagonal
 
 /-! Generic assertion transport retained from the former merge development.
 Merge steps, declaration environments, leaders, and current-table invariants no longer
-exist. `Recorded` and positive, delete-free rule monotonicity remain useful independently. -/
+exist. `Recorded` and positive, subsume-free rule monotonicity remain useful independently. -/
 
 namespace Egglog
 
@@ -31,7 +31,7 @@ theorem cong_replay {D E : Database} (h : ∀ p ∈ D.eqs, Cong E p.1 p.2) {a b 
     (hc : Cong D a b) : Cong E a b := by
   induction hc using Cong.rec (motive_2 := fun as bs _ => CongList E as bs) with
   | direct hp => exact h _ hp
-  | subterm _ hs ih => exact .subterm ih hs
+  | child _ hs ih => exact .child ih hs
   | symm _ ih => exact ih.symm
   | trans _ _ ih ih' => exact ih.trans ih'
   | congr _ _ ih ih' => exact .congr ih ih'
@@ -52,7 +52,8 @@ theorem refl_mem_addTerms {t : Term} (ts : List Term) (db : Database) (ht : t �
 
 theorem addTerms_eqs_mono {d e : Database} (h : d.eqs ⊆ e.eqs) (ts : List Term) :
     (d.addTerms ts).eqs ⊆ (e.addTerms ts).eqs :=
-  (Database.Contained.addTerms_mono ⟨h⟩ ts).eqs
+  by
+  simpa only [Database.addTerms_eqs] using Set.union_subset_union_left _ h
 
 theorem withOperands_mono_list {db : Database} {ts us : List Term} (h : ∀ t ∈ ts, t ∈ us) :
     (db.withOperands ts).eqs ⊆ (db.withOperands us).eqs := by
@@ -141,9 +142,9 @@ theorem addEq_mono {d e : Database} (h : d.Recorded e) (a b : Term) :
   · exact ⟨(a,b), Set.mem_insert _ _, mem_congOn_self (by simp), mem_congOn_self (by simp)⟩
   · exact (h.trans_contained (Contained.addEq a b e)).eqs p hp
 
-theorem contained_of_diag {d e : Database} (h : d.Recorded e) (hd : e.Diag) :
+theorem contained_of_diag {d e : Database} (h : d.Recorded e) (hd : e.Diag) (hX : d.subsumed ⊆ e.subsumed) :
     d.Contained e := by
-  constructor
+  refine ⟨?_, hX⟩
   intro p hp
   obtain ⟨q, hq, h1, h2⟩ := h.eqs p hp
   have hpq : p = q := Prod.ext (h1.eq_of_diag (hd.addTerms _)) (h2.eq_of_diag (hd.addTerms _))
@@ -155,6 +156,7 @@ theorem Database.addTerm_eq_self {db : Database} {t : Term}
     (ht : (t,t) ∈ db.eqs) : db.addTerm t = db := by
   apply Database.ext
   · exact Set.insert_eq_of_mem ht
+  · rfl
 
 theorem Env.Agree.cons {σ τ : Env} (h : Env.Agree σ τ) (w : Var) (t : Term) :
     Env.Agree ((w,t)::σ) ((w,t)::τ) := by
@@ -162,26 +164,31 @@ theorem Env.Agree.cons {σ τ : Env} (h : Env.Agree σ τ) (w : Var) (t : Term) 
   simp [Env.lookup_cons, h v]
 
 theorem Database.mem_terms_of_eqs {d e : Database} (h : d.eqs ⊆ e.eqs) {t : Term}
-    (ht : t ∈ d.terms) : t ∈ e.terms := (Contained.terms ⟨h⟩) ht
+    (ht : t ∈ d.terms) : t ∈ e.terms := by
+  obtain ⟨p, hp, ht⟩ := ht
+  exact ⟨p, h hp, ht⟩
 
-theorem RuleResults.mono {A C : Database} (hc : A.Contained C) {r : Rule}
-    (hq : ∀ p ∈ r.query, p.monotoneB = true) (hd : r.DeleteFree)
+theorem RuleResults.mono {A C : Database} (hc : A.Contained C) (hl : A.live ⊆ C.live) (hr : A.reps ⊆ C.reps) {r : Rule}
+    (hq : ∀ p ∈ r.query, p.monotoneB = true) (hd : r.SubsumeFree)
     {d : Database} (h : d ∈ RuleResults A r) :
     ∃ e ∈ RuleResults C r, d.Contained e := by
   obtain ⟨σ, hσ, he⟩ := h
   obtain ⟨e, he', hh⟩ := evalActions_mono hc hd he
-  exact ⟨e, ⟨σ, hσ.mono hc hq, he'⟩, hh⟩
+  exact ⟨e, ⟨σ, hσ.mono hc hl hr hq, he'⟩, hh⟩
 
-theorem RunRules.mono {R : List Rule} {A C : Database} (hc : A.Contained C)
-    (ha : ∀ r ∈ R, r.DeleteFree)
+theorem RunRules.mono {R : List Rule} {A C : Database} (hc : A.Contained C) (hl : A.live ⊆ C.live)
+    (hreps : A.reps ⊆ C.reps)
+    (ha : ∀ r ∈ R, r.SubsumeFree)
     (hq : ∀ r ∈ R, ∀ p ∈ r.query, p.monotoneB = true) :
     (RunRules R A).Contained (RunRules R C) := by
-  rw [RunRules.eq_sUnion R A ha, RunRules.eq_sUnion R C ha]
-  constructor
-  rintro p (hp | hp)
-  · exact Or.inl (hc.eqs hp)
-  · obtain ⟨d, ⟨r, hr, hd⟩, hp⟩ := Set.mem_iUnion₂.mp hp
-    obtain ⟨e, he, hh⟩ := RuleResults.mono hc (hq r hr) (ha r hr) hd
-    exact Or.inr (Set.mem_iUnion₂.mpr ⟨e, ⟨r, hr, he⟩, hh.eqs hp⟩)
+  rw [RunRules.eq_sUnion R A, RunRules.eq_sUnion R C]
+  refine ⟨?_, ?_⟩
+  · rintro p (hp | hp)
+    · exact Or.inl (hc.eqs hp)
+    · obtain ⟨d, ⟨r, hr, hd⟩, hp⟩ := Set.mem_iUnion₂.mp hp
+      obtain ⟨e, he, hh⟩ := RuleResults.mono hc hl hreps (hq r hr) (ha r hr) hd
+      exact Or.inr (Set.mem_iUnion₂.mpr ⟨e, ⟨r, hr, he⟩, hh.eqs hp⟩)
+
+  · simpa only [← RunRules.eq_sUnion, RunRules.subsumed_eq ha] using hc.subsumed
 
 end Egglog

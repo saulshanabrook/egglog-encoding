@@ -5,16 +5,15 @@ import Architect
 
 /-! The paper's compiler-correctness obligation. Both evaluations use mathematical
 `Database` states. No executable interpreter or fuel bound occurs in the statement.
-The paper's source programs use bounded rounds; only compiled rebuilding uses saturation.
-The proof for the constructor-and-delete encoding is pending; the executable gates in
+The proof for the view-free union-find encoding is pending; the executable gates in
 `DiffTest.lean` check the statement on the corpus. -/
 
 namespace Egglog.Congruence
 
 /-- Compilation preserves success, failed checks, and divergence. Neither side's
-termination is a premise; source schedules use bounded rounds. -/
+termination is a premise. -/
 def PreservesBehaviors : Prop :=
-  ∀ P : Program, P.WellFormed → P.Fragment → P.NoSaturate → ∀ behavior : Behavior,
+  ∀ P : Program, P.WellFormed → P.Fragment → ∀ behavior : Behavior,
     Behaves Database.empty (encode P) behavior ↔ Behaves Database.empty P behavior
 
 /-- For a well-formed supported source program, every pair of finite evaluations agrees
@@ -24,28 +23,26 @@ def PreservesObservations : Prop :=
     Eval Database.empty P source → Eval Database.empty (encode P) target →
       source.succeeded = target.succeeded
 
-/-- The paper's statement: the outcomes agree, and neither program diverges. -/
+/-- The paper's statement: the outcomes agree, and so does divergence. -/
 @[blueprint "thm:congruence"
   (title := /-- Congruence pass correctness -/)
-  (statement := /-- Let $P$ be a well-formed program in the source fragment without
-  $\kw{saturate}$. Then, for every outcome $o$,
+  (statement := /-- Let $P$ be a well-formed program in the source fragment. Then, for
+  every outcome $o$,
   \[
     \langle\operatorname{encode}(P),\varnothing\rangle\Downarrow o
       \iff\langle P,\varnothing\rangle\Downarrow o,
   \]
-  and neither $P$ nor $\operatorname{encode}(P)$ has a nonterminating execution: no
-  saturation repeats forever. -/)
+  and $\operatorname{encode}(P)$ has a nonterminating execution, a saturation that
+  repeats forever, if and only if $P$ has one. -/)
   (hasProof := false) (latexEnv := "theorem")]
 def Correctness : Prop :=
-  ∀ P : Program, P.WellFormed → P.Fragment → P.NoSaturate →
+  ∀ P : Program, P.WellFormed → P.Fragment →
     (∀ o : Result, Eval Database.empty (encode P) o ↔ Eval Database.empty P o) ∧
-    ¬ ProgramDiverges Database.empty P.commands ∧
-    ¬ ProgramDiverges Database.empty (encode P).commands
+    (Diverges Database.empty (encode P).schedule ↔ Diverges Database.empty P.schedule)
 
-/-- Bounded source schedules have finite compiled evaluations. Generated rebuilding
-may saturate; this asserts existence, not termination of every schedule. -/
+/-- Every source evaluation has a compiled evaluation. -/
 def PreservesTermination : Prop :=
-  ∀ P : Program, P.WellFormed → P.Fragment → P.NoSaturate → ∀ source : Result,
+  ∀ P : Program, P.WellFormed → P.Fragment → ∀ source : Result,
     Eval Database.empty P source → ∃ target, Eval Database.empty (encode P) target
 
 end Egglog.Congruence

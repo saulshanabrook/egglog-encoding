@@ -18,10 +18,10 @@ mutual
 
 /-- The claim and its justification, with the subproofs indented below. -/
 def Proof.render (indent : String) : Proof → String
-  | .symm c p => indent ++ c.render ++ "  symm\n" ++ p.render (indent ++ "  ")
-  | .trans c p q => indent ++ c.render ++ "  trans\n" ++
+  | pf@(.symm p) => indent ++ pf.claim.render ++ "  symm\n" ++ p.render (indent ++ "  ")
+  | pf@(.trans p q) => indent ++ pf.claim.render ++ "  trans\n" ++
       p.render (indent ++ "  ") ++ q.render (indent ++ "  ")
-  | .congr c p k q => indent ++ c.render ++ s!"  congr {k}\n" ++
+  | pf@(.congr p k q) => indent ++ pf.claim.render ++ s!"  congr {k}\n" ++
       p.render (indent ++ "  ") ++ q.render (indent ++ "  ")
   | .rule c i σ ps => indent ++ c.render ++ s!"  rule {i} {substRender σ}\n" ++
       Proof.renderAll (indent ++ "  ") ps

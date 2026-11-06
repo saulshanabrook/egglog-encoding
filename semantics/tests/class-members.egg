@@ -1,0 +1,16 @@
+; A rule that builds over members of a class its own outputs join. With one binding per
+; class this saturates like egglog: (F x) binds x to the representative of {A, B, G(A), …},
+; so each pass builds one G term. Binding every stored spelling would build G(G(…)) forever.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(constructor G (Math) Math)
+(ruleset lower)
+(ruleset upper)
+(F (A))
+(rule ((F x)) ((G x)) :ruleset lower)
+(rule ((G x)) ((union x (B))) :ruleset upper)
+(rule ((F (B))) ((F (G (B)))) :ruleset lower)
+(run-schedule (saturate (seq (run lower) (saturate (run upper)))))
+(check (F (G (B))) (= (A) (B)) (= (G (A)) (A)))

@@ -22,18 +22,18 @@ theorem Actions.unionFreeB_iff : ∀ as : List Action,
       simp only [List.all_cons, Bool.and_eq_true, Actions.UnionFree, Action.unionFreeB_iff,
         Actions.unionFreeB_iff as]
 
-@[inherit_doc Cmd.ruleUnionFreeB]
-theorem Cmd.ruleUnionFreeB_iff (c : Cmd) :
+@[inherit_doc Schedule.ruleUnionFreeB]
+theorem Schedule.ruleUnionFreeB_iff (c : Schedule) :
     c.ruleUnionFreeB = true ↔ c.UnionFree := by
-  simp only [Cmd.ruleUnionFreeB, List.all_eq_true, Cmd.UnionFree]
+  simp only [Schedule.ruleUnionFreeB, List.all_eq_true, Schedule.UnionFree]
   exact forall₂_congr (fun r _ => Actions.unionFreeB_iff r.actions)
 
 /-- Monotone source rules remove no rows. -/
-theorem Rule.deleteFree_of_monotone {r : Rule} (h : r.monotoneB = true) : r.DeleteFree :=
-  Actions.deleteFree_of_all (Bool.and_eq_true_iff.mp h).2
+theorem Rule.subsumeFree_of_monotone {r : Rule} (h : r.monotoneB = true) : r.SubsumeFree :=
+  Actions.subsumeFree_of_all (Bool.and_eq_true_iff.mp h).2
 
-theorem Cmd.deleteFree_of_monotone {c : Cmd} (h : c.monotoneB = true) :
-    ∀ r ∈ c.rules, r.DeleteFree :=
-  fun r hr => Rule.deleteFree_of_monotone (List.all_eq_true.mp h r hr)
+theorem Schedule.subsumeFree_of_monotone {c : Schedule} (h : c.monotoneB = true) :
+    ∀ r ∈ c.rules, r.SubsumeFree :=
+  fun r hr => Rule.subsumeFree_of_monotone (List.all_eq_true.mp h r hr)
 
 end Egglog

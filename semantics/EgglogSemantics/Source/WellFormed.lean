@@ -9,11 +9,11 @@ instance (r : Rule) (Γ : Scope) : Decidable (r.Scoped Γ) :=
   inferInstanceAs (Decidable ((∀ p ∈ r.query, p.Scoped) ∧
     Actions.Scoped r.actions (Query.bind r.query Γ)))
 
-instance (c : Cmd) (Γ : Scope) : Decidable (c.Scoped Γ) :=
-  inferInstanceAs (Decidable (∀ r ∈ c.rules, r.Scoped Γ))
+instance (S : Schedule) (Γ : Scope) : Decidable (S.Scoped Γ) :=
+  inferInstanceAs (Decidable (∀ r ∈ S.rules, r.Scoped Γ))
 
 instance (P : Program) (Γ : Scope) : Decidable (Program.Scoped P Γ) :=
-  inferInstanceAs (Decidable ((∀ c ∈ P.commands, c.Scoped Γ) ∧ ∀ p ∈ P.check, p.Scoped))
+  inferInstanceAs (Decidable (P.schedule.Scoped Γ ∧ ∀ p ∈ P.check, p.Scoped))
 
 /-- The paper's static premise, used together with `Program.Fragment`: every rule and
 check is scoped, with head variables bound by the query, and every name is applied at one

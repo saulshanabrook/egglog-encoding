@@ -9,34 +9,31 @@ private theorem option_true {b : Option Bool} (h : b.getD false = true) : b = so
 
 /-- A valid node's claim is supported when its subproofs' claims are. -/
 theorem checkNode_supported {P : Program} {db : Database}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (hok : sourceOk P = true)
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (hok : sourceOk P = true)
     {pf : Proof} (hp : ∀ q ∈ pf.subproofs, q.claim.Supported db)
     (h : checkNode P pf = true) : pf.claim.Supported db := by
   cases pf with
-  | symm c p =>
-      simp only [checkNode, beq_iff_eq] at h
-      change Claim.Supported db c
-      rw [h]
+  | symm p =>
+      change Claim.Supported db ⟨p.claim.rhs, p.claim.lhs⟩
       exact (hp p (by simp [Proof.subproofs])).symm
-  | trans c p q =>
-      simp only [checkNode, Bool.and_eq_true_iff, beq_iff_eq] at h
-      change Claim.Supported db c
-      rw [h.2]
+  | trans p q =>
+      simp only [checkNode, beq_iff_eq] at h
+      change Claim.Supported db ⟨p.claim.lhs, q.claim.rhs⟩
       have hq : Claim.Supported db ⟨p.claim.rhs, q.claim.rhs⟩ := by
-        rw [h.1]; exact hp q (by simp [Proof.subproofs])
+        rw [h]; exact hp q (by simp [Proof.subproofs])
       exact Claim.Supported.trans (hp p (by simp [Proof.subproofs])) hq
-  | congr c p k q =>
+  | congr p k q =>
       simp only [checkNode] at h
       cases he : p.claim.rhs with
       | lit l => simp [he] at h
       | app f args =>
-          simp only [he, Bool.and_eq_true_iff, beq_iff_eq] at h
+          simp only [he, beq_iff_eq] at h
           have hbase : Claim.Supported db ⟨p.claim.lhs, .app f args⟩ := by
             rw [← he]; exact hp p (by simp [Proof.subproofs])
-          change Claim.Supported db c
-          rw [h.2]
-          exact hbase.congr (hp q (by simp [Proof.subproofs])) h.1
+          have hk : k < args.length := (List.getElem?_eq_some_iff.mp h).1
+          simp only [Proof.claim, he, if_pos hk]
+          exact hbase.congr (hp q (by simp [Proof.subproofs])) h
   | rule c i σ ps =>
       simp only [checkNode] at h
       obtain ⟨r, hr, h⟩ := Option.bind_eq_some_iff.mp (option_true h)
@@ -50,10 +47,10 @@ theorem checkNode_supported {P : Program} {db : Database}
 mutual
 
 theorem valid_supported {P : Program} {db : Database}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (hok : sourceOk P = true) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (hok : sourceOk P = true) :
     (pf : Proof) → valid P pf = true → pf.claim.Supported db
-  | .symm c p, h => by
+  | .symm p, h => by
       simp only [valid, Bool.and_eq_true_iff] at h
       have ih := valid_supported hs hw hclosed hok p h.1
       refine checkNode_supported hs hw hclosed hok ?_ h.2
@@ -61,7 +58,7 @@ theorem valid_supported {P : Program} {db : Database}
       simp only [Proof.subproofs, List.mem_singleton] at hq
       subst hq
       exact ih
-  | .trans c p q, h => by
+  | .trans p q, h => by
       simp only [valid, Bool.and_eq_true_iff] at h
       have ihp := valid_supported hs hw hclosed hok p h.1.1
       have ihq := valid_supported hs hw hclosed hok q h.1.2
@@ -71,7 +68,7 @@ theorem valid_supported {P : Program} {db : Database}
       rcases hr with rfl | rfl
       · exact ihp
       · exact ihq
-  | .congr c p k q, h => by
+  | .congr p k q, h => by
       simp only [valid, Bool.and_eq_true_iff] at h
       have ihp := valid_supported hs hw hclosed hok p h.1.1
       have ihq := valid_supported hs hw hclosed hok q h.1.2
@@ -88,8 +85,8 @@ theorem valid_supported {P : Program} {db : Database}
 termination_by structural pf => pf
 
 theorem allValid_supported {P : Program} {db : Database}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (hok : sourceOk P = true) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (hok : sourceOk P = true) :
     (ps : List Proof) → allValid P ps = true → ∀ q ∈ ps, q.claim.Supported db
   | [], _, _, hq => by simp at hq
   | p :: ps, h, q, hq => by
@@ -104,10 +101,10 @@ end
 
 /-- Accepted claims retain source existence witnesses, including intermediate terms. -/
 theorem check_supported {P : Program} {db : Database} {pf : Proof} {c : Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (h : check P pf = some c) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (h : check P pf = some c) :
     c.Supported db := by
-  unfold check at h
+  unfold check checkIn at h
   split at h
   · contradiction
   · rename_i hok
@@ -120,15 +117,15 @@ theorem check_supported {P : Program} {db : Database} {pf : Proof} {c : Claim}
 
 /-- Checking proves an inferred source equality, even at unstored constructor spellings. -/
 theorem check_infers {P : Program} {db : Database} {pf : Proof} {c : Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (h : check P pf = some c) :
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (h : check P pf = some c) :
     db.Infers c.lhs c.rhs :=
   (check_supported hs hw hclosed h).infers hw
 
 /-- On endpoints held by the source, checking implies its original congruence relation. -/
 theorem check_sound {P : Program} {db : Database} {pf : Proof} {c : Claim}
-    (hs : ProgramStep Database.empty P.commands db) (hw : db.WF)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules db) (h : check P pf = some c)
+    (hs : Reach Database.empty P.schedule db) (hw : db.WF)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs db) (h : check P pf = some c)
     (hl : c.lhs ∈ db.terms) (hr : c.rhs ∈ db.terms) : StoredCong db c.lhs c.rhs :=
   (check_supported hs hw hclosed h).holds hw hl hr
 

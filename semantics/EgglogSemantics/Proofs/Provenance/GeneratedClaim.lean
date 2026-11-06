@@ -6,8 +6,8 @@ namespace Egglog.Provenance.Generated
 
 /-- An accepted generated certificate with a successful lift establishes its mapped claim. -/
 theorem check_claim_infers {P : Program} {src : Database}
-    (hs : ProgramStep Database.empty P.commands src)
-    (hclosed : ∀ c ∈ P.commands, RunSaturated c.rules src)
+    (hs : Reach Database.empty P.schedule src)
+    (hclosed : ∀ rs ∈ P.runs, RunSaturated rs src)
     {pf : Proof} {t : Term} {claim : SourceProof.Claim} {output : SourceProof.Proof}
     (hc : check (Congruence.encode P) pf = some t)
     (hm : Resugar.factClaim P t = some claim) (hl : Resugar.lift P pf = some output) :

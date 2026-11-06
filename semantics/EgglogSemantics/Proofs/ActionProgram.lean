@@ -1,17 +1,12 @@
 import EgglogSemantics.Proofs.Step
 
-/-! Splitting mathematical command sequences. -/
+/-! Splitting mathematical schedule sequences. -/
 
 namespace Egglog
 
-/-- Split a successful mathematical execution at a command-list boundary. -/
-theorem ProgramStep.append_inv {p q : List Cmd} {d e : Database}
-    (hr : ProgramStep d (p ++ q) e) : ∃ mid, ProgramStep d p mid ∧ ProgramStep mid q e := by
-  induction p generalizing d with
-  | nil => exact ⟨d, .nil, hr⟩
-  | cons c cs ih =>
-      obtain ⟨mid, hc, hrest⟩ := hr.cons_inv
-      obtain ⟨post, hp, hq⟩ := ih hrest
-      exact ⟨post, .cons hc hp, hq⟩
+/-- Split a successful execution at a schedule boundary. -/
+theorem Reach.append_inv {p q : Schedule} {d e : Database}
+    (hr : Reach d (.seq p q) e) : ∃ mid, Reach d p mid ∧ Reach mid q e :=
+  hr.seq_inv
 
 end Egglog

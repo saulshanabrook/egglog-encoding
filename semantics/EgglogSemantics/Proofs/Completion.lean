@@ -11,7 +11,7 @@ def Database.completion (d : Database) : Database :=
   {d with eqs := {p | d.Infers p.1 p.2}}
 
 theorem Database.contained_completion (d : Database) : d.Contained d.completion :=
-  ⟨fun _ hp => infers_of_cong (.direct hp)⟩
+  ⟨fun _ hp => infers_of_cong (.direct hp), subset_rfl⟩
 
 theorem Database.cong_completion_iff {d : Database} (hw : d.WF) {a b : Term} :
     StoredCong d.completion a b ↔ d.Infers a b := by
@@ -28,7 +28,7 @@ theorem Database.WF.completion {d : Database} (hw : d.WF) : d.completion.WF wher
 
 theorem Database.sameMeaning_completion {d : Database} (hw : d.WF) :
     d.SameMeaning d.completion :=
-  Database.SameMeaning.of_inferred (fun _ _ => ⟨infers_mono d.contained_completion,
+  Database.SameMeaning.of_inferred rfl (fun _ _ => ⟨infers_mono d.contained_completion,
     infers_of_assertions_only (e := d.completion) hw (fun _ hp => hp)⟩)
 
 theorem Database.completion_idempotent {d : Database} (hw : d.WF) :
@@ -37,22 +37,24 @@ theorem Database.completion_idempotent {d : Database} (hw : d.WF) :
   ext p
   exact (d.sameMeaning_completion hw).inferred p.1 p.2 |>.symm
 
-theorem Database.SameMeaning.completion_eq {d e : Database} (h : d.SameMeaning e) :
+theorem Database.SameMeaning.completion_eq {d e : Database} (h : d.SameMeaning e) (hX : d.subsumed = e.subsumed) :
     d.completion = e.completion := by
   apply Database.ext
   · exact Set.ext (fun p => h.inferred p.1 p.2)
+  · exact hX
 
-theorem Database.sameMeaning_iff_completion_eq {d e : Database} :
+theorem Database.sameMeaning_iff_completion_eq {d e : Database}
+    (hX : d.subsumed = e.subsumed) :
     d.SameMeaning e ↔ d.completion = e.completion := by
-  refine ⟨Database.SameMeaning.completion_eq, fun h => ?_⟩
-  apply Database.SameMeaning.of_inferred
+  refine ⟨fun h => h.completion_eq hX, fun h => ?_⟩
+  apply Database.SameMeaning.of_inferred hX
   exact fun a b => Set.ext_iff.mp (congrArg Database.eqs h) (a, b)
 
 theorem SourceMeaning.queryHolds_completion_iff {d : Database}
-    (hw : d.WF)
+    (hw : d.WF) (hr : d.HasReps) (hrc : d.completion.HasReps)
     {q : Query} (hq : ∀ p ∈ q, p.OrderingFree) :
     QueryHolds d.completion q ↔ QueryHolds d q :=
   (queryHolds_iff hw hw.completion
-    (d.sameMeaning_completion hw) hq).symm
+    (d.sameMeaning_completion hw) hr hrc hq).symm
 
 end Egglog

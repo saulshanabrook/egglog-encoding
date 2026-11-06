@@ -1,0 +1,24 @@
+(B) = (A)  rule 2 {}
+  (G (A)) = (G (A))  congr 0
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(B) = (B)  rule 2 {}
+  (G (A)) = (G (A))  congr 0
+    (G (A)) = (G (A))  rule 1 {x := (A)}
+      (F (A)) = (F (A))  congr 0
+        (F (A)) = (F (A))  rule 0 {}
+        (A) = (A)  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(G (A)) = (G (A))  rule 1 {x := (A)}
+  (F (A)) = (F (A))  congr 0
+    (F (A)) = (F (A))  rule 0 {}
+    (A) = (A)  rule 0 {}
+
+(F (A)) = (F (A))  rule 0 {}
+
+(A) = (A)  rule 0 {}

@@ -1,36 +1,46 @@
-import EgglogSemantics.Spec.Sequential
+import EgglogSemantics.Spec.Facts
 import EgglogSemantics.Proofs.Match
 
 /-! Single-substitution queries agree with the join representation. -/
 
 namespace Egglog
 
-/-- Atom and equality matching read the single semantic relation. -/
-theorem Matches.expr_iff_cong {db : Database} {e : Expr} {σ : Env} :
+/-- With no subsumption or ordering, lookup recovers the evaluation presentation. -/
+theorem Matches.expr_iff_cong {db : Database} {e : Expr} {σ : Env}
+    (hX : db.subsumed = ∅) (ho : e.OrderingFree)
+    (hσ : ∀ v t, Env.lookup v σ = some t → Cong db t t) :
     Matches db (.expr e) σ ↔ ∃ t, e.eval σ = some t ∧ Cong db t t := by
   constructor
-  · rintro h
-    cases h with | atom he hc => exact ⟨_, he, hc⟩
+  · intro h
+    cases h with
+    | atom hl =>
+      obtain ⟨t, he⟩ := hl.eval_exists
+      exact ⟨t, he, Lookup.exists_cong hσ ⟨he, hl⟩⟩
   · rintro ⟨t, he, hc⟩
-    exact .atom he hc
+    exact .atom (Lookup.of_eval hX ho he hc).2
 
-theorem Matches.eq_iff_cong {db : Database} {a b : Expr} {σ : Env} :
+theorem Matches.eq_iff_cong {db : Database} {a b : Expr} {σ : Env}
+    (hX : db.subsumed = ∅) (ha : a.OrderingFree) (hb : b.OrderingFree) :
     Matches db (.eq a b) σ ↔
       ∃ s t, a.eval σ = some s ∧ b.eval σ = some t ∧ Cong db s t := by
   constructor
-  · rintro h
-    cases h with | equal ha hb hc => exact ⟨_, _, ha, hb, hc⟩
-  · rintro ⟨s, t, ha, hb, hc⟩
-    exact .equal ha hb hc
+  · intro h
+    cases h with | equal _ _ ha hb hc => exact ⟨_, _, ha, hb, hc⟩
+  · rintro ⟨s, t, hsa, htb, hc⟩
+    exact .equal (Lookup.of_eval hX ha hsa (hc.trans hc.symm)).2
+      (Lookup.of_eval hX hb htb (hc.symm.trans hc)).2 hsa htb hc
 
-theorem Matches.expr_iff_infers {db : Database} {e : Expr} {σ : Env} :
+theorem Matches.expr_iff_infers {db : Database} {e : Expr} {σ : Env}
+    (hX : db.subsumed = ∅) (ho : e.OrderingFree)
+    (hσ : ∀ v t, Env.lookup v σ = some t → Cong db t t) :
     Matches db (.expr e) σ ↔ ∃ t, e.eval σ = some t ∧ db.Infers t t := by
-  simp only [expr_iff_cong, InferredFacts.congr_iff_infers]
+  simp only [expr_iff_cong hX ho hσ, InferredFacts.congr_iff_infers]
 
-theorem Matches.eq_iff_infers {db : Database} {a b : Expr} {σ : Env} :
+theorem Matches.eq_iff_infers {db : Database} {a b : Expr} {σ : Env}
+    (hX : db.subsumed = ∅) (ha : a.OrderingFree) (hb : b.OrderingFree) :
     Matches db (.eq a b) σ ↔
       ∃ s t, a.eval σ = some s ∧ b.eval σ = some t ∧ db.Infers s t := by
-  simp only [eq_iff_cong, InferredFacts.congr_iff_infers]
+  simp only [eq_iff_cong hX ha hb, InferredFacts.congr_iff_infers]
 
 private def selectEnv (vars : List Var) (σ : Env) : Env :=
   vars.filterMap fun v => (Env.lookup v σ).map (v, ·)
@@ -85,7 +95,7 @@ private theorem lookup_selectEnv {vars : List Var} {σ : Env} (hnd : vars.Nodup)
       · rw [if_neg (fun hc : v = w => hnd.1 (hc ▸ hv)), ih hnd.2 hv]
 
 theorem querySubst_of_matches_terms {db : Database} {q : Query} {σ : Env}
-    (hdom : (Env.dom σ).Perm q.vars) (hval : ∀ b ∈ σ, b.2 ∈ db.terms)
+    (hdom : (Env.dom σ).Perm q.vars) (hval : ∀ b ∈ σ, b.2 ∈ db.reps)
     (hm : ∀ p ∈ q, Matches db p σ) :
     ∃ τ, ValidQuerySubst db q τ ∧ Env.Agree τ σ := by
   have hpvar : ∀ p ∈ q, ∀ v ∈ p.freeVars [], v ∈ Env.dom σ := by
@@ -114,7 +124,7 @@ theorem querySubst_of_matches_terms {db : Database} {q : Query} {σ : Env}
   rw [hcanon p hp]
   exact p.mem_freeVars.mpr ⟨hvp, by simp [Env.dom]⟩
 theorem querySubst_of_matches {db : Database} {q : Query} {σ : Env}
-    (hdom : (Env.dom σ).Perm q.vars) (hval : ∀ b ∈ σ, b.2 ∈ db.terms)
+    (hdom : (Env.dom σ).Perm q.vars) (hval : ∀ b ∈ σ, b.2 ∈ db.reps)
     (hm : ∀ p ∈ q, Matches db p σ) :
     ∃ τ, ValidQuerySubst db q τ ∧ Env.Agree τ σ :=
   querySubst_of_matches_terms hdom hval hm
@@ -164,7 +174,7 @@ theorem exists_queryMatches {db : Database} {q : Query} {σ : Env}
   refine ⟨selectEnv q.vars σ, ⟨⟨?_, ?_⟩, ?_⟩, hag⟩
   · rw [hselected]
   · intro b hb
-    exact h.mem_terms b (Env.mem_of_lookup (mem_selectEnv hb).2)
+    exact h.mem_reps b (Env.mem_of_lookup (mem_selectEnv hb).2)
   · intro p hp
     exact (h.matches_of_mem hp).of_agreeOn fun v _ => (hag v).symm
 

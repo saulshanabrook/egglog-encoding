@@ -59,7 +59,7 @@ end
 instance : DecidableEq Term := decEq
 
 /-- `t` is a base value. egglog's `union` requires an eq-sort and so rejects one;
-`Action.write` reads this to refuse the same. -/
+`evalAction` reads this to refuse the same. -/
 def isLit : Term → Bool
   | .lit _ => true
   | .app _ _ => false
@@ -111,6 +111,9 @@ end Term
 /-- The order on base values: integers by `<`. -/
 def Lit.blt : Lit → Lit → Bool
   | .int m, .int n => decide (m < n)
+  | .int _, .str _ => true
+  | .str _, .int _ => false
+  | .str a, .str b => decide (a < b)
 
 mutual
 

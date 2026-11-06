@@ -32,9 +32,11 @@ theorem evalAction_isSome_of_scoped {σ : Env} {db : Database} {Γ : Scope}
   | expr e =>
     obtain ⟨t, ht⟩ := Expr.eval_isSome_of_scoped hm h.2
     exact ⟨db.addTerm t, by simp [evalAction, ht]⟩
-  | delete e =>
-    obtain ⟨t, ht⟩ := Expr.eval_isSome_of_scoped hm h.2
-    exact ⟨db.deleteRows {t}, by simp [evalAction, ht]⟩
+  | subsume f es =>
+    obtain ⟨t, ht⟩ := Expr.eval_isSome_of_scoped hm h
+    obtain ⟨ts, hts, rfl⟩ := Option.map_eq_some_iff.mp ht
+    exact ⟨(db.addTerm (.app f ts)).addSubsumed {.app f ts},
+      by simp [evalAction, hts]⟩
   | union a b =>
     obtain ⟨t, ht⟩ := Expr.eval_isSome_of_scoped hm h.1
     obtain ⟨u, hu'⟩ := Expr.eval_isSome_of_scoped hm h.2
@@ -68,29 +70,27 @@ theorem evalLocalActions_isSome_of_scoped {db : Database} {r : Rule}
     simpa using Query.bind_models Scope.Models.empty hσ
   exact evalActions_isSome_of_scoped hm hr.2 hu
 
-/-- A bounded command always returns a database. -/
-theorem CmdStep.exists_of_scoped {db : Database} {Γ : Scope} {c : Cmd}
-    (hns : c.NoSaturate) (_h : c.Scoped Γ) : ∃ d, CmdStep db c d := by
-  cases c with
-  | run R => exact ⟨_, rfl⟩
-  | saturate R => exact hns.elim
+/-- A saturation-free schedule always returns a database. -/
+theorem Reach.exists_of_noSaturate {db : Database} {S : Schedule}
+    (hns : S.NoSaturate) : ∃ d, Reach db S d := by
+  induction S generalizing db with
+  | run rs => exact ⟨_, .run⟩
+  | saturate S => exact hns.elim
+  | seq S₁ S₂ ih₁ ih₂ =>
+    obtain ⟨mid, h₁⟩ := ih₁ hns.1 (db := db)
+    obtain ⟨d, h₂⟩ := ih₂ hns.2 (db := mid)
+    exact ⟨d, .seq h₁ h₂⟩
 
-theorem ProgramStep.exists_of_noSaturate {db : Database} {cs : List Cmd}
-    (hns : ∀ c ∈ cs, c.NoSaturate) : ∃ d, ProgramStep db cs d := by
-  induction cs generalizing db with
-  | nil => exact ⟨_, .nil⟩
-  | cons c cs ih =>
-    cases c with
-    | saturate R => exact (show False from hns (.saturate R) (by simp)).elim
-    | run R =>
-      obtain ⟨d, hd⟩ := ih (db := RunRules R db) (fun c hc => hns c (by simp [hc]))
-      exact ⟨d, .cons rfl hd⟩
+/-- Scoping is compatible with progress; rounds simply omit stuck heads. -/
+theorem Reach.exists_of_scoped {db : Database} {Γ : Scope} {S : Schedule}
+    (hns : S.NoSaturate) (_h : S.Scoped Γ) : ∃ d, Reach db S d :=
+  Reach.exists_of_noSaturate hns
 
 theorem Eval.exists_of_scoped {db : Database} {Γ : Scope} {p : Program}
     (hns : p.NoSaturate) (_h : Program.Scoped p Γ) : ∃ r, Eval db p r := by
   classical
-  obtain ⟨d, hd⟩ := ProgramStep.exists_of_noSaturate (db := db) hns
-  by_cases hq : QueryHolds d p.check
+  obtain ⟨d, hd⟩ := Reach.exists_of_noSaturate (db := db) hns
+  by_cases hq : QueryHolds d.forgetSubsumed p.check
   · exact ⟨_, .ok hd hq⟩
   · exact ⟨_, .checkFailed hd hq⟩
 

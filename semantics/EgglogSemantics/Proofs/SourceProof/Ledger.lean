@@ -18,11 +18,11 @@ theorem ledger_contained_completion {db : Database} (hw : db.WF)
     {cs : List Claim} (hc : ∀ c ∈ cs, c.Supported db) :
     (ledger cs).Contained db.completion := by
   induction cs with
-  | nil => exact ⟨by simp [ledger, Database.empty]⟩
+  | nil => exact ⟨by simp [ledger, Database.empty], by simp [ledger, Database.empty]⟩
   | cons c cs ih =>
       have hclaim := (hc c (by simp)).completion hw
       have htail := ih (fun c h => hc c (by simp [h]))
-      refine ⟨?_⟩
+      refine ⟨?_, htail.subsumed⟩
       intro p hp
       rcases Set.mem_insert_iff.mp hp with rfl | hp
       · exact (Database.cong_completion_iff hw).mp hclaim

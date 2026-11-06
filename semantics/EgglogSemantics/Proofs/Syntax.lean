@@ -81,4 +81,23 @@ end Expr
 @[simp] theorem Query.vars_cons {p : Pattern} {ps : Query} :
     Query.vars (p :: ps) = p.vars ∪ Query.vars ps := rfl
 
+/-- A rule occurs in a schedule exactly when it occurs in one of its runs. -/
+theorem Schedule.mem_rules_iff {S : Schedule} {r : Rule} :
+    r ∈ S.rules ↔ ∃ rs ∈ S.runs, r ∈ rs := by
+  induction S with
+  | run rs => simp [Schedule.rules, Schedule.runs]
+  | saturate S ih => exact ih
+  | seq S₁ S₂ ih₁ ih₂ =>
+    simp only [Schedule.rules, Schedule.runs, List.mem_append, ih₁, ih₂]
+    constructor
+    · rintro (⟨rs, hrs, hr⟩ | ⟨rs, hrs, hr⟩)
+      · exact ⟨rs, Or.inl hrs, hr⟩
+      · exact ⟨rs, Or.inr hrs, hr⟩
+    · rintro ⟨rs, hrs | hrs, hr⟩
+      · exact Or.inl ⟨rs, hrs, hr⟩
+      · exact Or.inr ⟨rs, hrs, hr⟩
+
+theorem Program.mem_rules_iff {P : Program} {r : Rule} :
+    r ∈ P.rules ↔ ∃ rs ∈ P.runs, r ∈ rs := Schedule.mem_rules_iff
+
 end Egglog

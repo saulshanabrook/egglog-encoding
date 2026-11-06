@@ -1,10 +1,12 @@
 import EgglogSemantics.Tests.Congruence
 import EgglogSemantics.Congruence.Reader
-import EgglogSemantics.Provenance.Extract
+import EgglogSemantics.Provenance.Log
+import EgglogSemantics.SourceProof.Simplify
 import EgglogSemantics.Resugar.Export
 import EgglogSemantics.Tests.Egg
 import EgglogSemantics.Tests.Parse
 import EgglogSemantics.Tests.Render
+import EgglogSemantics.Tests.PaperTex
 
 /-!
 # Differential tests
@@ -39,13 +41,13 @@ private inductive Src where
   | saturateRules (rs : List Rule)
 
 private def prog (cs : List Src) (check : Query := []) : Program :=
-  let (cmds, _) := cs.foldl (fun (acc : List Cmd × List Rule) c => match c with
+  let (cmds, _) := cs.foldl (fun (acc : List Schedule × List Rule) c => match c with
     | .global a => (acc.1 ++ [.run [⟨[], [a]⟩]], acc.2)
     | .rule r => (acc.1, acc.2 ++ [r])
     | .run => (acc.1 ++ [.run acc.2], acc.2)
-    | .saturate => (acc.1 ++ [.saturate acc.2], acc.2)
-    | .saturateRules rs => (acc.1 ++ [.saturate rs], acc.2)) ([], [])
-  ⟨cmds, check⟩
+    | .saturate => (acc.1 ++ [.saturate (.run acc.2)], acc.2)
+    | .saturateRules rs => (acc.1 ++ [.saturate (.run rs)], acc.2)) ([], [])
+  ⟨Schedule.seqAll cmds, check⟩
 
 /-! ### Curated cases -/
 
@@ -95,7 +97,7 @@ private def nestedAtRule (key : Expr) : Rule where
 
 /-! #### A source `saturate`
 
-The `sat-*` family. A source `Cmd.saturate` runs rounds of a ruleset until nothing changes,
+The `sat-*` family. A source `saturate` runs rounds of its rules until nothing changes,
 and a rule of a *later* round has to see the equalities an earlier round asserted. egglog
 instruments the schedule node by node — its `Run` case becomes `(seq <run> <rebuild>)` and its
 `Saturate` case recurses into the loop body (`egglog/src/proofs/proof_encoding.rs:1969`,
@@ -440,7 +442,7 @@ private def genProgram (s : Nat) : List Src :=
   let (r₂, s) := genRule g₃ s
   let (rounds, s) := pick 3 s
   -- **Sometimes a source `saturate`**, drawn after everything else so that the rest of a
-  -- seed's program is what it was. `encodeCmd` gives a `Cmd.saturate` a schedule of its own,
+  -- seed's program is what it was. `encodeSchedule` compiles a `saturate` structurally,
   -- and nothing else in the corpus but the `sat-*` cases reaches it.
   let (wantSat, s) := pick 2 s
   let sat := match wantSat, genCollapseRules g₂ with
@@ -478,7 +480,7 @@ rule, so none runs the enumerator, whose cost is `|terms| ^ |vars|`. -/
 private def buildCase : List Src := [.global (.expr (add (C "One") (C "Two")))]
 
 /-- Two applications made congruent by a `union`, and nothing else — the smallest program
-whose encoded view holds a stale key. -/
+whose congruence rule has to fire. -/
 private def unionCase : List Src :=
   [.global (.expr (add (C "One") (C "Two"))),
    .global (.expr (add (C "Two") (C "One"))),
@@ -494,7 +496,7 @@ private def upCase : List Src :=
 
 /-- `upCase` with unary constructors throughout: the same two-level shape, and the smallest
 program in which the congruence has anywhere to travel. Cheaper only because the enumerator
-is exponential in a rule's variable count and a unary view's rebuild rule has one fewer. -/
+is exponential in a rule's variable count and a unary congruence rule has three fewer. -/
 private def upThinCase : List Src :=
   [.global (.expr (.app "H" [.app "F" [C "A"]])),
    .global (.expr (.app "H" [.app "F" [C "B"]])),
@@ -503,9 +505,9 @@ private def upThinCase : List Src :=
 /-! **The literal probes are model-only.** Every case in the corpus proper uses nullary
 constructors, because egglog's `i64` is a distinct primitive sort and `(Add 1 2)` would not
 typecheck there, while `Term.lit` shares a sort with applications here. These two are the
-only way to ask what `ViewRepr`'s literal clause does when a literal is a *source* term — a
-literal in a key column, which is the only place a source literal can be — so they live among
-the probes, which `writeCase` never sees. -/
+only way to ask what `Repr`'s literal clause does when a literal is a *source* term — a
+literal child, which is the only place a source literal can be — so they live among the
+probes, which `writeCase` never sees. -/
 
 /-- A literal the encoding also mints (`unitE` is `0`) is absent from this source. -/
 private def litCase : List Src := [.global (.expr (add (.lit (.int 1)) (.lit (.int 2))))]
@@ -515,15 +517,15 @@ private def litZeroCase : List Src := [.global (.expr (add (.lit (.int 0)) (.lit
 
 /-! ### The union-find probes
 
-`CorrReport.viaUF` counts the pairs the sweep joins whose two terms share no e-class
-outright, so that the join had to go through a `@UF` edge. It is zero on every case in the
-corpus, which is why `Read.lean`'s `SameClass` is the **flat** relation, one id both terms
-read to, with the walk kept here as a control rather than in the definition.
+`Read.lean`'s `SameClass` is the **flat** relation: each term reads, through the live
+edges of its children, to exactly one root, and the two roots are the same. A rebuild the
+target did not finish leaves a key with two live edges or two applications with one child
+tuple and two roots, and then a term has no id at all.
 
-These are the programs written to make it non-zero: a three-link chain built in each
-direction, endpoints at different term depths, a congruence that has to climb three levels,
-a representative that `ordering-min` puts *below* its class, unions a rule makes across
-rounds, and a `union` between two terms neither of which has a view row.
+These are the programs written to stress that: a three-link chain built in each direction,
+endpoints at different term depths, a congruence that has to climb three levels, a
+representative that `ordering-min` puts *below* its class, unions a rule makes across
+rounds, and a `union` between two literals.
 
 They are probes rather than corpus cases because the literal family is model-only —
 egglog's `i64` is a distinct sort where `Term.lit` shares one with applications — and
@@ -537,7 +539,7 @@ private def wrap : Nat → Expr → Expr
   | n + 1, e => .app "Wrapper" [wrap n e]
 
 /-- A three-link union chain under two wrappers, with **no** `run`: the only rebuild is the
-one `encodeCmd` appends to each action. `Term.blt` orders nullary constructors by name, so
+one `encodeSchedule` appends to each action. `Term.blt` orders nullary constructors by name, so
 `A` is the representative and the edges the `union`s write are `D → C`, `C → B`, `B → A`,
 each landing above the standing representative, the order that makes the walk longest. -/
 private def chainCase : List Src :=
@@ -557,17 +559,16 @@ private def chainDownCase : List Src :=
    .global (.union (C "C") (C "D"))]
 
 /-- Endpoints at different term depths: a leaf `union`ed with a one-level application, both
-ways round, so the column re-keying and the parent walk interleave. A nullary constructor
-sorts below a unary application in `Term.blt`, so the leaf is the representative both times
-and the application's own view is what moves. -/
+ways round. A nullary constructor sorts below a unary application in `Term.blt`, so the
+leaf is the representative both times and the application is what gains a parent. -/
 private def depthCase : List Src :=
   [.global (.expr (wrap 2 (C "A"))),
    .global (.expr (wrap 2 (C "B"))),
    .global (.union (C "A") (.app "Wrapper" [C "B"])),
    .global (.union (C "B") (.app "Wrapper" [C "A"]))]
 
-/-- A three-level tower over a `union`ed leaf. Each level's views collide only once the
-level below has been re-keyed, so the view collisions write `@UF` edges in later rebuild
+/-- A three-level tower over a `union`ed leaf. Each level's congruence rule fires only once
+the level below has been merged, so the congruence rules write `@UF` edges in later rebuild
 rounds than the `union` did: new edges arriving after the earlier ones were compressed,
 made by the maintenance rules rather than by a source rule. -/
 private def towerCase : List Src :=
@@ -598,10 +599,8 @@ private def roundCase : List Src :=
    .global (.expr (.app "Wrapper" [C "One"])),
    .rule commuteRule, .rule liftRule, .run, .run]
 
-/-- `unionCase` with literals in place of the nullary constructors, which would be the one
-shape whose `SameClass` the views cannot decide: `encodeBuild` emits no action for a
-literal, so neither `1` nor `2` has a view entry for the rebuild to re-key and the `@UF`
-edge would be the only record of their equality.
+/-- `unionCase` with literals in place of the nullary constructors, which would equate two
+literals: the `@UF` edge would be the only record of their equality.
 
 **It is not a program.** `execAction` refuses a `union` with a literal operand, so the
 source run sticks at the third command and `Cong src` never relates a literal to anything
@@ -640,25 +639,15 @@ def Program.encodeDomainB (p : Program) : Bool := decide p.Fragment
 
 /-! #### Running the compiled program
 
-`Congruence.encode` emits `Cmd.saturate rebuildRuleset` after every run, so a compiled
-program is outside `Program.NoSaturate` and `exec` reaches `runSaturateF`, which is
-fuel-bounded and answers `none` on exhaustion. `execAt` takes the fuel as an argument so
-that "the rebuild did not settle" and "a command got stuck" are different answers rather
-than the same `none`; everything but `.saturate` is `execCmd` unchanged, so `execAt
-runFuel` is `exec`. -/
-/-- `exec` with the `.saturate` fuel supplied by the caller. -/
-def execAt (fuel : Nat) (d : FDatabase) : List Cmd → Option FDatabase
-  | [] => some d
-  | .saturate rs :: cs => (d.runSaturateF rs fuel).bind fun d' => execAt fuel d' cs
-  | c :: cs => (execCmd d c).bind fun d' => execAt fuel d' cs
+`Congruence.encode` follows every run by a rebuild saturation, so a compiled program is
+outside `Program.NoSaturate` and `exec` is fuel-bounded, answering `none` on exhaustion.
+`execAt` takes the fuel as an argument so that the corpus can raise it. -/
+/-- `exec` with the saturation fuel supplied by the caller. -/
+def execAt (fuel : Nat) (d : FDatabase) (S : Schedule) : Option FDatabase :=
+  execSchedule fuel d S
 
 /-- **At `runFuel` it is `exec`**, so raising the fuel is the only thing the parameter does. -/
-theorem execAt_runFuel (d : FDatabase) (p : List Cmd) :
-    execAt runFuel d p = execProgram d p := by
-  induction p generalizing d with
-  | nil => rfl
-  | cons c cs ih =>
-    cases c <;> simp [execAt, execProgram, execCmd, ih]
+theorem execAt_runFuel (P : Program) : execAt runFuel FDatabase.empty P.schedule = exec P := rfl
 
 end Egglog
 
@@ -709,10 +698,8 @@ private def fileCases : IO (List (String × Program)) := do
     | .error e => throw (IO.userError s!"tests/{stem}.egg: {e}")
 
 /-- Run the target with structural equality and the corpus's saturation fuel. -/
-private def relationalExecAt (fuel : Nat) (d : FDatabase) : List Cmd → Option FDatabase
-  | [] => some d
-  | .saturate rs :: cs => (Relational.runSaturate rs fuel d).bind fun e => relationalExecAt fuel e cs
-  | c :: cs => (Relational.execCmd d c).bind fun e => relationalExecAt fuel e cs
+private def relationalExecAt (fuel : Nat) (d : FDatabase) (S : Schedule) : Option FDatabase :=
+  Relational.execSchedule fuel d S
 
 /-- Every stored equation is reflexive: the target asserted no union. -/
 private def eqsReflB (d : FDatabase) : Bool := d.eqs.all fun p => p.1 == p.2
@@ -727,7 +714,7 @@ saturation round. For finding out where an instrumented program spends its time.
 private def traceInstrumented (fuel : Nat) (p : Program) : IO Unit := do
   IO.eprintln "  compiling"
   let q := Congruence.encode p
-  IO.eprintln s!"  compiled: {q.commands.length} commands, {q.rules.length} rules"
+  IO.eprintln s!"  compiled: {q.schedule.topLevel.length} commands, {q.rules.length} rules"
   let some inst := Provenance.encode q | IO.println "provenance pass rejected input"
   let rounds (rs : List Rule) (d : FDatabase) : IO (Option FDatabase) := do
     let mut d := d
@@ -742,34 +729,103 @@ private def traceInstrumented (fuel : Nat) (p : Program) : IO Unit := do
       d := e
     return none
   let mut d := FDatabase.empty
-  for c in inst.commands do
+  for c in inst.schedule.topLevel do
     match c with
-    | .saturate rs =>
+    | .saturate (.run rs) =>
       IO.eprintln s!"    saturate {rs.length} rules"
       match ← rounds rs d with
       | some d' => d := d'
       | none => IO.println "    fuel exhausted"; return
-    | .run rs =>
+    | S =>
       let t0 ← IO.monoMsNow
-      let d' := Relational.runRules rs d
-      let n := d'.terms.length
-      let t ← IO.monoMsNow
-      IO.eprintln s!"    run {rs.length} rules -> terms {n} rows {d'.rows.length} ({t - t0} ms)"
-      d := d'
+      match Relational.execSchedule fuel d S with
+      | none => IO.println "    stuck or fuel exhausted"; return
+      | some d' =>
+        let n := d'.terms.length
+        let t ← IO.monoMsNow
+        IO.eprintln s!"    schedule over {S.rules.length} rules -> terms {n} rows {d'.rows.length} ({t - t0} ms)"
+        d := d'
   IO.println s!"  data rows {(Provenance.dataRows q d.terms).length}, firings {(Provenance.firings q d.terms).length}, check {Relational.holds d inst.check}"
 
+/-- `difftest paper-proof <file.egg> [--elide]`: the proof of the file's final check in the
+paper's notation, simplified for presentation and checked again, on stdout. -/
+private def paperProof (src : String) (e : PaperTex.Elision) : IO UInt32 := do
+    let text ← IO.FS.readFile src
+    match Program.ofEgg text with
+    | .error e => IO.eprintln s!"difftest: {src}: {e}"; return 1
+    | .ok p =>
+      let some pfs := Resugar.prove
+          (fun Q => relationalExecAt runFuel FDatabase.empty Q.schedule) p
+        | IO.eprintln "difftest: no proof of the check"; return 1
+      -- Simplified for presentation, and checked again.
+      for pf in pfs do
+        let simple := pf.simplify p
+        let shown := if SourceProof.check p simple == some pf.claim then simple else pf
+        IO.print (PaperTex.proof p shown e)
+      return 0
+
+/-- `difftest time <fuel> <case>`: time the stages of the congruence gate, and run the
+source schedule pass by pass under the general interpreter, reporting the state's size. -/
+private def timeCase (fuel : Nat) (p : Program) : IO Unit := do
+  let q := Congruence.encode p
+  let stage (label : String) (f : Unit → Option FDatabase) : IO (Option FDatabase) := do
+    let t0 ← IO.monoMsNow
+    let r := f ()
+    let n := r.map (·.terms.length)
+    let t ← IO.monoMsNow
+    IO.println s!"  {label}: {t - t0} ms, terms {n}"
+    pure r
+  -- The source, top-level command by command; a saturation pass by pass.
+  let mut d := FDatabase.empty
+  for S in p.schedule.topLevel do
+    match S with
+    | .saturate body =>
+      IO.println "  source saturate:"
+      let mut cur := d
+      let mut done := false
+      for i in [0:fuel] do
+        if done then break
+        match ← stage s!"    pass {i}" (fun _ => execSchedule fuel cur body) with
+        | none => IO.println "    body stuck"; return
+        | some e =>
+          if cur.sameData e then done := true
+          cur := e
+      d := cur
+    | S =>
+      match ← stage "  source command" (fun _ => execSchedule fuel d S) with
+      | none => IO.println "  stuck"; return
+      | some e => d := e
+  let _ ← stage "  source check" (fun _ => if d.holds p.check then some d else none)
+  let tgt ← stage "  target (general)" (fun _ => execSchedule fuel FDatabase.empty q.schedule)
+  let plain ← stage "  target (relational)"
+    (fun _ => Relational.execSchedule fuel FDatabase.empty q.schedule)
+  if let some e := tgt then
+    for k in [1:q.check.length + 1] do
+      let _ ← stage s!"  target check (general) on {k} atoms: {(q.check.take k).map Pattern.toEgg}"
+        (fun _ => if e.holds (q.check.take k) then some e else none)
+    let _ ← stage "  readings" (fun _ =>
+      let cl := d.closureF
+      let readings := d.terms.map fun t => (t, Congruence.idF e t)
+      if readings.any (fun (a, ia) => readings.any fun (b, ib) =>
+          decide ((a, b) ∈ cl) != (ia.isSome && ia == ib)) then none else some e)
+  if let some e := plain then
+    let _ ← stage "  target check (relational)"
+      (fun _ => if Relational.holds e q.check then some e else none)
+
 /-- Compare the compiled program's reading of every pair of source terms against source
-congruence, and its execution with and without equality reasoning. -/
-private def congruenceCheck (fuel : Nat) (p : Program) : List String := Id.run do
-  let compiled := Congruence.compile p
+congruence, and its execution with and without equality reasoning. `o` selects the
+compiler's optimizations; the reading goes through the union-find either way. -/
+private def congruenceCheck (fuel : Nat) (o : Congruence.Options) (p : Program) :
+    List String := Id.run do
+  let compiled := Congruence.compileWith o p
   let q := compiled.program
   let mut errors : List String := []
   if !q.arityConflicts.isEmpty then errors := errors ++ ["conflicting target arities"]
   -- One origin per compiled rule.
   if compiled.origins.length != q.rules.length then errors := errors ++ ["origins misaligned"]
-  match execAt fuel FDatabase.empty p.commands, execAt fuel FDatabase.empty q.commands with
+  match execAt fuel FDatabase.empty p.schedule, execAt fuel FDatabase.empty q.schedule with
   | some src, some tgt =>
-    match relationalExecAt fuel FDatabase.empty q.commands with
+    match relationalExecAt fuel FDatabase.empty q.schedule with
     | none => errors := errors ++ ["relational target stuck or exhausted fuel"]
     | some plain =>
       if !plain.sameData tgt then
@@ -777,9 +833,9 @@ private def congruenceCheck (fuel : Nat) (p : Program) : List String := Id.run d
     if !eqsReflB tgt || !subtermClosedB tgt then
       errors := errors ++ ["target violates reader assumptions"]
     let cl := src.closureF
-    let readings := src.terms.map fun t => (t, Congruence.viewReprsF tgt t)
-    if readings.any (fun (a, ids) => readings.any fun (b, js) =>
-        decide ((a, b) ∈ cl) != ids.any js.contains) then
+    let readings := src.terms.map fun t => (t, Congruence.idF tgt t)
+    if readings.any (fun (a, ia) => readings.any fun (b, ib) =>
+        decide ((a, b) ∈ cl) != (ia.isSome && ia == ib)) then
       errors := errors ++ ["source equality mismatch"]
     -- The final check is the observed behavior; both sides must agree on it.
     if src.holds p.check != tgt.holds q.check then
@@ -788,7 +844,21 @@ private def congruenceCheck (fuel : Nat) (p : Program) : List String := Id.run d
   | _, none => errors := errors ++ ["congruence target stuck or exhausted fuel"]
   return errors
 
-private def runCongruenceChecks (fuel : Nat) (names : List String) : IO UInt32 := do
+/-- Leading `--views=naive|indexed` and `--phased` arguments. -/
+private def parseOptions : List String → Congruence.Options × List String
+  | "--views=naive" :: rest =>
+      let (o, names) := parseOptions rest
+      ({ o with views := .naive }, names)
+  | "--views=indexed" :: rest =>
+      let (o, names) := parseOptions rest
+      ({ o with views := .indexed }, names)
+  | "--phased" :: rest =>
+      let (o, names) := parseOptions rest
+      ({ o with phased := true }, names)
+  | rest => ({}, rest)
+
+private def runCongruenceChecks (fuel : Nat) (o : Congruence.Options) (names : List String) :
+    IO UInt32 := do
   let files ← fileCases
   let available := allCases ++ files ++ probeCases
   let unknown := names.filter fun name => !(available.any fun c => c.1 == name)
@@ -805,7 +875,7 @@ private def runCongruenceChecks (fuel : Nat) (names : List String) : IO UInt32 :
       skipped := skipped + 1
       continue
     tested := tested + 1
-    let errors := congruenceCheck fuel p
+    let errors := congruenceCheck fuel o p
     unless errors.isEmpty do
       failed := failed + 1
       IO.println s!"FAIL {name}: {String.intercalate "; " errors}"
@@ -815,16 +885,16 @@ private def runCongruenceChecks (fuel : Nat) (names : List String) : IO UInt32 :
 private def provenanceCheck (fuel : Nat) (p : Program) (liftProofs : Bool) : List String := Id.run do
   let q := Congruence.encode p
   let some encoded := Provenance.encode q | return ["provenance pass rejected input"]
-  let some original := relationalExecAt fuel FDatabase.empty q.commands |
+  let some original := relationalExecAt fuel FDatabase.empty q.schedule |
     return ["congruence program stuck or exhausted fuel"]
-  let some annotated := relationalExecAt fuel FDatabase.empty encoded.commands |
+  let some annotated := relationalExecAt fuel FDatabase.empty encoded.schedule |
     return ["instrumented program stuck or exhausted fuel"]
   let mut errors : List String := []
   if !Provenance.unionFree encoded then errors := errors ++ ["provenance introduced union"]
   -- Without its log, the instrumented state is the original state.
   if (Provenance.eraseLog annotated.terms).toFinset != original.terms.toFinset then
     errors := errors ++ ["states differ without the log"]
-  let proofs := Provenance.extractEach q annotated.terms
+  let proofs := Provenance.rowProofs q annotated.terms
   let bad := proofs.filter fun tp => match tp.2 with
     | none => true
     | some pf => liftProofs && (Resugar.lift p pf).isNone
@@ -896,7 +966,7 @@ private def runEggChecks (fuel : Nat) (update : Bool) (names : List String) : IO
         [("congruence.egg", some congruence.render),
          ("provenance.egg", (Provenance.encode congruence).map Program.render),
          ("proofs.txt", (Resugar.certificates
-           (fun Q => relationalExecAt fuel FDatabase.empty Q.commands) p).map
+           (fun Q => relationalExecAt fuel FDatabase.empty Q.schedule) p).map
            Resugar.renderProofs)]
       for (suffix, text) in snapshots do
         let path := eggDir / s!"{name}.{suffix}"
@@ -909,7 +979,7 @@ private def runEggChecks (fuel : Nat) (update : Bool) (names : List String) : IO
             let expected ← IO.FS.readFile path
             if expected != text then
               errors := errors ++ [s!"{suffix} differs, {firstDifference expected text}"]
-      errors := errors ++ congruenceCheck fuel p ++ provenanceCheck fuel p false ++
+      errors := errors ++ congruenceCheck fuel {} p ++ provenanceCheck fuel p false ++
         (provenanceCheck fuel p true).map ("lifting: " ++ ·)
     unless errors.isEmpty do
       failed := failed + 1
@@ -937,7 +1007,7 @@ private def exportCertificates (fuel : Nat) (path : String) (names : List String
       let p := p₀
       if !p.encodeDomainB then continue
       let some cs := Resugar.certificates
-          (fun Q => relationalExecAt fuel FDatabase.empty Q.commands) p |
+          (fun Q => relationalExecAt fuel FDatabase.empty Q.schedule) p |
         IO.eprintln s!"difftest: {name} does not lift"; return 1
       let some json := Resugar.Export.caseJson name p cs |
         IO.eprintln s!"difftest: {name} is outside the source checker's fragment"; return 1
@@ -980,10 +1050,34 @@ def main (args : List String) : IO UInt32 := do
       match rest with
       | "update" :: names => runEggChecks n true names
       | names => runEggChecks n false names
-  | "congruence" :: fuel :: names =>
+  | "congruence" :: fuel :: rest =>
+    -- `difftest congruence <fuel> [--views=naive|indexed] [--phased] [names]`
     match fuel.toNat? with
     | none => IO.eprintln s!"difftest: bad fuel {fuel}"; return 1
-    | some n => runCongruenceChecks n names
+    | some n =>
+      let (o, names) := parseOptions rest
+      runCongruenceChecks n o names
+  | ["paper-tex", src] =>
+    -- The congruence pass over a source `.egg` file, in the paper's notation, on stdout.
+    let text ← IO.FS.readFile src
+    match Program.ofEgg text with
+    | .error e => IO.eprintln s!"difftest: {src}: {e}"; return 1
+    | .ok p =>
+      unless decide p.Fragment do
+        IO.eprintln s!"difftest: {src} is outside the source fragment"
+      IO.print (PaperTex.compiled p)
+      return 0
+  | ["paper-proof", src] => paperProof src {}
+  | ["paper-proof", src, "--elide"] | ["paper-proof", "--elide", src] =>
+    paperProof src PaperTex.elideAll
+  | ["time", fuel, name] =>
+    match fuel.toNat? with
+    | none => IO.eprintln s!"difftest: bad fuel {fuel}"; return 1
+    | some n =>
+      let files ← fileCases
+      match (allCases ++ files ++ probeCases).find? (·.1 == name) with
+      | none => IO.eprintln s!"unknown case {name}"; return 1
+      | some (_, p) => timeCase n p; return 0
   | ["trace", fuel, name] =>
     match fuel.toNat? with
     | none => IO.eprintln s!"difftest: bad fuel {fuel}"; return 1
@@ -1010,14 +1104,19 @@ def main (args : List String) : IO UInt32 := do
       IO.FS.createDirAll dir
       writeCase dir s!"rand-{n}" (prog (genProgram (k + 1)))
       return 0
-  | [dir, "compiled"] =>
+  | dir :: "compiled" :: rest =>
+    -- `difftest <dir> compiled [--views=naive|indexed] [--phased]`
+    let (o, extra) := parseOptions rest
+    unless extra.isEmpty do
+      IO.eprintln s!"difftest: unknown arguments {extra}"
+      return 1
     IO.FS.createDirAll dir
     let files ← fileCases
     let mut n := 0
     for (name, p₀) in curated ++ files ++ randomCases do
       let p := p₀
       if !p.encodeDomainB then continue
-      writeCompiled dir name (Congruence.encode p)
+      writeCompiled dir name (Congruence.encodeWith o p)
       n := n + 1
     IO.println s!"wrote {n} compiled cases"
     return 0

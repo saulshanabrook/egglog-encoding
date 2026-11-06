@@ -15,14 +15,14 @@ namespace Egglog
 namespace Database.SameMeaning
 
 theorem refl (d : Database) : d.SameMeaning d :=
-  ⟨fun _ _ => Iff.rfl⟩
+  ⟨fun _ _ => Iff.rfl, fun _ => Iff.rfl⟩
 
 theorem symm {d e : Database} (h : d.SameMeaning e) : e.SameMeaning d :=
-  ⟨fun a b => (h.congr a b).symm⟩
+  ⟨fun a b => (h.congr a b).symm, fun t => (h.live t).symm⟩
 
 theorem trans {d e f : Database} (h : d.SameMeaning e) (h' : e.SameMeaning f) :
     d.SameMeaning f :=
-  ⟨fun a b => (h.congr a b).trans (h'.congr a b)⟩
+  ⟨fun a b => (h.congr a b).trans (h'.congr a b), fun t => (h.live t).trans (h'.live t)⟩
 
 end Database.SameMeaning
 
@@ -169,7 +169,7 @@ private theorem refl_mem_addTerms {t : Term} :
 
 private theorem operands_mono_list {d : Database} {ts us : List Term}
     (h : ∀ t ∈ ts, t ∈ us) : (d.withOperands ts).Contained (d.withOperands us) := by
-  constructor
+  refine ⟨?_, by simp [Database.withOperands]⟩
   intro p hp
   rcases mem_addTerms_eqs ts d p hp with hp | ⟨t, ht, rfl⟩
   · exact (Database.Contained.addTerms us d).eqs hp
@@ -288,8 +288,17 @@ theorem infers_mono {d e : Database} (h : d.Contained e) {a b : Term}
   exact ⟨w, h.terms hw, hwa.mono hg, hab.mono hg⟩
 
 theorem infers_iff_of_eqs_eq {d e : Database} (h : d.eqs = e.eqs) {a b : Term} :
-    d.Infers a b ↔ e.Infers a b :=
-  ⟨infers_mono ⟨h.subset⟩, infers_mono ⟨h.symm.subset⟩⟩
+    d.Infers a b ↔ e.Infers a b := by
+  have forward : ∀ {d e : Database}, d.eqs = e.eqs → d.Infers a b → e.Infers a b := by
+    intro d e h ⟨w, hw, hwa, hab⟩
+    have ht := Database.terms_eq_of_eqs_eq h
+    have ha : ∀ p ∈ (d.withOperands [a, b]).eqs,
+        StoredCong (e.withOperands [a, b]) p.1 p.2 := by
+      intro p hp
+      apply StoredCong.direct
+      simpa [Database.withOperands, Database.addTerms_eqs, h] using hp
+    exact ⟨w, ht ▸ hw, hwa.of_assertions ha, hab.of_assertions ha⟩
+  exact ⟨forward h, forward h.symm⟩
 
 theorem infers_of_held {d : Database} {t : Term} (ht : t ∈ d.terms) : d.Infers t t := by
   have h := (Database.toStored ht).mono (Database.Contained.addTerms [t, t] d)
@@ -356,7 +365,7 @@ theorem congr_infers {d : Database} {a b : Term} (h : Cong d a b) : d.Infers a b
   induction h using Cong.rec
       (motive_2 := fun as bs _ => List.Forall₂ d.Infers as bs) with
   | direct hp => exact infers_of_cong (.direct hp)
-  | subterm _ hs ih => exact infers_subterm_core ih hs
+  | child _ hs ih => exact infers_subterm_core ih (.arg hs (.refl _))
   | symm _ ih => exact infers_symm_core ih
   | trans _ _ ih₁ ih₂ => exact infers_trans_core ih₁ ih₂
   | congr _ _ ih ihs => exact infers_congr_core ih ihs
@@ -426,10 +435,10 @@ theorem inferred {d e : Database} (h : d.SameMeaning e) (a b : Term) :
   InferredFacts.congr_iff_infers.symm.trans
     ((h.congr a b).trans InferredFacts.congr_iff_infers)
 
-theorem of_inferred {d e : Database} (hi : ∀ a b, d.Infers a b ↔ e.Infers a b) :
-    d.SameMeaning e :=
-  ⟨fun a b => InferredFacts.congr_iff_infers.trans
-    ((hi a b).trans InferredFacts.congr_iff_infers.symm)⟩
+theorem of_inferred {d e : Database} (hX : d.subsumed = e.subsumed)
+    (hi : ∀ a b, d.Infers a b ↔ e.Infers a b) : d.SameMeaning e :=
+  .of_congr (fun a b => InferredFacts.congr_iff_infers.trans
+    ((hi a b).trans InferredFacts.congr_iff_infers.symm)) hX
 
 end Database.SameMeaning
 
@@ -473,7 +482,7 @@ theorem infers_of_interpreted_extension {d e : Database} (hw : d.WF)
 /-- Materializing an already inferred constructor term changes no inferred fact. -/
 theorem sameMeaning_addTerm {d : Database} (hw : d.WF) {t : Term}
     (ht : d.Infers t t) : d.SameMeaning (d.addTerm t) := by
-  refine Database.SameMeaning.of_inferred (fun a b => ⟨infers_mono
+  refine Database.SameMeaning.of_inferred rfl (fun a b => ⟨infers_mono
     (Database.Contained.addTerm t d), ?_⟩)
   apply infers_of_interpreted_extension hw
   · rintro p (rfl | hp)
@@ -496,7 +505,7 @@ no inferred fact. The premise includes existence, even for `a = a`. -/
 theorem sameMeaning_addEq {d : Database} (hw : d.WF) {a b : Term}
     (hab : d.Infers a b) : d.SameMeaning (d.addEq a b) := by
   obtain ⟨w, hw', ha, hb⟩ := (infers_iff_interpret hw).mp hab
-  refine Database.SameMeaning.of_inferred (fun x y => ⟨infers_mono
+  refine Database.SameMeaning.of_inferred rfl (fun x y => ⟨infers_mono
     (Database.Contained.addEq a b d), ?_⟩)
   apply infers_of_interpreted_extension hw
   · rintro p (rfl | hp)
@@ -578,7 +587,7 @@ theorem sameMeaning_addEq_congr {d : Database} (hw : d.WF)
     rintro p (rfl | hp)
     · exact hab
     · exact infers_mono hg (infers_of_cong (.direct hp))
-  exact Database.SameMeaning.of_inferred fun x y =>
+  exact Database.SameMeaning.of_inferred rfl fun x y =>
     ⟨forward ha hb hlit', forward ha.symm hb.symm hlit⟩
 
 
@@ -588,8 +597,8 @@ namespace Database.SameMeaning
 
 /-- The same constructor write preserves equivalence of inferred states. -/
 theorem addTerm {d e : Database} (h : d.SameMeaning e) (hd : d.WF) (he : e.WF)
-    (t : Term) : (d.addTerm t).SameMeaning (e.addTerm t) := by
-  refine of_inferred fun a b => ?_
+    (t : Term) (hX : d.subsumed = e.subsumed) : (d.addTerm t).SameMeaning (e.addTerm t) := by
+  refine of_inferred hX fun a b => ?_
   have forward : ∀ {d e : Database}, d.SameMeaning e → e.WF →
       ∀ {a b}, (d.addTerm t).Infers a b → (e.addTerm t).Infers a b := by
     intro d e h he a b hi
@@ -603,9 +612,10 @@ theorem addTerm {d e : Database} (h : d.SameMeaning e) (hd : d.WF) (he : e.WF)
 /-- The same asserted equation preserves equivalence of inferred states. The
 well-formed endpoints are explicit because literal isolation is a database invariant. -/
 theorem addEq {d e : Database} (h : d.SameMeaning e) (hd : d.WF) (he : e.WF)
-    (a b : Term) (hlit : a.isLit ∨ b.isLit → a = b) :
+    (a b : Term) (hlit : a.isLit ∨ b.isLit → a = b)
+    (hX : d.subsumed = e.subsumed) :
     (d.addEq a b).SameMeaning (e.addEq a b) := by
-  refine of_inferred fun x y => ?_
+  refine of_inferred hX fun x y => ?_
   have forward : ∀ {d e : Database}, d.SameMeaning e → e.WF →
       ∀ {x y}, (d.addEq a b).Infers x y → (e.addEq a b).Infers x y := by
     intro d e h he x y hi

@@ -5,8 +5,8 @@ namespace Egglog.SourceProof
 def reflClaims (t : Term) : List Claim :=
   t.subtermList.map fun s => ⟨s, s⟩
 
-/-- Only facts produced by this action, including constructed subterms. Source proofs cover
-the monotone fragment: a delete produces no fact and makes its firing unusable. -/
+/-- Only facts produced by this action, including constructed subterms. A subsume, which
+only compiled programs use, produces no fact a proof may cite. -/
 def actionFacts (σ : Env) : Action → Option (List Claim)
   | .expr e => do
       let t ← e.eval σ
@@ -16,7 +16,9 @@ def actionFacts (σ : Env) : Action → Option (List Claim)
       let y ← b.eval σ
       if x.isLit || y.isLit then none
       else some (⟨x, y⟩ :: ⟨y, x⟩ :: (reflClaims x ++ reflClaims y))
-  | .delete _ => none
+  | .subsume _ es => do
+      let _ ← Expr.evalList es σ
+      some []
 
 def actionsFacts (σ : Env) : List Action → Option (List Claim)
   | [] => some []

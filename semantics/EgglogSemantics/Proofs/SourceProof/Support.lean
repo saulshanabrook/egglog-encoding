@@ -11,7 +11,7 @@ def ambient (db : Database) : Database :=
 theorem ambient_refl (db : Database) (t : Term) : StoredCong (ambient db) t t :=
   .direct (Or.inr rfl)
 
-theorem ambient_contains (db : Database) : db.Contained (ambient db) := ⟨fun _ hp => Or.inl hp⟩
+theorem ambient_contains (db : Database) : db.Contained (ambient db) := ⟨fun _ hp => Or.inl hp, subset_rfl⟩
 
 /-- Every subterm has a representative that actually exists in the source. -/
 def Supports (db : Database) (t : Term) : Prop :=
@@ -114,13 +114,15 @@ theorem Claim.Supported.of_completion {db : Database} (hw : db.WF) {c : Claim}
   have hamb {a b : Term} (h : db.Infers a b) : StoredCong (ambient db) a b := by
     exact h.choose_spec.2.2.mono
       (show (db.withOperands [a, b]).Contained (ambient db) from
-        ⟨fun p hp => Conservativity.mem_addTerms_eqs _ db p hp⟩)
+        ⟨fun p hp => Conservativity.mem_addTerms_eqs _ db p hp,
+          by simp [Database.withOperands, ambient]⟩)
   have hs {t : Term} (ht : db.Infers t t) : Supports db t := by
     intro s hst
     obtain ⟨u, hu, hus, _⟩ := InferredFacts.infers_subterm hw ht hst
     exact ⟨u, hu, hus.symm.mono
       (show (db.withOperands [s, s]).Contained (ambient db) from
-        ⟨fun p hp => Conservativity.mem_addTerms_eqs _ db p hp⟩)⟩
+        ⟨fun p hp => Conservativity.mem_addTerms_eqs _ db p hp,
+          by simp [Database.withOperands, ambient]⟩)⟩
   exact ⟨hamb hi, hs (InferredFacts.infers_left hw hi),
     hs (InferredFacts.infers_right hw hi)⟩
 

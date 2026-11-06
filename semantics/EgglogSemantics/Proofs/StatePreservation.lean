@@ -4,31 +4,18 @@ import EgglogSemantics.Proofs.MatchValues
 namespace Egglog
 
 /-- Every rule query named by the command is safe. -/
-@[simp] def Cmd.QueriesSafe (c : Cmd) : Prop := ∀ r ∈ c.rules, r.query.Safe
+@[simp] def Schedule.QueriesSafe (c : Schedule) : Prop := ∀ r ∈ c.rules, r.query.Safe
 
 /-- Safety of rule queries; the final check does not fire a rule. -/
 @[simp] def Program.QueriesSafe (P : Program) : Prop :=
-  ∀ c ∈ P.commands, c.QueriesSafe
+  P.schedule.QueriesSafe
 
 theorem Program.queriesSafe_of_rules (P : Program)
-    (h : ∀ r ∈ P.rules, r.query.Safe) : P.QueriesSafe := by
-  intro c hc r hr
-  exact h r (List.mem_flatMap.mpr ⟨c, hc, hr⟩)
+    (h : ∀ r ∈ P.rules, r.query.Safe) : P.QueriesSafe := h
 
 /-- No typing invariant is needed for literal isolation. -/
-theorem reachable_wf_storeOk {p : List Cmd} {d : Database}
-    (h : ProgramStep Database.empty p d) : d.WF := h.wf Database.WF.empty
-
-/-- A deletion reasserts only children of held rows, and hence only held terms. -/
-theorem Database.deleteRows_terms_subset (db : Database) (X : Set Term) :
-    (db.deleteRows X).terms ⊆ db.terms := by
-  rintro s ⟨p, hp | ⟨t, ht, c, hc, rfl⟩, hs⟩
-  · exact ⟨p, hp.1, hs⟩
-  · refine ⟨(t, t), ht.1, Or.inl ?_⟩
-    have hsc := hs.elim id id
-    cases t with
-    | lit l => simp [Term.children] at hc
-    | app f args => exact Term.IsSubterm.arg hc hsc
+theorem reachable_wf_storeOk {p : Schedule} {d : Database}
+    (h : Reach Database.empty p d) : d.WF := h.wf Database.WF.empty
 
 /-- A term property, closed under subterms, can be checked on asserted endpoints. -/
 theorem Database.terms_preserved {db : Database} {P : Term → Prop}
@@ -52,9 +39,10 @@ theorem Action.mem_writes {σ : Env} {as : List Action} {W : Set (Term × Term)}
     · obtain ⟨b, hb, V, hv, hp⟩ := ih ht hp
       exact ⟨b, by simp [hb], V, hv, hp⟩
 
-theorem Action.mem_erases {σ : Env} {as : List Action} {X : Set Term}
-    (h : Action.erases σ as = some X) {t : Term} (ht : t ∈ X) :
-    ∃ e, Action.delete e ∈ as ∧ e.eval σ = some t := by
+theorem Action.mem_marks {σ : Env} {as : List Action} {X : Set Term}
+    (h : Action.marks σ as = some X) {t : Term} (ht : t ∈ X) :
+    ∃ f es ts, Action.subsume f es ∈ as ∧ Expr.evalList es σ = some ts ∧
+      t = .app f ts := by
   induction as generalizing X with
   | nil => cases Option.some.inj h; exact ht.elim
   | cons a as ih =>
@@ -65,16 +53,17 @@ theorem Action.mem_erases {σ : Env} {as : List Action} {X : Set Term}
       | expr _ | union _ _ =>
         obtain ⟨_, _, rfl⟩ := Option.map_eq_some_iff.mp ha
         exact ht.elim
-      | delete e =>
-        obtain ⟨u, hu, rfl⟩ := Option.map_eq_some_iff.mp ha
+      | subsume f es =>
+        obtain ⟨ts, hts, rfl⟩ := Option.map_eq_some_iff.mp ha
         obtain rfl := ht
-        exact ⟨e, by simp, hu⟩
-    · obtain ⟨e, he, ht⟩ := ih hz ht
-      exact ⟨e, by simp [he], ht⟩
+        exact ⟨f, es, ts, by simp, hts, rfl⟩
+    · obtain ⟨f, es, ts, ha, hts, ht⟩ := ih hz ht
+      exact ⟨f, es, ts, by simp [ha], hts, ht⟩
 
 /-- All results evaluated by an action satisfy a term property. -/
 def Action.EvalTerms (σ : Env) (P : Term → Prop) : Action → Prop
-  | .expr e | .delete e => ∀ t, e.eval σ = some t → P t
+  | .expr e => ∀ t, e.eval σ = some t → P t
+  | .subsume f es => ∀ t, (Expr.app f es).eval σ = some t → P t
   | .union a b => (∀ t, a.eval σ = some t → P t) ∧ (∀ t, b.eval σ = some t → P t)
 
 theorem Action.write_satisfies {σ : Env} {P : Term → Prop} {a : Action}
@@ -93,15 +82,17 @@ theorem Action.write_satisfies {σ : Env} {P : Term → Prop} {a : Action}
     · cases Option.some.inj hw
       rintro p rfl
       exact ⟨h.1 t ht, h.2 u hu⟩
-  | delete e =>
-    obtain ⟨t, _, rfl⟩ := Option.map_eq_some_iff.mp hw
-    simp
+  | subsume f es =>
+    obtain ⟨ts, hts, rfl⟩ := Option.map_eq_some_iff.mp hw
+    rintro p rfl
+    have ht := h (.app f ts) (by simp [Expr.eval, hts])
+    exact ⟨ht, ht⟩
 
 theorem evalAction_preserves {σ : Env} {P : Term → Prop} {d e : Database} {a : Action}
     (hsub : ∀ t, P t → ∀ s ∈ t.subterms, P s) (hd : ∀ t ∈ d.terms, P t)
     (ha : a.EvalTerms σ P) (h : evalAction σ d a = some e) : ∀ t ∈ e.terms, P t := by
   rcases evalAction_eq_some h with ⟨ex, t, rfl, ht, rfl⟩ |
-    ⟨a, b, t, u, rfl, ht, hu, _, rfl⟩ | ⟨ex, t, rfl, ht, rfl⟩
+    ⟨a, b, t, u, rfl, ht, hu, _, rfl⟩ | ⟨f, es, ts, rfl, hts, rfl⟩
   · intro s hs
     rcases Database.addTerm_terms ▸ hs with hs | hs
     · exact hd s hs
@@ -112,7 +103,9 @@ theorem evalAction_preserves {σ : Env} {P : Term → Prop} {d e : Database} {a 
     · exact hsub t (ha.1 t ht) s hs
     · exact hsub u (ha.2 u hu) s hs
   · intro s hs
-    exact hd s (Database.deleteRows_terms_subset d {t} hs)
+    rcases Database.addTerm_terms ▸ hs with hs | hs
+    · exact hd s hs
+    · exact hsub (.app f ts) (ha _ (by simp [Expr.eval, hts])) s hs
 
 theorem evalActions_preserves {σ : Env} {P : Term → Prop} {d e : Database} {as : List Action}
     (hsub : ∀ t, P t → ∀ s ∈ t.subterms, P s) (hd : ∀ t ∈ d.terms, P t)
@@ -125,19 +118,18 @@ theorem evalActions_preserves {σ : Env} {P : Term → Prop} {d e : Database} {a
     exact ih (evalAction_preserves hsub hd (ha a (by simp)) hm)
       (fun a hm => ha a (by simp [hm])) ht
 
-/-- Row removal and simultaneous writes preserve any subterm-closed endpoint property.
-Deletion needs no condition: it only removes rows and keeps held terms. -/
+/-- A round preserves any subterm-closed property shared by the existing terms and
+the endpoints written by its actions. -/
 theorem RunRules.preserves {P : Term → Prop} {db : Database} {R : List Rule}
     (hsub : ∀ t, P t → ∀ s ∈ t.subterms, P s) (hd : ∀ t ∈ db.terms, P t)
     (hw : ∀ r ∈ R, ∀ σ, QueryMatches db r.query σ →
       ∀ a ∈ r.actions, ∀ W, a.write σ = some W → ∀ p ∈ W, P p.1 ∧ P p.2) :
     ∀ t ∈ (RunRules R db).terms, P t := by
+  rw [RunRules.eq_pair]
   apply Database.terms_preserved hsub
   intro p hp
   rcases hp with hp | hp
-  · have hh : ∀ t ∈ (db.deleteRows (RunErases R db)).terms, P t :=
-      fun t ht => hd t (Database.deleteRows_terms_subset db (RunErases R db) ht)
-    exact ⟨hh _ ⟨p, hp, Or.inl (.refl _)⟩, hh _ ⟨p, hp, Or.inr (.refl _)⟩⟩
+  · exact ⟨hd _ ⟨p, hp, Or.inl (.refl _)⟩, hd _ ⟨p, hp, Or.inr (.refl _)⟩⟩
   · obtain ⟨W, ⟨r, hr, σ, hσ, hW⟩, hp⟩ := hp
     obtain ⟨a, ha, V, hv, hp⟩ := Action.mem_writes hW hp
     exact hw r hr σ hσ a ha V hv p hp

@@ -11,19 +11,31 @@ lists lexicographically. The public order compares node counts first, then uses 
 strict total structural order. The list comparison is only total at equal lengths. -/
 namespace Lit
 
-/-- Asymmetry, totality and transitivity of the base-value order, each the integer law
-under `decide`. `Term.blt`'s literal case is this one. -/
+/-- Asymmetry, totality and transitivity of the base-value order, using the integer and
+string laws under `decide`, with integers below strings. -/
 theorem blt_asymm {l m : Lit} (h : Lit.blt l m = true) : Lit.blt m l = false := by
-  cases l; cases m; simp_all [Lit.blt]
-  omega
+  cases l <;> cases m <;>
+    simp_all only [Lit.blt, decide_eq_true_eq, decide_eq_false_iff_not, Bool.false_eq_true]
+  · exact lt_asymm h
+  · exact String.lt_asymm h
 
 theorem blt_total {l m : Lit} (h : l ≠ m) : Lit.blt l m = true ∨ Lit.blt m l = true := by
-  cases l; cases m; simp_all [Lit.blt]
+  cases l <;> cases m <;>
+    simp_all only [Lit.blt, decide_eq_true_eq, ne_eq, Lit.int.injEq, Lit.str.injEq,
+      true_or, or_true]
+  · exact lt_or_gt_of_ne h
+  · rename_i a b
+    rcases Std.lt_trichotomy a b with hlt | heq | hgt
+    · exact Or.inl hlt
+    · exact False.elim (h heq)
+    · exact Or.inr hgt
 
 theorem blt_trans {l m n : Lit} (h₁ : Lit.blt l m = true) (h₂ : Lit.blt m n = true) :
     Lit.blt l n = true := by
-  cases l; cases m; cases n; simp_all [Lit.blt]
-  omega
+  cases l <;> cases m <;> cases n <;>
+    simp_all only [Lit.blt, decide_eq_true_eq, Bool.false_eq_true]
+  · exact lt_trans h₁ h₂
+  · exact String.lt_trans h₁ h₂
 
 end Lit
 

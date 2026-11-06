@@ -12,6 +12,6 @@ inductive Behavior where
 def Behaves (db : Database) (P : Program) : Behavior → Prop
   | .success => Eval db P .ok
   | .checkFailed => Eval db P .checkFailed
-  | .diverges => ProgramDiverges db P.commands
+  | .diverges => Diverges db P.schedule
 
 end Egglog

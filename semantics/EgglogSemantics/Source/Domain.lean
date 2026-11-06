@@ -41,18 +41,18 @@ def Pattern.ctors : Pattern → List (FnName × Nat)
 def Action.ctors : Action → List (FnName × Nat)
   | .expr e => e.ctors
   | .union e₁ e₂ => e₁.ctors ++ e₂.ctors
-  | .delete e => e.ctors
+  | .subsume f es => (Expr.app f es).ctors
 
 /-- `Expr.ctors` over a rule. -/
 def Rule.ctors (r : Rule) : List (FnName × Nat) :=
   (r.query.flatMap Pattern.ctors) ++ (r.actions.flatMap Action.ctors)
 
-/-- `Expr.ctors` over a command. -/
-def Cmd.ctors (c : Cmd) : List (FnName × Nat) := c.rules.flatMap Rule.ctors
+/-- `Expr.ctors` over a schedule. -/
+def Schedule.ctors (S : Schedule) : List (FnName × Nat) := S.rules.flatMap Rule.ctors
 
 /-- Every function name and arity the program mentions, deduplicated. -/
 def Program.ctors (P : Program) : List (FnName × Nat) :=
-  (P.commands.flatMap Cmd.ctors ++ P.check.flatMap Pattern.ctors).dedup
+  (P.schedule.ctors ++ P.check.flatMap Pattern.ctors).dedup
 
 /-! ### Names -/
 
@@ -60,17 +60,17 @@ def Program.ctors (P : Program) : List (FnName × Nat) :=
 def Action.vars : Action → List Var
   | .expr e => e.vars
   | .union e₁ e₂ => e₁.vars ∪ e₂.vars
-  | .delete e => e.vars
+  | .subsume f es => (Expr.app f es).vars
 
 /-- The variables a rule mentions. -/
 def Rule.vars (r : Rule) : List Var := r.query.vars ∪ (r.actions.flatMap Action.vars)
 
-/-- `Rule.vars` over a command. -/
-def Cmd.vars (c : Cmd) : List Var := c.rules.flatMap Rule.vars
+/-- `Rule.vars` over a schedule. -/
+def Schedule.vars (S : Schedule) : List Var := S.rules.flatMap Rule.vars
 
 /-- Every variable the program mentions. -/
 def Program.vars (P : Program) : List Var :=
-  (P.commands.flatMap Cmd.vars ++ P.check.vars).dedup
+  (P.schedule.vars ++ P.check.vars).dedup
 
 /-- **Every name the source text mentions**, of the two kinds the generated namespace has
 to stay clear of: a function name and a variable. -/
@@ -108,12 +108,12 @@ query is `Query.VarsKeyed`. -/
 def Query.Encodable (q : Query) : Prop :=
   (∀ p ∈ q, p.Grounded ∧ p.Scoped) ∧ Query.VarsKeyed q
 
-/-- `Query.Encodable` at every rule the command fires. -/
-def Cmd.QueryEncodable (c : Cmd) : Prop := ∀ r ∈ c.rules, r.query.Encodable
+/-- `Query.Encodable` at every rule the schedule fires. -/
+def Schedule.QueryEncodable (S : Schedule) : Prop := ∀ r ∈ S.rules, r.query.Encodable
 
 /-- `Query.Encodable` at every rule and at the final check. -/
 def Program.QueriesEncodable (P : Program) : Prop :=
-  (∀ c ∈ P.commands, c.QueryEncodable) ∧ P.check.Encodable
+  P.schedule.QueryEncodable ∧ P.check.Encodable
 
 /-! ### Rule-head legality
 
@@ -142,13 +142,13 @@ holds. -/
 def Action.litFreeB : Action → Bool
   | .expr e => e.litFreeB
   | .union e₁ e₂ => e₁.litFreeB && e₂.litFreeB
-  | .delete e => e.litFreeB
+  | .subsume f es => (Expr.app f es).litFreeB
 
 /-- `Action.litFreeB` at every action a rule runs. -/
 def Rule.litFreeB (r : Rule) : Bool := r.actions.all Action.litFreeB
 
-/-- `Rule.litFreeB` at every rule a command fires. -/
-def Cmd.litFreeB (c : Cmd) : Bool := c.rules.all Rule.litFreeB
+/-- `Rule.litFreeB` at every rule a schedule fires. -/
+def Schedule.litFreeB (S : Schedule) : Bool := S.rules.all Rule.litFreeB
 
 /-- `Action.UnionFree`, computed. -/
 def Action.unionFreeB : Action → Bool
@@ -159,49 +159,66 @@ def Action.unionFreeB : Action → Bool
 def Rule.unionFreeB (r : Rule) : Bool := r.actions.all Action.unionFreeB
 
 /-- No rule head asserts a union. -/
-def Cmd.ruleUnionFreeB (c : Cmd) : Bool := c.rules.all Rule.unionFreeB
+def Schedule.ruleUnionFreeB (S : Schedule) : Bool := S.rules.all Rule.unionFreeB
+
+/-- Whether an expression is an application, computed. -/
+def Expr.isAppB : Expr → Bool
+  | .app _ _ => true
+  | _ => false
+
+/-- Every union of the action is between applications. An application never evaluates to
+a literal, so such a union is never stuck, whatever literals the program builds. -/
+def Action.unionAppsB : Action → Bool
+  | .union e₁ e₂ => e₁.isAppB && e₂.isAppB
+  | _ => true
+
+/-- `Action.unionAppsB` at every action a rule runs. -/
+def Rule.unionAppsB (r : Rule) : Bool := r.actions.all Action.unionAppsB
+
+/-- `Rule.unionAppsB` at every rule a schedule fires. -/
+def Schedule.unionAppsB (S : Schedule) : Bool := S.rules.all Rule.unionAppsB
 
 /-! ### Monotone source programs
 
-Disequality guards and deletes are what the compiled rebuilding uses to replace rows.
-Source programs only add facts, so both are excluded from the fragment; their semantics
-is nonetheless the general one. -/
+Disequality guards and subsumption are what the compiled rebuilding uses to replace rows.
+Source programs only add facts that queries can see, so both are excluded from the
+fragment; their semantics is nonetheless the general one. -/
 
 /-- No disequality guard. -/
 def Pattern.monotoneB : Pattern → Bool
   | .ne _ _ => false
   | _ => true
 
-/-- No delete. -/
+/-- No subsume. -/
 def Action.monotoneB : Action → Bool
-  | .delete _ => false
+  | .subsume _ _ => false
   | _ => true
 
-/-- The rule tests no disequality and deletes no row. -/
+/-- The rule tests no disequality and subsumes no row. -/
 def Rule.monotoneB (r : Rule) : Bool :=
   r.query.all Pattern.monotoneB && r.actions.all Action.monotoneB
 
-/-- The command tests no disequality and deletes no row. -/
-def Cmd.monotoneB (c : Cmd) : Bool := c.rules.all Rule.monotoneB
+/-- The schedule tests no disequality and subsumes no row. -/
+def Schedule.monotoneB (S : Schedule) : Bool := S.rules.all Rule.monotoneB
 
-/-- No rule and not the final check tests a disequality, and no rule deletes a row. -/
+/-- No rule and not the final check tests a disequality, and no rule subsumes a row. -/
 def Program.monotoneB (P : Program) : Bool :=
-  P.commands.all Cmd.monotoneB && P.check.all Pattern.monotoneB
+  P.schedule.monotoneB && P.check.all Pattern.monotoneB
 
 /-! #### The head-scope check, and deciding it
 
 `Spec/Scope.lean`'s `Actions.Scoped` at a rule's own query variables. Every action in
 the head uses the same query substitution; actions do not introduce bindings. -/
 
-/-- **Every variable a rule head reads is one the rule's own query binds**, and a build or
-delete is an application. -/
+/-- **Every variable a rule head reads is one the rule's own query binds**, and a build is
+an application. -/
 def Rule.HeadScoped (r : Rule) : Prop := Actions.Scoped r.actions (Query.vars r.query)
 
 @[inherit_doc Rule.HeadScoped]
-def Cmd.HeadScoped (c : Cmd) : Prop := ∀ r ∈ c.rules, r.HeadScoped
+def Schedule.HeadScoped (S : Schedule) : Prop := ∀ r ∈ S.rules, r.HeadScoped
 
 @[inherit_doc Rule.HeadScoped]
-def Program.HeadsScoped (P : Program) : Prop := ∀ c ∈ P.commands, c.HeadScoped
+def Program.HeadsScoped (P : Program) : Prop := P.schedule.HeadScoped
 
 instance Expr.decidableIsApp : ∀ e : Expr, Decidable e.IsApp
   | .app _ _ => .isTrue trivial
@@ -215,7 +232,7 @@ instance Expr.decidableScoped (e : Expr) (Γ : Scope) : Decidable (e.Scoped Γ) 
 instance Action.decidableScoped : ∀ (a : Action) (Γ : Scope), Decidable (a.Scoped Γ)
   | .expr e, Γ => inferInstanceAs (Decidable (e.IsApp ∧ e.Scoped Γ))
   | .union e₁ e₂, Γ => inferInstanceAs (Decidable (e₁.Scoped Γ ∧ e₂.Scoped Γ))
-  | .delete e, Γ => inferInstanceAs (Decidable (e.IsApp ∧ e.Scoped Γ))
+  | .subsume f es, Γ => inferInstanceAs (Decidable ((Expr.app f es).Scoped Γ))
 
 instance Actions.decidableScoped : ∀ (as : List Action) (Γ : Scope),
     Decidable (Actions.Scoped as Γ)
@@ -226,11 +243,11 @@ instance Actions.decidableScoped : ∀ (as : List Action) (Γ : Scope),
 instance Rule.decidableHeadScoped (r : Rule) : Decidable r.HeadScoped :=
   inferInstanceAs (Decidable (Actions.Scoped r.actions (Query.vars r.query)))
 
-instance Cmd.decidableHeadScoped (c : Cmd) : Decidable c.HeadScoped :=
-  inferInstanceAs (Decidable (∀ r ∈ c.rules, r.HeadScoped))
+instance Schedule.decidableHeadScoped (S : Schedule) : Decidable S.HeadScoped :=
+  inferInstanceAs (Decidable (∀ r ∈ S.rules, r.HeadScoped))
 
 instance Program.decidableHeadsScoped (P : Program) : Decidable P.HeadsScoped :=
-  inferInstanceAs (Decidable (∀ c ∈ P.commands, c.HeadScoped))
+  inferInstanceAs (Decidable P.schedule.HeadScoped)
 
 /-- Every name is applied at one arity. -/
 def Program.AritiesAgree (P : Program) : Prop :=
@@ -243,14 +260,14 @@ instance (P : Program) : Decidable P.AritiesAgree :=
 theorem is about, and the source proof checker accepts. -/
 @[blueprint "def:fragment"
   (title := /-- Supported source fragment -/)
-  (statement := /-- Source programs contain no disequality guard, no delete, and no
+  (statement := /-- Source programs contain no disequality guard, no subsumption, and no
   $\min$, and their names avoid the generated \texttt{@} prefix. Expression patterns and
   build actions are applications. Equality patterns are not pairs of bare literals, and
   every query variable occurs as an application argument. Head variables are query-bound,
-  and each name has a consistent arity. Finally, either all heads are union-free or all
-  head expressions are literal-free. -/)]
+  and each name has a consistent arity. Finally, either every union is between
+  applications or all head expressions are literal-free. -/)]
 structure Program.Fragment (P : Program) : Prop where
-  /-- Source programs only add facts; disequality and deletion serve compiled rebuilding. -/
+  /-- Source programs only add facts; disequality and subsumption serve compiled rebuilding. -/
   monotone : P.monotoneB = true
   /-- The source never computes with `min`: every expression builds. -/
   noMin : Program.OrderingFree P
@@ -259,9 +276,9 @@ structure Program.Fragment (P : Program) : Prop where
   /-- Patterns supply constructor reads and key every variable. Flattening a bare literal
   pattern would otherwise erase its existence requirement. -/
   queryEncodable : P.QueriesEncodable
-  /-- Either no action performs a union, or no literal can be built and handed to one. -/
-  noLitUnion : (∀ c ∈ P.commands, c.ruleUnionFreeB = true) ∨
-    ∀ c ∈ P.commands, c.litFreeB = true
+  /-- Either every union is between applications, or no literal can be built and handed to
+  one; either way no union is stuck on a literal. -/
+  noLitUnion : P.schedule.unionAppsB = true ∨ P.schedule.litFreeB = true
   /-- Each source function has a unique arity. -/
   aritiesAgree : P.AritiesAgree
   /-- Every rule-head variable is query-bound, and a build action is an application.
@@ -361,17 +378,17 @@ instance (q : Query) : Decidable (Query.VarsKeyed q) :=
 instance (q : Query) : Decidable q.Encodable :=
   inferInstanceAs (Decidable ((∀ p ∈ q, p.Grounded ∧ p.Scoped) ∧ Query.VarsKeyed q))
 
-instance (c : Cmd) : Decidable c.QueryEncodable :=
-  inferInstanceAs (Decidable (∀ r ∈ c.rules, r.query.Encodable))
+instance (S : Schedule) : Decidable S.QueryEncodable :=
+  inferInstanceAs (Decidable (∀ r ∈ S.rules, r.query.Encodable))
 
 instance (P : Program) : Decidable P.QueriesEncodable :=
-  inferInstanceAs (Decidable ((∀ c ∈ P.commands, c.QueryEncodable) ∧ P.check.Encodable))
+  inferInstanceAs (Decidable (P.schedule.QueryEncodable ∧ P.check.Encodable))
 
 instance instDecidableFragment (P : Program) : Decidable P.Fragment :=
   decidable_of_iff (P.monotoneB = true ∧ Program.OrderingFree P ∧
       (∀ n ∈ P.names, ¬ "@".isPrefixOf n) ∧
       P.QueriesEncodable ∧
-      ((∀ c ∈ P.commands, c.ruleUnionFreeB = true) ∨ ∀ c ∈ P.commands, c.litFreeB = true) ∧
+      (P.schedule.unionAppsB = true ∨ P.schedule.litFreeB = true) ∧
       P.AritiesAgree ∧ P.HeadsScoped)
     ⟨fun h => ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1, h.2.2.2.2.2.1, h.2.2.2.2.2.2⟩,
       fun h => ⟨h.monotone, h.noMin, h.noAt, h.queryEncodable, h.noLitUnion, h.aritiesAgree,

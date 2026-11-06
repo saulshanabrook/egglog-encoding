@@ -1,4 +1,5 @@
 import EgglogSemantics.Proofs.Step
+import EgglogSemantics.Proofs.Representatives
 
 /-! Structural equality in mathematical union-free states, and syntax inversion for
 ordering-free source expressions. No executable state is involved. -/
@@ -33,11 +34,10 @@ theorem Diag.addTerms {db : Database} (h : db.Diag) (ts : List Term) :
 theorem Diag.withOperands {db : Database} (h : db.Diag) (ts : List Term) :
     (db.withOperands ts).Diag := h.addTerms ts
 
-theorem Diag.deleteRows {db : Database} (h : db.Diag) (X : Set Term) :
-    (db.deleteRows X).Diag := by
-  rintro p (hp | ⟨t, _, c, _, rfl⟩)
-  · exact h p hp.1
-  · rfl
+theorem Diag.addSubsumed {db : Database} (h : db.Diag) (X : Set Term) :
+    (db.addSubsumed X).Diag := h
+
+theorem Diag.forgetSubsumed {db : Database} (h : db.Diag) : db.forgetSubsumed.Diag := h
 
 end Database
 
@@ -61,7 +61,7 @@ theorem Cong.eq_of_diag {d : Database} (hd : d.Diag) {a b : Term}
     (h : Cong d a b) : a = b := by
   induction h using Cong.rec (motive_2 := fun as bs _ => as = bs) with
   | direct hp => exact hd _ hp
-  | subterm => rfl
+  | child => rfl
   | symm _ ih => exact ih.symm
   | trans _ _ ih₁ ih₂ => exact ih₁.trans ih₂
   | congr _ _ _ ih => exact congrArg _ ih
@@ -73,6 +73,19 @@ theorem CongList.eq_of_diag {d : Database} (hd : d.Diag) {as bs : List Term}
   match h with
   | .nil => rfl
   | .cons h hs => exact congrArg₂ List.cons (h.eq_of_diag hd) (hs.eq_of_diag hd)
+
+theorem Database.Diag.reps_eq_terms {d : Database} (hd : d.Diag) : d.reps = d.terms := by
+  apply Set.Subset.antisymm d.reps_subset_terms
+  intro t ht
+  refine ⟨ht, fun s _ hc => ?_⟩
+  simp [hc.eq_of_diag hd]
+
+theorem Database.Diag.hasReps {d : Database} (hd : d.Diag) : d.HasReps := by
+  intro t ht
+  obtain ⟨w, hw, hwt, _⟩ := InferredFacts.congr_iff_infers.mp ht
+  have hc : Cong d w t := InferredFacts.congr_iff_infers.mpr
+    (InferredFacts.infers_of_congOn_core (InferredFacts.infers_of_held hw) hwt)
+  exact ⟨w, hd.reps_eq_terms.symm ▸ hw, hc.symm⟩
 
 theorem congOn_eq_of_diag {E : Database} (h : E.Diag) {ts : List Term} {a b : Term}
     (hc : StoredCongOn E ts a b) : a = b := StoredCong.eq_of_diag (h.withOperands ts) hc

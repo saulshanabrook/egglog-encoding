@@ -42,15 +42,16 @@ theorem Expr.exists_ctorList_of_mem_fnsList : ∀ {es : List Expr} {g : FnName},
         exact ⟨k, by rw [Expr.ctorsList]; exact List.mem_append_right _ hk⟩
 end
 
-/-- A `(name, arity)` pair one command applies is one the whole program applies. -/
-theorem mem_program_ctors {Q : Program} {c : Cmd} (hc : c ∈ Q.commands) {p : FnName × Nat}
-    (hp : p ∈ c.ctors) : p ∈ Q.ctors := by
+/-- Constructor uses of a schedule whose rules occur in the program occur in the program. -/
+theorem mem_program_ctors {Q : Program} {S : Schedule} (hs : S.rules ⊆ Q.rules)
+    {p : FnName × Nat} (hp : p ∈ S.ctors) : p ∈ Q.ctors := by
   rw [Program.ctors, List.mem_dedup]
-  exact List.mem_append_left _ (List.mem_flatMap.mpr ⟨c, hc, hp⟩)
+  obtain ⟨r, hr, hp⟩ := List.mem_flatMap.mp hp
+  exact List.mem_append_left _ (List.mem_flatMap.mpr ⟨r, hs hr, hp⟩)
 
-/-- `Program.OrderingFree` at a member command. -/
+/-- `Program.OrderingFree` at a rule of the program. -/
 theorem Program.OrderingFree.of_mem {P : Program} (h : Program.OrderingFree P)
-    {c : Cmd} (hc : c ∈ P.commands) : c.OrderingFree := h.1 c hc
+    {r : Rule} (hr : r ∈ P.rules) : r.OrderingFree := h.1 r hr
 
 /-- No literal occurs in `t`. -/
 def Term.LitFree (t : Term) : Prop := ∀ s ∈ t.subterms, ¬ s.isLit
@@ -131,12 +132,13 @@ theorem Database.LitFree.lookup {db : Database} (hw : db.WF) (h : db.LitFree)
 
 def Action.NoLits (a : Action) : Prop := a.litFreeB = true
 
-def Cmd.NoLits (c : Cmd) : Prop := ∀ r ∈ c.rules, ∀ a ∈ r.actions, a.NoLits
+def Schedule.NoLits (c : Schedule) : Prop := ∀ r ∈ c.rules, ∀ a ∈ r.actions, a.NoLits
 
 theorem Action.evalTerms_litFree {σ : Env} {a : Action} (hl : a.NoLits)
     (hs : ∀ v t, Env.lookup v σ = some t → t.LitFree) : a.EvalTerms σ Term.LitFree := by
   cases a with
-  | expr e | delete e => exact fun t ht => Expr.eval_litFree hs e hl ht
+  | expr e => exact fun t ht => Expr.eval_litFree hs e hl ht
+  | subsume f es => exact fun t ht => Expr.eval_litFree hs (.app f es) hl ht
   | union a b =>
     have hl' := Bool.and_eq_true_iff.mp hl
     exact ⟨fun t ht => Expr.eval_litFree hs a hl'.1 ht,
@@ -176,25 +178,22 @@ theorem Database.NoLits.runRules {R : List Rule} {db : Database} (hw : db.WF)
   have hh := RunRules.preserves_evalTerms (R := R) (P := Term.LitFree)
     (fun _ ht _ hsub => ht.subterm hsub) (fun _ ht => h.terms.term hw ht)
     (fun r hr σ hσ a ha => Action.evalTerms_litFree (hn r hr a ha)
-      (h.terms.lookup hw hσ.1.2))
+      (h.terms.lookup hw hσ.1.mem_terms))
   exact fun t ht => hh t ht t (.refl _)
 
 theorem cmdStep_noLits {db db' : Database} (hw : db.WF) (h : db.NoLits)
-    {c : Cmd} (hn : c.NoLits) (hs : CmdStep db c db') : db'.NoLits := by
-  cases c with
-  | run R => subst db'; exact h.runRules hw hn
-  | saturate R =>
-    induction hs with
-    | fixpoint => exact h.runRules hw hn
-    | again _ _ ih => exact ih (RunRules.wf hw) (h.runRules hw hn)
+    {S : Schedule} (hn : S.NoLits) (hs : Reach db S db') : db'.NoLits := by
+  induction hs with
+  | run => exact h.runRules hw hn
+  | seq h₁ _ ih₁ ih₂ =>
+    exact ih₂ (h₁.wf hw) (ih₁ hw h (fun r hr => hn r (List.mem_append_left _ hr)))
+      (fun r hr => hn r (List.mem_append_right _ hr))
+  | fixpoint _ _ ih => exact ih hw h hn
+  | again h₁ _ _ ih₁ ih₂ => exact ih₂ (h₁.wf hw) (ih₁ hw h hn) hn
 
 theorem programStep_noLits {db db' : Database} (hw : db.WF) (h : db.NoLits)
-    {p : List Cmd} (hn : ∀ c ∈ p, c.NoLits) (hs : ProgramStep db p db') : db'.NoLits := by
-  induction hs with
-  | nil => exact h
-  | cons hc _ ih =>
-    exact ih (hc.wf hw) (cmdStep_noLits hw h (hn _ (by simp)) hc)
-      (fun c hc => hn c (by simp [hc]))
+    {S : Schedule} (hn : S.NoLits) (hs : Reach db S db') : db'.NoLits :=
+  cmdStep_noLits hw h hn hs
 
 def Actions.UnionRunnable (as : List Action) (db : Database) : Prop :=
   Actions.UnionFree as ∨ (db.LitFree ∧ ∀ a ∈ as, a.NoLits)
@@ -233,20 +232,18 @@ theorem evalLocalActions_isSome_of_builds {db : Database} (hw : db.WF) {r : Rule
     simpa using Query.bind_models Scope.Models.empty hq
   exact evalActions_isSome_of_builds hm hw hq.mem_terms hsc hr
 
-theorem Cmd.NoLits.of_domain {P : Program} (_hdom : P.Fragment)
-    (hlit : ∀ c ∈ P.commands, c.litFreeB = true) {c : Cmd} (hc : c ∈ P.commands) : c.NoLits := by
+theorem Schedule.NoLits.of_domain {P : Program} (_hdom : P.Fragment)
+    (hlit : P.schedule.litFreeB = true) {S : Schedule} (hs : S.rules ⊆ P.rules) :
+    S.NoLits := by
   intro r hr a ha
-  exact List.all_eq_true.mp (List.all_eq_true.mp (hlit c hc) r hr) a ha
+  exact List.all_eq_true.mp (List.all_eq_true.mp hlit r (hs hr)) a ha
 
-/-- **`Database.NoLits` at every state the source run reaches**, under `noLitUnion`'s second
-arm. Applied to a *prefix* of the program it is the invariant at the state a firing command
-starts from. -/
+/-- Literal-freedom holds after any schedule using only the source program's rules. -/
 theorem noLits_of_programStep {P : Program} (hdom : P.Fragment)
-    (hlit : ∀ c ∈ P.commands, c.litFreeB = true) {p : List Cmd} (hp : ∀ c ∈ p, c ∈ P.commands)
-    {sd : Database} (hstep : ProgramStep Database.empty p sd) : sd.NoLits :=
+    (hlit : P.schedule.litFreeB = true) {S : Schedule} (hs : S.rules ⊆ P.rules)
+    {sd : Database} (hstep : Reach Database.empty S sd) : sd.NoLits :=
   programStep_noLits Database.WF.empty Database.empty_noLits
-    (fun c hc => Cmd.NoLits.of_domain hdom hlit (hp c hc))
-    hstep
+    (Schedule.NoLits.of_domain hdom hlit hs) hstep
 
 /-- `Expr.Scoped` in the scope. -/
 theorem Expr.Scoped.mono {e : Expr} {Γ Γ' : Scope} (hsub : ∀ v ∈ Γ, v ∈ Γ')
@@ -256,7 +253,8 @@ theorem Expr.Scoped.mono {e : Expr} {Γ Γ' : Scope} (hsub : ∀ v ∈ Γ, v ∈
 theorem Action.Scoped.mono {a : Action} {Γ Γ' : Scope} (hsub : ∀ v ∈ Γ, v ∈ Γ')
     (h : a.Scoped Γ) : a.Scoped Γ' := by
   cases a with
-  | expr e | delete e => exact ⟨h.1, Expr.Scoped.mono hsub h.2⟩
+  | expr e => exact ⟨h.1, Expr.Scoped.mono hsub h.2⟩
+  | subsume f es => exact Expr.Scoped.mono hsub h
   | union e₁ e₂ => exact ⟨Expr.Scoped.mono hsub h.1, Expr.Scoped.mono hsub h.2⟩
 
 @[inherit_doc Expr.Scoped.mono]
