@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dev-dependencies]
+lmfao-extract = { path = "../lmfao" }
 egglog = { path = "../../egglog", default-features = false }
 egglog-experimental = { path = "../../egglog-experimental" }
 benchmark-memory = { path = "../../benchmark-memory" }

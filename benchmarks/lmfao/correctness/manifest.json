@@ -1,0 +1,20 @@
+{
+  "variants": [
+    {
+      "name": "single-root",
+      "file": "single-root.egg",
+      "rewrite_round_budget": 64
+    },
+    {
+      "name": "roots",
+      "file": "roots.egg",
+      "rewrite_round_budget": 64
+    },
+    {
+      "name": "shared",
+      "file": "shared.egg",
+      "rewrite_round_budget": 64
+    }
+  ],
+  "export_names": "(Lambda \"lambda\") (Sing \"sing\") (Add \"+\") (Mult \"*\") (Sub \"-\") (Equality \"eq\") (Get \"get\") (Range \"range\") (App \"apply\") (IfThen \"ifthen\") (Binop \"binop\") (SubArray \"subarray\") (Unique \"unique\") (Sum \"sum\") (Merge \"merge\") (Let \"sdql-let\") (Num \"=payload\") (Symbol \"=payload\" \"sym:\") (Null \"null\") (Pair \"Pair\") (Output \"Output\") (Program \"Program\") (AggregateQuery \"AggregateQuery\") (TreeRoot \"TreeRoot\") (Region \"Region\") (Neighbor \"Neighbor\") (Cons \"Cons\") (Nil \"Nil\") (B0 \"B0\") (B1 \"B1\") (Mask \"Mask\") (Weights \"Weights\") (WeightOne \"WeightOne\") (Scalar \"Scalar\") (MaskUnion \"MaskUnion\") (MaskIntersect \"MaskIntersect\") (SelectWeights \"SelectWeights\") (WeightsEqual \"WeightsEqual\") (BoolAnd \"BoolAnd\") (ViewRequest \"ViewRequest\") (ChildRequests \"ChildRequests\") (ComputeView \"ComputeView\") (SharedView \"SharedView\") (ViewColumn \"ViewColumn\") (MergeCandidate \"MergeCandidate\")"
+}

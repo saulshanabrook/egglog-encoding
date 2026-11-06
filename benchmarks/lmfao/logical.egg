@@ -1,0 +1,90 @@
+;;; Aggregate queries, directional views, and shared aggregate columns.
+;;; Schema regions are query-independent orientations of a fixed join tree.
+(include "egglog-experimental/tests/slotted/languages/sdql.egg")
+(constructor Pair (U U) U)
+(constructor Output (U U) U)
+(constructor Program (U) U)
+(constructor AggregateQuery (U U U) U)
+(constructor TreeRoot (U U) U)
+;;; origin, destination, subtree attributes, subtree functions, local functions, children
+(constructor Region (U U U U U U) U)
+(constructor Neighbor (U U) U)
+(constructor Cons (U U) U)
+(constructor Nil () U)
+(constructor B0 () U)
+(constructor B1 () U)
+(constructor Mask (U U) U)
+(constructor Weights (U U) U)
+(constructor WeightOne () U)
+;;; A scalar's body is a closed function of one source row.
+(constructor Scalar (U U) U)
+(constructor MaskUnion (U U) U)
+(constructor MaskIntersect (U U) U)
+(constructor SelectWeights (U U) U)
+(constructor WeightsEqual (U U) U)
+(constructor BoolAnd (U U) U)
+(constructor ViewRequest (U U U) U)
+(constructor ChildRequests (U U U) U)
+;;; region, output keys, requested weights, local weights, incoming aggregates
+(constructor ComputeView (U U U U U) U)
+(constructor SharedView (U U) U)
+(constructor ViewColumn (U U U U) U)
+(constructor MergeCandidate (U U) U)
+
+;;; Every schema root supplies an alternative for the same logical query.
+(rewrite query (ViewRequest region keys weights)
+  :name "logical-root"
+  :when ((= query (AggregateQuery domain keys weights))
+         (= orientation (TreeRoot domain region))))
+
+;;; Distribute a product across the fixed tree. Only required output attributes
+;;; and edge separators survive in a child view; weights follow their owners.
+(rewrite request
+  (ComputeView region keys weights (SelectWeights local weights)
+    (ChildRequests children keys weights))
+  :name "logical-pushdown"
+  :when ((= request (ViewRequest region keys weights))
+         (= region (Region origin destination attributes functions local children))))
+(rewrite (ChildRequests (Nil) keys weights) (Nil) :name "logical-children-empty")
+(rewrite requests
+  (Cons
+    (ViewRequest child (MaskUnion separator (MaskIntersect keys attributes))
+      (SelectWeights functions weights))
+    (ChildRequests rest keys weights))
+  :name "logical-children"
+  :when ((= requests (ChildRequests children keys weights))
+         (= children (Cons edge rest))
+         (= edge (Neighbor child separator))
+         (= child (Region origin destination attributes functions local descendants))))
+
+;;; Distinct kernels with the same region and keys may use a shared producer.
+;;; The selected columns, not an external compatibility pass, define its body.
+(rewrite a
+  (MergeCandidate (WeightsEqual wa wb)
+    (ViewColumn (SharedView region keys) wa local_a children_a))
+  :name "logical-merge-views"
+  :when ((= a (ComputeView region keys wa local_a children_a))
+         (= b (ComputeView region keys wb local_b children_b))))
+(rewrite (MergeCandidate (B0) column) column :name "logical-distinct-columns")
+
+;;; Balanced schema masks and function vectors are evaluated inside the graph.
+(rewrite (MaskIntersect (B0) b) (B0) :name "logical-intersect-zero")
+(rewrite (MaskIntersect (B1) b) b :name "logical-intersect-one")
+(rewrite (MaskIntersect (Mask a b) (Mask c d))
+  (Mask (MaskIntersect a c) (MaskIntersect b d)) :name "logical-intersect")
+(rewrite (MaskUnion (B0) b) b :name "logical-union-zero")
+(rewrite (MaskUnion (B1) b) (B1) :name "logical-union-one")
+(rewrite (MaskUnion (Mask a b) (Mask c d))
+  (Mask (MaskUnion a c) (MaskUnion b d)) :name "logical-union")
+(rewrite (SelectWeights (B0) weight) (WeightOne) :name "logical-select-zero")
+(rewrite (SelectWeights (B1) weight) weight :name "logical-select-one")
+(rewrite (SelectWeights (Mask a b) (Weights c d))
+  (Weights (SelectWeights a c) (SelectWeights b d)) :name "logical-select")
+(rewrite (BoolAnd (B0) b) (B0) :name "logical-and-zero")
+(rewrite (BoolAnd (B1) b) b :name "logical-and-one")
+(rewrite (WeightsEqual (WeightOne) (WeightOne)) (B1) :name "logical-equal-unit")
+(rewrite (WeightsEqual (Scalar owner body) (Scalar owner body)) (B1) :name "logical-equal-scalar")
+(rewrite (WeightsEqual (Scalar owner body) (WeightOne)) (B0) :name "logical-different-left")
+(rewrite (WeightsEqual (WeightOne) (Scalar owner body)) (B0) :name "logical-different-right")
+(rewrite (WeightsEqual (Weights a b) (Weights c d))
+  (BoolAnd (WeightsEqual a c) (WeightsEqual b d)) :name "logical-equal")

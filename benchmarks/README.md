@@ -84,6 +84,11 @@ The Python suite includes a real CLI integration test on small Math and
 disequality fixtures. It uses a temporary report and checks successful runtime/RSS
 observations through the same public runner.
 
+The [LMFAO batching case study](lmfao/README.txt) has three frozen optimizer
+pairs under `lmfao/inputs/`, outside the default figure catalog. It uses the
+shared runner/cache. Its six small rule cases run in
+`paper-tests/tests/lmfao.rs`; Python tests cover DAG extraction and SQL semantics.
+
 For a disposable three-round verification preview:
 
 ```bash
