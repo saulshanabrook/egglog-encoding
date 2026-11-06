@@ -315,6 +315,55 @@ mod tests {
     }
 
     #[test]
+    fn eq_globals_keep_written_values_through_canonicalization() {
+        for binding in [
+            "(let $b (B)) (union (A) (B))",
+            "(union (A) (B)) (let $b (B))",
+        ] {
+            let source = format!(
+                r#"
+                (datatype E (A) (B) (Unrelated) (Wrap E) (Root E))
+                (let $input (Root (Wrap (A))))
+                {binding}
+                (let $alias $b)
+                (let $selected (Root (Wrap $alias)))
+                (check (= $input $selected))
+                (extract $selected)
+                (fail (check (= $selected (Root (Wrap (Unrelated))))))
+
+                (function pinned () E :merge (Wrap $alias))
+                (set (pinned) (A))
+                (set (pinned) (Unrelated))
+                (check (= (pinned) (Wrap (A))))
+                "#
+            );
+            for mut egraph in [
+                EGraph::default(),
+                EGraph::new_with_term_encoding(),
+                EGraph::new_with_proofs(),
+                EGraph::new_with_proofs().with_proof_testing(),
+            ] {
+                let outputs = egraph.parse_and_run_program(None, &source).unwrap();
+                if egraph.proof_state.proof_testing {
+                    let (store, id) = outputs
+                        .iter()
+                        .find_map(|output| match output {
+                            CommandOutput::ProveExists {
+                                proof_store,
+                                proof_id,
+                            } => Some((proof_store, *proof_id)),
+                            _ => None,
+                        })
+                        .expect("strict checking must produce the requested equality proof");
+                    let proof = store.get(id);
+                    assert_eq!(store.term_dag().to_string(proof.lhs()), "(Root (Wrap (A)))");
+                    assert_eq!(store.term_dag().to_string(proof.rhs()), "(Root (Wrap (B)))");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn primitive_globals_work_in_actions_queries_and_rule_heads() {
         let source = r#"
             (datatype Math (Num i64))

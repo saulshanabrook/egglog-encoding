@@ -110,7 +110,6 @@ expression: proof_snapshot
               (x2 (Var "b2"))
               t_9
               (f2 (f (Var "b2")))))
-(let t_18 (f (f (Var "b2"))))
 (Trans
   (= t t_1)
   (Trans
@@ -177,7 +176,7 @@ expression: proof_snapshot
           t_16
           t_17)
         prf
-        (Sym (= t_3 t_18) (Fiat (= t_18 t_3))))
+        (Fiat (= t_3 (f (f (Var "b2"))))))
       (substitution (x3 t_14) t_11 (x2 (f (Var "b2"))) t_12 t_13))
     (Rule
       (= t_14 (f (Var "b3")))
@@ -298,7 +297,6 @@ expression: proof_snapshot
               (x2 (Var "b2"))
               t_8
               (f2 (f (Var "b2")))))
-(let t_17 (f (f (Var "b2"))))
 (Trans
   (= t t_1)
   (Sym
@@ -360,7 +358,7 @@ expression: proof_snapshot
           t_15
           t_16)
         prf
-        (Sym (= t_3 t_17) (Fiat (= t_17 t_3))))
+        (Fiat (= t_3 (f (f (Var "b2"))))))
       (substitution (x3 t_13) t_10 (x2 (f (Var "b2"))) t_11 t_12))
     (Rule
       (= t_13 (f (Var "b3")))

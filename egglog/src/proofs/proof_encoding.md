@@ -335,6 +335,10 @@ References to `$g1` become `(@Globals_Math "$g1")`. For an eq-sort, the encoder
 adds a proof column to the shared table: `String -> (Math, proof)`. The table's
 merge, rebuild index, and rebuild rules serve all globals of that sort.
 A definition stores its value without adding an e-class merge.
+Its proof states `canonical = written`, even if the value was already
+canonicalized when the global was defined. Actions reading the global reverse
+that proof to connect its written value to the current representative before
+composing a parent constructor's congruence proof.
 
 The storage key is not part of the source expression. Proof-node numbering
 therefore treats a global read as one node, and proof checking evaluates the

@@ -3,11 +3,10 @@ source: egglog-experimental/tests/files.rs
 expression: snapshot
 ---
 (
-(let t
-  (premises
-            (Fiat
-              (= (Pair (Leaf "b") 7 (Leaf "d")) (Pair (Leaf "a") 7 (Leaf "c"))))))
-(let t_1
+(let t (Pair (Leaf "b") 7 (Leaf "d")))
+(let t_1 (Pair (Leaf "a") 7 (Leaf "c")))
+(let t_2 (premises (Sym (= t t_1) (Fiat (= t_1 t)))))
+(let t_3
   (substitution
             (@injectivity-left (Leaf "b"))
             (@injectivity-left_1 7)
@@ -21,9 +20,9 @@ expression: snapshot
   (premises
     (Sym
       (= (Leaf "a") (Leaf "b"))
-      (Rule (= (Leaf "b") (Leaf "a")) (name "@injectivity-Pair") t t_1))
+      (Rule (= (Leaf "b") (Leaf "a")) (name "@injectivity-Pair") t_2 t_3))
     (Sym
       (= (Leaf "c") (Leaf "d"))
-      (Rule (= (Leaf "d") (Leaf "c")) (name "@injectivity-Pair") t t_1)))
+      (Rule (= (Leaf "d") (Leaf "c")) (name "@injectivity-Pair") t_2 t_3)))
   (substitution))
 )

@@ -1123,7 +1123,8 @@ impl<'a> ProofInstrumentor<'a> {
 
                 // For `(let $x (Num 1))`, store the id of `(Num 1)` in `$x`'s
                 // row. Eq-sort rows also carry the proof needed when a union
-                // replaces that id with its representative.
+                // replaces that id with its representative: canonical = written,
+                // including when the written value was already noncanonical.
                 if func_type.role.is_global() {
                     let e_value = exprs.pop().expect("a set has a value");
                     let keys = ids(&exprs);
@@ -1140,7 +1141,7 @@ impl<'a> ProofInstrumentor<'a> {
                         match &e_value.connector {
                             Some(connector) => {
                                 let connector = self.connector_node(emit, connector);
-                                self.reflexive(connector)
+                                self.mint_sym(&connector)
                             }
                             None => self.reflexive_for_justification(emit),
                         }
@@ -1759,7 +1760,8 @@ impl<'a> ProofInstrumentor<'a> {
     /// its FD view `(key) -> (val, proof)` returns the
     /// stored e-class (a global is `set` before it is used, so the fresh fallback is
     /// dead code that only fires on a malformed program). The value read is already
-    /// the view's canonical e-class, so no natural/deduped connector is recorded.
+    /// the view's canonical e-class; [`Self::global_operand`] also records its
+    /// connection to the global's written value when proofs are enabled.
     ///
     /// The signature requires the fallback pair, so both are bare fresh ids: no
     /// row says anything about either, since nothing ever reads them.
@@ -1786,6 +1788,26 @@ impl<'a> ProofInstrumentor<'a> {
             "(let {vx} ({set_if_empty} {keys} {fresh_e} {fallback_proof}))"
         ));
         vx
+    }
+
+    /// Read a global while retaining the proof from its written value to its
+    /// current representative. Parents' fiat/merge conclusions name the written
+    /// value, so their congruence steps must include this connector too.
+    fn global_operand(&mut self, func: &FuncType, keys: &[String], emit: &mut Emit) -> Operand {
+        let value = self.lookup_global(func, keys, emit.stmts);
+        let mut global = Operand::plain(value);
+        if self.proofs_enabled() && func.output().is_eq_sort() {
+            global.natural = self.fresh_term_id(emit.stmts, &func.name);
+            let fallback = self.reflexive_for_justification(emit);
+            let read = crate::proofs::proof_fresh::view_proof_prim_name(&func.name);
+            let proof = self.fresh_var();
+            emit.stmts.push(format!(
+                "(let {proof} ({read} {} {fallback}))",
+                ListDisplay(keys, " ")
+            ));
+            global.connector = Some(Connector::Node(self.mint_sym(&proof)));
+        }
+        global
     }
 
     /// The `Proof` datatype's sort name.
@@ -2107,25 +2129,7 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
                 if func_type.role.is_global() {
                     let keys = args.iter().map(ToString::to_string).collect::<Vec<_>>();
-                    let value = self.lookup_global(func_type, &keys, emit.stmts);
-                    let mut global = Operand::plain(value);
-                    if self.proofs_enabled() && func_type.output().is_eq_sort() {
-                        // The merge is evaluated under the written global's value,
-                        // while execution reads its canonical representative. The
-                        // view proof connects those two, including after a union.
-                        global.natural = self.fresh_term_id(emit.stmts, &func_type.name);
-                        let fallback =
-                            self.reflexive_for_justification(&mut emit.justified_by(&node));
-                        let read =
-                            crate::proofs::proof_fresh::view_proof_prim_name(&func_type.name);
-                        let proof = self.fresh_var();
-                        emit.stmts.push(format!(
-                            "(let {proof} ({read} {} {fallback}))",
-                            ListDisplay(&keys, " ")
-                        ));
-                        global.connector = Some(Connector::Node(self.mint_sym(&proof)));
-                    }
-                    return global;
+                    return self.global_operand(func_type, &keys, &mut emit.justified_by(&node));
                 }
                 let arg_vars = args
                     .iter()
@@ -2200,11 +2204,7 @@ impl<'a> ProofInstrumentor<'a> {
                             // Global reads introduced by lowering are the only
                             // custom-function lookups allowed in these actions.
                             if func_type.role.is_global() {
-                                Operand::plain(self.lookup_global(
-                                    func_type,
-                                    &ids(&args),
-                                    emit.stmts,
-                                ))
+                                self.global_operand(func_type, &ids(&args), emit)
                             } else {
                                 panic!(
                                     "Found a function lookup in actions, should have been prevented by typechecking"
