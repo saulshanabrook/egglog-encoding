@@ -12,22 +12,23 @@
 ;;; `(Null)`.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 (constructor G (U U) U)
 (constructor Null () U)
 
 
-(let f01 (F $0 $1))
-(let f10 (F $1 $0))
+(let f01 (F (V $0) (V $1)))
+(let f10 (F (V $1) (V $0)))
 (union f01 f10)
 
-(let g0 (G $0 (Null)))
+(let g0 (G (V $0) (Null)))
 (union f01 g0)
 
 ;; bound before the run, so the graph holds these invocations to be asked about
-(let g5 (G $5 (Null)))
-(let f78 (F $7 $8))
+(let g5 (G (V $5) (Null)))
+(let f78 (F (V $7) (V $8)))
 
 (run 0)
 

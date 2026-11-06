@@ -1,0 +1,30 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (V Var) (Pair U U) (Hit))
+(let input (Pair (V $a) (V $b)))
+(rewrite (Pair (V $x) (V $y)) (Hit)
+  :when ((renaming-= (V $x) (V $y)) (not-free $x (V $y)) (!= (V $x) (V $y))) :name "guards")
+(run 1)
+(check (= input (Hit)))
+
+Proof:
+(let t (Pair (V $a) (V $b)))
+(let prf (Fiat (= (V $a) (V $a))))
+(let prop (= (V $b) (V $b)))
+(let prf_1 (Equivariance prop prf (renaming ($a $b) ($b $a))))
+(let prf_2 (Fiat (= () ())))
+(Rule
+  (= t (Hit))
+  (name "guards")
+  (premises
+    (Fiat (= t t))
+    (RenamingEq (renaming-= (V $a) (V $b)) prf (Fiat prop))
+    prf_1
+    prf_2
+    prf
+    prf_1
+    prf_2)
+  (substitution ($x $a) ($y $b)))

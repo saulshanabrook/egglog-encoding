@@ -1,32 +1,52 @@
 //! An explicit slotted-source to ordinary-egglog pass. Evaluation stays in egglog.
+use super::compiled::{CompiledProgram, ProofRequests};
+use super::errors::{CompileError, UnsupportedProofFeature};
+use super::proofs::pipeline::{EncodingNames, ProofRequest, SlottedClaim};
+use super::proofs::resolve::Reader;
 use super::{
-    maintenance,
+    flatten, maintenance,
     model::*,
     query, rewrite,
     syntax::{self, Form},
 };
-use egglog::ast::{ParseError, Span};
-use std::collections::BTreeSet;
+use egglog::ast::{ParseError, ResolvedNCommand, ResolvedRule, Rewrite as SourceRewrite, Span};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Whether to emit native checks or translate proofs of slotted claims.
+pub enum ProofMode {
+    #[default]
+    /// Use the ordinary encoding without proof instrumentation.
+    Disabled,
+    /// Run the proof-compatible encoding with ordinary checks.
+    Check,
+    /// Translate and verify supported equality checks; run ordinary checks for others.
+    Prove,
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 /// Control source-level slotted matching semantics.
 pub struct Options {
     /// Match the reference nested matcher's restriction on non-pattern aliasing.
     pub no_aliasing: bool,
+    /// Select proof instrumentation and claim handling.
+    pub proof_mode: ProofMode,
 }
 
 #[derive(Default)]
 struct Pattern {
-    names: query::PatternNames,
-    atoms: Vec<query::Atom>,
+    names: flatten::PatternNames,
+    atoms: Vec<flatten::Atom>,
     conditions: query::Conditions,
     values: Vec<(String, Term, Option<String>)>,
     patterns: usize,
+    proof_names: query::ProofNames,
 }
 
 impl Pattern {
     fn new(forms: &[Form]) -> Self {
-        fn reserve(form: &Form, names: &mut query::PatternNames) {
+        fn reserve(form: &Form, names: &mut flatten::PatternNames) {
             match form {
                 Form::Atom(name) => names.reserve(name),
                 Form::List(forms) => {
@@ -45,9 +65,17 @@ impl Pattern {
     }
 }
 
+#[derive(Clone, Default)]
+struct ProofCompiler {
+    source: Reader,
+    names: EncodingNames,
+    flattened: BTreeMap<String, ResolvedRule>,
+}
+
 #[derive(Clone)]
 struct State {
     lang: Language,
+    proofs: Option<ProofCompiler>,
     initialized: bool,
     dirty: bool,
     rules: usize,
@@ -60,11 +88,13 @@ impl Default for State {
     fn default() -> Self {
         Self {
             lang: Language::default(),
+            proofs: None,
             initialized: false,
             dirty: false,
             rules: 0,
             extracts: 0,
             reserved: [
+                "Var",
                 "Names",
                 "Binding",
                 "Frame",
@@ -89,6 +119,11 @@ pub struct Compiler {
     options: Options,
     state: State,
     scopes: Vec<State>,
+    next_rule: usize,
+    used_rule_names: BTreeSet<String>,
+    next_check: usize,
+    next_proof: usize,
+    proof_requests: ProofRequests,
 }
 
 impl Compiler {
@@ -96,23 +131,58 @@ impl Compiler {
     pub fn new(options: Options) -> Self {
         Self {
             options,
+            state: State {
+                proofs: (options.proof_mode == ProofMode::Prove).then(ProofCompiler::default),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    /// Compile a program without evaluating it. Includes resolve from the process
-    /// working directory.
-    /// A failed compilation leaves this compiler unchanged.
+    /// Compile to lowered egglog text. Includes resolve from the working directory.
+    /// Proof replay requires the original source; use [`Self::compile_program`] to
+    /// retain it for execution. A failed compilation leaves this compiler unchanged.
     pub fn compile(
         &mut self,
         filename: Option<String>,
         source: &str,
-    ) -> Result<String, ParseError> {
+    ) -> Result<String, CompileError> {
         let mut next = self.clone();
-        let forms = read(filename, source, &mut BTreeSet::new())?;
-        let result = next.program(&forms)?;
+        let (text, _) = next.compile_inner(filename, source)?;
         *self = next;
-        Ok(result)
+        Ok(text)
+    }
+
+    /// Compile commands and retain the original resolved programs for proof checking.
+    /// Includes resolve from the working directory. A failure leaves this compiler unchanged.
+    pub fn compile_program(
+        &mut self,
+        filename: Option<String>,
+        source: &str,
+    ) -> Result<CompiledProgram, CompileError> {
+        let mut next = self.clone();
+        let (text, proofs) = next.compile_inner(filename.clone(), source)?;
+        let mut graph = super::new_egraph();
+        super::proofs::pipeline::register(&mut graph);
+        let commands = graph
+            .parse_program(filename, &text)
+            .map_err(|error| ParseError(egglog::span!(), error.to_string()))?;
+        *self = next;
+        Ok(CompiledProgram { commands, proofs })
+    }
+
+    fn compile_inner(
+        &mut self,
+        filename: Option<String>,
+        source: &str,
+    ) -> Result<(String, ProofRequests), CompileError> {
+        let forms = read(filename, source, &mut BTreeSet::new())?;
+        if self.options.proof_mode == ProofMode::Prove {
+            UnsupportedProofFeature::check(&forms)?;
+        }
+        let result = self.program(&forms)?;
+        let proofs = std::mem::take(&mut self.proof_requests);
+        Ok((result, proofs))
     }
 
     fn program(&mut self, forms: &[(Form, Span)]) -> Result<String, ParseError> {
@@ -157,6 +227,12 @@ impl Compiler {
             self.state.initialized = true;
         }
         for sort in sorts {
+            if sort == "Var" {
+                return Err(ParseError(
+                    fallback.clone(),
+                    "Var is a built-in rigid sort".into(),
+                ));
+            }
             if self.state.lang.carriers.iter().any(|s| s.sort == sort) {
                 return Err(ParseError(
                     fallback.clone(),
@@ -164,7 +240,11 @@ impl Compiler {
                 ));
             }
             let s = Symbols::new(&sort, self.state.lang.carriers.len());
-            self.emit(&mut out, maintenance::carrier(&s), Some(&sort));
+            self.emit(
+                &mut out,
+                maintenance::carrier(&s, self.options.proof_mode != ProofMode::Disabled),
+                Some(&sort),
+            );
             self.state.lang.carriers.push(s);
         }
         for f in ctors {
@@ -173,7 +253,11 @@ impl Compiler {
                 .map_err(|e| ParseError(fallback.clone(), e))?;
             self.emit(
                 &mut out,
-                maintenance::constructor(&op, self.state.lang.symbols(&op.sort)),
+                maintenance::constructor(
+                    &op,
+                    self.state.lang.symbols(&op.sort),
+                    self.options.proof_mode != ProofMode::Disabled,
+                ),
                 Some(&op.name),
             );
             self.state.lang.constructors.insert(op.name.clone(), op);
@@ -189,6 +273,12 @@ impl Compiler {
                 fallback,
                 format!("declaration {name:?} is reserved by the slotted encoding"),
             ));
+        }
+        if let Some(proofs) = &mut self.state.proofs {
+            proofs
+                .source
+                .declare(forms)
+                .map_err(|e| ParseError(fallback.clone(), e.to_string()))?;
         }
         for (f, span) in forms {
             let head = f.call().map_err(|e| ParseError(span.clone(), e))?.0;
@@ -207,6 +297,14 @@ impl Compiler {
                 self.maintain(&mut out);
             }
             let command = self.command(f).map_err(|e| ParseError(span.clone(), e))?;
+            if matches!(head, "let" | "union")
+                && let Some(proofs) = &mut self.state.proofs
+            {
+                proofs
+                    .source
+                    .command(f, span)
+                    .map_err(|e| ParseError(span.clone(), e.to_string()))?;
+            }
             match head {
                 "run" | "extract" => self.state.dirty = false,
                 "let" | "union" if !command.is_empty() => self.state.dirty = true,
@@ -247,96 +345,11 @@ impl Compiler {
     }
 
     fn constructor(&self, f: &Form) -> Result<Constructor, String> {
-        let (_, args) = f.call()?;
-        if args.len() < 3 {
-            return Err("constructor expects a name, input sorts, and output sort".into());
-        }
-        let name = args[0].symbol()?.to_owned();
-        if name.starts_with('$') {
-            return Err("constructor names cannot start with $".into());
-        }
-        let sort = args[2].symbol()?.to_owned();
-        if self.state.lang.constructors.contains_key(&name) {
-            return Err(format!("constructor {name:?} is declared more than once"));
-        }
-        let carriers = self
-            .state
-            .lang
-            .carriers
-            .iter()
-            .map(|s| s.sort.as_str())
-            .collect::<BTreeSet<_>>();
-        if !carriers.contains(sort.as_str()) {
-            return Err(format!(
-                "constructor {name}: output sort {sort} is not a declared equality sort"
-            ));
-        }
-        let cols = args[1]
-            .list()?
-            .iter()
-            .map(Form::atom)
-            .collect::<Result<Vec<_>, _>>()?;
-        let child_count = cols.iter().filter(|s| carriers.contains(**s)).count();
-        let mut binders = BTreeSet::new();
-        let mut in_binder = false;
-        for f in &args[3..] {
-            let t = f.atom()?;
-            if t == ":binder" {
-                in_binder = true;
-            } else if t.starts_with(':') {
-                return Err(format!("constructor {name}: option {t} is not supported"));
-            } else {
-                if !in_binder {
-                    return Err(format!("constructor {name}: expected :binder"));
-                }
-                let i = t
-                    .parse::<usize>()
-                    .map_err(|_| format!("constructor {name}: invalid binder position {t}"))?;
-                if !binders.insert(i) {
-                    return Err(format!("constructor {name}: duplicate binder position"));
-                }
-            }
-        }
-        if let (Some(&lo), Some(&hi)) = (binders.first(), binders.last()) {
-            if hi >= child_count.saturating_sub(1) {
-                return Err(format!(
-                    "constructor {name}: binder positions must cover a following child"
-                ));
-            }
-            if binders.len() != hi - lo + 1 {
-                return Err(format!(
-                    "constructor {name}: binder positions must be contiguous"
-                ));
-            }
-        }
-        let mut child = 0;
-        let mut columns = Vec::new();
-        for col in cols {
-            if carriers.contains(col) {
-                if col != sort {
-                    return Err(format!(
-                        "constructor {name}: cross-sort slotted children are not supported"
-                    ));
-                }
-                columns.push(if binders.contains(&child) {
-                    Column::Binder
-                } else {
-                    Column::Child
-                });
-                child += 1;
-            } else if ["i64", "String"].contains(&col) {
-                columns.push(Column::Payload(col.into()));
-            } else {
-                return Err(format!(
-                    "constructor {name}: unsupported payload sort {col}"
-                ));
-            }
-        }
-        Ok(Constructor {
-            name,
-            sort,
-            columns,
-        })
+        source_constructor(
+            f,
+            self.state.lang.carriers.iter().map(|s| s.sort.as_str()),
+            self.state.lang.constructors.values(),
+        )
     }
 
     fn command(&mut self, f: &Form) -> Result<String, String> {
@@ -363,10 +376,7 @@ impl Compiler {
                 let encoded = if bare_slot {
                     String::new()
                 } else {
-                    format!(
-                        "(let ${name} {})",
-                        self.state.lang.encode(&t, &self.sort_of(&t)?)
-                    )
+                    format!("(let ${name} {})", self.state.lang.encode(&t))
                 };
                 self.state.lang.globals.insert(name.into(), t);
                 Ok(encoded)
@@ -376,10 +386,16 @@ impl Compiler {
                     return Err("union expects two terms".into());
                 }
                 let (sort, terms) = self.common(args)?;
+                if sort == "Var" {
+                    return Err(
+                        "Var names are rigid and cannot be unioned; use the variable constructor"
+                            .into(),
+                    );
+                }
                 Ok(format!(
                     "(union {} {})",
-                    self.state.lang.encode_top(&terms[0], &sort),
-                    self.state.lang.encode_top(&terms[1], &sort)
+                    self.state.lang.encode(&terms[0]),
+                    self.state.lang.encode(&terms[1])
                 ))
             }
             "rewrite" => self.rewrite(args),
@@ -420,6 +436,12 @@ impl Compiler {
                 }
                 let t = self.term(&args[0], true, None)?;
                 let sort = self.sort_of(&t)?;
+                if sort == "Var" {
+                    return Err(
+                        "extract expects a term in an equality sort; use the variable constructor"
+                            .into(),
+                    );
+                }
                 self.state.extracts += 1;
                 let i = self.state.extracts;
                 let names = self
@@ -432,7 +454,7 @@ impl Compiler {
                     .join(" ");
                 Ok(format!(
                     "(let $$slotted_extract{i} {})\n{}\n(slotted-extract $$slotted_extract{i} {} {names})",
-                    self.state.lang.encode(&t, &sort),
+                    self.state.lang.encode(&t),
                     maintenance::schedule(0, false),
                     self.state.lang.edge(&t),
                 ))
@@ -452,14 +474,9 @@ impl Compiler {
             .lang
             .sort_of(t)
             .map(str::to_owned)
-            .or_else(|| {
-                (self.state.lang.carriers.len() == 1)
-                    .then(|| self.state.lang.carriers[0].sort.clone())
-            })
-            .ok_or_else(|| {
-                "bare slot has no equality-sort context; put it under a constructor".into()
-            })
+            .ok_or_else(|| "cannot determine the term's sort".into())
     }
+
     fn common(&mut self, forms: &[Form]) -> Result<(String, Vec<Term>), String> {
         let terms = forms
             .iter()
@@ -498,6 +515,9 @@ impl Compiler {
             Form::List(_) => {
                 let (head, args) = f.call()?;
                 if head == "subst" {
+                    if self.options.proof_mode == ProofMode::Prove {
+                        return Err(UnsupportedProofFeature::Substitution.to_string());
+                    }
                     if ground || args.len() != 3 {
                         return Err(
                             "subst expects three arguments on a rewrite right-hand side".into()
@@ -505,7 +525,7 @@ impl Compiler {
                     }
                     return Ok(Term::Subst(Box::new([
                         self.term(&args[0], false, expected)?,
-                        self.term(&args[1], false, expected)?,
+                        self.term(&args[1], false, Some("Var"))?,
                         self.term(&args[2], false, expected)?,
                     ])));
                 }
@@ -544,12 +564,23 @@ impl Compiler {
                             }
                         }
                         Column::Child => self.term(a, ground, Some(&op.sort))?,
-                        Column::Binder => {
-                            let t = self.term(a, ground, Some(&op.sort))?;
-                            if !matches!(t, Term::Slot(_)) {
-                                return Err(format!("{head}'s binder column takes a slot literal"));
+                        Column::Var | Column::Binder => {
+                            let t = self.term(a, ground, Some("Var"))?;
+                            match &t {
+                                Term::Slot(_) => t,
+                                Term::Global(n) if self.state.lang.global_slot(n).is_some() => {
+                                    if ground {
+                                        Term::Slot(self.state.lang.global_slot(n).unwrap().into())
+                                    } else {
+                                        t
+                                    }
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "{head}'s Var column takes a slot literal or a global name"
+                                    ));
+                                }
                             }
-                            t
                         }
                     });
                 }
@@ -575,6 +606,13 @@ impl Compiler {
 
     fn global_terms(&self, p: &mut Pattern, term: &mut Term, sort: Option<&str>) {
         match term {
+            Term::Global(n) if self.state.lang.global_slot(n).is_some() => {
+                let slot = self.state.lang.global_slot(n).unwrap();
+                p.conditions
+                    .concrete_slots
+                    .insert(n.clone(), self.state.lang.slot_names.id(slot));
+                *term = Term::Slot(n.clone());
+            }
             Term::Global(_) => {
                 let root = p.names.fresh("_global");
                 p.values
@@ -582,8 +620,8 @@ impl Compiler {
                 *term = Term::Variable(root);
             }
             Term::Node(op, args) => {
-                let sort = &self.state.lang.constructors[op].sort;
-                for arg in args {
+                let constructor = &self.state.lang.constructors[op];
+                for (arg, sort) in args.iter_mut().zip(constructor.input_sorts()) {
                     self.global_terms(p, arg, Some(sort));
                 }
             }
@@ -605,20 +643,24 @@ impl Compiler {
                 } else {
                     format!("_w{}_", p.patterns)
                 };
-                p.atoms.extend(query::flatten(
-                    &self.state.lang,
-                    &term,
-                    &root,
-                    &tmp,
-                    &mut p.names,
-                )?);
+                let atoms = flatten::flatten(&self.state.lang, &term, &root, &tmp, &mut p.names)?;
+                p.proof_names.patterns.push(flatten::pattern_names(&atoms));
+                p.atoms.extend(atoms);
                 p.patterns += 1;
             }
-            Term::Slot(_) | Term::Global(_) => {
+            Term::Slot(_) => {
+                return Err("a term pattern needs a variable constructor around its slot".into());
+            }
+            Term::Global(_) => {
                 let sort = self.state.lang.sort_of(&term).map(str::to_owned);
+                if sort.as_deref() == Some("Var") {
+                    return Err(
+                        "a term pattern needs a variable constructor around its slot".into(),
+                    );
+                }
                 p.values.push((root, term, sort));
             }
-            _ => return Err("expected a constructor pattern, global, or slot".into()),
+            _ => return Err("expected a constructor pattern or term global".into()),
         }
         Ok(())
     }
@@ -741,7 +783,7 @@ impl Compiler {
                 (self.state.lang.carriers.len() == 1)
                     .then(|| self.state.lang.carriers[0].sort.clone())
             })
-            .ok_or("bare slot has no equality-sort context; put it under a constructor")?;
+            .ok_or("query has no equality-sort context; include a constructor pattern")?;
         p.conditions.values = p
             .values
             .drain(..)
@@ -754,50 +796,47 @@ impl Compiler {
     }
 
     fn rewrite(&mut self, args: &[Form]) -> Result<String, String> {
-        if args.len() < 2 {
-            return Err("rewrite needs a left- and right-hand side".into());
+        let mut source = source_rewrite(args)?;
+        name_rewrite(
+            &mut source,
+            self.next_rule,
+            (self.options.proof_mode != ProofMode::Disabled).then_some(&mut self.used_rule_names),
+        );
+        let (encoded, flattened) = self.lower_rewrite(&source)?;
+        if let Some(proofs) = &mut self.state.proofs {
+            proofs
+                .source
+                .add_rewrite(&source)
+                .map_err(|e| e.to_string())?;
+            let resolved = proofs
+                .source
+                .resolve_rewrite(&flattened.rule)
+                .map_err(|e| e.to_string())?;
+            proofs.flattened.insert(source.name.clone(), resolved);
+            proofs.names.insert(source.name.clone(), flattened.names);
         }
-        let lhs = self.term(&args[0], false, None)?;
-        let mut rhs = self.term(&args[1], false, None)?;
-        let mut p = Pattern::new(args);
-        let root = self.pattern_value(&mut p, lhs)?;
-        let mut name = None;
-        let mut when_seen = false;
-        let mut i = 2;
-        while i < args.len() {
-            let key = args[i].atom()?;
-            i += 1;
-            let start = i;
-            while i < args.len() && !matches!(&args[i], Form::Atom(s) if s.starts_with(':')) {
-                i += 1;
-            }
-            let values = &args[start..i];
-            match key {
-                ":ruleset" => return Err("named rulesets are not supported by the slotted schedule; omit :ruleset and use (run N)".into()),
-                ":name" => {
-                    if values.len() != 1 {
-                        return Err(":name expects one argument".into());
-                    }
-                    name = Some(unquote(values[0].atom()?)?);
-                }
-                ":when" => {
-                    if when_seen {
-                        return Err("several :when clauses; use one list of facts".into());
-                    }
-                    when_seen = true;
-                    if values.len() != 1 {
-                        return Err(":when takes one list of facts".into());
-                    }
-                    let facts = values[0].list()?;
-                    if facts.iter().any(|f| !matches!(f, Form::List(_))) {
-                        return Err(":when takes a list of facts".into());
-                    }
-                    for fact in facts {
-                        self.pattern_fact(&mut p, fact)?;
-                    }
-                }
-                _ => return Err(format!("unsupported rewrite option {key}")),
-            }
+        self.next_rule += 1;
+        Ok(encoded)
+    }
+
+    pub(super) fn lower_rewrite(
+        &mut self,
+        source: &SourceRewrite,
+    ) -> Result<(String, flatten::Rewrite), String> {
+        let lhs_form = Form::from_expr(&source.lhs);
+        let rhs_form = Form::from_expr(&source.rhs);
+        let facts: Vec<_> = source.conditions.iter().map(Form::from_fact).collect();
+        let mut forms = vec![lhs_form.clone(), rhs_form.clone()];
+        forms.extend(facts.clone());
+        let lhs = self.term(&lhs_form, false, None)?;
+        let mut rhs = self.term(&rhs_form, false, None)?;
+        let mut p = Pattern::new(&forms);
+        let root = self.pattern_value(&mut p, lhs.clone())?;
+        if !matches!(lhs, Term::Node(_, _)) {
+            p.proof_names.patterns.insert(0, vec![]);
+        }
+        for fact in &facts {
+            self.pattern_fact(&mut p, fact)?;
         }
         if self.options.no_aliasing && p.patterns > 1 {
             return Err("no-aliasing mode requires a single nested pattern".into());
@@ -817,20 +856,148 @@ impl Compiler {
         }
         self.global_terms(&mut p, &mut rhs, None);
         self.finish_pattern(&mut p)?;
-        let result = rewrite::compile(
+        let mut flattened = flatten::rewrite(
+            &self.state.lang,
+            &root,
+            &lhs,
+            &rhs,
+            &p.atoms,
+            &p.conditions,
+            p.proof_names,
+        );
+        let (encoded, names) = rewrite::compile(
             &self.state.lang,
             rewrite::Rewrite {
                 root: &root,
                 atoms: &p.atoms,
                 rhs: &rhs,
                 conditions: p.conditions,
-                name: name.as_deref(),
+                name: Some(&source.name),
                 ordinal: self.state.rules,
                 nested: self.options.no_aliasing,
             },
+            flattened.names,
         )?;
         self.state.rules += 1;
-        Ok(result)
+        flattened.names = names;
+        flattened.rule.name = source.name.clone();
+        Ok((encoded, flattened))
+    }
+
+    fn proof_claim(&mut self, fact: &Form) -> Result<Option<String>, String> {
+        fn ground(term: &Term) -> bool {
+            match term {
+                Term::Node(_, args) => args.iter().all(ground),
+                Term::Slot(_) | Term::Global(_) | Term::Payload(_) => true,
+                _ => false,
+            }
+        }
+        let (kind, terms) = fact.call()?;
+        if !matches!(kind, "=" | "renaming-=") || terms.len() != 2 {
+            return Ok(None);
+        }
+        let ts = terms
+            .iter()
+            .map(|t| self.term(t, false, None))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !ts.iter().all(ground) {
+            return Ok(None);
+        }
+        let mut slots = BTreeSet::new();
+        for term in &ts {
+            term.slot_literals(&mut slots);
+        }
+        for slot in slots {
+            self.state.lang.slot_names.intern(&slot)?;
+        }
+        let mut p = Pattern::new(std::slice::from_ref(fact));
+        let mut roots = Vec::new();
+        let mut patterns = Vec::new();
+        for term in ts {
+            let is_node = matches!(term, Term::Node(_, _));
+            roots.push(self.pattern_value(&mut p, term)?);
+            patterns.push(if is_node {
+                p.proof_names.patterns.last().unwrap().clone()
+            } else {
+                vec![]
+            });
+        }
+        p.conditions.comparisons.push((
+            query::Comparison::parse(kind).unwrap(),
+            roots[0].clone(),
+            roots[1].clone(),
+        ));
+        self.finish_pattern(&mut p)?;
+        let q = self.compile_check(&p)?;
+        p.proof_names.patterns = patterns;
+        p.proof_names.classes = q.classes.iter().cloned().collect();
+        p.proof_names.readings = q.readings.clone();
+        p.proof_names.frame = q.frame.clone();
+        let proofs = self.state.proofs.as_ref().expect("proof compilation state");
+        let source = proofs.source.snapshot().map_err(|e| e.to_string())?;
+        let mut flattened = source.clone();
+        for command in &mut flattened.commands {
+            if let ResolvedNCommand::NormRule { rule } = command {
+                *rule = proofs.flattened[&rule.name].clone();
+            }
+        }
+        let claim = SlottedClaim {
+            kind: kind.into(),
+            lhs: terms[0].expr()?,
+            rhs: terms[1].expr()?,
+            lhs_root: roots[0].clone(),
+            rhs_root: roots[1].clone(),
+            slot_names: self
+                .state
+                .lang
+                .slot_names
+                .entries()
+                .map(|(name, id)| (name.to_owned(), id))
+                .collect(),
+            names: p.proof_names,
+        };
+        let id = self.next_proof;
+        self.next_proof += 1;
+        self.proof_requests.insert(
+            id,
+            Arc::new(ProofRequest {
+                source,
+                flattened,
+                names: proofs.names.clone(),
+                claim,
+            }),
+        );
+        let proof = format!("(slotted-prove {id} {})", q.body.join(" "));
+        Ok(Some(self.refine_check(&q, &proof)?))
+    }
+
+    fn compile_check(&self, p: &Pattern) -> Result<query::Query, String> {
+        let anchor = p.atoms.first().map(|a| a.root.as_str()).or_else(|| {
+            p.conditions
+                .values
+                .first()
+                .map(|(root, _, _)| root.as_str())
+        });
+        query::compile(
+            &self.state.lang,
+            &p.atoms,
+            &p.conditions,
+            "_check_",
+            true,
+            anchor,
+            self.options.no_aliasing,
+        )
+    }
+
+    fn refine_check(&mut self, q: &query::Query, check: &str) -> Result<String, String> {
+        let split = q.split.ok_or("check has no matching frame")?;
+        let ordinal = self.next_check;
+        self.next_check += 1;
+        Ok(format!(
+            "(push)\n(ruleset $$slotted_check)\n(rule ({}) ((Idx {} 0)) :ruleset $$slotted_check :name \"slotted/check/{ordinal}\")\n(run-schedule (run $$slotted_check))\n(run-schedule (saturate (run slotted-refine)))\n{check}\n(pop)",
+            q.body[..split].join(" "),
+            q.length
+        ))
     }
 
     fn check(&mut self, f: &Form, negated: bool) -> Result<String, String> {
@@ -840,6 +1007,13 @@ impl Compiler {
                 return Err("slotted fail takes a check".into());
             }
             return self.check(&args[0], !negated);
+        }
+        if !negated
+            && self.options.proof_mode == ProofMode::Prove
+            && let [fact] = args
+            && let Some(proof) = self.proof_claim(fact)?
+        {
+            return Ok(proof);
         }
         if args.is_empty() {
             return Ok(if negated { "(fail (check))" } else { "(check)" }.into());
@@ -865,7 +1039,7 @@ impl Compiler {
             let mut names = Pattern::new(args).names;
             let mut pattern = vec![Form::Atom(ctor.into())];
             for column in op.columns {
-                let stem = if column == Column::Binder {
+                let stem = if matches!(column, Column::Var | Column::Binder) {
                     "$_bound"
                 } else {
                     "_child"
@@ -887,23 +1061,197 @@ impl Compiler {
             self.pattern_fact(&mut p, fact)?;
         }
         self.finish_pattern(&mut p)?;
-        let anchor = p.atoms.first().map(|a| a.root.as_str()).or_else(|| {
-            p.conditions
-                .values
-                .first()
-                .map(|(root, _, _)| root.as_str())
-        });
-        let q = query::compile(
-            &self.state.lang,
-            &p.atoms,
-            &p.conditions,
-            "_check_",
-            true,
-            anchor,
-            self.options.no_aliasing,
-        )?;
+        let q = self.compile_check(&p)?;
+        if self.options.proof_mode != ProofMode::Disabled {
+            let check = call("check", q.body.iter().cloned());
+            let check = if negated {
+                format!("(fail {check})")
+            } else {
+                check
+            };
+            return self.refine_check(&q, &check);
+        }
         Ok(super::check::emit(&q, f, !negated))
     }
+}
+
+pub(super) fn source_constructor<'a>(
+    f: &Form,
+    carriers: impl Iterator<Item = &'a str>,
+    constructors: impl Iterator<Item = &'a Constructor>,
+) -> Result<Constructor, String> {
+    let carriers = carriers.collect::<BTreeSet<_>>();
+    let constructors = constructors.collect::<Vec<_>>();
+    let (_, args) = f.call()?;
+    if args.len() < 3 {
+        return Err("constructor expects a name, input sorts, and output sort".into());
+    }
+    let name = args[0].symbol()?.to_owned();
+    if name.starts_with('$') {
+        return Err("constructor names cannot start with $".into());
+    }
+    let sort = args[2].symbol()?.to_owned();
+    if constructors.iter().any(|op| op.name == name) {
+        return Err(format!("constructor {name:?} is declared more than once"));
+    }
+    if !carriers.contains(sort.as_str()) {
+        return Err(format!(
+            "constructor {name}: output sort {sort} is not a declared equality sort"
+        ));
+    }
+    let cols = args[1]
+        .list()?
+        .iter()
+        .map(Form::atom)
+        .collect::<Result<Vec<_>, _>>()?;
+    let child_count = cols
+        .iter()
+        .filter(|s| **s == "Var" || carriers.contains(**s))
+        .count();
+    let mut binders = BTreeSet::new();
+    let mut in_binder = false;
+    for f in &args[3..] {
+        let t = f.atom()?;
+        if t == ":binder" {
+            in_binder = true;
+        } else if t.starts_with(':') {
+            return Err(format!("constructor {name}: option {t} is not supported"));
+        } else {
+            if !in_binder {
+                return Err(format!("constructor {name}: expected :binder"));
+            }
+            let i = t
+                .parse::<usize>()
+                .map_err(|_| format!("constructor {name}: invalid binder position {t}"))?;
+            if !binders.insert(i) {
+                return Err(format!("constructor {name}: duplicate binder position"));
+            }
+        }
+    }
+    if let (Some(&lo), Some(&hi)) = (binders.first(), binders.last()) {
+        if hi >= child_count.saturating_sub(1) {
+            return Err(format!(
+                "constructor {name}: binder positions must cover a following child"
+            ));
+        }
+        if binders.len() != hi - lo + 1 {
+            return Err(format!(
+                "constructor {name}: binder positions must be contiguous"
+            ));
+        }
+    }
+    let variable = cols == ["Var"] && binders.is_empty();
+    if variable
+        && let Some(previous) = constructors
+            .iter()
+            .find(|op| op.sort == sort && op.columns == [Column::Var])
+    {
+        return Err(format!(
+            "equality sort {sort:?} already has variable constructor {}",
+            previous.name
+        ));
+    }
+    let mut child = 0;
+    let mut columns = Vec::new();
+    for col in cols {
+        if col == "Var" {
+            columns.push(if binders.contains(&child) {
+                    Column::Binder
+                } else if variable {
+                    Column::Var
+                } else {
+                    return Err(format!("constructor {name}: Var arguments must be binders or the unary variable constructor"));
+                });
+            child += 1;
+        } else if carriers.contains(col) {
+            if col != sort {
+                return Err(format!(
+                    "constructor {name}: cross-sort slotted children are not supported"
+                ));
+            }
+            if binders.contains(&child) {
+                return Err(format!(
+                    "constructor {name}: binder columns must have sort Var"
+                ));
+            }
+            columns.push(Column::Child);
+            child += 1;
+        } else if ["i64", "String"].contains(&col) {
+            columns.push(Column::Payload(col.into()));
+        } else {
+            return Err(format!(
+                "constructor {name}: unsupported payload sort {col}"
+            ));
+        }
+    }
+    Ok(Constructor {
+        name,
+        sort,
+        columns,
+    })
+}
+
+pub(super) fn name_rewrite(
+    source: &mut SourceRewrite,
+    ordinal: usize,
+    used: Option<&mut BTreeSet<String>>,
+) {
+    let name = if source.name.is_empty() {
+        format!("_slotted_match_{ordinal}")
+    } else {
+        source.name.clone()
+    };
+    source.name = name.clone();
+    if let Some(used) = used {
+        let mut suffix = ordinal;
+        while !used.insert(source.name.clone()) {
+            source.name = format!("{name}#{suffix}");
+            suffix += 1;
+        }
+    }
+}
+
+pub(super) fn source_rewrite(args: &[Form]) -> Result<SourceRewrite, String> {
+    if args.len() < 2 {
+        return Err("rewrite needs a left- and right-hand side".into());
+    }
+    let mut source = SourceRewrite {
+        span: egglog::span!(),
+        lhs: args[0].expr()?,
+        rhs: args[1].expr()?,
+        conditions: vec![],
+        name: String::new(),
+    };
+    let mut when_seen = false;
+    let mut i = 2;
+    while i < args.len() {
+        let key = args[i].atom()?;
+        i += 1;
+        let start = i;
+        while i < args.len() && !matches!(&args[i], Form::Atom(s) if s.starts_with(':')) {
+            i += 1;
+        }
+        let values = &args[start..i];
+        match key {
+            ":ruleset" => return Err("named rulesets are not supported by the slotted schedule; omit :ruleset and use (run N)".into()),
+            ":name" => {
+                let [value] = values else { return Err(":name expects one argument".into()) };
+                source.name = unquote(value.atom()?)?;
+            }
+            ":when" => {
+                if when_seen { return Err("several :when clauses; use one list of facts".into()); }
+                when_seen = true;
+                let [value] = values else { return Err(":when takes one list of facts".into()) };
+                let facts = value.list()?;
+                if facts.iter().any(|fact| !matches!(fact, Form::List(_))) {
+                    return Err(":when takes a list of facts".into());
+                }
+                source.conditions = facts.iter().map(Form::fact).collect::<Result<_, _>>()?;
+            }
+            _ => return Err(format!("unsupported rewrite option {key}")),
+        }
+    }
+    Ok(source)
 }
 
 fn read(
@@ -911,8 +1259,15 @@ fn read(
     source: &str,
     active: &mut BTreeSet<std::path::PathBuf>,
 ) -> Result<Vec<(Form, Span)>, ParseError> {
+    expand_includes(syntax::parse(filename, source)?, active)
+}
+
+pub(super) fn expand_includes(
+    forms: Vec<(Form, Span)>,
+    active: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<Vec<(Form, Span)>, ParseError> {
     let mut out = Vec::new();
-    for (form, span) in syntax::parse(filename, source)? {
+    for (form, span) in forms {
         if let Ok(("include", [arg])) = form.call() {
             let file = unquote(arg.atom().map_err(|e| ParseError(span.clone(), e))?)
                 .map_err(|e| ParseError(span.clone(), e))?;
@@ -932,7 +1287,11 @@ fn read(
     Ok(out)
 }
 
-fn declarations(f: &Form, sorts: &mut Vec<String>, ctors: &mut Vec<Form>) -> Result<(), String> {
+pub(super) fn declarations(
+    f: &Form,
+    sorts: &mut Vec<String>,
+    ctors: &mut Vec<Form>,
+) -> Result<(), String> {
     let (head, args) = f.call()?;
     match head {
         "sort" if args.len() == 1 => sorts.push(args[0].symbol()?.into()),

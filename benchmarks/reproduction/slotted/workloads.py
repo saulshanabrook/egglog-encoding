@@ -45,7 +45,7 @@ def logic_source(path, *, text=None):
         raise ValueError(f"{path.name}: reference case studies require one equality sort")
     # These constructors have identical names and column order in xmulti's L.
     for op in src.lang.ops.values():
-        op.ref = op.ctor
+        op.ref = "var" if op.sig == [syntax.SLOT] else op.ctor
     return src
 
 
@@ -83,8 +83,11 @@ def logic_workload(path, *, rounds=None):
     def term(form):
         return src.lang.sexpr(src.term(form, ground=True))
 
-    # Rust initializes one variable class even for a closed program.
-    head = [f"rounds {budget}", *ctor_lines(src.lang), f"term {term(goal[0])}", "term (var $0)"]
+    # Seed the same variable node explicitly in both engines, including closed inputs.
+    head = [f"rounds {budget}", *ctor_lines(src.lang), f"term {term(goal[0])}"]
+    variable = src.carriers[src.sorts[0]].var
+    if variable is not None:
+        head.append("term (var $0)")
     head += [f"union {term(a)} {term(b)}" for a, b in unions]
     tail = [f"goal {term(goal[1])}"]
     multi = [line for rule in rules for line in syntax.rule_lines(src, src.lang, rule)]
@@ -97,6 +100,9 @@ def logic_workload(path, *, rounds=None):
         unsupported = str(exc)
     forms = syntax.parse(program)
     forms = [["run", str(budget)] if f[0] == "run" else f for f in forms]
+    first_action = next(i for i, form in enumerate(forms) if form[0] in ("union", "run"))
+    if variable is not None:
+        forms.insert(first_action, ["let", "_variable_seed", [variable, "$0"]])
     return Workload(
         study="logic",
         case=path.stem,
@@ -141,7 +147,7 @@ def array_program(start, target, rounds, *, with_target):
 
     def term(t):
         if t[0] == "var":
-            return f"${t[1]}"
+            return f"({array_bench.LANG.symbols_for(array_bench.LANG.default_sort).var} ${t[1]})"
         op = array_bench.LANG.ops[t[0]]
         args = []
         for kind, arg in zip(op.arg_kinds(), t[1:], strict=True):

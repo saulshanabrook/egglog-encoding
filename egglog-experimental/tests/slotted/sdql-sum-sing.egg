@@ -11,12 +11,13 @@
 ;;; the match has to solve to that same slot.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor Sing (U U) U)
-(constructor Sum (U U U U) U :binder 1 2)
+(constructor Sum (U Var Var U) U :binder 1 2)
 (constructor Null () U)
 
-(rewrite (Sum e1 $k $v (Sing $k $v)) e1 :name "sum-sing")
+(rewrite (Sum e1 $k $v (Sing (V $k) (V $v))) e1 :name "sum-sing")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; it fires, and on the body written with any slots
@@ -24,7 +25,7 @@
 (push)
 
 (let r (Sing (Null) (Null)))
-(let s (Sum r $5 $6 (Sing $5 $6)))
+(let s (Sum r $5 $6 (Sing (V $5) (V $6))))
 (run 2)
 
 (check (= s r))
@@ -37,7 +38,7 @@
 (push)
 
 (let r (Sing (Null) (Null)))
-(let swapped (Sum r $5 $6 (Sing $6 $5)))
+(let swapped (Sum r $5 $6 (Sing (V $6) (V $5))))
 (run 2)
 
 (check (!= swapped r))

@@ -1,6 +1,6 @@
 {
-  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (g (var $0) (f (var $0) (var $1)))\nterm (var $0)\nunion (f (var $0) (var $1)) (f (var $1) (var $0))\nrule\natom _sl1 var $x\natom _p g _sl1 _t1\natom _sl2 var $x\natom _t1 f a _sl2\nrhs _p (h ?a (var $x))\n",
-  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (g (var $0) (f (var $0) (var $1)))\nterm (var $0)\nunion (f (var $0) (var $1)) (f (var $1) (var $0))\nrule\nnested (g (var $x) (f ?a (var $x)))\nrhs root (h ?a (var $x))\n",
+  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (g (var $0) (f (var $0) (var $1)))\nterm (var $0)\nunion (f (var $0) (var $1)) (f (var $1) (var $0))\nrule\natom _sl1 var $x\natom _p g _sl1 _t1\natom _sl2 var $x\natom _t1 f a _sl2\nrhs _p (h ?a (var $x))\n",
+  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (g (var $0) (f (var $0) (var $1)))\nterm (var $0)\nunion (f (var $0) (var $1)) (f (var $1) (var $0))\nrule\nnested (g (var $x) (f ?a (var $x)))\nrhs root (h ?a (var $x))\n",
   "probes": [],
   "expect": {
     "full_nodes_exceed_compat": false

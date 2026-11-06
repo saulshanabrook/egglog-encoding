@@ -1,6 +1,7 @@
 ; Frozen differential input; see generate_differential.py.
 (sort U)
-(constructor Lam (U U) U :binder 0)
+(constructor V (Var) U)
+(constructor Lam (Var U) U :binder 0)
 (constructor F (U U) U)
 (constructor G (U U) U)
 (constructor H (U U) U)
@@ -10,6 +11,7 @@
 (constructor Add (U U) U)
 (constructor Num (i64) U)
 (constructor Null () U)
-(let start (F $a0 (G $0 (Null))))
+(let _variable_seed (V $0))
+(let start (F (V $a0) (G (V $0) (Null))))
 (rewrite (F a (G b n)) (H a b))
 (run 1)

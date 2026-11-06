@@ -23,7 +23,11 @@ use crate::{
 };
 use egglog_ast::generic_ast::Literal;
 use egglog_numeric_id::{DenseIdMap, NumericId, define_id};
-use std::{fmt, rc::Rc};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    rc::Rc,
+};
 
 define_id!(
     pub(super) RawProofId,
@@ -36,6 +40,23 @@ impl fmt::Display for ProofId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.index())
     }
+}
+
+/// Print a proof S-expression with let bindings for shared subproofs and terms.
+pub fn proof_term_to_string(dag: &TermDag, proof: TermId) -> String {
+    let mut symbols = SymbolGen::new(String::new());
+    let mut buffer = String::new();
+    let root = dag.to_string_with_let_internal(&mut symbols, proof, &mut buffer, |head| {
+        match head {
+            "=" => "prop",
+            "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "Proj"
+            | "ContainerNormalize" | "Eval" | "Equivariance" | "Alpha" | "RenamingEq" => "prf",
+            _ => "t",
+        }
+        .to_string()
+    });
+    buffer.push_str(&root);
+    buffer
 }
 
 /// Find the subexpression at pre-order position `idx` in `expr`'s tree (index 0
@@ -374,7 +395,7 @@ impl Proposition {
 }
 
 /// A proof shows that a [`Proposition`] is true, justified by a [`Justification`].
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Proof {
     pub(super) proposition: Proposition,
     pub(super) justification: Justification,
@@ -388,7 +409,7 @@ pub struct Proof {
 /// [`Proposition`] being proven (in a [`Proof`]).
 /// Additionally, [`Justification::Rule`] includes the explicit substitution mapping variable names to terms,
 /// while `RawProof::Rule` leaves this implicit.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Justification {
     /// Equalities added at the top level are justified by fiat.
     /// Primitive reflexive equalities like 2 = 2 are also justified by Fiat.
@@ -459,6 +480,51 @@ pub enum Justification {
     /// rule is checked (see `check_side_condition`), which is what establishes
     /// the container's value. The `Proof`'s proposition is a placeholder.
     Eval,
+}
+
+impl Justification {
+    /// Immediate proof dependencies, in the order used by this step.
+    pub fn premises(&self) -> Vec<ProofId> {
+        match self {
+            Self::Fiat | Self::Eval => vec![],
+            Self::Rule { premise_proofs, .. } => premise_proofs.clone(),
+            Self::MergeFn {
+                old_proof,
+                new_proof,
+                ..
+            } => vec![*old_proof, *new_proof],
+            Self::Trans(left, right) => vec![*left, *right],
+            Self::Sym(proof) | Self::Proj { proof, .. } | Self::ContainerNormalize { proof } => {
+                vec![*proof]
+            }
+            Self::Congr {
+                proof, child_proof, ..
+            } => vec![*proof, *child_proof],
+        }
+    }
+}
+
+impl Hash for Justification {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        self.premises().hash(state);
+        match self {
+            Self::Rule {
+                name, substitution, ..
+            } => {
+                name.hash(state);
+                // IndexMap equality ignores insertion order.
+                let mut bindings: Vec<_> = substitution.iter().collect();
+                bindings.sort_unstable_by_key(|(name, _)| *name);
+                bindings.hash(state);
+            }
+            Self::MergeFn { function, .. } => function.hash(state),
+            Self::Congr { child_index, .. } | Self::Proj { child_index, .. } => {
+                child_index.hash(state)
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The [`RawProof`] a constructor states, over its arguments and its
@@ -807,6 +873,11 @@ impl ProofStore {
         &self.term_dag
     }
 
+    /// Intern terms used by proofs and their checking context.
+    pub fn term_dag_mut(&mut self) -> &mut TermDag {
+        &mut self.term_dag
+    }
+
     /// Recompute a container term's canonical form by applying the constructor
     /// validator registered for its head (the container's own term normalizer).
     /// Non-container terms, and heads with no validator, are returned unchanged.
@@ -962,6 +1033,11 @@ impl ProofStore {
         &self.id_to_proof[proof_id]
     }
 
+    /// Every proof in the store, by id.
+    pub fn proofs(&self) -> impl Iterator<Item = (ProofId, &Proof)> {
+        self.id_to_proof.iter()
+    }
+
     /// Add a proof, sharing one node per distinct `key`. The e-graph
     /// hash-conses its own proof rows, so proofs reconstructed during lifting
     /// must be shared too — otherwise a subproof reached along several paths
@@ -978,15 +1054,16 @@ impl ProofStore {
     /// Format a proof as one parenthesized s-expression containing its local
     /// bindings and final proof term.
     pub fn proof_to_string(&self, proof_id: ProofId) -> String {
-        let symbol_gen = &mut SymbolGen::new("".to_string());
-        let mut buffer = String::new();
-        let res = self.print_to_buffer(symbol_gen, proof_id, &mut buffer);
-        buffer.push_str(&res);
-        format!("(\n{buffer}\n)")
+        let mut dag = self.term_dag.clone();
+        let mut cache = HashMap::default();
+        let proof = self.proof_to_term_for_printing(&mut dag, proof_id, &mut cache);
+        format!("(\n{}\n)", proof_term_to_string(&dag, proof))
     }
 
-    /// An empty store over `term_dag`.
-    pub(super) fn new(
+    /// An empty store over `term_dag`. The caller supplies trusted container
+    /// normalizers by constructor head and the base-value constructor heads
+    /// whose applications to base values are self-evident.
+    pub fn new(
         term_dag: TermDag,
         container_normalizers: HashMap<String, PrimitiveValidator>,
         prim_value_constructors: HashSet<String>,
@@ -1835,28 +1912,6 @@ impl ProofStore {
         self.term_dag.app(head.clone(), updated_children)
     }
 
-    /// Print a proof with the given id, with subproofs and terms
-    /// added as let bindings in `buffer`.
-    /// Returns the printed proof string.
-    fn print_to_buffer(
-        &self,
-        symbol_gen: &mut SymbolGen,
-        proof_id: ProofId,
-        buffer: &mut String,
-    ) -> String {
-        let mut dag = self.term_dag.clone();
-        let mut cache = HashMap::default();
-        let proof_term_id = self.proof_to_term_for_printing(&mut dag, proof_id, &mut cache);
-        dag.to_string_with_let_internal(symbol_gen, proof_term_id, buffer, |constructor| {
-            match constructor {
-                "=" => "prop".to_string(),
-                "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "Proj"
-                | "ContainerNormalize" | "Eval" => "prf".to_string(),
-                _ => "t".to_string(),
-            }
-        })
-    }
-
     fn proof_to_term_for_printing(
         &self,
         dag: &mut TermDag,
@@ -1869,14 +1924,33 @@ impl ProofStore {
 
         let proof = &self.id_to_proof[proof_id];
 
+        let term_id = proof.to_term(
+            dag,
+            |term| term,
+            |dag, premise| self.proof_to_term_for_printing(dag, premise, cache),
+        );
+
+        cache.insert(proof_id, term_id);
+        term_id
+    }
+}
+
+impl Proof {
+    /// Render one step, mapping its terms and obtaining rendered premises from the caller.
+    pub fn to_term(
+        &self,
+        dag: &mut TermDag,
+        term: impl Fn(TermId) -> TermId,
+        mut premise: impl FnMut(&mut TermDag, ProofId) -> TermId,
+    ) -> TermId {
         // Helper to create (= lhs rhs) term
         let make_equality = |dag: &mut TermDag, lhs: TermId, rhs: TermId| -> TermId {
             dag.app("=".to_string(), vec![lhs, rhs])
         };
 
-        let term_id = match &proof.justification {
+        match &self.justification {
             Justification::Fiat => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
                 dag.app("Fiat".to_string(), vec![equality])
             }
             Justification::Rule {
@@ -1884,19 +1958,19 @@ impl ProofStore {
                 premise_proofs,
                 substitution,
             } => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
                 let name_literal = dag.lit(Literal::String(name.clone()));
                 let name_term = dag.app("name".to_string(), vec![name_literal]);
 
                 let premise_terms: Vec<TermId> = premise_proofs
                     .iter()
-                    .map(|pid| self.proof_to_term_for_printing(dag, *pid, cache))
+                    .map(|pid| premise(dag, *pid))
                     .collect();
                 let premises_term = dag.app("premises".to_string(), premise_terms);
 
                 let substitution_terms: Vec<TermId> = substitution
                     .iter()
-                    .map(|(var, term_id)| dag.app(var.clone(), vec![*term_id]))
+                    .map(|(var, term_id)| dag.app(var.clone(), vec![term(*term_id)]))
                     .collect();
                 let substitution_term = dag.app("substitution".to_string(), substitution_terms);
 
@@ -1910,9 +1984,9 @@ impl ProofStore {
                 old_proof,
                 new_proof,
             } => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let old_term_id = self.proof_to_term_for_printing(dag, *old_proof, cache);
-                let new_term_id = self.proof_to_term_for_printing(dag, *new_proof, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let old_term_id = premise(dag, *old_proof);
+                let new_term_id = premise(dag, *new_proof);
                 let function_term = dag.var(function.clone());
                 dag.app(
                     "Merge".to_string(),
@@ -1920,17 +1994,17 @@ impl ProofStore {
                 )
             }
             Justification::Trans(left, right) => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let left_term_id = self.proof_to_term_for_printing(dag, *left, cache);
-                let right_term_id = self.proof_to_term_for_printing(dag, *right, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let left_term_id = premise(dag, *left);
+                let right_term_id = premise(dag, *right);
                 dag.app(
                     "Trans".to_string(),
                     vec![equality, left_term_id, right_term_id],
                 )
             }
             Justification::Sym(inner) => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let inner_term_id = self.proof_to_term_for_printing(dag, *inner, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let inner_term_id = premise(dag, *inner);
                 dag.app("Sym".to_string(), vec![equality, inner_term_id])
             }
             Justification::Congr {
@@ -1938,9 +2012,9 @@ impl ProofStore {
                 child_index,
                 child_proof,
             } => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let base_term_id = self.proof_to_term_for_printing(dag, *base, cache);
-                let child_term_id = self.proof_to_term_for_printing(dag, *child_proof, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let base_term_id = premise(dag, *base);
+                let child_term_id = premise(dag, *child_proof);
                 let index_term = dag.lit(Literal::Int(*child_index as i64));
                 dag.app(
                     "Congr".to_string(),
@@ -1951,28 +2025,31 @@ impl ProofStore {
                 proof: base,
                 child_index,
             } => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let base_term_id = self.proof_to_term_for_printing(dag, *base, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let base_term_id = premise(dag, *base);
                 let index_term = dag.lit(Literal::Int(*child_index as i64));
                 dag.app("Proj".to_string(), vec![equality, base_term_id, index_term])
             }
             Justification::ContainerNormalize { proof: inner } => {
-                let equality = make_equality(dag, proof.lhs(), proof.rhs());
-                let inner_term_id = self.proof_to_term_for_printing(dag, *inner, cache);
+                let equality = make_equality(dag, term(self.lhs()), term(self.rhs()));
+                let inner_term_id = premise(dag, *inner);
                 dag.app(
                     "ContainerNormalize".to_string(),
                     vec![equality, inner_term_id],
                 )
             }
             Justification::Eval => dag.app("Eval".to_string(), vec![]),
-        };
-
-        cache.insert(proof_id, term_id);
-        term_id
+        }
     }
-}
 
-impl Proof {
+    /// Construct an unchecked proof step.
+    pub fn new(proposition: Proposition, justification: Justification) -> Self {
+        Self {
+            proposition,
+            justification,
+        }
+    }
+
     /// Get the proposition the proof proves
     pub fn proposition(&self) -> &Proposition {
         &self.proposition

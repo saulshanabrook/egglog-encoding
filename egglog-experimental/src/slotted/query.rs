@@ -1,92 +1,18 @@
 //! Multipattern matching, shared by rewrites and checks.
+use super::flatten::Atom;
 use super::model::*;
 use super::syntax::quote;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug)]
-pub(super) struct Atom {
-    pub root: String,
-    pub op: String,
-    pub kids: Vec<Term>,
-    pub pays: Vec<Term>,
-}
-
-/// Names shared by all patterns in one query, including generated names.
-#[derive(Default)]
-pub(super) struct PatternNames(BTreeSet<String>);
-
-impl PatternNames {
-    pub fn reserve(&mut self, name: &str) {
-        self.0.insert(name.to_owned());
-    }
-
-    pub fn fresh(&mut self, stem: &str) -> String {
-        let mut name = stem.to_owned();
-        let mut suffix = 0;
-        while !self.0.insert(name.clone()) {
-            suffix += 1;
-            name = format!("{stem}_{suffix}");
-        }
-        name
-    }
-}
-
-pub(super) fn flatten(
-    lang: &Language,
-    t: &Term,
-    root: &str,
-    tmp: &str,
-    names: &mut PatternNames,
-) -> Result<Vec<Atom>, String> {
-    fn go(
-        lang: &Language,
-        t: &Term,
-        root: String,
-        tmp: &str,
-        id: &mut usize,
-        names: &mut PatternNames,
-        out: &mut Vec<Atom>,
-    ) -> Result<(), String> {
-        let Term::Node(n, args) = t else {
-            return Err("a pattern's root must be a constructor call".into());
-        };
-        let (children, pays) = lang.constructors[n].split(args);
-        let mut kids = Vec::new();
-        let mut nested = Vec::new();
-        for c in children {
-            match c {
-                Term::Variable(_) | Term::Slot(_) => kids.push(c.clone()),
-                Term::Node(n, _)
-                    if lang.constructors[n].children().is_empty() && !c.has_payload_variable() =>
-                {
-                    kids.push(c.clone())
-                }
-                Term::Node(_, _) => {
-                    *id += 1;
-                    let name = names.fresh(&format!("{tmp}{id}"));
-                    kids.push(Term::Variable(name.clone()));
-                    nested.push((c, name));
-                }
-                _ => return Err("unsupported term in pattern".into()),
-            }
-        }
-        out.push(Atom {
-            root,
-            op: n.clone(),
-            kids,
-            pays: pays.into_iter().cloned().collect(),
-        });
-        for (c, name) in nested {
-            go(lang, c, name, tmp, id, names, out)?;
-        }
-        Ok(())
-    }
-    let mut t = t.clone();
-    lang.refresh_shadowed(&mut t);
-    let mut out = Vec::new();
-    names.reserve(root);
-    go(lang, &t, root.into(), tmp, &mut 0, names, &mut out)?;
-    Ok(out)
+/// Compiler-generated names used to reconstruct source rules and query witnesses.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ProofNames {
+    /// Patterns in source order, empty for terms without constructor atoms.
+    pub patterns: Vec<Vec<(Vec<usize>, String)>>,
+    /// Generated class bindings for pattern variables and atoms.
+    pub classes: BTreeMap<String, String>,
+    pub readings: BTreeMap<String, String>,
+    pub frame: String,
 }
 
 fn variables(a: &Atom) -> BTreeSet<String> {
@@ -223,6 +149,7 @@ pub(super) struct Query {
     pub refined: String,
     pub length: String,
     pub filter_start: usize,
+    pub readings: BTreeMap<String, String>,
     used: BTreeSet<String>,
     prefix: String,
     id: usize,
@@ -287,6 +214,7 @@ fn occurrence(
         && let Some((op, cols, j)) = parents.get(pv)
     {
         let sym = q.fresh(&format!("sym_{}", label(pv)));
+        q.readings.insert(pv.to_owned(), sym.clone());
         let pinned = q.fresh(&format!("pinned_{}", label(pv)));
         facts.push(format!("(= {pinned} (_pinned_{op} {cols} {j}))"));
         facts.push(format!(
@@ -341,14 +269,13 @@ pub(super) fn compile(
     for (root, value, sort) in &conditions.values {
         let sy = lang.symbols(sort);
         let class = q.bind(root);
-        let label = q.fresh("value");
         match value {
             Term::Global(_) => {
                 let edge = q.fresh("global_edge");
                 q.body.push(format!(
                     "({} {} {edge} {class})",
                     sy.renames,
-                    lang.encode(value, sort)
+                    lang.encode(value)
                 ));
                 globals.push(format!(
                     "(child {} (compose {} {edge}) ({} {class}))",
@@ -357,24 +284,12 @@ pub(super) fn compile(
                     sy.free_vars
                 ));
             }
-            Term::Slot(slot) => {
-                q.body.push(format!("(= {class} ({} 0))", sy.var));
-                q.body.push(format!(
-                    "(= {label} (atom {} (root {} ({} {class})) (lit {} (map-of 0 0))))",
-                    quote(&label),
-                    quote(root),
-                    sy.free_vars,
-                    quote(slot)
-                ));
-                literals.insert(slot.clone());
-                avs.push(label);
-            }
-            _ => unreachable!("query values are globals or slots"),
+            _ => unreachable!("query values are term globals"),
         }
         seen.insert(root.clone());
     }
-    for id in conditions.concrete_slots.values() {
-        globals.push(format!("(leaf (map-of 0 {id}))"));
+    for (name, id) in &conditions.concrete_slots {
+        globals.push(format!("(lit {} (map-of 0 {id}))", quote(name)));
     }
     if !globals.is_empty() {
         let label = q.fresh("globals");
@@ -397,7 +312,7 @@ pub(super) fn compile(
                     "e{idx}_{}",
                     match k {
                         Term::Variable(v) => label(v).into(),
-                        Term::Slot(s) => format!("lit_{}", &s[1..]),
+                        Term::Slot(s) => format!("lit_{}", s.strip_prefix('$').unwrap_or(s)),
                         _ => format!("leaf{j}"),
                     }
                 ))
@@ -464,8 +379,10 @@ pub(super) fn compile(
                     seen.insert(pv.clone());
                 }
                 Term::Slot(s) => {
-                    kids.push(format!("({} 0)", sy.var));
-                    literals.insert(s.clone());
+                    kids.push(String::new());
+                    if !conditions.concrete_slots.contains_key(s) {
+                        literals.insert(s.clone());
+                    }
                     bindings.push(format!(
                         "({} {} {e})",
                         if op.binders().contains(&j) {
@@ -504,11 +421,8 @@ pub(super) fn compile(
         }
         for (t, c, j) in reached {
             let ren = q.fresh(&format!("leafren{idx}_{j}"));
-            q.body.push(format!(
-                "({} {} {ren} {c})",
-                sy.renames,
-                lang.encode(t, &op.sort)
-            ));
+            q.body
+                .push(format!("({} {} {ren} {c})", sy.renames, lang.encode(t)));
         }
         q.body.extend(facts);
         let av = q.fresh(&format!("atom_{idx}"));

@@ -694,6 +694,7 @@ dependencies = [
  "codspeed-divan-compat",
  "egglog",
  "egglog-ast",
+ "egglog-numeric-id",
  "egglog-reports",
  "egraph-isomorphism",
  "fixedbitset",
@@ -711,6 +712,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "stacker",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

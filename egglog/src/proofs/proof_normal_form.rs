@@ -44,7 +44,9 @@ fn proof_form_cmd(cmd: ResolvedNCommand, fresh: &mut SymbolGen) -> ResolvedNComm
     })
 }
 
-fn proof_form_fact(
+/// Put a fact in proof normal form, appending prerequisite facts to `res`.
+/// `fresh` must reserve a prefix absent from the surrounding program's variables.
+pub fn proof_form_fact(
     fact: ResolvedFact,
     res: &mut Vec<ResolvedFact>,
     fresh: &mut SymbolGen,

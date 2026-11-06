@@ -1,6 +1,7 @@
 ; Frozen differential input; see generate_differential.py.
 (sort U)
-(constructor Lam (U U) U :binder 0)
+(constructor V (Var) U)
+(constructor Lam (Var U) U :binder 0)
 (constructor F (U U) U)
 (constructor G (U U) U)
 (constructor H (U U) U)
@@ -12,5 +13,5 @@
 (constructor Null () U)
 (rewrite root (G a0 (G a1 (G a2 (G a3 (G a4 a5))))) :when ((= root (Null)) (= p0 (F a0 a0)) (= p1 (F a1 a1)) (= p2 (F a2 a2)) (= p3 (F a3 a3)) (= p4 (F a4 a4)) (= p5 (F a5 a5))) :name "all-refinements")
 (let n (Null))
-(let f (F $0 $0))
+(let f (F (V $0) (V $0)))
 (run 1)

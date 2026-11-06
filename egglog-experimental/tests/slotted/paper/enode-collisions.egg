@@ -13,6 +13,7 @@
 ;;; independently.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor C (U U) U)
 (constructor I (U U) U)
@@ -20,17 +21,17 @@
 (constructor Null () U)
 
 
-(let c01 (C $0 $1))
-(union c01 (C $1 $0))
+(let c01 (C (V $0) (V $1)))
+(union c01 (C (V $1) (V $0)))
 
-(let i01 (I (C $0 $1) (Null)))
-(let i10 (I (C $1 $0) (Null)))
-(let i02 (I (C $0 $2) (Null)))
+(let i01 (I (C (V $0) (V $1)) (Null)))
+(let i10 (I (C (V $1) (V $0)) (Null)))
+(let i02 (I (C (V $0) (V $2)) (Null)))
 
 ;; the same child at two positions, invoked differently at each
-(let n1 (N (C $0 $1) (C $0 $1)))
-(let n2 (N (C $0 $1) (C $1 $0)))
-(let n3 (N (C $1 $0) (C $0 $1)))
+(let n1 (N (C (V $0) (V $1)) (C (V $0) (V $1))))
+(let n2 (N (C (V $0) (V $1)) (C (V $1) (V $0))))
+(let n3 (N (C (V $1) (V $0)) (C (V $0) (V $1))))
 
 (run 0)
 

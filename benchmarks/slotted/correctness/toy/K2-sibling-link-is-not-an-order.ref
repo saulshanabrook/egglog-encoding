@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 6\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (var $0)\nterm (f (h null (var $2)) (f (var $2) null))\nunion (f (h null (var $2)) (f (var $2) null)) (sub (var $0) (var $0))\nrule\natom x3 h x5 x2\natom x6 f x4 x5\natom x7 f x3 x6\naction x7 h x2 x6\nprobe (f (h null (var $2)) (f (var $2) null))\nprobe (sub (var $0) (var $0))\nprobe (h (var $0) (var $1))\nprobe (h (var $0) (var $0))\nprobe null\n",
+  "multi": "rounds 6\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (f (h null (var $2)) (f (var $2) null))\nterm (var $0)\nunion (f (h null (var $2)) (f (var $2) null)) (sub (var $0) (var $0))\nrule\natom x3 h x5 x2\natom x6 f x4 x5\natom x7 f x3 x6\naction x7 h x2 x6\nprobe (f (h null (var $2)) (f (var $2) null))\nprobe (sub (var $0) (var $0))\nprobe (h (var $0) (var $1))\nprobe (h (var $0) (var $0))\nprobe null\n",
   "nested": null,
   "probes": [
     "_p0",

@@ -16,17 +16,18 @@
 ;;; the test that separates `=` from `renaming-=`.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor F (U U) U)
 (constructor G (U U) U)
 (constructor H (U U) U)
 
 
-(let f12 (F $1 $2))
-(let g21 (G $2 $1))
-(let g12 (G $1 $2))
-(let h12 (H $1 $2))
-(let h21 (H $2 $1))
+(let f12 (F (V $1) (V $2)))
+(let g21 (G (V $2) (V $1)))
+(let g12 (G (V $1) (V $2)))
+(let h12 (H (V $1) (V $2)))
+(let h21 (H (V $2) (V $1)))
 (union f12 g21)
 (union g12 h12)
 

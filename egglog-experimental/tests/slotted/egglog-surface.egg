@@ -10,6 +10,7 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/egglog-surface.egg
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor Null () U)
 (constructor Succ (U) U)
@@ -17,7 +18,7 @@
 (constructor Pair (U U) U)
 (constructor IConst () U)
 (constructor Mul (U U) U)
-(constructor Lam (U U) U :binder 0)
+(constructor Lam (Var U) U :binder 0)
 (constructor G (U U) U)
 
 
@@ -40,12 +41,12 @@
 (push)
 (rewrite (Pair x ?x) (G ?x x) :name "distinct-names")
 
-(let pair (Pair $left $right))
+(let pair (Pair (V $left) (V $right)))
 (run 1)
 (let slot_right $right)
 (let slot_left $left)
-(check (= pair (G slot_right slot_left)))
-(fail (check (= pair (G slot_left slot_right))))
+(check (= pair (G (V slot_right) (V slot_left))))
+(fail (check (= pair (G (V slot_left) (V slot_right)))))
 (pop)
 
 
@@ -180,10 +181,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
 (let k (IConst))
-(rewrite (Lam $k (Mul k $k)) k :name "slot-not-global")
+(rewrite (Lam $k (Mul k (V $k))) k :name "slot-not-global")
 
 ;; the bound slot is not free in the body's `k`, so this reduces
-(let ek (Lam $0 (Mul (IConst) $0)))
+(let ek (Lam $0 (Mul (IConst) (V $0))))
 (run 5)
 
 (check (= ek (IConst)))
@@ -199,7 +200,7 @@
 (rewrite (Lam $s b) (Null) :when ((not-free $s (Lam $s b))) :name "shed")
 
 ;; a binder never has its own bound slot free, so the condition holds and it fires
-(let shed-yes (Lam $0 (G $1 $1)))
+(let shed-yes (Lam $0 (G (V $1) (V $1))))
 (run 5)
 (check (= shed-yes (Null)))
 (pop)

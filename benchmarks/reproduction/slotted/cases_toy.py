@@ -130,35 +130,12 @@ def rhs_text(t):
     return syntax.pat_sexpr(LANG, syntax.rhs_of(LANG, t))
 
 
-def check_encodable(case):
-    """Reject a case the encoding cannot represent faithfully.
-
-    A `U` value is an e-node, not an invocation, so a bare `(var $k)` at top level
-    encodes as `(Var 0)` for every k -- the slot is lost. Such a case is not a
-    faithful translation, and it is not shift-equivalent either, since shifting
-    changes what it means on one side only. Slots inside a compound term ride in
-    the stored edges and are fine; `null` has no slot to lose.
-
-    This has been mistaken for a machinery bug twice. Use a compound term with the
-    same slots instead -- `LEAF0` below.
-    """
-    tops = list(case.terms) + list(case.probes)
-    for a, b in case.unions:
-        tops += [a, b]
-    bad = [t for t in tops if t[0] == "var"]
-    if bad:
-        raise AssertionError(
-            f"{case.name}: bare leaf at top level {bad} -- the encoding cannot "
-            f"carry its slot; use a compound term with the same slots"
-        )
-
-
 def _child(c):
     """An atom's child, in the encoder's grammar.
 
-    A child written `$v` is a slot literal, not a pattern variable: the encoding stores
-    a binder's slot as an edge to `(Var 0)`, so the child position is that literal
-    class. One written `#k` is the PAYLOAD LEAF `k`, reached through its own class --
+    A child written `$v` names a variable occurrence, or a rigid Var in a binder
+    position. The source renderer adds the declared variable constructor only
+    in a term position. One written `#k` is the PAYLOAD LEAF `k`, reached through its own class --
     the same spelling the oracle's `atom` line uses for one.
     """
     if c.startswith("#"):

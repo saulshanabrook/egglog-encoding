@@ -24,12 +24,13 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/sdql-beta.egg
 
 (sort U)
+(constructor V (Var) U)
 
-(constructor Let (U U U) U :binder 1)
+(constructor Let (U Var U) U :binder 1)
 (constructor Add (U U) U)
-(constructor Lambda (U U) U :binder 0)
+(constructor Lambda (Var U) U :binder 0)
 (constructor Unique (U) U)
-(constructor Sum (U U U U) U :binder 1 2)
+(constructor Sum (U Var Var U) U :binder 1 2)
 (constructor Num (i64) U)
 (constructor Null () U)
 
@@ -40,7 +41,7 @@
 ;;; A: let $5 = 0 in (var $5)   =   0
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let a (Let (Num 0) $5 $5))
+(let a (Let (Num 0) $5 (V $5)))
 (run 2)
 (check (= a (Num 0)))
 (pop)
@@ -54,13 +55,13 @@
 ;;; answer and this is the case that notices.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let b (Let $7 $5 $5))
+(let b (Let (V $7) $5 (V $5)))
 (run 2)
 (let slot_7 $7)
-(check (= b slot_7))
+(check (= b (V slot_7)))
 ;; and not the answer a dropped renaming would give
 (let slot_5 $5)
-(check (!= b slot_5))
+(check (!= b (V slot_5)))
 (pop)
 
 
@@ -73,10 +74,10 @@
 ;;; `(inverse mb)` has no name for it and the bridge has to mint one.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let c (Let (Num 0) $5 $9))
+(let c (Let (Num 0) $5 (V $9)))
 (run 2)
 (let slot_9 $9)
-(check (= c slot_9))
+(check (= c (V slot_9)))
 (pop)
 
 
@@ -86,8 +87,8 @@
 ;;;     let $5 = 0 in ((var $5) + (var $9))   =   (0 + (var $9))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let d (Let (Num 0) $5 (Add $5 $9)))
-(let want (Add (Num 0) $9))
+(let d (Let (Num 0) $5 (Add (V $5) (V $9))))
+(let want (Add (Num 0) (V $9)))
 (run 2)
 (check (= d want))
 (pop)
@@ -104,9 +105,9 @@
 ;;; check is what pins that the replacement's free `$0` was not captured.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let e (Let $0 $1 (Lambda $0 (Add $1 $0))))
-(let capture-avoiding (Lambda $2 (Add $0 $2)))
-(let captured (Lambda $0 (Add $0 $0)))
+(let e (Let (V $0) $1 (Lambda $0 (Add (V $1) (V $0)))))
+(let capture-avoiding (Lambda $2 (Add (V $0) (V $2))))
+(let captured (Lambda $0 (Add (V $0) (V $0))))
 (run 2)
 (check (= e capture-avoiding))
 (check (!= e captured))
@@ -122,8 +123,8 @@
 ;;; instead would produce the constant body, which the negative check rejects.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let f (Let (Num 1) $0 (Lambda $0 $0)))
-(let shadowed (Lambda $7 $7))
+(let f (Let (Num 1) $0 (Lambda $0 (V $0))))
+(let shadowed (Lambda $7 (V $7)))
 (let pierced (Lambda $7 (Num 1)))
 (run 2)
 (check (= f shadowed))
@@ -139,8 +140,8 @@
 ;;; beta would build `wrong` instead of `want`.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let with-binders (Sum (Null) $2 $3 $1))
-(let without-binders (Add (Unique $1) (Null)))
+(let with-binders (Sum (Null) $2 $3 (V $1)))
+(let without-binders (Add (Unique (V $1)) (Null)))
 (union with-binders without-binders)
 (let g (Let (Num 0) $1 with-binders))
 (let want (Sum (Null) $2 $3 (Num 0)))

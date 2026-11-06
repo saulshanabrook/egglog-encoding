@@ -11,11 +11,12 @@
 ;;;     target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/own-sort.egg
 
 (sort S)
+(constructor VS (Var) S)
 
 (constructor Null () S)
 (constructor Succ (S) S)
 (constructor Prev (S) S)
-(constructor Lam (S S) S :binder 0)
+(constructor Lam (Var S) S :binder 0)
 (constructor G (S S) S)
 
 
@@ -39,9 +40,9 @@
 ;;; so the two spellings of the identity are one class.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (push)
-(let id0 (Lam $0 $0))
-(let id7 (Lam $7 $7))
-(let k (Lam $0 $3))
+(let id0 (Lam $0 (VS $0)))
+(let id7 (Lam $7 (VS $7)))
+(let k (Lam $0 (VS $3)))
 (run 0)
 
 (check (= id0 id7))          ; alpha-equivalent, so equal

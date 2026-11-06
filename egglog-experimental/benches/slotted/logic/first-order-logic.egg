@@ -1,9 +1,10 @@
-(sort L) ; the logical sort containing propositions; booleans.
+(sort L)
+(constructor VL (Var) L) ; the logical sort containing propositions; booleans.
 
 (constructor True () L)
 (constructor False () L)
 
-(constructor Forall (L L) L :binder 0)
+(constructor Forall (Var L) L :binder 0)
 (constructor Implies (L L) L)
 (constructor And (L L) L)
 
@@ -31,13 +32,13 @@
 
 ; axioms:
 ; = true (forall x: P(x))
-(union (True) (Forall $0 (P $0)))
+(union (True) (Forall $0 (P (VL $0))))
 
 ; = true (forall x: P(x) -> Q(x))
-(union (True) (Forall $0 (Implies (P $0) (Q $0))))
+(union (True) (Forall $0 (Implies (P (VL $0)) (Q (VL $0)))))
 
 (run 2)
 
 ; goal:
 ; = true (forall x: Q(x))
-(check (= (True) (Forall $0 (Q $0))))
+(check (= (True) (Forall $0 (Q (VL $0)))))

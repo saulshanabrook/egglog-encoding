@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 4\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nterm (var $0)\nterm (app (app map f1) (app (app map f2) arr))\nrule\natom _p app _t1 _t2\natom _cl1 map\natom _t1 app _cl1 f\natom _t2 app _t3 arg\natom _cl2 map\natom _t3 app _cl2 g\nrhs _p (app (app map (lam $fu (app ?f (app ?g (var $fu))))) ?arg)\nprobe (app (app map f1) (app (app map f2) arr))\nprobe (app (app map (lam $0 (app f1 (app f2 (var $0))))) arr)\nprobe (app (app map (lam $0 (app f2 (app f1 (var $0))))) arr)\n",
+  "multi": "rounds 4\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nctor var V\nterm (app (app map f1) (app (app map f2) arr))\nterm (var $0)\nrule\natom _p app _t1 _t2\natom _cl1 map\natom _t1 app _cl1 f\natom _t2 app _t3 arg\natom _cl2 map\natom _t3 app _cl2 g\nrhs _p (app (app map (lam $fu (app ?f (app ?g (var $fu))))) ?arg)\nprobe (app (app map f1) (app (app map f2) arr))\nprobe (app (app map (lam $0 (app f1 (app f2 (var $0))))) arr)\nprobe (app (app map (lam $0 (app f2 (app f1 (var $0))))) arr)\n",
   "nested": null,
   "probes": [
     "_p0",

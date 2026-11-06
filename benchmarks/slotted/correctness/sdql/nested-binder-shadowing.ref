@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 3\nctor * Mult\nctor + Add\nctor - Sub\nctor apply App\nctor binop Binop\nctor eq Equality\nctor get Get\nctor ifthen IfThen\nctor lambda Lambda\nctor merge Merge\nctor null Null\nctor number Num\nctor range Range\nctor sdql-let Let\nctor sing Sing\nctor subarray SubArray\nctor sum Sum\nctor symbol Symbol\nctor unique Unique\nterm (var $0)\nrule\natom _p eq a b\nrhs _p (eq ?b ?a)\nprobe (sum null $5 $5 (var $5))\nprobe (sum null $6 $7 (var $7))\nprobe (sum null $6 $7 (var $6))\nprobe (merge null null $5 $5 $5 (var $5))\nprobe (merge null null $6 $7 $8 (var $8))\nprobe (merge null null $6 $7 $8 (var $6))\n",
+  "multi": "rounds 3\nctor * Mult\nctor + Add\nctor - Sub\nctor apply App\nctor binop Binop\nctor eq Equality\nctor get Get\nctor ifthen IfThen\nctor lambda Lambda\nctor merge Merge\nctor null Null\nctor number Num\nctor range Range\nctor sdql-let Let\nctor sing Sing\nctor subarray SubArray\nctor sum Sum\nctor symbol Symbol\nctor unique Unique\nctor var V\nterm (var $0)\nrule\natom _p eq a b\nrhs _p (eq ?b ?a)\nprobe (sum null $5 $5 (var $5))\nprobe (sum null $6 $7 (var $7))\nprobe (sum null $6 $7 (var $6))\nprobe (merge null null $5 $5 $5 (var $5))\nprobe (merge null null $6 $7 $8 (var $8))\nprobe (merge null null $6 $7 $8 (var $6))\n",
   "nested": null,
   "probes": [
     "_p0",

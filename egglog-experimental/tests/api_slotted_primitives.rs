@@ -1,4 +1,4 @@
-use egglog::{EGraph, Error};
+use egglog::{CommandOutput, EGraph, Error};
 
 #[test]
 fn runtime_registration_is_isolated_from_ordinary_egglog() -> Result<(), Error> {
@@ -42,5 +42,49 @@ fn class_slot_bindings_reject_non_identity_maps() -> Result<(), Error> {
 (check (= (root "p" (map-of 0 0)) (root "p" (map-of 0 0))))
 "#,
     )?;
+    Ok(())
+}
+
+#[test]
+fn coset_reps_are_a_group_with_ordered_elements() -> Result<(), Error> {
+    let mut eg = egglog_experimental::slotted::new_egraph();
+    eg.parse_and_run_program(
+        None,
+        r#"
+; S3 on {0, 1, 2}: pinning slot 0 leaves one representative per preimage of 0
+(let $grp (group-close (set-of (map-of 0 1 1 0 2 2) (map-of 0 1 1 2 2 0))))
+(check (= (set-length $grp) 6))
+(let $reps (group-coset-reps $grp (map-of 0 0)))
+(check (= (set-length $reps) 3))
+(let $elements (group-elements $reps))
+(check (= (vec-get $elements 0) (map-of 0 0 1 1 2 2)))
+(check (= (vec-get $elements 1) (map-of 0 1 1 0 2 2)))
+(check (= (vec-get $elements 2) (map-of 0 1 1 2 2 0)))
+"#,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn group_element_indices_are_independent_of_interning_order() -> Result<(), Error> {
+    for elements in ["(map-of 0 -1) (map-of 0 2)", "(map-of 0 2) (map-of 0 -1)"] {
+        let mut eg = egglog_experimental::slotted::new_egraph_with_proofs();
+        let outputs = eg.parse_and_run_program(
+            None,
+            &format!(
+                r#"
+(datatype Choice (Chosen Renaming))
+(rule ((= r (vec-get (group-elements (set-of {elements})) 0))) ((Chosen r)))
+(run 1)
+(prove (Chosen (map-of 0 -1)))
+"#
+            ),
+        )?;
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
+        );
+    }
     Ok(())
 }

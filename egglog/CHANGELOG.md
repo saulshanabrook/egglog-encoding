@@ -1,6 +1,10 @@
 # Changes
 
 ## [Unreleased] - ReleaseDate
+- Expose proof-step rendering and premise traversal; proofs support equality and hashing.
+- Let extension commands opt into proof support with `UserDefinedCommand::supports_proofs` and expose unsimplified proofs for external translation. Add map and ordering validators.
+- Expose single-step checking, fact normalization, proof construction, and the resolved proof-checking program for checkers that extend the ordinary proof format. Allow rule type resolution with additional typed local bindings.
+
 
 - Tree extraction materializes each reachable table once and re-relaxes only the rows whose children improved (from #956). Costs, chronological tie-breaking and extracted terms are unchanged.
 - Index construction skips constant radix digits and uses wider digits for larger inputs when they reduce the pass count, preserving row order within each key.

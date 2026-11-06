@@ -7,8 +7,8 @@
 ;;; Nothing here means anything. `xdiff.py` compares the encoding against the reference
 ;;; over generated terms, and a neutral language is the point: seven arity-2 operators
 ;;; with no rewrite rules and no algebra, so a disagreement is about the ENCODING and
-;;; never about a rule being wrong. `Lam` is the one binder; the compiler supplies
-;;; the variable constructor.
+;;; never about a rule being wrong. `Lam` is the one binder; `V` is the declared
+;;; variable constructor.
 ;;;
 ;;; `sub2` exists because `sub` is a reference tag in more than one of the oracle's
 ;;; languages; see `toy.ref`.
@@ -16,8 +16,9 @@
 ;;; Compile with: target/debug/egglog-experimental --slotted egglog-experimental/tests/slotted/languages/toy.egg --mode desugar
 
 (sort U)
+(constructor V (Var) U)
 
-(constructor Lam (U U) U :binder 0)              ; Lam(Bind<AppliedId>)      "lam"
+(constructor Lam (Var U) U :binder 0)              ; Lam(Bind<AppliedId>)      "lam"
 (constructor F (U U) U)                          ; F(AppliedId, AppliedId)   "f"
 (constructor G (U U) U)                          ; G(AppliedId, AppliedId)   "g"
 (constructor H (U U) U)                          ; H(AppliedId, AppliedId)   "h"

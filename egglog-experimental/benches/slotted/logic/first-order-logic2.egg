@@ -1,9 +1,10 @@
-(sort L) ; the logical sort containing propositions; booleans.
+(sort L)
+(constructor VL (Var) L) ; the logical sort containing propositions; booleans.
 
 (constructor True () L)
 (constructor False () L)
 
-(constructor Forall (L L) L :binder 0)
+(constructor Forall (Var L) L :binder 0)
 (constructor Implies (L L) L)
 (constructor And (L L) L)
 
@@ -15,11 +16,11 @@
 (constructor Identity (L) L)
 
 ; 'let x=t in b' = (Let x b t)
-(constructor Let (L L L) L :binder 0)
+(constructor Let (Var L L) L :binder 0)
 
 ; general substitution:
-(rewrite (Let $x $x t) t)
-(rewrite (Let $x $b t) $b)
+(rewrite (Let $x (VL $x) t) t)
+(rewrite (Let $x (VL $b) t) (VL $b))
 (rewrite (Let $x (True) t) (True))
 (rewrite (Let $x (False) t) (False))
 (rewrite (Let $x (Forall $y b) t) (Forall $y (Let $x b t)))
@@ -47,7 +48,7 @@
 
 ; axioms:
 ; = true (forall x: P(x) -> Q(x))
-(union (True) (Forall $0 (Implies (P $0) (Q $0))))
+(union (True) (Forall $0 (Implies (P (VL $0)) (Q (VL $0)))))
 
 ; = true (P c)
 (union (True) (P (C)))

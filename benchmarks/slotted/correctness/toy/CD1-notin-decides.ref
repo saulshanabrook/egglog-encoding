@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 10\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (var $0)\nterm (lam $0 (g (var $1) (var $1)))\nterm (lam $0 (g (var $0) (var $0)))\nrule\natom p lam $s b\ncond notin $s b\naction p = b b\nprobe (lam $0 (g (var $1) (var $1)))\nprobe (g (var $1) (var $1))\nprobe (lam $0 (g (var $0) (var $0)))\nprobe (g (var $0) (var $0))\n",
+  "multi": "rounds 10\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (lam $0 (g (var $1) (var $1)))\nterm (lam $0 (g (var $0) (var $0)))\nterm (var $0)\nrule\natom p lam $s b\ncond notin $s b\naction p = b b\nprobe (lam $0 (g (var $1) (var $1)))\nprobe (g (var $1) (var $1))\nprobe (lam $0 (g (var $0) (var $0)))\nprobe (g (var $0) (var $0))\n",
   "nested": null,
   "probes": [
     "_p0",

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use egglog::{EGraph, Value, ast::FunctionSubtype, sort::S};
+use egglog::{EGraph, Function, Value, ast::FunctionSubtype, sort::S};
 
 use super::model::{Column, Constructor, Symbols};
 
@@ -14,18 +14,38 @@ pub(super) struct Layouts {
     pub constructors: BTreeMap<String, Constructor>,
 }
 
+fn has_kind(graph: &EGraph, function: &Function, kind: FunctionSubtype) -> bool {
+    if !function.is_view() {
+        return function.subtype() == kind;
+    }
+    // Views are physical functions; row readers expose their source table kind.
+    match kind {
+        FunctionSubtype::Constructor => graph
+            .constructor_enodes_while(function.name(), |_| false)
+            .is_ok(),
+        FunctionSubtype::Custom => graph
+            .function_entries_while(function.name(), |_| false)
+            .is_ok(),
+    }
+}
+
+fn has_single_output(function: &Function) -> bool {
+    // An encoded view adds a proof column after its source output.
+    function.func_type().outputs.len() == 1 + usize::from(function.is_view())
+}
+
 fn rows(graph: &EGraph, name: &str, sorts: &[&str]) -> Result<Vec<Vec<Value>>, String> {
     let function = graph
         .get_function(name)
         .ok_or_else(|| format!("missing {name}"))?;
     let schema = function.func_type();
-    if function.subtype() != FunctionSubtype::Custom
+    if !has_kind(graph, function, FunctionSubtype::Custom)
         || schema
             .input
             .iter()
             .map(|s| s.name())
             .ne(sorts.iter().copied())
-        || schema.outputs.len() != 1
+        || !has_single_output(function)
         || schema.output().name() != "Unit"
     {
         return Err(format!("invalid metadata schema for {name}"));
@@ -41,6 +61,20 @@ impl Layouts {
     pub fn load(graph: &EGraph) -> Result<Self, String> {
         let text = |v| graph.value_to_base::<S>(v).into_inner();
         let integer = |v| graph.value_to_base::<i64>(v);
+        let mut carriers = BTreeMap::new();
+        let mut indices = BTreeSet::new();
+        for row in rows(graph, "SlottedCarrierLayout", &["String", "i64"])? {
+            let sort = text(row[0]);
+            let index = usize::try_from(integer(row[1]))
+                .map_err(|_| format!("negative carrier index for {sort}"))?;
+            if !indices.insert(index)
+                || carriers
+                    .insert(sort.clone(), Symbols::new(&sort, index))
+                    .is_some()
+            {
+                return Err(format!("conflicting carrier layout for {sort}"));
+            }
+        }
         let mut arities = BTreeMap::new();
         for row in rows(graph, "SlottedNodeLayout", &["String", "i64"])? {
             let name = text(row[0]);
@@ -70,6 +104,9 @@ impl Layouts {
         for row in rows(graph, "SlottedEdgeLayout", &["String", "i64"])? {
             add(text(row[0]), integer(row[1]), Column::Child)?;
         }
+        for row in rows(graph, "SlottedSlotLayout", &["String", "i64"])? {
+            add(text(row[0]), integer(row[1]), Column::Var)?;
+        }
         for row in rows(graph, "SlottedPayloadLayout", &["String", "i64", "String"])? {
             add(text(row[0]), integer(row[1]), Column::Payload(text(row[2])))?;
         }
@@ -88,43 +125,28 @@ impl Layouts {
                 ));
             }
             let col = columns.get_mut(&name).and_then(|c| c.get_mut(&marker));
-            if col.as_deref() != Some(&Column::Child) {
+            if col.as_deref() != Some(&Column::Var) {
                 return Err(format!("invalid binder column {marker} for {name}"));
             }
             *col.unwrap() = Column::Binder;
             covered.entry(name).or_default().insert(body);
         }
-        let mut carriers = BTreeMap::new();
         let mut constructors = BTreeMap::new();
+        let mut variable_sorts = BTreeSet::new();
         for (name, arity) in arities {
             let function = graph
                 .get_function(&name)
                 .ok_or_else(|| format!("missing constructor {name}"))?;
             let schema = function.func_type();
-            if function.subtype() != FunctionSubtype::Constructor
+            if !has_kind(graph, function, FunctionSubtype::Constructor)
                 || schema.input.len() != arity
-                || schema.outputs.len() != 1
+                || !has_single_output(function)
                 || !schema.output().is_eq_sort()
             {
                 return Err(format!("invalid constructor schema for {name}"));
             }
             let sort = schema.output().name().to_owned();
             let cols = columns.remove(&name).unwrap_or_default();
-            if let Some(index) = name
-                .strip_prefix("SlottedVar_")
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                if arity != 1 || schema.input[0].name() != "i64" || !cols.is_empty() {
-                    return Err(format!("invalid variable layout for {name}"));
-                }
-                if carriers
-                    .insert(sort.clone(), Symbols::new(&sort, index))
-                    .is_some()
-                {
-                    return Err(format!("multiple variable constructors for {sort}"));
-                }
-                continue;
-            }
             let mut physical = 0;
             let mut out = Vec::new();
             let mut edge_columns = Vec::new();
@@ -141,7 +163,14 @@ impl Layouts {
                         }
                         physical += 1;
                     }
-                    Column::Child | Column::Binder => {
+                    Column::Var | Column::Binder => {
+                        edge_columns.push(col);
+                        if schema.input.get(col).map(|s| s.name()) != Some("Renaming") {
+                            return Err(format!("slot type mismatch for {name} column {col}"));
+                        }
+                        physical += 1;
+                    }
+                    Column::Child => {
                         edge_columns.push(col);
                         if schema.input.get(col).map(|s| s.name()) != Some("Renaming")
                             || schema.input.get(col + 1).map(|s| s.name()) != Some(sort.as_str())
@@ -160,7 +189,19 @@ impl Layouts {
                 columns: out,
             };
             let binders = op.binders();
-            let covered_column = op.covered().and_then(|i| edge_columns.get(i)).copied();
+            let covered_column = op.covered().and_then(|i| {
+                (op.children().get(i).copied() == Some(&Column::Child))
+                    .then(|| edge_columns.get(i).copied())
+                    .flatten()
+            });
+            if op.columns.contains(&Column::Var) {
+                if op.columns != [Column::Var] {
+                    return Err(format!("invalid variable layout for {name}"));
+                }
+                if !variable_sorts.insert(op.sort.clone()) {
+                    return Err(format!("multiple variable constructors for {}", op.sort));
+                }
+            }
             if physical != arity
                 || (!binders.is_empty() && covered_column.is_none())
                 || covered.remove(&name).unwrap_or_default() != covered_column.into_iter().collect()
@@ -182,12 +223,10 @@ impl Layouts {
         // Counting only the layouts we happened to find could silently lose a
         // constructor if its metadata row were missing. Check declaration coverage.
         for (name, function) in graph.functions_iter() {
-            if function.subtype() == FunctionSubtype::Constructor
+            if has_kind(graph, function, FunctionSubtype::Constructor)
                 && !function.is_let_binding()
-                && (carriers.contains_key(function.func_type().output().name())
-                    || name.starts_with("SlottedVar_"))
+                && carriers.contains_key(function.func_type().output().name())
                 && !constructors.contains_key(name)
-                && !carriers.values().any(|s| s.var == *name)
             {
                 return Err(format!("missing node layout for constructor {name}"));
             }
@@ -217,9 +256,9 @@ impl Layouts {
                     .get_function(name)
                     .ok_or_else(|| format!("missing {name}"))?;
                 let schema = function.func_type();
-                if function.subtype() != kind
+                if !has_kind(graph, function, kind)
                     || schema.input.iter().map(|s| s.name()).ne(input)
-                    || schema.outputs.len() != 1
+                    || !has_single_output(function)
                     || output.is_some_and(|ty| schema.output().name() != ty)
                 {
                     return Err(format!("invalid invariant table schema for {name}"));

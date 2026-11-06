@@ -1,5 +1,6 @@
+use super::flatten::Atom;
 use super::model::*;
-use super::query::{self, Atom, Conditions, Query, names_expr};
+use super::query::{self, Conditions, Query, names_expr};
 use super::syntax::quote;
 
 enum Slots {
@@ -34,9 +35,12 @@ fn build(
                 slots: Slots::Name(pv.clone()),
             })
         }
+        Term::Slot(_) if sort != "Var" => Err(format!(
+            "term has sort Var, expected {sort}; use the variable constructor"
+        )),
         Term::Slot(s) => Ok(Built {
             edge: format!("(ren {} {})", q.frame, quote(s)),
-            value: format!("({} 0)", lang.symbols(sort).var),
+            value: String::new(),
             slots: Slots::Name(s.clone()),
         }),
         Term::Node(n, args) => {
@@ -65,8 +69,13 @@ fn build(
                 });
             }
             let mut built = Vec::new();
-            for c in &children {
-                built.push(build(lang, c, sort, q, actions, false)?);
+            for (c, column) in children.iter().zip(op.children()) {
+                let input_sort = if *column == Column::Child {
+                    sort
+                } else {
+                    "Var"
+                };
+                built.push(build(lang, c, input_sort, q, actions, false)?);
             }
             let value = q.fresh(&format!("built_{}", n.to_lowercase()));
             let mut edges = built.iter().map(|b| b.edge.clone()).collect::<Vec<_>>();
@@ -182,7 +191,7 @@ fn substitute(
         q.fresh("t_ren"),
         q.fresh("back"),
     );
-    let inputs = format!("{bc} {bx} ({} 0) {tr} {tc} {}", s.var, quote(&s.free_vars));
+    let inputs = format!("{bc} {bx} {tr} {tc} {}", quote(&s.free_vars));
     Ok(vec![
         format!(
             "(let {needed} (map-union (map-image {bm}) (map-union (map-image {tm}) (map-of {x} {x}))))"
@@ -234,7 +243,12 @@ pub(super) struct Rewrite<'a> {
     pub nested: bool,
 }
 
-pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, String> {
+/// Lower a rewrite together with the names needed to reconstruct its proofs.
+pub(super) fn compile(
+    lang: &Language,
+    mut r: Rewrite<'_>,
+    mut names: query::ProofNames,
+) -> Result<(String, query::ProofNames), String> {
     let mut rhs = r.rhs.clone();
     lang.refresh_shadowed(&mut rhs);
     let mut fresh = std::collections::BTreeSet::new();
@@ -246,6 +260,7 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
             }
         }
     }
+    fresh.retain(|name| !r.conditions.concrete_slots.contains_key(name));
     r.conditions.fresh.extend(fresh);
     let mut q = query::compile(
         lang,
@@ -279,8 +294,15 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
         }
     };
     let naive = rhs.uses_subst();
+    names.classes = q
+        .classes
+        .iter()
+        .map(|(v, c)| (v.to_owned(), c.clone()))
+        .collect();
+    names.readings = q.readings.clone();
+    names.frame = q.frame.clone();
     let Some(split) = q.split else {
-        return Ok(rule(&q.body, &actions, naive, None, r.name));
+        return Ok((rule(&q.body, &actions, naive, None, r.name), names));
     };
     let relation = format!("_slotted_match_{}", r.ordinal);
     let mut columns = vec![q.refined.clone(), q.length.clone()];
@@ -298,7 +320,7 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
     let row = call(&relation, columns);
     let mut apply_body = vec![row.clone()];
     apply_body.extend_from_slice(&q.body[split..]);
-    Ok([
+    let code = [
         format!("(relation {relation} ({}))", sorts.join(" ")),
         rule(
             &q.body[..split],
@@ -322,5 +344,6 @@ pub(super) fn compile(lang: &Language, mut r: Rewrite<'_>) -> Result<String, Str
             r.name.map(|n| format!("{n}/drain")).as_deref(),
         ),
     ]
-    .join("\n"))
+    .join("\n");
+    Ok((code, names))
 }

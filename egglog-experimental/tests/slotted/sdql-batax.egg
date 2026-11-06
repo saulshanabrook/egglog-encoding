@@ -47,15 +47,15 @@
 (include "egglog-experimental/tests/slotted/languages/sdql-rules.egg")
 
 ;;; the CSR range, shared by both inner sums
-(let subarr (SubArray $3 $8 (Sub (Get $2 (Add $7 (Num 1))) (Num 1))))
+(let subarr (SubArray (V $3) (V $8) (Sub (Get (V $2) (Add (V $7) (Num 1))) (Num 1))))
 
 ;;; the two inner sums over that range: a singleton, and a product
-(let t7 (Sum subarr $9 $10 (Sing $10 (Get $4 $9))))
-(let t10 (Sum subarr $9 $10 (Mult (Get $4 $9) (Get $5 $10))))
+(let t7 (Sum subarr $9 $10 (Sing (V $10) (Get (V $4) (V $9)))))
+(let t10 (Sum subarr $9 $10 (Mult (Get (V $4) (V $9)) (Get (V $5) (V $10)))))
 
 (let prog
   (Lambda $1 (Lambda $2 (Lambda $3 (Lambda $4 (Lambda $5 (Lambda $6
-    (Mult $1 (Sum $2 $7 $8 (Mult t7 t10))))))))))
+    (Mult (V $1) (Sum (V $2) $7 $8 (Mult t7 t10))))))))))
 
 ;;; the machinery alone: the term is already canonical, so this settles at once
 (run 0)

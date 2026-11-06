@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 6\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (var $0)\nterm (k (g (f (var $0) null) null) (h (var $1) null))\nunion (g (f (var $0) null) null) (g (f (var $5) null) null)\nunion (k (g (f (var $0) null) null) (h (var $1) null)) (k (g (f (var $0) null) null) (h (var $6) null))\nrule\natom p k q d2\natom q g d1 n\natom d1 f x n2\natom d2 h x n3\naction p sub d1 d2\nprobe (k (g (f (var $0) null) null) (h (var $1) null))\nprobe (sub (f (var $0) null) (h (var $1) null))\nprobe (sub (f (var $0) null) (h (var $0) null))\nprobe null\n",
+  "multi": "rounds 6\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (k (g (f (var $0) null) null) (h (var $1) null))\nterm (var $0)\nunion (g (f (var $0) null) null) (g (f (var $5) null) null)\nunion (k (g (f (var $0) null) null) (h (var $1) null)) (k (g (f (var $0) null) null) (h (var $6) null))\nrule\natom p k q d2\natom q g d1 n\natom d1 f x n2\natom d2 h x n3\naction p sub d1 d2\nprobe (k (g (f (var $0) null) null) (h (var $1) null))\nprobe (sub (f (var $0) null) (h (var $1) null))\nprobe (sub (f (var $0) null) (h (var $0) null))\nprobe null\n",
   "nested": null,
   "probes": [
     "_p0",

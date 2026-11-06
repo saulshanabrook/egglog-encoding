@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use egglog::{
-    ArcSort, CommandOutput, EGraph, Enode, Error, Function, Term, TermDag, TermId,
+    ArcSort, CommandOutput, Context, Core, EGraph, Enode, Error, Function, Term, TermDag, TermId,
     UserDefinedCommand, Value,
     ast::{Expr, Literal},
     extract::TreeCostModel,
@@ -34,11 +34,7 @@ impl TreeCostModel<BigUint> for TreeSize<'_> {
                 if *column == Column::Child {
                     children.push(physical + 1);
                 }
-                physical += if matches!(column, Column::Payload(_)) {
-                    1
-                } else {
-                    2
-                };
+                physical += if *column == Column::Child { 2 } else { 1 };
             }
         }
         children
@@ -126,16 +122,7 @@ impl Decoder<'_> {
         let Term::App(name, args) = self.encoded.get(id) else {
             return Err(error("expected a constructor term"));
         };
-        let result = if self.layouts.carriers.iter().any(|s| s.var == *name) {
-            let [slot] = args.as_slice() else {
-                return Err(error("invalid variable constructor"));
-            };
-            let Term::Lit(Literal::Int(slot)) = self.encoded.get(*slot) else {
-                return Err(error("invalid variable slot"));
-            };
-            let name = self.name(&mut frame, *slot);
-            self.output.var(name)
-        } else {
+        let result = {
             let op = self
                 .layouts
                 .constructors
@@ -151,10 +138,13 @@ impl Decoder<'_> {
                     let edge = self.edge(args[physical])?;
                     if *column == Column::Binder {
                         let slot = *edge.get(&0).ok_or_else(|| error("binder lacks its slot"))?;
+                        if edge.len() != 1 {
+                            return Err(error("binder must have exactly domain {0}"));
+                        }
                         binders.insert(slot, self.fresh());
                     }
                     edges.push(edge);
-                    physical += 2;
+                    physical += if *column == Column::Child { 2 } else { 1 };
                 }
             }
             let mut children = Vec::new();
@@ -171,7 +161,20 @@ impl Decoder<'_> {
                     }
                     Column::Binder => {
                         children.push(self.output.var(binders[&edges[child][&0]].clone()));
-                        physical += 2;
+                        physical += 1;
+                        child += 1;
+                    }
+                    Column::Var => {
+                        let edge = &edges[child];
+                        let slot = *edge
+                            .get(&0)
+                            .ok_or_else(|| error("variable lacks its slot"))?;
+                        if edge.len() != 1 {
+                            return Err(error("variable must have exactly domain {0}"));
+                        }
+                        let name = self.name(&mut frame, slot);
+                        children.push(self.output.var(name));
+                        physical += 1;
                         child += 1;
                     }
                     Column::Child => {
@@ -200,12 +203,35 @@ impl Decoder<'_> {
 pub(super) struct ExtractCommand;
 
 impl UserDefinedCommand for ExtractCommand {
+    fn supports_proofs(&self) -> bool {
+        true
+    }
+
     fn update(&self, graph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
         let [root, frame, names @ ..] = args else {
             return Err(error("expected a term and its slot frame"));
         };
-        let (sort, root) = graph.eval_expr(root)?;
-        let (_, frame) = graph.eval_expr(frame)?;
+        let Expr::Var(_, name) = root else {
+            return Err(error("expected a prepared root global"));
+        };
+        // Globals live in shared per-sort tables. Ground lookup resolves their
+        // source names in both ordinary and proof-encoded graphs.
+        let mut terms = TermDag::default();
+        let root = terms.app(name.clone(), vec![]);
+        let (sort, root) = graph.lookup_term_dag(&terms, &[(root, None)])?.remove(0);
+        let renaming_sort = graph
+            .get_sort_by_name("Renaming")
+            .cloned()
+            .ok_or_else(|| error("missing Renaming sort"))?;
+        let frame = graph.typecheck_expr_with_bindings_and_output(
+            frame,
+            &[],
+            renaming_sort,
+            Context::Read,
+        )?;
+        let frame = graph
+            .read(|mut state| state.eval_resolved_expr(&frame, &[]))
+            .ok_or_else(|| error("could not evaluate the slot frame"))?;
         let frame = renaming(graph, frame)?;
         let mut source_names = BTreeMap::new();
         for name in names {

@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 3\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nterm (var $0)\nterm (app map (lam $0 (app f1 (app f2 (var $0)))))\nrule\natom _cl1 map\natom _p app _cl1 _t1\natom _t1 lam $x _t2\natom _t2 app f gx\nrhs _p (lam $in (app (app map ?f) (app (app map (lam $x ?gx)) (var $in))))\ncond notin $x f\nprobe (app map (lam $0 (app f1 (app f2 (var $0)))))\nprobe (lam $1 (app (app map f1) (app (app map (lam $0 (app f2 (var $0)))) (var $1))))\nprobe (lam $1 (app (app map f2) (app (app map (lam $0 (app f1 (var $0)))) (var $1))))\n",
+  "multi": "rounds 3\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nctor var V\nterm (app map (lam $0 (app f1 (app f2 (var $0)))))\nterm (var $0)\nrule\natom _cl1 map\natom _p app _cl1 _t1\natom _t1 lam $x _t2\natom _t2 app f gx\nrhs _p (lam $in (app (app map ?f) (app (app map (lam $x ?gx)) (var $in))))\ncond notin $x f\nprobe (app map (lam $0 (app f1 (app f2 (var $0)))))\nprobe (lam $1 (app (app map f1) (app (app map (lam $0 (app f2 (var $0)))) (var $1))))\nprobe (lam $1 (app (app map f2) (app (app map (lam $0 (app f1 (var $0)))) (var $1))))\n",
   "nested": null,
   "probes": [
     "_p0",

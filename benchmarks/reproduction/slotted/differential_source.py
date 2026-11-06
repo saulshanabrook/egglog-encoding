@@ -63,18 +63,29 @@ def load_rules(path, lang):
 
 def reference_spec(lang, rounds, terms, unions, rules, probes):
     """The reference protocol shared by generated cases and source fixtures."""
-    lines = [f"rounds {rounds}", *workloads.ctor_lines(lang), "term (var $0)"]
+    lines = [f"rounds {rounds}", *workloads.ctor_lines(lang)]
     lines.extend(f"term {lang.sexpr(t)}" for t in terms)
+    # The reference's goal is relative to its first term. Seed the shared
+    # variable only after the workload inputs so that root keeps its meaning.
+    if lang.symbols_for(lang.default_sort).var is not None:
+        lines.append("term (var $0)")
     lines.extend(f"union {lang.sexpr(a)} {lang.sexpr(b)}" for a, b in unions)
     lines.extend(rules)
     lines.extend(f"probe {lang.sexpr(t)}" for t in probes)
     return "\n".join(lines) + "\n"
 
 
+def variable_term(lang, slot):
+    constructor = lang.symbols_for(lang.default_sort).var
+    if constructor is None:
+        raise ValueError(f"{lang.default_sort}: no variable constructor is declared")
+    return f"({constructor} {slot})"
+
+
 def term(lang, t):
     """A generated ground term in the public source language."""
     if t[0] == "var":
-        return f"${t[1]}"
+        return variable_term(lang, f"${t[1]}")
     op = lang[t[0]]
     kids, pays = op.split(t[1:])
     return node(op, [f"${lang.slot(k)}" if i in op.binders else term(lang, k) for i, k in enumerate(kids)], pays)
@@ -96,16 +107,18 @@ def node(op, kids, pays):
     return "(" + " ".join(parts) + ")"
 
 
-def pattern(lang, t):
-    if t[0] in ("pv", "sl"):
+def pattern(lang, t, *, binder=False):
+    if t[0] == "pv":
         return t[1]
+    if t[0] == "sl":
+        return t[1] if binder else variable_term(lang, t[1])
     if t[0] == "cls":
         return term(lang, t[1])
     if t[0] == ref.SUBST:
-        return "(subst " + " ".join(pattern(lang, a) for a in t[1:]) + ")"
+        return "(subst " + " ".join(pattern(lang, a, binder=i == 1) for i, a in enumerate(t[1:])) + ")"
     op = lang[t[0]]
     kids, pays = op.split(t[1:])
-    return node(op, [pattern(lang, k) for k in kids], pays)
+    return node(op, [pattern(lang, k, binder=i in op.binders) for i, k in enumerate(kids)], pays)
 
 
 def rewrite(lang, atoms, root, rhs, *, conds=(), name=None):
@@ -113,7 +126,8 @@ def rewrite(lang, atoms, root, rhs, *, conds=(), name=None):
     facts = []
     for r, op, kids, *payloads in atoms:
         pays = payloads[0] if payloads else lang[op].pays
-        facts.append(f"(= {r} {node(lang[op], [pattern(lang, k) for k in kids], pays)})")
+        children = [pattern(lang, k, binder=i in lang[op].binders) for i, k in enumerate(kids)]
+        facts.append(f"(= {r} {node(lang[op], children, pays)})")
     facts.extend(f"({'free' if want else 'not-free'} {slot} {' '.join(pvars)})" for want, slot, pvars in conds)
     options = f" :when ({' '.join(facts)})"
     if name:
@@ -181,7 +195,8 @@ def fixture_block(path, anchor):
             _, name, body = form
             if name in named:
                 raise ValueError(f"{path.name}: duplicate global {name!r} in fixture case {anchor!r}")
-            term = src.term(body)
+            column = ref.SLOT if isinstance(body, str) and ref.SLOT_LITERAL.fullmatch(body) else ref.CHILD
+            term = src.term(body, column)
             src.lang.bound[name] = term
             named[name] = fixture_term(term, named)
         elif form[0] == "union":
@@ -216,9 +231,11 @@ def fixture_rewrites(path, *names):
 def program(language, lang, rules, terms, unions, probes, rounds, *, defer_probes=False):
     """Keep public source/probes; Rust observes partitions after execution."""
     source = [f'(include "egglog-experimental/tests/slotted/languages/{language}.egg")', *dict.fromkeys(rules)]
+    if lang.symbols_for(lang.default_sort).var is not None:
+        source.append(f"(let _variable_seed {variable_term(lang, '$0')})")
     source += [f"(let _t{i} {term(lang, t)})" for i, t in enumerate(terms)]
     source += [f"(union {term(lang, a)} {term(lang, b)})" for a, b in unions]
-    probe_terms = [f"(let _p{i} {term(lang, t)})" for i, t in enumerate(probes) if t[0] != "var"]
+    probe_terms = [f"(let _p{i} {term(lang, t)})" for i, t in enumerate(probes)]
     if not defer_probes:
         source += probe_terms
     source.append(f"(run {rounds})")

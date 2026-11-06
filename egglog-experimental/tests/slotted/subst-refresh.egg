@@ -2,7 +2,7 @@
 ;;; and its slots are unchanged. Only the unsubstituted App matches improve-body.
 (include "egglog-experimental/tests/slotted/languages/sdql.egg")
 (rewrite (Let t $x body) (subst body $x t) :name "beta")
-(rewrite (App (Symbol "z") $x) (Unique $x) :name "improve-body")
-(let start (Let (Num 7) $0 (App (Symbol "z") $0)))
+(rewrite (App (Symbol "z") (V $x)) (Unique (V $x)) :name "improve-body")
+(let start (Let (Num 7) $0 (App (Symbol "z") (V $0))))
 (run 2)
 (check (= start (Unique (Num 7))))

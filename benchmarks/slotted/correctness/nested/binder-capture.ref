@@ -1,6 +1,6 @@
 {
-  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (f (var $4) (lam $5 (var $5)))\nterm (var $0)\nrule\natom _p f a _t1\natom _t1 lam $x b\nrhs _p (lam $x (f ?a ?b))\n",
-  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (f (var $4) (lam $5 (var $5)))\nterm (var $0)\nrule\nnested (f ?a (lam $x ?b))\nrhs root (lam $x (f ?a ?b))\n",
+  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (f (var $4) (lam $5 (var $5)))\nterm (var $0)\nrule\natom _p f a _t1\natom _t1 lam $x b\nrhs _p (lam $x (f ?a ?b))\n",
+  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (f (var $4) (lam $5 (var $5)))\nterm (var $0)\nrule\nnested (f ?a (lam $x ?b))\nrhs root (lam $x (f ?a ?b))\n",
   "probes": [],
   "expect": {
     "full_nodes_exceed_compat": true

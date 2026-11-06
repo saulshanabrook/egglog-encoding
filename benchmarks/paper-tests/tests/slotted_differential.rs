@@ -124,6 +124,7 @@ fn frozen_semantic_pairs_have_reference_partitions_and_validated_counts() {
             };
             let mut compiler = Compiler::new(Options {
                 no_aliasing: nested,
+                ..Default::default()
             });
             let mut graph = new_egraph();
             graph.set_num_threads(1);

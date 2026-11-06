@@ -1,6 +1,6 @@
 {
-  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (lam $-9223372036854775808 (lam $-9223372036854775808 (f (var $-9223372036854775808) (var $-9223372036854775807))))\nterm (var $0)\nrule\natom _p lam $x _t1\natom _t1 lam $y _t2\natom _sl1 var $y\natom _t2 f _sl1 body\nrhs _p (lam $x (lam $y (g ?body (var $y))))\n",
-  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (lam $-9223372036854775808 (lam $-9223372036854775808 (f (var $-9223372036854775808) (var $-9223372036854775807))))\nterm (var $0)\nrule\nnested (lam $x (lam $y (f (var $y) ?body)))\nrhs root (lam $x (lam $y (g ?body (var $y))))\n",
+  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (lam $-9223372036854775808 (lam $-9223372036854775808 (f (var $-9223372036854775808) (var $-9223372036854775807))))\nterm (var $0)\nrule\natom _p lam $x _t1\natom _t1 lam $y _t2\natom _sl1 var $y\natom _t2 f _sl1 body\nrhs _p (lam $x (lam $y (g ?body (var $y))))\n",
+  "nested": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (lam $-9223372036854775808 (lam $-9223372036854775808 (f (var $-9223372036854775808) (var $-9223372036854775807))))\nterm (var $0)\nrule\nnested (lam $x (lam $y (f (var $y) ?body)))\nrhs root (lam $x (lam $y (g ?body (var $y))))\n",
   "probes": [],
   "expect": {
     "full_nodes_exceed_compat": false

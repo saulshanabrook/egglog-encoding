@@ -13,17 +13,18 @@
 ;;; a different node and must not come along.
 
 (sort U)
+(constructor V (Var) U)
 
 (constructor Mul (U U) U)
 (constructor Null () U)
 
 
-(let m7 (Mul $7 (Null)))
+(let m7 (Mul (V $7) (Null)))
 (let zero (Null))
 (union m7 zero)
 
-(let m9 (Mul $9 (Null)))
-(let m97 (Mul $9 $7))
+(let m9 (Mul (V $9) (Null)))
+(let m97 (Mul (V $9) (V $7)))
 
 (run 0)
 

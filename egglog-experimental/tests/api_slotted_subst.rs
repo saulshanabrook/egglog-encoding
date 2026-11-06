@@ -1,7 +1,7 @@
 //! Tests for the `slotted-subst` primitive.
 //!
 //! The encoding here is the smallest one that exercises it: a `Renaming` sort,
-//! a class sort `U`, the normalised variable `(Var 0)`, and constructors whose
+//! a class sort `U`, the normalised variable `(V (map-of 0 0))`, and constructors whose
 //! children each occupy a `Renaming` column followed by a `U` column. This fixture
 //! publishes the same physical-layout metadata and exact `FreeVars` rows as the
 //! compiler, without pulling in the rest of `RenamesToLeader` maintenance.
@@ -13,33 +13,35 @@ use egglog::prelude::*;
 /// beta step needs.
 const SLOTTED: &str = r#"
 (sort U)
-(constructor Var (i64) U)
+(constructor V (Renaming) U)
 (constructor Null () U)
 (constructor H (Renaming U Renaming U) U)
 (constructor Lbl (String Renaming U) U)
-(constructor Lam (Renaming U Renaming U) U)
+(constructor Lam (Renaming Renaming U) U)
 (constructor App (Renaming U Renaming U) U)
 
 (function SlottedNodeLayout (String i64) Unit :no-merge :internal-hidden)
 (function SlottedEdgeLayout (String i64) Unit :no-merge :internal-hidden)
+(function SlottedSlotLayout (String i64) Unit :no-merge :internal-hidden)
 (function SlottedBinderLayout (String i64 i64 i64 String) Unit :no-merge :internal-hidden)
-(set (SlottedNodeLayout "Var" 1) ())
+(set (SlottedNodeLayout "V" 1) ())
+(set (SlottedSlotLayout "V" 0) ())
 (set (SlottedNodeLayout "Null" 0) ())
 (set (SlottedNodeLayout "H" 4) ())
 (set (SlottedEdgeLayout "H" 0) ())
 (set (SlottedEdgeLayout "H" 2) ())
 (set (SlottedNodeLayout "Lbl" 3) ())
 (set (SlottedEdgeLayout "Lbl" 1) ())
-(set (SlottedNodeLayout "Lam" 4) ())
-(set (SlottedEdgeLayout "Lam" 0) ())
-(set (SlottedEdgeLayout "Lam" 2) ())
-(set (SlottedBinderLayout "Lam" 0 2 -1 "") ())
+(set (SlottedNodeLayout "Lam" 3) ())
+(set (SlottedSlotLayout "Lam" 0) ())
+(set (SlottedEdgeLayout "Lam" 1) ())
+(set (SlottedBinderLayout "Lam" 0 1 -1 "") ())
 (set (SlottedNodeLayout "App" 4) ())
 (set (SlottedEdgeLayout "App" 0) ())
 (set (SlottedEdgeLayout "App" 2) ())
 
 (function FreeVars (U) Renaming :merge (map-intersect old new))
-(set (FreeVars (Var 0)) (map-of 0 0))
+(set (FreeVars (V (map-of 0 0))) (map-of 0 0))
 (set (FreeVars (Null)) (map-empty))
 (ruleset slots)
 (rule ((= e (H m1 c1 m2 c2)))
@@ -48,7 +50,7 @@ const SLOTTED: &str = r#"
 (rule ((= e (Lbl p m c)))
       ((set (FreeVars e) (map-image m)))
       :ruleset slots)
-(rule ((= e (Lam mx (Var 0) mb body))
+(rule ((= e (Lam mx mb body))
        (= x (map-get mx 0)))
       ((set (FreeVars e) (map-remove (map-image mb) x)))
       :ruleset slots)
@@ -87,9 +89,9 @@ fn a_reachable_constructor_without_layout_is_rejected() {
     assert_subst_rejected(
         r#"
 (constructor Mystery (Renaming U) U)
-(let $body (Mystery (map-of 0 0) (Var 0)))
+(let $body (Mystery (map-of 0 0) (V (map-of 0 0))))
 (set (FreeVars $body) (map-of 0 0))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 "#,
     );
 }
@@ -106,7 +108,7 @@ fn a_container_payload_is_rejected() {
 (set (SlottedNodeLayout "Boxed" 1) ())
 (let $body (Boxed (vec-of 1 2)))
 (set (FreeVars $body) (map-empty))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 "#,
     );
 }
@@ -116,10 +118,10 @@ fn a_container_payload_is_rejected() {
 fn substitutes_an_occurring_slot() -> Result<(), Error> {
     let mut egraph = egraph(
         "
-(let $body (H (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
-(check (= $out (H (map-empty) (Null) (map-of 0 1) (Var 0))))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
+(check (= $out (H (map-empty) (Null) (map-of 0 1) (V (map-of 0 0)))))
 (fail (check (= $out $body)))
 ",
     )?;
@@ -134,13 +136,13 @@ fn accepts_an_explicit_free_vars_table() -> Result<(), Error> {
     egraph(
         r#"
 (function FreeVars_1 (U) Renaming :merge (map-intersect old new))
-(set (FreeVars_1 (Var 0)) (map-of 0 0))
+(set (FreeVars_1 (V (map-of 0 0))) (map-of 0 0))
 (set (FreeVars_1 (Null)) (map-empty))
-(let $body (H (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
 (set (FreeVars_1 $body) (map-of 0 0 1 1))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null) "FreeVars_1"))
-(let $frame (slotted-subst-frame $body 0 (Var 0) (map-empty) (Null) "FreeVars_1"))
-(check (= $out (H (map-empty) (Null) (map-of 0 1) (Var 0))))
+(let $out (slotted-subst $body 0 (map-empty) (Null) "FreeVars_1"))
+(let $frame (slotted-subst-frame $body 0 (map-empty) (Null) "FreeVars_1"))
+(check (= $out (H (map-empty) (Null) (map-of 0 1) (V (map-of 0 0)))))
 (check (= $frame (map-of 1 1)))
 "#,
     )?;
@@ -153,15 +155,15 @@ fn accepts_an_explicit_free_vars_table() -> Result<(), Error> {
 fn rejects_an_invalid_explicit_free_vars_table() {
     assert_subst_rejected(
         r#"
-(let $body (H (map-of 0 0) (Var 0) (map-empty) (Null)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null) "MissingFreeVars"))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null) "MissingFreeVars"))
 "#,
     );
     assert_subst_rejected(
         r#"
 (function WrongFreeVars (i64) Renaming :no-merge)
-(let $body (H (map-of 0 0) (Var 0) (map-empty) (Null)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null) "WrongFreeVars"))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null) "WrongFreeVars"))
 "#,
     );
 }
@@ -172,9 +174,9 @@ fn rejects_an_invalid_explicit_free_vars_table() {
 fn a_slot_that_does_not_occur_is_a_no_op() -> Result<(), Error> {
     let mut egraph = egraph(
         "
-(let $body (H (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $body (H (map-of 0 1) (V (map-of 0 0)) (map-of 0 2) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 (check (= $out $body))
 ",
     )?;
@@ -188,18 +190,18 @@ fn a_slot_that_does_not_occur_is_a_no_op() -> Result<(), Error> {
 fn substitutes_a_nested_occurrence() -> Result<(), Error> {
     let mut egraph = egraph(
         "
-(let $inner (H (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $inner (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
 (let $mid   (Lbl \"f\" (map-of 0 0 1 1) $inner))
-(let $body  (H (map-of 0 0 1 1) $mid (map-of 0 2) (Var 0)))
+(let $body  (H (map-of 0 0 1 1) $mid (map-of 0 2) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 (check (= $out
           (H (map-of 1 1)
-             (Lbl \"f\" (map-of 1 1) (H (map-empty) (Null) (map-of 0 1) (Var 0)))
-             (map-of 0 2) (Var 0))))
+             (Lbl \"f\" (map-of 1 1) (H (map-empty) (Null) (map-of 0 1) (V (map-of 0 0))))
+             (map-of 0 2) (V (map-of 0 0)))))
 ",
     )?;
-    // `(Var 0)` at slot 2 is shared, so only the spine is rebuilt: two `H`
+    // `(V (map-of 0 0))` at slot 2 is shared, so only the spine is rebuilt: two `H`
     // rows added, one `Lbl` row added.
     assert_eq!(row_count(&mut egraph, "H"), 4);
     assert_eq!(row_count(&mut egraph, "Lbl"), 2);
@@ -213,24 +215,24 @@ fn a_redundant_node_slot_survives_the_frame_change() -> Result<(), Error> {
     let mut egraph = egraph(
         "
 ;; `$c`'s node names slots {0, 7}...
-(let $c (H (map-of 0 0) (Var 0) (map-of 0 7) (Var 0)))
+(let $c (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 7) (V (map-of 0 0))))
 ;; ...while the edge reaching it says its class has only slot 0, so 7 is
 ;; redundant and outside the frame the substitution carries in.
-(let $body (H (map-of 0 5) $c (map-of 0 6) (Var 0)))
+(let $body (H (map-of 0 5) $c (map-of 0 6) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 5 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 5 (map-empty) (Null)))
 ;; the slot survives under some name -- the result is spelt canonically, as the
 ;; reference's fresh names are arbitrary too -- and is not dropped
-(check (= x (H (map-empty) (Null) m (Var 0))) (= (map-length m) 1))
-(fail (check (= x (H (map-empty) (Null) (map-empty) (Var 0)))))
+(check (= x (H (map-empty) (Null) m (V (map-of 0 0)))) (= (map-length m) 1))
+(fail (check (= x (H (map-empty) (Null) (map-empty) (V (map-of 0 0))))))
 ",
     )?;
     // The result keeps the redundant slot, so the outer edge names it.
     egraph.parse_and_run_program(
         None,
         "(check (= $out (H outer
-                          (H (map-empty) (Null) inner (Var 0))
-                          (map-of 0 6) (Var 0)))
+                          (H (map-empty) (Null) inner (V (map-of 0 0)))
+                          (map-of 0 6) (V (map-of 0 0))))
                 (= (map-length outer) 1)
                 (= (map-length inner) 1))",
     )?;
@@ -247,14 +249,14 @@ fn a_redundant_node_slot_survives_the_frame_change() -> Result<(), Error> {
 fn a_class_with_no_finite_term_declines() {
     let Err(err) = egraph(
         "
-(let $ground (H (map-of 0 0) (Var 0) (map-empty) (Null)))
+(let $ground (H (map-of 0 0) (V (map-of 0 0)) (map-empty) (Null)))
 (let $cyclic (H (map-of 0 0) $ground (map-empty) (Null)))
 (union $ground $cyclic)
 (run-schedule (saturate (run slots)))
 ;; only the self-referential node is left in the class
-(delete (H (map-of 0 0) (Var 0) (map-empty) (Null)))
+(delete (H (map-of 0 0) (V (map-of 0 0)) (map-empty) (Null)))
 
-(let $out (slotted-subst $cyclic 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $cyclic 0 (map-empty) (Null)))
 ",
     ) else {
         panic!("a class with no finite term cannot be substituted into")
@@ -271,12 +273,12 @@ fn a_class_with_no_finite_term_declines() {
 fn a_cyclic_class_uses_its_grounded_enode() -> Result<(), Error> {
     egraph(
         "
-(let $ground (H (map-of 0 0) (Var 0) (map-empty) (Null)))
+(let $ground (H (map-of 0 0) (V (map-of 0 0)) (map-empty) (Null)))
 (let $cyclic (H (map-of 0 0) $ground (map-empty) (Null)))
 (union $ground $cyclic)
 (run-schedule (saturate (run slots)))
 
-(let $out (slotted-subst $cyclic 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $cyclic 0 (map-empty) (Null)))
 (check (= $out (H (map-empty) (Null) (map-empty) (Null))))
 ",
     )?;
@@ -291,19 +293,19 @@ fn a_cyclic_class_uses_its_grounded_enode() -> Result<(), Error> {
 fn a_naive_rule_performs_a_beta_step() -> Result<(), Error> {
     egraph(
         "
-(let $body (H (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
-(let $lam (Lam (map-of 0 0) (Var 0) (map-of 0 0 1 1) $body))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
+(let $lam (Lam (map-of 0 0) (map-of 0 0 1 1) $body))
 (let $redex (App (map-of 1 1) $lam (map-empty) (Null)))
 (run-schedule (saturate (run slots)))
 
 (rule ((= e (App ml l mt t))
-       (= l (Lam mx (Var 0) mb bod))
+       (= l (Lam mx mb bod))
        (= x (map-get mx 0)))
-      ((union e (slotted-subst bod x (Var 0) mt t)))
+      ((union e (slotted-subst bod x mt t)))
       :naive)
 (run 1)
 
-(check (= $redex (H (map-empty) (Null) (map-of 0 1) (Var 0))))
+(check (= $redex (H (map-empty) (Null) (map-of 0 1) (V (map-of 0 0)))))
 ",
     )?;
     Ok(())
@@ -315,10 +317,10 @@ fn a_naive_rule_performs_a_beta_step() -> Result<(), Error> {
 fn a_payload_column_is_copied_through() -> Result<(), Error> {
     egraph(
         "
-(let $body (Lbl \"f\" (map-of 0 3) (Var 0)))
+(let $body (Lbl \"f\" (map-of 0 3) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 3 (Var 0) (map-of 0 9) (Var 0)))
-(check (= $out (Lbl \"f\" (map-of 0 9) (Var 0))))
+(let $out (slotted-subst $body 3 (map-of 0 9) (V (map-of 0 0))))
+(check (= $out (Lbl \"f\" (map-of 0 9) (V (map-of 0 0)))))
 ",
     )?;
     Ok(())
@@ -336,9 +338,9 @@ fn slotted_subst_frame_places_the_result_in_the_bodys_frame() -> Result<(), Erro
     // identity on the slots that survive: $0 is substituted away, $1 remains.
     egraph(
         "
-(let $body (H (map-of 0 0) (Var 0) (map-of 0 1) (Var 0)))
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $fr (slotted-subst-frame $body 0 (Var 0) (map-empty) (Null)))
+(let $fr (slotted-subst-frame $body 0 (map-empty) (Null)))
 (check (= $fr (map-of 1 1)))
 ",
     )?;
@@ -347,25 +349,25 @@ fn slotted_subst_frame_places_the_result_in_the_bodys_frame() -> Result<(), Erro
     // it was reached by -- here the identity on its own two slots.
     egraph(
         "
-(let $body (H (map-of 0 2) (Var 0) (map-of 0 3) (Var 0)))
+(let $body (H (map-of 0 2) (V (map-of 0 0)) (map-of 0 3) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
-(let $fr (slotted-subst-frame $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
+(let $fr (slotted-subst-frame $body 0 (map-empty) (Null)))
 (check (= $out $body))
 (check (= $fr (map-of 2 2 3 3)))
 ",
     )?;
 
     // Substituting into the variable itself gives `t` under `t_ren`. The class is
-    // `(Var 0)` whatever `t_ren` is, so the renaming carries all the information.
-    // `(Var 0)` is bound by an earlier command so that its row is on the table
+    // `(V (map-of 0 0))` whatever `t_ren` is, so the renaming carries all the information.
+    // `(V (map-of 0 0))` is bound by an earlier command so that its row is on the table
     // by the time the substitution reads it.
     egraph(
         "
-(let $v (Var 0))
+(let $v (V (map-of 0 0)))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $v 0 $v (map-of 0 7) $v))
-(let $fr (slotted-subst-frame $v 0 $v (map-of 0 7) $v))
+(let $out (slotted-subst $v 0 (map-of 0 7) $v))
+(let $fr (slotted-subst-frame $v 0 (map-of 0 7) $v))
 (check (= $out $v))
 (check (= $fr (map-of 0 7)))
 (fail (check (= $fr (map-of 0 0))))
@@ -380,13 +382,13 @@ fn substitution_after_pop_uses_restored_database() -> Result<(), Error> {
     egraph(
         r#"
 (push)
-(let $body (Lbl "left" (map-of 0 0) (Var 0)))
+(let $body (Lbl "left" (map-of 0 0) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $warm (slotted-subst $body 7 (Var 0) (map-empty) (Null)))
+(let $warm (slotted-subst $body 7 (map-empty) (Null)))
 (pop)
-(let $body (Lbl "right" (map-of 0 0) (Var 0)))
+(let $body (Lbl "right" (map-of 0 0) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 (check (= $out (Lbl "right" (map-empty) (Null))))
 "#,
     )?;
@@ -400,17 +402,17 @@ fn substitution_after_clone_uses_its_own_database() -> Result<(), Error> {
     cloned.parse_and_run_program(
         None,
         r#"
-(let $body (Lbl "left" (map-of 0 0) (Var 0)))
+(let $body (Lbl "left" (map-of 0 0) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $warm (slotted-subst $body 7 (Var 0) (map-empty) (Null)))
+(let $warm (slotted-subst $body 7 (map-empty) (Null)))
 "#,
     )?;
     original.parse_and_run_program(
         None,
         r#"
-(let $body (Lbl "right" (map-of 0 0) (Var 0)))
+(let $body (Lbl "right" (map-of 0 0) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $out (slotted-subst $body 0 (Var 0) (map-empty) (Null)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
 (check (= $out (Lbl "right" (map-empty) (Null))))
 "#,
     )?;
@@ -421,12 +423,12 @@ fn substitution_after_clone_uses_its_own_database() -> Result<(), Error> {
 fn substitution_observes_free_vars_without_constructor_changes() -> Result<(), Error> {
     egraph(
         r#"
-(let $body (H (map-of 0 1) (Var 0) (map-of 0 2) (Var 0)))
+(let $body (H (map-of 0 1) (V (map-of 0 0)) (map-of 0 2) (V (map-of 0 0))))
 (run-schedule (saturate (run slots)))
-(let $before (slotted-subst-frame $body 0 (Var 0) (map-empty) (Null)))
+(let $before (slotted-subst-frame $body 0 (map-empty) (Null)))
 (check (= $before (map-of 1 1 2 2)))
 (set (FreeVars $body) (map-empty))
-(let $after (slotted-subst-frame $body 0 (Var 0) (map-empty) (Null)))
+(let $after (slotted-subst-frame $body 0 (map-empty) (Null)))
 (check (= $after (map-empty)))
 "#,
     )?;
@@ -435,7 +437,7 @@ fn substitution_observes_free_vars_without_constructor_changes() -> Result<(), E
 
 #[test]
 fn shared_closed_terms_do_not_reserve_expanded_private_slot_ranges() -> Result<(), Error> {
-    let mut program = "(let $n0 (Lam (map-of 0 0) (Var 0) (map-of 0 0) (Var 0)))\n".to_owned();
+    let mut program = "(let $n0 (Lam (map-of 0 0) (map-of 0 0) (V (map-of 0 0))))\n".to_owned();
     for i in 1..=130 {
         let prev = i - 1;
         program.push_str(&format!(
@@ -444,7 +446,7 @@ fn shared_closed_terms_do_not_reserve_expanded_private_slot_ranges() -> Result<(
     }
     program.push_str(
         "(run-schedule (saturate (run slots)))\n\
-         (let $out (slotted-subst $n130 0 (Var 0) (map-empty) (Null)))\n\
+         (let $out (slotted-subst $n130 0 (map-empty) (Null)))\n\
          (check (= $out $n130))\n",
     );
     egraph(&program)?;
@@ -453,7 +455,7 @@ fn shared_closed_terms_do_not_reserve_expanded_private_slot_ranges() -> Result<(
 
 #[test]
 fn exact_tree_cost_excludes_cycles_above_machine_sizes() -> Result<(), Error> {
-    let mut program = "(let $n0 (Var 0))\n".to_owned();
+    let mut program = "(let $n0 (V (map-of 0 0)))\n".to_owned();
     for i in 1..=130 {
         let prev = i - 1;
         program.push_str(&format!(
@@ -463,7 +465,7 @@ fn exact_tree_cost_excludes_cycles_above_machine_sizes() -> Result<(), Error> {
     program.push_str(
         "(union $n130 (H (map-of 0 0) $n130 (map-of 0 0) $n130))\n\
          (run-schedule (saturate (run slots)))\n\
-         (let $out (slotted-subst $n130 0 (Var 0) (map-empty) (Null)))\n\
+         (let $out (slotted-subst $n130 0 (map-empty) (Null)))\n\
          (let $want0 (Null))\n",
     );
     for i in 1..=130 {
@@ -475,4 +477,51 @@ fn exact_tree_cost_excludes_cycles_above_machine_sizes() -> Result<(), Error> {
     program.push_str("(check (= $out $want130))\n");
     egraph(&program)?;
     Ok(())
+}
+
+/// A binder's singleton field stays independent of the replacement variable's
+/// class, and refreshing it cannot capture a free name of that replacement.
+#[test]
+fn rigid_binders_refresh_without_capturing_replacement_slots() -> Result<(), Error> {
+    egraph(
+        r#"
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
+(let $lam (Lam (map-of 0 1) (map-of 0 0 1 1) $body))
+(run-schedule (saturate (run slots)))
+(let $out (slotted-subst $lam 0 (map-of 0 1) (V (map-of 0 0))))
+(let $frame (slotted-subst-frame $lam 0 (map-of 0 1) (V (map-of 0 0))))
+(check (= $out (Lam (map-of 0 2) (map-of 1 1 2 2)
+                    (H (map-of 0 1) (V (map-of 0 0)) (map-of 0 2) (V (map-of 0 0))))))
+(check (= $frame (map-of 1 1)))
+"#,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn substitution_accepts_noncanonical_variable_occurrences() -> Result<(), Error> {
+    egraph(
+        r#"
+(let $body (V (map-of 0 7)))
+(set (FreeVars $body) (map-of 7 7))
+(let $out (slotted-subst $body 7 (map-empty) (Null)))
+(check (= $out (Null)))
+"#,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn rigid_slot_fields_require_exactly_the_singleton_domain() {
+    for field in ["(map-empty)", "(map-of 1 1)", "(map-of 0 0 1 1)"] {
+        assert_subst_rejected(&format!(
+            "(let $bad (V {field}))
+             (let $out (slotted-subst (V (map-of 0 0)) 0 (map-empty) (Null)))"
+        ));
+        assert_subst_rejected(&format!(
+            "(let $bad (Lam {field} (map-of 0 0) (V (map-of 0 0))))
+             (run-schedule (saturate (run slots)))
+             (let $out (slotted-subst (V (map-of 0 0)) 0 (map-empty) (Null)))"
+        ));
+    }
 }

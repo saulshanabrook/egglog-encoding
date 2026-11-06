@@ -59,7 +59,7 @@ impl ContainerValue for MapContainer {
 /// The entries of a flat `(map-of k0 v0 ...)` term as a Rust `BTreeMap` in
 /// canonical key order, with `MapContainer`'s last-write-wins semantics on
 /// duplicate keys; `None` for any other term.
-fn map_term_to_btreemap<'a>(
+pub fn map_term_to_btreemap<'a>(
     termdag: &'a TermDag,
     term_id: TermId,
 ) -> Option<BTreeMap<OrdTerm<'a>, TermId>> {
@@ -93,9 +93,30 @@ fn map_term_args(map: BTreeMap<OrdTerm<'_>, TermId>) -> Vec<TermId> {
 
 /// Canonicalize alternating `[k0, v0, ...]` arguments to the flat
 /// `(map-of ...)` term; `None` on odd arity.
-fn normalize_map_term(termdag: &mut TermDag, args: &[TermId]) -> Option<TermId> {
+pub fn normalize_map_term(termdag: &mut TermDag, args: &[TermId]) -> Option<TermId> {
     let flat = map_term_args(map_of_args_to_btreemap(termdag, args)?);
     Some(termdag.app("map-of".to_string(), flat))
+}
+
+/// A `(map-of ...)` term's entries keyed by [`TermId`]. Use [`id_map_term`] to
+/// convert the result back to canonical term order.
+pub(crate) fn map_term_to_id_map(
+    termdag: &TermDag,
+    term_id: TermId,
+) -> Option<BTreeMap<TermId, TermId>> {
+    Some(
+        map_term_to_btreemap(termdag, term_id)?
+            .into_iter()
+            .map(|(k, v)| (k.id(), v))
+            .collect(),
+    )
+}
+
+/// The canonical `(map-of ...)` term of entries keyed by [`TermId`]; the
+/// inverse of [`map_term_to_id_map`].
+pub(crate) fn id_map_term(termdag: &mut TermDag, map: &BTreeMap<TermId, TermId>) -> TermId {
+    let flat: Vec<TermId> = map.iter().flat_map(|(k, v)| [*k, *v]).collect();
+    normalize_map_term(termdag, &flat).expect("even arity")
 }
 
 /// `a ∘ b`, the map sending `x` to `a[b[x]]`: `b` applies first. Undefined
@@ -108,16 +129,16 @@ pub fn compose<T: Copy + Ord>(a: &BTreeMap<T, T>, b: &BTreeMap<T, T>) -> BTreeMa
 }
 
 /// The inverse map; `None` unless the input is injective.
-fn inverse(m: &BTreeMap<Value, Value>) -> Option<BTreeMap<Value, Value>> {
-    let out: BTreeMap<Value, Value> = m.iter().map(|(k, v)| (*v, *k)).collect();
+fn inverse<T: Copy + Ord>(m: &BTreeMap<T, T>) -> Option<BTreeMap<T, T>> {
+    let out: BTreeMap<T, T> = m.iter().map(|(k, v)| (*v, *k)).collect();
     (out.len() == m.len()).then_some(out)
 }
 
 /// Union of partial maps; `None` if they disagree on a shared key.
-fn map_union(
-    a: &BTreeMap<Value, Value>,
-    b: &BTreeMap<Value, Value>,
-) -> Option<BTreeMap<Value, Value>> {
+fn map_union<K: Copy + Ord, V: Copy + Eq>(
+    a: &BTreeMap<K, V>,
+    b: &BTreeMap<K, V>,
+) -> Option<BTreeMap<K, V>> {
     let mut out = a.clone();
     for (k, v) in b {
         if out.insert(*k, *v).is_some_and(|old| old != *v) {
@@ -161,6 +182,35 @@ pub fn find_mapping<T: Copy + Ord>(
         }
     }
     Some(mapping)
+}
+
+/// Apply `f` to a map term's entries and return a canonical map term.
+/// Returns `None` for malformed input or when `f` does.
+fn unary_map_validator(
+    f: impl Fn(&BTreeMap<TermId, TermId>) -> Option<BTreeMap<TermId, TermId>> + Send + Sync + 'static,
+) -> impl Fn(&mut TermDag, &[TermId]) -> Option<TermId> + Send + Sync + 'static {
+    move |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [a] = args else { return None };
+        let out = f(&map_term_to_id_map(termdag, *a)?)?;
+        Some(id_map_term(termdag, &out))
+    }
+}
+
+/// [`unary_map_validator`] for a primitive over two maps.
+fn binary_map_validator(
+    f: impl Fn(&BTreeMap<TermId, TermId>, &BTreeMap<TermId, TermId>) -> Option<BTreeMap<TermId, TermId>>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(&mut TermDag, &[TermId]) -> Option<TermId> + Send + Sync + 'static {
+    move |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [a, b] = args else { return None };
+        let out = f(
+            &map_term_to_id_map(termdag, *a)?,
+            &map_term_to_id_map(termdag, *b)?,
+        )?;
+        Some(id_map_term(termdag, &out))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -306,6 +356,22 @@ impl ContainerSort for MapSort {
                 (!contains).then(|| termdag.lit(Literal::Unit))
             };
 
+        let map_remove_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [map, key] = args else { return None };
+            let mut map = map_term_to_btreemap(termdag, *map)?;
+            map.remove(&termdag.ord_term(*key));
+            let flat = map_term_args(map);
+            Some(termdag.app("map-of".into(), flat))
+        };
+        let find_mapping_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let maps = args
+                .iter()
+                .map(|m| map_term_to_id_map(termdag, *m))
+                .collect::<Option<Vec<_>>>()?;
+            let out = find_mapping(&maps)?;
+            Some(id_map_term(termdag, &out))
+        };
+
         add_primitive_with_validator!(eg, "map-empty" = {self.clone(): MapSort} || -> @MapContainer (arc) { MapContainer {
             do_rebuild_keys: self.ctx.key.is_eq_sort() || self.ctx.key.is_eq_container_sort(),
             do_rebuild_vals: self.ctx.value.is_eq_sort() || self.ctx.value.is_eq_container_sort(),
@@ -327,30 +393,30 @@ impl ContainerSort for MapSort {
 
         add_primitive_with_validator!(eg, "map-get"    = |    xs: @MapContainer (arc), x: # (self.key())                     | -?> # (self.value()) { xs.data.get(&x).copied() }, map_get_validator);
         add_primitive_with_validator!(eg, "map-insert" = |mut xs: @MapContainer (arc), x: # (self.key()), y: # (self.value())| -> @MapContainer (arc) {{ Arc::make_mut(&mut xs.data).insert(x, y); xs }}, map_insert_validator);
-        add_primitive!(eg, "map-remove" = |mut xs: @MapContainer (arc), x: # (self.key())                     | -> @MapContainer (arc) {{ Arc::make_mut(&mut xs.data).remove(&x);   xs }});
+        add_primitive_with_validator!(eg, "map-remove" = |mut xs: @MapContainer (arc), x: # (self.key())                     | -> @MapContainer (arc) {{ Arc::make_mut(&mut xs.data).remove(&x);   xs }}, map_remove_validator);
 
         add_primitive_with_validator!(eg, "map-length"       = |xs: @MapContainer (arc)| -> i64 { xs.data.len() as i64 }, map_length_validator);
         add_primitive_with_validator!(eg, "map-contains"     = |xs: @MapContainer (arc), x: # (self.key())| -?> () { ( xs.data.contains_key(&x)).then_some(()) }, map_contains_validator);
         add_primitive_with_validator!(eg, "map-not-contains" = |xs: @MapContainer (arc), x: # (self.key())| -?> () { (!xs.data.contains_key(&x)).then_some(()) }, map_not_contains_validator);
 
-        add_primitive!(eg, "map-union" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(map_union(&xs.data, &ys.data)?), ..xs }) });
+        add_primitive_with_validator!(eg, "map-union" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(map_union(&xs.data, &ys.data)?), ..xs }) }, binary_map_validator(map_union));
 
         // With matching key and value sorts a map is a partial injection on one
         // space — a renaming, in the slotted-e-graph sense — so it composes and
         // inverts. `find-mapping` solves for the renaming carrying one tuple of
         // edges onto another; it is variadic, taking the two tuples flat.
         if self.key.name() == self.value.name() {
-            add_primitive!(eg, "compose" = |a: @MapContainer (arc), b: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: Arc::new(compose(&a.data, &b.data)), ..b } });
-            add_primitive!(eg, "inverse"     = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(inverse(&a.data)?), ..a }) });
-            add_primitive!(eg, "map-inverse" = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(inverse(&a.data)?), ..a }) });
-            add_primitive!(eg, "find-mapping" = {self.clone(): MapSort} [xs: @MapContainer (arc)] -?> @MapContainer (arc) {{
+            add_primitive_with_validator!(eg, "compose" = |a: @MapContainer (arc), b: @MapContainer (arc)| -> @MapContainer (arc) { MapContainer { data: Arc::new(compose(&a.data, &b.data)), ..b } }, binary_map_validator(|a, b| Some(compose(a, b))));
+            add_primitive_with_validator!(eg, "inverse"     = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(inverse(&a.data)?), ..a }) }, unary_map_validator(inverse));
+            add_primitive_with_validator!(eg, "map-inverse" = |a: @MapContainer (arc)| -?> @MapContainer (arc) { Some(MapContainer { data: Arc::new(inverse(&a.data)?), ..a }) }, unary_map_validator(inverse));
+            add_primitive_with_validator!(eg, "find-mapping" = {self.clone(): MapSort} [xs: @MapContainer (arc)] -?> @MapContainer (arc) {{
                 let maps: Vec<_> = xs.map(|m| m.data).collect();
                 Some(MapContainer {
                     do_rebuild_keys: self.ctx.key.is_eq_sort() || self.ctx.key.is_eq_container_sort(),
                     do_rebuild_vals: self.ctx.value.is_eq_sort() || self.ctx.value.is_eq_container_sort(),
                     data: Arc::new(find_mapping(&maps)?),
                 })
-            }});
+            }}, find_mapping_validator);
         }
     }
 

@@ -1,6 +1,7 @@
 ;;; Egglog constructors in `toy.egg` and their reference spellings.
 ;;; See `sdql.ref` for the format.
 
+V            var
 Lam          lam
 F            f
 G            g

@@ -1,0 +1,21 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype U (V Var) (Lam Var U :binder 0))
+(let input (Lam $a (Lam $a (V $a))))
+(run 0)
+(check (= input (Lam $b (Lam $c (V $c)))))
+
+Proof:
+(let t (Lam $v0 (Lam $v1 (V $v1))))
+(let t_1 (Lam $a (Lam $a (V $a))))
+(let prf (Alpha (= t_1 t) (Fiat (= t_1 t_1))))
+(Claim
+  (=
+    t
+    (rename
+      (renaming ($b $v0) ($c $v1) ($v0 $b) ($v1 $c))
+      (Lam $b (Lam $c (V $c)))))
+  (Trans (= t t) (Sym (= t t_1) prf) prf))

@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 2\nctor * Mult\nctor + Add\nctor - Sub\nctor apply App\nctor binop Binop\nctor eq Equality\nctor get Get\nctor ifthen IfThen\nctor lambda Lambda\nctor merge Merge\nctor null Null\nctor number Num\nctor range Range\nctor sdql-let Let\nctor sing Sing\nctor subarray SubArray\nctor sum Sum\nctor symbol Symbol\nctor unique Unique\nterm (var $0)\nterm (sdql-let (var $2) $1 (var $1))\nrule\natom _sl1 var $free\natom _sl2 var $bound\natom _p sdql-let _sl1 $bound _sl2\nrhs _p null\nprobe (sdql-let (var $2) $1 (var $1))\nprobe null\n",
+  "multi": "rounds 2\nctor * Mult\nctor + Add\nctor - Sub\nctor apply App\nctor binop Binop\nctor eq Equality\nctor get Get\nctor ifthen IfThen\nctor lambda Lambda\nctor merge Merge\nctor null Null\nctor number Num\nctor range Range\nctor sdql-let Let\nctor sing Sing\nctor subarray SubArray\nctor sum Sum\nctor symbol Symbol\nctor unique Unique\nctor var V\nterm (sdql-let (var $2) $1 (var $1))\nterm (var $0)\nrule\natom _sl1 var $free\natom _sl2 var $bound\natom _p sdql-let _sl1 $bound _sl2\nrhs _p null\nprobe (sdql-let (var $2) $1 (var $1))\nprobe null\n",
   "nested": null,
   "probes": [
     "_p0",

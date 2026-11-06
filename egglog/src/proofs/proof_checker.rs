@@ -14,7 +14,7 @@ use crate::{
         ResolvedNCommand,
     },
     core::ResolvedCall,
-    proofs::proof_format::{Justification, ProofId, ProofStore, Proposition},
+    proofs::proof_format::{Justification, Proof, ProofId, ProofStore, Proposition},
     util::{HashMap, HashSet, IndexMap, SymbolGen},
 };
 use thiserror::Error;
@@ -557,22 +557,20 @@ pub enum ProofCheckErrorKind {
     ContainerPrimitiveNotSideCondition { rule_name: String, prim: String },
 }
 
-/// Context needed for proof checking
-pub(crate) struct ProofCheckContext {
+/// Source axioms and global bindings shared by checks over one term dag.
+pub struct ProofCheckContext {
     /// Set of equalities established by global union/set actions
     /// Each entry is a pair (lhs, rhs) that was unified
     /// This includes reflexive equalities (term, term) for all globals
     global_equalities: HashSet<Proposition>,
     /// Map of global variable names to their TermIds
     global_bindings: HashMap<String, TermId>,
-    /// Cache of already-checked proofs
-    checked_proofs: HashMap<ProofId, Proposition>,
 }
 
 impl ProofCheckContext {
     /// Create a new proof check context by analyzing the program.
     /// This gathers all equalities established by global actions (unions and sets).
-    fn new(prog: &[ResolvedNCommand], term_dag: &mut TermDag) -> Result<Self, ProofCheckError> {
+    pub fn new(prog: &[ResolvedNCommand], term_dag: &mut TermDag) -> Result<Self, ProofCheckError> {
         // Check for duplicate rule names
         let mut seen_rule_names: HashSet<&str> = HashSet::default();
         for cmd in prog {
@@ -592,7 +590,6 @@ impl ProofCheckContext {
 
         Ok(ProofCheckContext {
             global_equalities: action_ctx.propositions,
-            checked_proofs: HashMap::default(),
             global_bindings: action_ctx.var_bindings,
         })
     }
@@ -645,8 +642,8 @@ impl ProofStore {
         proof_id: ProofId,
         program: &[ResolvedNCommand],
     ) -> Result<Proposition, ProofCheckError> {
-        let mut ctx = ProofCheckContext::new(program, &mut self.term_dag)?;
-        self.check_proof_with_context(proof_id, program, &mut ctx)
+        let ctx = ProofCheckContext::new(program, &mut self.term_dag)?;
+        self.check_proof_with_context(proof_id, program, &ctx, &mut HashMap::default())
     }
 
     /// Check proofs in order against one program, sharing the checked-proof cache.
@@ -655,10 +652,11 @@ impl ProofStore {
         proof_ids: &[ProofId],
         program: &[ResolvedNCommand],
     ) -> Result<Vec<Proposition>, ProofCheckError> {
-        let mut ctx = ProofCheckContext::new(program, &mut self.term_dag)?;
+        let ctx = ProofCheckContext::new(program, &mut self.term_dag)?;
+        let mut checked = HashMap::default();
         proof_ids
             .iter()
-            .map(|&proof_id| self.check_proof_with_context(proof_id, program, &mut ctx))
+            .map(|&proof_id| self.check_proof_with_context(proof_id, program, &ctx, &mut checked))
             .collect()
     }
 
@@ -667,15 +665,37 @@ impl ProofStore {
         &mut self,
         proof_id: ProofId,
         program: &[ResolvedNCommand],
-        ctx: &mut ProofCheckContext,
+        ctx: &ProofCheckContext,
+        checked: &mut HashMap<ProofId, Proposition>,
     ) -> Result<Proposition, ProofCheckError> {
-        // Check cache first
-        if let Some(prop) = ctx.checked_proofs.get(&proof_id) {
+        if let Some(prop) = checked.get(&proof_id) {
             return Ok(prop.clone());
         }
-
         let proof = self.id_to_proof[proof_id].clone();
-        let result = match &proof.justification {
+        let result = self.check_step(proof_id, &proof, program, ctx, |store, premise| {
+            store.check_proof_with_context(premise, program, ctx, checked)
+        });
+        if let Ok(ref prop) = result {
+            checked.insert(proof_id, prop.clone());
+        }
+        result
+    }
+
+    /// Check one ordinary step, delegating its premise proofs to `check_premise`.
+    /// The callback must validate each requested premise in the same theory.
+    /// `ctx` must come from `program` and this store's term dag; all term IDs in
+    /// the step and returned propositions must belong to that dag.
+    /// Callers must ensure terms and substitutions are well-typed and respect
+    /// the rule's variable scopes; this method does not recheck those properties.
+    pub fn check_step(
+        &mut self,
+        proof_id: ProofId,
+        proof: &Proof,
+        program: &[ResolvedNCommand],
+        ctx: &ProofCheckContext,
+        mut check_premise: impl FnMut(&mut Self, ProofId) -> Result<Proposition, ProofCheckError>,
+    ) -> Result<Proposition, ProofCheckError> {
+        match &proof.justification {
             Justification::Fiat => {
                 // Accept a reflexive equality over a literal or a
                 // primitive-closed term (re-evaluated from the term alone), or
@@ -745,7 +765,7 @@ impl ProofStore {
                     if is_container_side_condition(fact) {
                         self.check_side_condition(fact, &mut working_subst, name)?;
                     } else {
-                        let prop = self.check_proof_with_context(premise_id, program, ctx)?;
+                        let prop = check_premise(self, premise_id)?;
                         self.check_fact_matches_proposition(fact, &prop, &working_subst, name)?;
                     }
                 }
@@ -768,8 +788,8 @@ impl ProofStore {
                 new_proof,
             } => {
                 // Check both sub-proofs - they should be reflexive proofs
-                let old_prop = self.check_proof_with_context(*old_proof, program, ctx)?;
-                let new_prop = self.check_proof_with_context(*new_proof, program, ctx)?;
+                let old_prop = check_premise(self, *old_proof)?;
+                let new_prop = check_premise(self, *new_proof)?;
 
                 let (old_lhs, old_rhs) = (old_prop.lhs, old_prop.rhs);
                 let (new_lhs, new_rhs) = (new_prop.lhs, new_prop.rhs);
@@ -881,8 +901,8 @@ impl ProofStore {
 
             Justification::Trans(left_id, right_id) => {
                 // Check both sub-proofs
-                let left_prop = self.check_proof_with_context(*left_id, program, ctx)?;
-                let right_prop = self.check_proof_with_context(*right_id, program, ctx)?;
+                let left_prop = check_premise(self, *left_id)?;
+                let right_prop = check_premise(self, *right_id)?;
 
                 let (left_lhs, left_rhs) = (left_prop.lhs, left_prop.rhs);
                 let (right_lhs, right_rhs) = (right_prop.lhs, right_prop.rhs);
@@ -914,7 +934,7 @@ impl ProofStore {
 
             Justification::Sym(inner_id) => {
                 // Check the inner proof
-                let inner_prop = self.check_proof_with_context(*inner_id, program, ctx)?;
+                let inner_prop = check_premise(self, *inner_id)?;
                 let (inner_lhs, inner_rhs) = (inner_prop.lhs, inner_prop.rhs);
 
                 // Symmetry swaps lhs and rhs
@@ -938,11 +958,11 @@ impl ProofStore {
                 child_proof: child_id,
             } => {
                 // Check the base proof (proves t1 = f(..., ci, ...))
-                let base_prop = self.check_proof_with_context(*base_id, program, ctx)?;
+                let base_prop = check_premise(self, *base_id)?;
                 let (base_lhs, base_rhs) = (base_prop.lhs, base_prop.rhs);
 
                 // Check the child proof (proves ci = c2)
-                let child_prop = self.check_proof_with_context(*child_id, program, ctx)?;
+                let child_prop = check_premise(self, *child_id)?;
                 let (child_lhs, child_rhs) = (child_prop.lhs, child_prop.rhs);
 
                 // base_rhs should be an application f(...)
@@ -1011,7 +1031,7 @@ impl ProofStore {
             } => {
                 // The sub-proof establishes `t1 = f(..., ci, ...)`; the child at
                 // `child_index` is the `ci` this may conclude is reflexive.
-                let base_prop = self.check_proof_with_context(*base_id, program, ctx)?;
+                let base_prop = check_premise(self, *base_id)?;
                 let Term::App(_, children) = self.term_dag.get(base_prop.rhs) else {
                     return Err(ProofCheckErrorKind::ProjectionBaseNotApp { proof_id }.into());
                 };
@@ -1039,7 +1059,7 @@ impl ProofStore {
             Justification::ContainerNormalize { proof: inner_id } => {
                 // The sub-proof establishes `t1 = raw`; normalize `raw` to its
                 // canonical container form via the validator for its head.
-                let inner_prop = self.check_proof_with_context(*inner_id, program, ctx)?;
+                let inner_prop = check_premise(self, *inner_id)?;
                 let raw = inner_prop.rhs;
                 let normalized = self.normalize_container(raw);
                 let lhs_ok = proof.lhs() == inner_prop.lhs;
@@ -1063,14 +1083,7 @@ impl ProofStore {
                 // appeared outside a side condition, which is malformed.
                 Err(ProofCheckErrorKind::EvalOutsideSideCondition { proof_id }.into())
             }
-        };
-
-        // Cache the result
-        if let Ok(ref prop) = result {
-            ctx.checked_proofs.insert(proof_id, prop.clone());
         }
-
-        result
     }
 
     /// Check a container side condition by re-evaluating it against the rule

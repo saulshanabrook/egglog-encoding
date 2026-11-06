@@ -26,9 +26,10 @@
 ;;; already here; and the slide, transpose and dot-product rules, which need
 ;;; constructors this language does not declare.
 (sort U)
+(constructor V (Var) U)
 
-(constructor Lam (U U) U :binder 0)
+(constructor Lam (Var U) U :binder 0)
 (constructor App (U U) U)
-(constructor Let (U U U) U :binder 0)
+(constructor Let (Var U U) U :binder 0)
 (constructor Sym (String) U)
 (constructor Num (i64) U)

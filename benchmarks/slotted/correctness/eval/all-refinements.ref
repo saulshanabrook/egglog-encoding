@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nterm (var $0)\nterm (null)\nterm (f (var $0) (var $0))\nrule\natom root null \natom p0 f a0 a0\natom p1 f a1 a1\natom p2 f a2 a2\natom p3 f a3 a3\natom p4 f a4 a4\natom p5 f a5 a5\nrhs root (g ?a0 (g ?a1 (g ?a2 (g ?a3 (g ?a4 ?a5)))))\n",
+  "multi": "rounds 1\nctor add Add\nctor f F\nctor g G\nctor h H\nctor k K\nctor lam Lam\nctor null Null\nctor number Num\nctor sub Sub\nctor sub2 Sub2\nctor var V\nterm (var $0)\nterm (null)\nterm (f (var $0) (var $0))\nrule\natom root null \natom p0 f a0 a0\natom p1 f a1 a1\natom p2 f a2 a2\natom p3 f a3 a3\natom p4 f a4 a4\natom p5 f a5 a5\nrhs root (g ?a0 (g ?a1 (g ?a2 (g ?a3 (g ?a4 ?a5)))))\n",
   "nested": null,
   "probes": [],
   "expect": {

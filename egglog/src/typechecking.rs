@@ -1507,6 +1507,17 @@ impl TypeInfo {
         rule: &Rule,
         global_seminaive: bool,
     ) -> Result<ResolvedRule, TypeError> {
+        self.typecheck_rule_with_bindings(symbol_gen, rule, global_seminaive, &IndexMap::default())
+    }
+
+    /// Infer a rule with additional typed local bindings available to its body and head.
+    pub fn typecheck_rule_with_bindings(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        rule: &Rule,
+        global_seminaive: bool,
+        bindings: &IndexMap<&str, (Span, ArcSort)>,
+    ) -> Result<ResolvedRule, TypeError> {
         let Rule {
             span,
             head,
@@ -1536,6 +1547,10 @@ impl TypeInfo {
         problem.add_query(&query, self, query_ctx)?;
 
         let mut binding = query.vars().collect::<IndexSet<_>>();
+        binding.extend(bindings.keys().map(|name| (*name).to_owned()));
+        for (var, (span, sort)) in bindings {
+            problem.assign_local_var_type(var, span.clone(), sort.clone())?;
+        }
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);

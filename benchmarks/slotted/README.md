@@ -22,6 +22,7 @@ expand individual pairs to inspect their frozen bytes.
 | Paper array/SDQL/logic goals and iteration budgets | Actual frozen inputs in the catalog-driven Rust paper target |
 | Artifact hashes, capture guards and operator correspondence | Static Python tooling tests and inspectable manifests |
 | Original active rule library correspondence | Explicit `python -m benchmarks.reproduction.slotted.reference_rules` reproduction check |
+| Slotted proof translation | Rust proof corpus checks supported frozen inputs and proves the differential fixtures' observed probe equalities |
 
 The previous Python runner/progress/protocol tests disappear with that runner.
 Paper graph-isomorphism obligations and generated random campaigns are retired;

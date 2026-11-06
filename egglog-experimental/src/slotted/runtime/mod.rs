@@ -9,11 +9,12 @@ use std::sync::Arc;
 mod frame;
 mod group;
 mod primitives;
-mod renaming;
+pub(crate) mod renaming;
 mod subst;
+pub(crate) mod terms;
 mod types;
-use frame::*;
-use types::{Renaming, SlotSet};
+pub(crate) use frame::*;
+pub(crate) use types::{Renaming, SlotSet};
 
 fn map_container(data: std::collections::BTreeMap<Value, Value>) -> MapContainer {
     MapContainer::new(data, false, false)
@@ -22,6 +23,7 @@ fn map_container(data: std::collections::BTreeMap<Value, Value>) -> MapContainer
 /// Install the fixed runtime vocabulary once, before evaluating lowered code.
 /// Ordinary egglog sorts and primitives are still used for the storage containers.
 pub(super) fn register(eg: &mut EGraph) {
+    add_base_sort(eg, super::var_sort::VarSort, span!()).unwrap();
     add_base_sort(eg, NamesSort, span!()).unwrap();
     add_base_sort(eg, BindingSort, span!()).unwrap();
     add_base_sort(eg, FrameSort, span!()).unwrap();

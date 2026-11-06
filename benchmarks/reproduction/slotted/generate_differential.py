@@ -68,7 +68,7 @@ def frozen_inputs():
     for name, unions, start, lhs, rhs, differs in cases_nested.CASES:
         program = (
             '(include "egglog-experimental/tests/slotted/languages/toy.egg")\n'
-            + f"{unions}\n(let start {start})\n(rewrite {lhs} {rhs})\n(run 1)\n"
+            + f"(let _variable_seed (V $0))\n{unions}\n(let start {start})\n(rewrite {lhs} {rhs})\n(run 1)\n"
         )
         parsed = reference.Source(Path("nested.egg"), text=program)
         lang = cases_toy.LANG
@@ -91,7 +91,7 @@ def frozen_inputs():
         add("nested", name, program, multi, nested=nested, full_nodes_exceed_compat=differs)
     for name, rounds in (("subst-refresh", 2), ("coset-direction", 1)):
         path = ROOT / "egglog-experimental/tests/slotted" / f"{name}.egg"
-        program = path.read_text()
+        program = path.read_text().replace("(let start", "(let _variable_seed (V $0))\n(let start", 1)
         parsed = reference.Source(path)
         lang = workloads.pf.reference_language()
         forms = reference.parse(program)
@@ -118,7 +118,7 @@ def frozen_inputs():
     program = '(include "egglog-experimental/tests/slotted/languages/toy.egg")\n'
     program += (
         source.rewrite(lang, atoms, "root", rhs, name="all-refinements")
-        + "\n(let n (Null))\n(let f (F $0 $0))\n(run 1)\n"
+        + "\n(let n (Null))\n(let f (F (V $0) (V $0)))\n(run 1)\n"
     )
     root, lines = reference.atom_lines(lang, "root", atoms)
     spec = [

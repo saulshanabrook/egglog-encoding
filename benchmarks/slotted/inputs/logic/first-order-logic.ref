@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 2\nctor And And\nctor False False\nctor Forall Forall\nctor Implies Implies\nctor P P\nctor Q Q\nctor True True\nterm True\nterm (var $0)\nunion True (Forall $0 (P (var $0)))\nunion True (Forall $0 (Implies (P (var $0)) (Q (var $0))))\nrule\natom _p True \natom t True \natom t Forall $0 b1\natom t Forall $0 b2\nrhs _p (Forall $0 (And ?b1 ?b2))\nrule\natom _p True \natom t True \natom t Forall $0 _t1\natom _t1 And _t2 a\natom _t2 Implies a b\nrhs _p (Forall $0 ?b)\ngoal (Forall $0 (Q (var $0)))\n",
+  "multi": "rounds 2\nctor And And\nctor False False\nctor Forall Forall\nctor Implies Implies\nctor P P\nctor Q Q\nctor True True\nctor var VL\nterm True\nterm (var $0)\nunion True (Forall $0 (P (var $0)))\nunion True (Forall $0 (Implies (P (var $0)) (Q (var $0))))\nrule\natom _p True \natom t True \natom t Forall $0 b1\natom t Forall $0 b2\nrhs _p (Forall $0 (And ?b1 ?b2))\nrule\natom _p True \natom t True \natom t Forall $0 _t1\natom _t1 And _t2 a\natom _t2 Implies a b\nrhs _p (Forall $0 ?b)\ngoal (Forall $0 (Q (var $0)))\n",
   "nested": null,
   "unsupported_reason": "requires a single nested pattern; found multipattern :when conditions"
 }

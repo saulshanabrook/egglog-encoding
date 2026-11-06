@@ -1,5 +1,5 @@
 {
-  "multi": "rounds 8\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nterm (var $0)\nterm (lam $0 (app (app f1 (var $0)) (var $0)))\nrule\natom _p lam $x _t1\natom _sl1 var $x\natom _t1 app f _sl1\nrhs _p ?f\ncond notin $x f\nprobe (lam $0 (app (app f1 (var $0)) (var $0)))\nprobe (app f1 (var $0))\nprobe (app f1 cc)\n",
+  "multi": "rounds 8\nctor app App\nctor lam Lam\nctor let Let\nctor number Num\nctor symbol Sym\nctor var V\nterm (lam $0 (app (app f1 (var $0)) (var $0)))\nterm (var $0)\nrule\natom _p lam $x _t1\natom _sl1 var $x\natom _t1 app f _sl1\nrhs _p ?f\ncond notin $x f\nprobe (lam $0 (app (app f1 (var $0)) (var $0)))\nprobe (app f1 (var $0))\nprobe (app f1 cc)\n",
   "nested": null,
   "probes": [
     "_p0",

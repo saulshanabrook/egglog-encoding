@@ -111,17 +111,48 @@ where
     cli_with_preprocessor_impl(egraph, args, |_, source| Ok(source.to_owned()), false);
 }
 
-/// Use the standard CLI with a source-to-source pass before parsing each input.
+/// An input prepared by an extension before CLI evaluation or desugaring.
+pub trait CliProgram {
+    /// Evaluate the prepared program on the CLI's e-graph.
+    fn run(
+        &self,
+        graph: &mut EGraph,
+        filename: Option<String>,
+    ) -> Result<Vec<CommandOutput>, Error>;
+    /// Return lowered commands for `--mode desugar`.
+    fn desugar(&self, graph: &mut EGraph, filename: Option<String>) -> Result<Vec<Command>, Error>;
+}
+
+impl CliProgram for String {
+    fn run(
+        &self,
+        graph: &mut EGraph,
+        filename: Option<String>,
+    ) -> Result<Vec<CommandOutput>, Error> {
+        graph.parse_and_run_program(filename, self)
+    }
+
+    fn desugar(&self, graph: &mut EGraph, filename: Option<String>) -> Result<Vec<Command>, Error> {
+        graph.resolve_program(filename, self).map(|commands| {
+            commands
+                .into_iter()
+                .map(|command| command.make_unresolved())
+                .collect()
+        })
+    }
+}
+
+/// Use the standard CLI with a pass that prepares each input for execution.
 /// File names, serialization, reports, and evaluation retain normal CLI behavior.
 /// The pass also receives each complete REPL input, with no file name.
 /// Failed REPL inputs restore both the e-graph and the cloned pass state, including
 /// when evaluation executed part of the input before failing. File inputs exit on
 /// failure.
 #[allow(clippy::disallowed_macros)]
-pub fn cli_with_preprocessor<I, T>(
+pub fn cli_with_preprocessor<I, T, P: CliProgram>(
     egraph: EGraph,
     args: I,
-    preprocess: impl FnMut(Option<String>, &str) -> Result<String, Error> + Clone,
+    preprocess: impl FnMut(Option<String>, &str) -> Result<P, Error> + Clone,
 ) where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
@@ -130,10 +161,10 @@ pub fn cli_with_preprocessor<I, T>(
 }
 
 #[allow(clippy::disallowed_macros)]
-fn cli_with_preprocessor_impl<I, T>(
+fn cli_with_preprocessor_impl<I, T, P: CliProgram>(
     mut egraph: EGraph,
     args: I,
-    mut preprocess: impl FnMut(Option<String>, &str) -> Result<String, Error> + Clone,
+    mut preprocess: impl FnMut(Option<String>, &str) -> Result<P, Error> + Clone,
     transactional_repl: bool,
 ) where
     I: IntoIterator<Item = T>,
@@ -332,13 +363,13 @@ impl EGraph {
         )
     }
 
-    fn repl_preprocessed<R: Read, W: Write>(
+    fn repl_preprocessed<R: Read, W: Write, P: CliProgram>(
         &mut self,
         input: R,
         mut output: W,
         mode: RunMode,
         is_terminal: bool,
-        preprocess: &mut (impl FnMut(Option<String>, &str) -> Result<String, Error> + Clone),
+        preprocess: &mut (impl FnMut(Option<String>, &str) -> Result<P, Error> + Clone),
         transactional: bool,
     ) -> io::Result<()> {
         let mut run = |egraph: &mut Self, source: &str, output: &mut W| {
@@ -391,13 +422,13 @@ fn should_eval(curr_cmd: &str) -> bool {
     all_sexps(SexpParser::new(None, curr_cmd)).is_ok()
 }
 
-fn run_commands<W>(
+fn run_commands<W, P: CliProgram>(
     egraph: &mut EGraph,
     filename: Option<String>,
     command: &str,
     mut output: W,
     mode: RunMode,
-    preprocess: &mut impl FnMut(Option<String>, &str) -> Result<String, Error>,
+    preprocess: &mut impl FnMut(Option<String>, &str) -> Result<P, Error>,
 ) -> io::Result<Option<Error>>
 where
     W: Write,
@@ -413,7 +444,7 @@ where
         }
     };
     if mode == RunMode::ShowDesugaredEgglog {
-        return Ok(match egraph.resolve_program(filename, &command) {
+        return Ok(match command.desugar(egraph, filename) {
             Ok(resolved) => {
                 let sanitized = sanitize_internal_names(&resolved);
 
@@ -429,7 +460,7 @@ where
         });
     };
 
-    Ok(match egraph.parse_and_run_program(filename, &command) {
+    Ok(match command.run(egraph, filename) {
         Ok(msgs) => {
             if mode != RunMode::NoMessages {
                 for msg in msgs {

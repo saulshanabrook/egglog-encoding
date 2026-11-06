@@ -4,7 +4,7 @@
       "repository": "https://github.com/memoryleak47/slotted-egraphs-artifact",
       "revision": "83f2e5bee2b3aa45bf97ef1e3a8abe953790c735",
       "rule_library": "egglog-experimental/tests/slotted/languages/sdql-rules.egg",
-      "rule_library_sha256": "sha256:d0514c2b73976c6c02fe84fc9f1a8fadfb2796762cfba27c1ad1214ba54ca093",
+      "rule_library_sha256": "sha256:164950e11e02bb83532332cd57e9e3efb19725cabc39f6b4c9bc80011c529d69",
       "target_contract": "The artifact compares extraction costs; these source fixtures check the stronger supplied target syntax."
     },
     "reference": {
@@ -15,15 +15,16 @@
   "preparation": {
     "source_revision": "d26e379bc896e4751bcd53b925b1682828dea19b",
     "command": "python -m benchmarks.reproduction.slotted.generate",
-    "note": "Frozen bytes retain the historical benchmarks.slotted.generate header; generation is an explicit reproduction operation."
+    "note": "Frozen inputs regenerated for explicit Var constructors when rebasing slotted proofs; schedules and native reference policies are retained. The historical benchmarks.slotted.generate header is preserved.",
+    "syntax_revision": "9d936c7f94bd5fb83d835baad5b0a2b00fad9422"
   },
   "workloads": [
     {
       "id": "array/goal-2d-4f-N0",
       "file": "array/goal-2d-4f-N0.egg",
-      "file_sha256": "sha256:a469562e4e91d835831bb00f9c7d186209d6c9e6df2b763d57b683992da45ebe",
+      "file_sha256": "sha256:ba9602db277893dd180706e5f8d1ab94b83d1525cccc596f3108afddc0e655e6",
       "reference": "array/goal-2d-4f-N0.ref",
-      "reference_sha256": "sha256:c83d7317681159f06b8c3fd419c8814890fb183fae307233dc9a8f38f842a742",
+      "reference_sha256": "sha256:9d49a26660aa301fd2d5510ddc64d89e6f82b290fe68659091d3d093d598870a",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -39,9 +40,9 @@
     {
       "id": "array/goal-2d-4f-N1",
       "file": "array/goal-2d-4f-N1.egg",
-      "file_sha256": "sha256:91a92ad11edfe028d990d2656f1ed2cd277d4d7175318463abde71ef39ee793d",
+      "file_sha256": "sha256:181e78f1d025712ec15ecbd7496663485a0526d40672e09dc625c8cfb5aebd2f",
       "reference": "array/goal-2d-4f-N1.ref",
-      "reference_sha256": "sha256:b582f6760524d3b8192bebaa61d8ab2717a7f923e57334ebfe06cf3ae3da4dc0",
+      "reference_sha256": "sha256:1b20b56472d32123847169a1a143d794c3c5734fd0446e0584775d6daa079925",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -57,9 +58,9 @@
     {
       "id": "array/goal-2d-4f-N10",
       "file": "array/goal-2d-4f-N10.egg",
-      "file_sha256": "sha256:cfb57627f62e22c6f76ff363cef8232e7fb75e1e2f8e548350012f2861e52d67",
+      "file_sha256": "sha256:ee1189946968f99c796296e90712f596b0b766f9b63f82fa087e5035bbaf00e1",
       "reference": "array/goal-2d-4f-N10.ref",
-      "reference_sha256": "sha256:17af3582ac95f235641356a7f76ae8d66cbe3cde205bb8622599547569e07f2b",
+      "reference_sha256": "sha256:643d3feee2eb1fd7f345efa259ba59cda35814a9022c4bac591f5368a988a2e5",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -75,9 +76,9 @@
     {
       "id": "array/goal-2d-4f-N2",
       "file": "array/goal-2d-4f-N2.egg",
-      "file_sha256": "sha256:abf66063df0576b6c5704b8b11aabd024cce312abbc4bf784b2ee9e084c93993",
+      "file_sha256": "sha256:cf99d8fe5bd42bfd0b700e813c32d33df35774701d111ec9347d9010aef36005",
       "reference": "array/goal-2d-4f-N2.ref",
-      "reference_sha256": "sha256:ce3870628a56d1c4806d63ed56305d58fe6a95dcd4b671a7345e8206a29bce20",
+      "reference_sha256": "sha256:3780f4f6e9fc482353b134f4d76dbd50602d961b7c8a81e68712969619b4b37f",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -93,9 +94,9 @@
     {
       "id": "array/goal-2d-4f-N3",
       "file": "array/goal-2d-4f-N3.egg",
-      "file_sha256": "sha256:7dde2b7efb9c4e8fce6c769ae391ac973da343a8ef7430f40c731e686360cdd3",
+      "file_sha256": "sha256:87f2983ec8763085e98a29d0af4b7c74de5f10a7301415535b3911cda3588f85",
       "reference": "array/goal-2d-4f-N3.ref",
-      "reference_sha256": "sha256:14e137f9f379264b9834207530a478861f49bbe2b289508e10fdef9641f18f6a",
+      "reference_sha256": "sha256:c240399e2a0a4204189434a82a3c3b8883f89830154c9bd2dad7f832fee43ae9",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -111,9 +112,9 @@
     {
       "id": "array/goal-2d-4f-N4",
       "file": "array/goal-2d-4f-N4.egg",
-      "file_sha256": "sha256:a37192150ca4321347f4a65d9596b96edfa1ea4d54ed3e9c34434d9a6f78c51d",
+      "file_sha256": "sha256:a372c6e0755072244eb4a035f86c6bd8df7bbb6b5025128f4a78e3cded441300",
       "reference": "array/goal-2d-4f-N4.ref",
-      "reference_sha256": "sha256:0b2dbddc93bc2d570a523d96d6e79e6d63ebd57ec8f8fa60d29116234fd3c6e6",
+      "reference_sha256": "sha256:3b4e59a70c32d232e1e92868d1fe94fe00ef5e8bd9c84b1dbcc3518993ff3ad6",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -129,9 +130,9 @@
     {
       "id": "array/goal-2d-4f-N5",
       "file": "array/goal-2d-4f-N5.egg",
-      "file_sha256": "sha256:59b5d196fd43f84186440d424d8643cf58f07832f6c622c83299b5565d42cab8",
+      "file_sha256": "sha256:732eb8e719e930aa57ddd243768039389b912365526f9ed430f5ecda03268a54",
       "reference": "array/goal-2d-4f-N5.ref",
-      "reference_sha256": "sha256:ab1030ec8f2387f41e1b32ca043eeda168b53c0406ef184848e95e4285470a5a",
+      "reference_sha256": "sha256:f0afb4d5ead45eb1e5e60d99e5c608cf00a4dd564ce561e6c6249968638acab7",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -147,9 +148,9 @@
     {
       "id": "array/goal-2d-4f-N6",
       "file": "array/goal-2d-4f-N6.egg",
-      "file_sha256": "sha256:a31c605ef07a71fb8e55a561918b18cdaa054fbc112036d59574eff8fbd1dd9f",
+      "file_sha256": "sha256:b72136e51150d87635aa9fd16ee5f8b0792ea80d23b1e0eb6e32734fcfacb790",
       "reference": "array/goal-2d-4f-N6.ref",
-      "reference_sha256": "sha256:82c5a7f26c9b621ab5d1eb64da8487cc4f8042bd9c1b5b7e6e4f267d7cd206c6",
+      "reference_sha256": "sha256:ed669fe31c375e6f05a931d10c8ec1f6818f427fd46c348bbd5ddd4cf3ae0f76",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -165,9 +166,9 @@
     {
       "id": "array/goal-2d-4f-N7",
       "file": "array/goal-2d-4f-N7.egg",
-      "file_sha256": "sha256:bca00ea8797b9bf9b371a8fa63f241144c200c341119169b4d6543d00edd1240",
+      "file_sha256": "sha256:11defd7f90888f5d0718ef1496a8778afce586dd784e214950e4466a6eed43f9",
       "reference": "array/goal-2d-4f-N7.ref",
-      "reference_sha256": "sha256:9cf2b2b9a46226d6ce08d440c27fb4651e03f88a8d06018908b54794e9a1870c",
+      "reference_sha256": "sha256:1b5339edc1ca16d10ba32d69a80acc68672bcf2ab7a5f0d3a58544cc22591948",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -183,9 +184,9 @@
     {
       "id": "array/goal-2d-4f-N8",
       "file": "array/goal-2d-4f-N8.egg",
-      "file_sha256": "sha256:6b1d502bbabbde578e592cc5eb294638978a7a4d0c4adb1248c06ca05c04409b",
+      "file_sha256": "sha256:e612be027b572a8e1d61837d114cab9be87a66769bd7011a050184976797b80f",
       "reference": "array/goal-2d-4f-N8.ref",
-      "reference_sha256": "sha256:71b20ab5894b96a414baa017d6d95fbc55629afef5379572c42490ee69fd4b28",
+      "reference_sha256": "sha256:2c0a61fbc41ea6657f20b18122a1b3518a0d392e17597c0aec4c7c8b495dd892",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -201,9 +202,9 @@
     {
       "id": "array/goal-2d-4f-N9",
       "file": "array/goal-2d-4f-N9.egg",
-      "file_sha256": "sha256:71829f6ed3d6d8c9a4b922e49669e6b5d15c3bdc64e5907e62abd8b205672a34",
+      "file_sha256": "sha256:c673679b43aadeafc34498f1cadfc879424def32c0305c2995d080e614b70c9d",
       "reference": "array/goal-2d-4f-N9.ref",
-      "reference_sha256": "sha256:752d701f41063a1e8fcc7b745629d433a9a08b982a4ac748b4c01064c84a8b00",
+      "reference_sha256": "sha256:be94a8cb56ffd4c216a3f325059963a02ea029ffb0dd4488fd227914e0764505",
       "family": "array",
       "rounds": 6,
       "run_budgets": [
@@ -219,9 +220,9 @@
     {
       "id": "logic/first-order-logic",
       "file": "logic/first-order-logic.egg",
-      "file_sha256": "sha256:25d08b53d15c57320c91266a62a80d4e2ca28ed71b98f3621003de0b3cc1a79e",
+      "file_sha256": "sha256:57ca4c7c668b01e394e72d42b2f6a6b88956a8324bb09fea31bf6fe79327d4a0",
       "reference": "logic/first-order-logic.ref",
-      "reference_sha256": "sha256:7cd9a8a46d10c69606f51aa6dbbb6c211926ff9273093685211424f1202c71ab",
+      "reference_sha256": "sha256:04e1273f78beb03f92e9a8c3f05e659a4b3ea9b7a3dabfd8ce0239aa75287c4b",
       "family": "logic",
       "rounds": 2,
       "run_budgets": [
@@ -237,9 +238,9 @@
     {
       "id": "logic/first-order-logic2",
       "file": "logic/first-order-logic2.egg",
-      "file_sha256": "sha256:2eac61fd74050e2e9f0f8cac4081800535fe94f46599e3592e81f957830b4a14",
+      "file_sha256": "sha256:eb328808edf393cbc4ec2d2b3ff42bd5bafe53ee45b57423f484476cef94b227",
       "reference": "logic/first-order-logic2.ref",
-      "reference_sha256": "sha256:0c0e69c914f06780cd64f1415d9eda7457d0eb101fd8807c5fc68d4c4de07e88",
+      "reference_sha256": "sha256:57e4f317330f950d4b4ab1033a08cb91bdfac3b96076d6fb94c5ac9b4a190ee3",
       "family": "logic",
       "rounds": 5,
       "run_budgets": [
@@ -255,9 +256,9 @@
     {
       "id": "sdql/batax_1st-44rules",
       "file": "sdql/batax_1st-44rules.egg",
-      "file_sha256": "sha256:e41027e48ab509ea8553ea6f5bd475370f9da119b12abba04257402171bb4b7a",
+      "file_sha256": "sha256:a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
       "reference": "sdql/batax_1st-44rules.ref",
-      "reference_sha256": "sha256:0be815ada87c0aa928b571e68e3328a9bb5af98cde47a343e11c7db31601cf5d",
+      "reference_sha256": "sha256:b38bb95ad2b73cd8a1a5b7029b614effd63821f96d83bbbf16c25bf1322cc9ff",
       "family": "sdql",
       "rounds": 13,
       "run_budgets": [
@@ -278,9 +279,9 @@
     {
       "id": "sdql/batax_2nd-44rules",
       "file": "sdql/batax_2nd-44rules.egg",
-      "file_sha256": "sha256:87277868e931935c2f885433d8135bd3ca01618f911356dd46b2a16e53197cc1",
+      "file_sha256": "sha256:672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
       "reference": "sdql/batax_2nd-44rules.ref",
-      "reference_sha256": "sha256:902232ad6185e35f865cb27b1726b385ce35d93a4d7281f43b359c89064d43ff",
+      "reference_sha256": "sha256:33a5ae73e8e0f6f480043b9261af436cddf85e950dd3d4ecd08c6b929ae46076",
       "family": "sdql",
       "rounds": 12,
       "run_budgets": [
@@ -301,9 +302,9 @@
     {
       "id": "sdql/mmm_1st-44rules",
       "file": "sdql/mmm_1st-44rules.egg",
-      "file_sha256": "sha256:dafabe24077fedae4905b98590a3c94b1e01a84ad3ec71070ed59d8eceacfe8e",
+      "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
       "reference": "sdql/mmm_1st-44rules.ref",
-      "reference_sha256": "sha256:17ed2c0d33989955113243efda545ae0d622f32bdf218751800b61f33da3bd4b",
+      "reference_sha256": "sha256:d5dac47c9905cf4968bd1b80cd3e8a0616e502a3e41b76309e9441e4cd3a44a3",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -324,9 +325,9 @@
     {
       "id": "sdql/mmm_2nd-44rules",
       "file": "sdql/mmm_2nd-44rules.egg",
-      "file_sha256": "sha256:44f23b505b48e69aac074d9d19ef2d2aabdd3191e42e0de672e90c4e962637a3",
+      "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
       "reference": "sdql/mmm_2nd-44rules.ref",
-      "reference_sha256": "sha256:97d90052b569dbafcaea6a24c2a2cb4f58794e8da770b34a94f3e8ee00e68e07",
+      "reference_sha256": "sha256:f2c8cdd0d3b6b529115a1eaae5985392552513e3d6d430132e841106e39e8e7a",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -347,9 +348,9 @@
     {
       "id": "sdql/mmm_sum_1st-44rules",
       "file": "sdql/mmm_sum_1st-44rules.egg",
-      "file_sha256": "sha256:ccbc48815f391677596099dff283ea5aafad1ac9653accf0a298205a4cf1af43",
+      "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
       "reference": "sdql/mmm_sum_1st-44rules.ref",
-      "reference_sha256": "sha256:964f9945b4b0958faa60ee5f2f8434f3638930ba542835e4cc0d5f26cdf4baaa",
+      "reference_sha256": "sha256:9e97ff2b5fdbdc69ad33f2a78e32026fe8fb0713b92ccfe84d44228eab1966fa",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -370,9 +371,9 @@
     {
       "id": "sdql/mmm_sum_2nd-44rules",
       "file": "sdql/mmm_sum_2nd-44rules.egg",
-      "file_sha256": "sha256:aba9773a2e72d9926d341a1a317501d00e0c729a49b17508ddbe9654277f00f2",
+      "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
       "reference": "sdql/mmm_sum_2nd-44rules.ref",
-      "reference_sha256": "sha256:1b2e94bb31884e757917fe038a5b5328f8ff01b40235d70e0c8a7cc815c6b0c1",
+      "reference_sha256": "sha256:d107c80e761725fd9662a439e00e77a46043f37f4add733d14d0c39ff549aecf",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -393,9 +394,9 @@
     {
       "id": "sdql/mttkrp_1st-44rules",
       "file": "sdql/mttkrp_1st-44rules.egg",
-      "file_sha256": "sha256:8057f1c6b02c37672adcb86dcb884f53edb9a4972fd1e9cbfad71646c81ec486",
+      "file_sha256": "sha256:78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
       "reference": "sdql/mttkrp_1st-44rules.ref",
-      "reference_sha256": "sha256:1f1687137cdf82ebb1fcc71662dc6c44d7e1a7a0f9974e133270b14440c4b8ac",
+      "reference_sha256": "sha256:9b68a505d08c6e8c59049bbaf9744afcc947837fa4b55a93904be18faf544dce",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -416,9 +417,9 @@
     {
       "id": "sdql/mttkrp_2nd-44rules",
       "file": "sdql/mttkrp_2nd-44rules.egg",
-      "file_sha256": "sha256:df1b8a346185b0e6367f00256493b1cb6d4d857d13f7549697a75960942e4ba7",
+      "file_sha256": "sha256:a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
       "reference": "sdql/mttkrp_2nd-44rules.ref",
-      "reference_sha256": "sha256:e32de7b5116692f8d4ff7630b0731ffa1486f8e0a59d4645ef4361328a68dabe",
+      "reference_sha256": "sha256:31fd539a3ce4c93c8af9b7ecb19d4df84c331da7a6430a39ebe412cffa8359f5",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -439,9 +440,9 @@
     {
       "id": "sdql/ttm_1st-44rules",
       "file": "sdql/ttm_1st-44rules.egg",
-      "file_sha256": "sha256:f8d5cb7f440b78fa0d6201a09223b7f67a8e2753d6da7da5aeae36b1c0d1c4bc",
+      "file_sha256": "sha256:cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
       "reference": "sdql/ttm_1st-44rules.ref",
-      "reference_sha256": "sha256:5147539156939ae48b7d78115db620469daca251894ab175c069a8767ce08f64",
+      "reference_sha256": "sha256:9a1723ceea41e037d5ba556cb1410da90f8239ed6e2bc1f8dfaadab11926a324",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [
@@ -462,9 +463,9 @@
     {
       "id": "sdql/ttm_2nd-44rules",
       "file": "sdql/ttm_2nd-44rules.egg",
-      "file_sha256": "sha256:efec9b1f61619a9fce2a91bc1aac41d5919c973031d3f7ab9e6ab13ee0f86f11",
+      "file_sha256": "sha256:dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
       "reference": "sdql/ttm_2nd-44rules.ref",
-      "reference_sha256": "sha256:5f02a7f243fd0d8e9b4af58389ca454f02f17908201181f6a77585fce9dac995",
+      "reference_sha256": "sha256:7f224750b241883707f668a27956fadbf32d837ec145fe7c9a62169fd5ce9712",
       "family": "sdql",
       "rounds": 30,
       "run_budgets": [

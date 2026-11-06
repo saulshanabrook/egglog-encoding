@@ -89,11 +89,8 @@ pub(crate) enum RulesetKind {
 }
 
 pub type NCommand = GenericNCommand<String, String>;
-/// [`ResolvedNCommand`] is another specialization of [`GenericNCommand`], which
-/// adds the type information to heads and leaves of commands.
-/// [`EGraph::typecheck_command`](crate::EGraph::typecheck_command) turns an
-/// [`NCommand`] into a [`ResolvedNCommand`].
-pub(crate) type ResolvedNCommand = GenericNCommand<ResolvedCall, ResolvedVar>;
+/// A desugared command whose call heads and variable leaves carry resolved types.
+pub type ResolvedNCommand = GenericNCommand<ResolvedCall, ResolvedVar>;
 
 /// A [`NCommand`] is a desugared [`Command`], where syntactic sugars
 /// like [`Command::Datatype`] and [`Command::Rewrite`]
@@ -1928,7 +1925,7 @@ pub type Merge = GenericMerge<String, String>;
 pub type ResolvedMerge = GenericMerge<ResolvedCall, ResolvedVar>;
 
 pub type Rule = GenericRule<String, String>;
-pub(crate) type ResolvedRule = GenericRule<ResolvedCall, ResolvedVar>;
+pub type ResolvedRule = GenericRule<ResolvedCall, ResolvedVar>;
 
 pub type Rewrite = GenericRewrite<String, String>;
 

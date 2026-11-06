@@ -165,6 +165,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             let mut compiler = egglog_experimental::slotted::Compiler::new(
                 egglog_experimental::slotted::Options {
                     no_aliasing: nested,
+                    ..Default::default()
                 },
             );
             let mut graph = egglog_experimental::slotted::new_egraph();

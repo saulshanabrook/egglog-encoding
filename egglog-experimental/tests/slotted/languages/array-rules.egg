@@ -6,7 +6,7 @@
 
 (include "egglog-experimental/tests/slotted/languages/array.egg")
 
-(rewrite (Lam $x (App f $x))
+(rewrite (Lam $x (App f (V $x)))
          f
          :name "eta"
          :when ((not-free $x f)))
@@ -17,7 +17,7 @@
          b
          :name "let-unused"
          :when ((not-free $x b)))
-(rewrite (Let $x $x e)
+(rewrite (Let $x (V $x) e)
          e
          :name "let-var-same")
 (rewrite (Let $x (App a b) e)
@@ -29,11 +29,11 @@
          :name "let-lam-diff"
          :when ((not-free $y e) (free $x body)))
 (rewrite (App (App (Sym "map") f) (App (App (Sym "map") g) arg))
-         (App (App (Sym "map") (Lam $fu (App f (App g $fu)))) arg)
+         (App (App (Sym "map") (Lam $fu (App f (App g (V $fu))))) arg)
          :name "map-fusion"
 )
 (rewrite (App (Sym "map") (Lam $x (App f gx)))
-         (Lam $in (App (App (Sym "map") f) (App (App (Sym "map") (Lam $x gx)) $in)))
+         (Lam $in (App (App (Sym "map") f) (App (App (Sym "map") (Lam $x gx)) (V $in))))
          :name "map-fission"
          :when ((not-free $x f))
 )
