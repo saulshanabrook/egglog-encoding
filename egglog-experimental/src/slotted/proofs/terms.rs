@@ -14,6 +14,49 @@ use crate::slotted::runtime::Renaming as SlotMap;
 use egglog::{Term, TermDag, TermId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::hash::{Hash, Hasher};
+
+/// Slot-insensitive structural hashes for one append-only term DAG. Hashes only
+/// reject incompatible alpha/renaming candidates; collisions merely add work.
+/// Keep this cache with the reconstruction pass, not with retained proofs.
+#[derive(Default)]
+pub(in crate::slotted) struct TermShapes(HashMap<TermId, u64>);
+
+impl TermShapes {
+    /// Alpha conversion and slot permutations preserve this shape. Keep the
+    /// existing matching/Alpha derivation as the authority when hashes agree.
+    pub fn get(&mut self, dag: &TermDag, term: TermId) -> u64 {
+        if let Some(&shape) = self.0.get(&term) {
+            return shape;
+        }
+        let mut pending = vec![(term, false)];
+        while let Some((term, ready)) = pending.pop() {
+            if self.0.contains_key(&term) {
+                continue;
+            }
+            let node = dag.get(term);
+            if !ready && let Term::App(_, children) = node {
+                pending.push((term, true));
+                pending.extend(children.iter().map(|&child| (child, false)));
+                continue;
+            }
+            let mut hash = rustc_hash::FxHasher::default();
+            match node {
+                Term::Lit(value) => (0u8, value).hash(&mut hash),
+                Term::Var(_) if slot_of(dag, term).is_some() => 1u8.hash(&mut hash),
+                Term::Var(name) => (2u8, name).hash(&mut hash),
+                Term::App(head, children) => {
+                    (3u8, head, children.len()).hash(&mut hash);
+                    for child in children {
+                        self.0[child].hash(&mut hash);
+                    }
+                }
+            }
+            self.0.insert(term, hash.finish());
+        }
+        self.0[&term]
+    }
+}
 
 /// A shared supply for generated slot names. Negative slots are legal source
 /// names too, so the counter alone does not establish freshness.

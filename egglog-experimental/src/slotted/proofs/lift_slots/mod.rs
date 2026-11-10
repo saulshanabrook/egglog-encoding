@@ -8,7 +8,9 @@ use super::context::{ColumnKind, ProofContext, SourceFact, pattern_term};
 use super::coordinates::{Coordinates, ViewId};
 use super::format::{Claim, SlottedProofStore};
 use super::pipeline::EncodingNames;
-use super::terms::{FreshSlots, Renaming, all_slots, rename, slot_of, slot_term, term_renaming};
+use super::terms::{
+    FreshSlots, Renaming, TermShapes, all_slots, rename, slot_of, slot_term, term_renaming,
+};
 
 use super::{HashMap, HashSet};
 use crate::slotted::query::ProofNames;
@@ -39,6 +41,8 @@ use shape::ShapeKey;
 
 type LiftResult<T> = Result<T, String>;
 type SymmetryPremises = Vec<Option<(TermId, ProofId)>>;
+/// A carrier source term, its connecting proof, and whether to reverse it.
+type SourceBridge = (TermId, ProofId, bool);
 
 /// Lift the egglog proof `root`, which proves the encoded form of `claim`,
 /// into a slotted proof of the claim over `dag`, the program's term dag.
@@ -104,6 +108,12 @@ struct SlotLifter<'a> {
     /// Carrier equalities by the constructor of their source spelling, in proof
     /// order. The bool selects the reversed direction of the stored equality.
     carrier_index: Option<HashMap<String, Vec<(ProofId, bool)>>>,
+    /// Incoming carrier witnesses by endpoint, in ordinary proof order. Each
+    /// entry is (source term, proof, reversed).
+    source_index: Option<HashMap<TermId, Vec<SourceBridge>>>,
+    /// Slot-insensitive structural hashes, used only to reject candidates whose
+    /// constructors or payloads cannot match. Hash collisions only add work.
+    term_shapes: TermShapes,
     /// Preferred occurrences depend only on the immutable ordinary proof DAG.
     occurrence_memo: HashMap<TermId, Occurrence>,
     /// The `(class, slot)` certificates being derived, against circularity.
@@ -210,6 +220,8 @@ impl<'a> SlotLifter<'a> {
             free_vars_index: None,
             group_index: None,
             carrier_index: None,
+            source_index: None,
+            term_shapes: TermShapes::default(),
             occurrence_memo: HashMap::default(),
             cert_stack: Default::default(),
             fresh,

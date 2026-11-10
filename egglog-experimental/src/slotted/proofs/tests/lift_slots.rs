@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn reflexivity_rejects_incompatible_shapes_before_alpha_conversion() {
+    let mut program = ProofContext::default();
+    program.add_constructor("Z", vec![]);
+    program.add_constructor("V", vec![ColumnKind::Var]);
+    program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
+    program.add_constructor("Triple", vec![ColumnKind::Child; 3]);
+    let mut dag = TermDag::default();
+    let vars: Vec<_> = (0..5)
+        .map(|slot| {
+            let slot = slot_term(&mut dag, slot);
+            dag.app("V".into(), vec![slot])
+        })
+        .collect();
+    let zero = dag.app("Z".into(), vec![]);
+    let good = dag.app("Triple".into(), vec![vars[3], vars[4], zero]);
+    let mut shared = zero;
+    for _ in 0..32 {
+        shared = dag.app("Pair".into(), vec![shared, shared]);
+    }
+    let bad = dag.app("Triple".into(), vec![vars[0], vars[0], shared]);
+    let target = dag.app("Triple".into(), vec![vars[1], vars[2], zero]);
+    program.lets.insert("good".into(), good);
+    program.lets.insert("bad".into(), bad);
+    // The bad candidate is visited first. Its early repeated-slot conflict must
+    // not send the enormous, structurally different third child through Alpha.
+    assert_eq!(program.built_terms(&dag)[0], bad);
+    let names = EncodingNames::default();
+    let egg = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+    let mut lifter = SlotLifter::new(&program, dag, &names, &egg);
+    let proof = lifter.reflexive(target).unwrap();
+    let (mut store, proof) = lifter.out.finish(proof);
+    super::super::checker::check_proof_in_program(&mut store, &program, proof).unwrap();
+    assert_eq!(store.proposition(proof), &Proposition::new(target, target));
+}
+
+#[test]
 fn variable_expansion_replays_its_construction_witness() {
     use crate::slotted::{Compiler, Options, ProofMode, new_egraph_with_proofs};
     use egglog::CommandOutput;

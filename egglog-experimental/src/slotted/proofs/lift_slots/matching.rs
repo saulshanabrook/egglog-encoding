@@ -3,6 +3,35 @@
 use super::*;
 
 impl SlotLifter<'_> {
+    /// The carrier spellings connected to `node`, including reflexive witnesses
+    /// once and non-reflexive witnesses in either available direction.
+    fn source_bridges(&mut self, node: TermId) -> Vec<SourceBridge> {
+        if self.source_index.is_none() {
+            let mut index: HashMap<TermId, Vec<SourceBridge>> = HashMap::default();
+            for (id, proof) in self.egg.proofs() {
+                if self.is_carrier_term(proof.lhs()) {
+                    index
+                        .entry(proof.rhs())
+                        .or_default()
+                        .push((proof.lhs(), id, false));
+                }
+                if proof.lhs() != proof.rhs() && self.is_carrier_term(proof.rhs()) {
+                    index
+                        .entry(proof.lhs())
+                        .or_default()
+                        .push((proof.rhs(), id, true));
+                }
+            }
+            self.source_index = Some(index);
+        }
+        self.source_index
+            .as_ref()
+            .unwrap()
+            .get(&node)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Which side of a row proof's proposition a consumer reads.
     fn row_side(&self, proof: ProofId, rhs: bool) -> TermId {
         let p = self.egg.get(proof);
@@ -235,17 +264,11 @@ impl SlotLifter<'_> {
                     continue;
                 }
                 let node = args[0];
-                let sources = std::iter::once((node, None))
-                    .chain(self.egg.proofs().filter_map(|(p, proof)| {
-                        if proof.rhs() == node && self.is_carrier_term(proof.lhs()) {
-                            Some((proof.lhs(), Some((p, false))))
-                        } else if proof.lhs() == node && self.is_carrier_term(proof.rhs()) {
-                            Some((proof.rhs(), Some((p, true))))
-                        } else {
-                            None
-                        }
-                    }))
-                    .collect::<Vec<_>>();
+                let sources = std::iter::once((node, None)).chain(
+                    self.source_bridges(node)
+                        .into_iter()
+                        .map(|(source, proof, reversed)| (source, Some((proof, reversed)))),
+                );
                 for (source, bridge) in sources {
                     let decoded = self.dec(source)?;
                     if !self

@@ -39,9 +39,10 @@ impl SlotLifter<'_> {
             .into_iter()
             .chain(self.known.keys().copied())
             .collect();
+        let shape = self.term_shapes.get(&self.out.term_dag, t);
         for other in candidates {
             let mut pairs = BTreeMap::new();
-            if other == t {
+            if other == t || self.term_shapes.get(&self.out.term_dag, other) != shape {
                 continue;
             }
             let matched = match self.match_slots(other, t, &mut pairs) {
