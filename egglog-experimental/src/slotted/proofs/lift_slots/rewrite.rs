@@ -428,7 +428,7 @@ impl SlotLifter<'_> {
             let dr = self.dec(row)?;
             let sub = self.subterm_at(content, path)?;
             let mut pairs = BTreeMap::new();
-            if self.unify_slots(dr, sub, &mut pairs).is_err() {
+            if self.match_slots(dr, sub, &mut pairs).is_err() {
                 continue;
             }
             for (s, cs) in pairs {
@@ -545,7 +545,7 @@ impl SlotLifter<'_> {
         let mut stack = vec![haystack];
         while let Some(t) = stack.pop() {
             let mut pairs = BTreeMap::new();
-            if self.unify_slots(t, needle, &mut pairs).is_ok()
+            if self.match_slots(t, needle, &mut pairs).is_ok()
                 && Renaming::completing(pairs.into_iter()).is_some()
             {
                 return Some(t);

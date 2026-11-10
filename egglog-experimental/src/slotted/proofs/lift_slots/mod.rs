@@ -101,6 +101,11 @@ struct SlotLifter<'a> {
     /// Proofs of `FreeVars` rows by class, for redundancy certificates.
     free_vars_index: Option<HashMap<TermId, Vec<ProofId>>>,
     group_index: Option<HashMap<TermId, Vec<ProofId>>>,
+    /// Carrier equalities by the constructor of their source spelling, in proof
+    /// order. The bool selects the reversed direction of the stored equality.
+    carrier_index: Option<HashMap<String, Vec<(ProofId, bool)>>>,
+    /// Preferred occurrences depend only on the immutable ordinary proof DAG.
+    occurrence_memo: HashMap<TermId, Occurrence>,
     /// The `(class, slot)` certificates being derived, against circularity.
     cert_stack: HashSet<(TermId, i64)>,
     fresh: FreshSlots,
@@ -204,6 +209,8 @@ impl<'a> SlotLifter<'a> {
             shape_terms: HashMap::default(),
             free_vars_index: None,
             group_index: None,
+            carrier_index: None,
+            occurrence_memo: HashMap::default(),
             cert_stack: Default::default(),
             fresh,
             reserved_terms,

@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// A failed candidate match carries only the conflicting nodes, so rejected
+/// candidates never render (potentially very large) terms for diagnostics.
+pub(super) enum SlotMismatch {
+    Terms(TermId, TermId),
+    Conflict(i64, i64, i64),
+}
+
 impl SlotLifter<'_> {
     /// Record that `proof` proves `lhs = …`, so `lhs`'s reflexivity is available.
     pub(super) fn note(&mut self, proof: ViewId) -> ViewId {
@@ -34,7 +41,7 @@ impl SlotLifter<'_> {
             .collect();
         for other in candidates {
             let mut pairs = BTreeMap::new();
-            if other == t || self.unify_slots(other, t, &mut pairs).is_err() {
+            if other == t || self.match_slots(other, t, &mut pairs).is_err() {
                 continue;
             }
             let Some(sigma) = Renaming::completing(pairs.iter().map(|(k, v)| (*k, *v))) else {
@@ -143,40 +150,58 @@ impl SlotLifter<'_> {
         b: TermId,
         pairs: &mut BTreeMap<i64, i64>,
     ) -> LiftResult<()> {
-        let dag = &self.out.term_dag;
-        match (dag.get(a).clone(), dag.get(b).clone()) {
-            (Term::Var(x), Term::Var(y)) => {
-                let (sa, sb) = (
-                    super::super::terms::slot_of(dag, a),
-                    super::super::terms::slot_of(dag, b),
-                );
-                match (sa, sb) {
-                    (Some(sa), Some(sb)) => match pairs.get(&sa) {
-                        Some(&prev) if prev != sb => Err(format!(
-                            "slot ${sa} would have to be both ${prev} and ${sb}"
-                        )),
-                        _ => {
-                            pairs.insert(sa, sb);
-                            Ok(())
-                        }
-                    },
-                    _ if x == y => Ok(()),
-                    _ => Err(format!("cannot align {x} with {y}")),
-                }
-            }
-            (Term::Lit(x), Term::Lit(y)) if x == y => Ok(()),
-            (Term::App(h1, c1), Term::App(h2, c2)) if h1 == h2 && c1.len() == c2.len() => {
-                for (x, y) in c1.iter().zip(c2.iter()) {
-                    self.unify_slots(*x, *y, pairs)?;
-                }
-                Ok(())
-            }
-            _ => Err(format!(
+        self.match_slots(a, b, pairs).map_err(|error| match error {
+            SlotMismatch::Terms(a, b) => format!(
                 "cannot align {} with {}",
                 self.out_string(a),
                 self.out_string(b)
-            )),
+            ),
+            SlotMismatch::Conflict(sa, prev, sb) => {
+                format!("slot ${sa} would have to be both ${prev} and ${sb}")
+            }
+        })
+    }
+
+    pub(super) fn match_slots(
+        &self,
+        a: TermId,
+        b: TermId,
+        pairs: &mut BTreeMap<i64, i64>,
+    ) -> Result<(), SlotMismatch> {
+        let dag = &self.out.term_dag;
+        let mut pending = vec![(a, b)];
+        let mut seen = HashSet::default();
+        while let Some((a, b)) = pending.pop() {
+            if !seen.insert((a, b)) {
+                continue;
+            }
+            match (dag.get(a), dag.get(b)) {
+                (Term::Var(x), Term::Var(y)) => {
+                    let (sa, sb) = (
+                        super::super::terms::slot_of(dag, a),
+                        super::super::terms::slot_of(dag, b),
+                    );
+                    match (sa, sb) {
+                        (Some(sa), Some(sb)) => match pairs.get(&sa) {
+                            Some(&prev) if prev != sb => {
+                                return Err(SlotMismatch::Conflict(sa, prev, sb));
+                            }
+                            _ => {
+                                pairs.insert(sa, sb);
+                            }
+                        },
+                        _ if x == y => (),
+                        _ => return Err(SlotMismatch::Terms(a, b)),
+                    }
+                }
+                (Term::Lit(x), Term::Lit(y)) if x == y => (),
+                (Term::App(h1, c1), Term::App(h2, c2)) if h1 == h2 && c1.len() == c2.len() => {
+                    pending.extend(c1.iter().copied().zip(c2.iter().copied()).rev());
+                }
+                _ => return Err(SlotMismatch::Terms(a, b)),
+            }
         }
+        Ok(())
     }
 
     /// The slotted proof of the equality an egglog proof denotes: for a carrier
@@ -307,8 +332,8 @@ impl SlotLifter<'_> {
             for (a, b) in [(u.lhs, u.rhs), (u.rhs, u.lhs)] {
                 let mut left = BTreeMap::new();
                 let mut right = BTreeMap::new();
-                if self.unify_slots(a, lhs, &mut left).is_err()
-                    || self.unify_slots(b, target, &mut right).is_err()
+                if self.match_slots(a, lhs, &mut left).is_err()
+                    || self.match_slots(b, target, &mut right).is_err()
                     || self
                         .program
                         .free_slots(&self.out.term_dag, a)

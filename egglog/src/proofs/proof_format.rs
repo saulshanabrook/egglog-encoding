@@ -328,6 +328,9 @@ pub struct ProofStore {
     rule_at: HashMap<String, usize>,
     /// Rule name -> how its head lowers.
     head_plans: HashMap<String, Rc<HeadPlan>>,
+    /// Global action -> its planned nodes. Shared by every positional fiat in
+    /// that action; rebuilding the plan clones the entire source expression.
+    action_plans: HashMap<usize, Rc<HeadPlan>>,
     /// (Rule name, body premises) -> how far that firing's head has been walked.
     /// Every rule proof of one firing reads a column out of the array that one
     /// walk fills.
@@ -976,17 +979,22 @@ impl ProofStore {
         at: usize,
         node: usize,
     ) -> TermId {
-        let action = global_action_at(prog, at);
         // The encoder numbers the *planned* action, so plan this one the same
         // way. Only the shape matters here, so the lifted `let`s get a local
         // counter rather than the encoder's fresh names.
-        let mut next = 0usize;
-        let mut fresh = || {
-            next += 1;
-            format!("@plan{next}")
-        };
-        let plan =
-            crate::proofs::proof_head::HeadPlan::new(std::slice::from_ref(action), &mut fresh);
+        let plan = self
+            .action_plans
+            .entry(at)
+            .or_insert_with(|| {
+                let action = global_action_at(prog, at);
+                let mut next = 0usize;
+                let mut fresh = || {
+                    next += 1;
+                    format!("@plan{next}")
+                };
+                Rc::new(HeadPlan::new(std::slice::from_ref(action), &mut fresh))
+            })
+            .clone();
         use crate::proofs::proof_encoding_helpers::{ActionNode, action_nodes};
         let nodes: Vec<ActionNode<'_>> = plan.actions.iter().flat_map(action_nodes).collect();
         match nodes.get(node) {
@@ -1076,6 +1084,7 @@ impl ProofStore {
             prim_value_constructors,
             rule_at: HashMap::default(),
             head_plans: HashMap::default(),
+            action_plans: HashMap::default(),
             head_walks: HashMap::default(),
             synthesized: HashMap::default(),
         }
@@ -1106,6 +1115,13 @@ impl ProofStore {
             .iter()
             .map(|&root| store.lift_raw_proof(prog, &globals, raw_store, root))
             .collect();
+        // These indexes and continuation states are only needed while lifting.
+        // In particular, a head walk can retain the program's global bindings.
+        store.action_plans = HashMap::default();
+        store.head_plans = HashMap::default();
+        store.head_walks = HashMap::default();
+        store.rule_at = HashMap::default();
+        store.proof_id = HashMap::default();
         (store, roots)
     }
 
@@ -1227,7 +1243,16 @@ impl ProofStore {
                 let bindings = match &carried {
                     Some(_) => HashMap::default(),
                     None => {
-                        let mut bindings = globals.clone();
+                        // A continuation keeps its bindings until lifting ends.
+                        // Retaining every program global in every firing makes
+                        // memory proportional to firings * globals, even for a
+                        // head that reads none of them.
+                        let mut bindings = HashMap::default();
+                        rule.head.visit_vars(&mut |_, var| {
+                            if let Some(&term) = globals.get(&var.name) {
+                                bindings.insert(var.name.clone(), term);
+                            }
+                        });
                         bindings
                             .extend(substitution.iter().map(|(var, term)| (var.clone(), *term)));
                         bindings

@@ -443,6 +443,9 @@ impl SlotLifter<'_> {
     // reach a child whose source spelling still includes a redundant slot.
 
     fn global_occurrence(&mut self, child: TermId) -> LiftResult<Occurrence> {
+        if let Some(&occurrence) = self.occurrence_memo.get(&child) {
+            return Ok(occurrence);
+        }
         let head = self
             .app(child)
             .ok_or("global child is not a constructor")?
@@ -453,44 +456,69 @@ impl SlotLifter<'_> {
             cls: child,
             row: None,
         };
-        let candidates = self
-            .egg
-            .proofs()
-            .filter_map(|(id, proof)| {
-                (proof.lhs() != proof.rhs()
-                    && self.is_carrier_term(proof.lhs())
-                    && self.is_carrier_term(proof.rhs()))
-                .then_some((id, proof.lhs(), proof.rhs()))
-            })
-            .collect::<Vec<_>>();
-        for (id, lhs, rhs) in candidates {
-            for (row, cls, reversed) in [(rhs, lhs, false), (lhs, rhs, true)] {
-                if self.app(row).is_none_or(|(h, _)| h != head) {
-                    continue;
-                }
-                let decoded = self.dec(row)?;
-                let mut pairs = BTreeMap::new();
-                if self.unify_slots(decoded, term, &mut pairs).is_err()
-                    || Renaming::completing(pairs.into_iter()).is_none()
+        if free == 0 {
+            self.occurrence_memo.insert(child, occurrence);
+            return Ok(occurrence);
+        }
+        if self.carrier_index.is_none() {
+            let mut index: HashMap<String, Vec<(ProofId, bool)>> = HashMap::default();
+            for (id, proof) in self.egg.proofs() {
+                if proof.lhs() == proof.rhs()
+                    || !self.is_carrier_term(proof.lhs())
+                    || !self.is_carrier_term(proof.rhs())
                 {
                     continue;
                 }
-                let target = self.dec(cls)?;
-                let target_free = self.program.free_slots(&self.out.term_dag, target).len();
-                if target_free >= free {
-                    continue;
+                for (row, reversed) in [(proof.rhs(), false), (proof.lhs(), true)] {
+                    let head = self.app(row).unwrap().0;
+                    index
+                        .entry(head.to_string())
+                        .or_default()
+                        .push((id, reversed));
                 }
-                let mut proof = self.eq(id)?;
-                if reversed {
-                    proof = self.out.sym(proof);
-                }
-                occurrence = Occurrence {
-                    cls,
-                    row: Some((row, proof)),
-                };
-                free = target_free;
+            }
+            self.carrier_index = Some(index);
+        }
+        let count = self
+            .carrier_index
+            .as_ref()
+            .unwrap()
+            .get(head)
+            .map_or(0, Vec::len);
+        for at in 0..count {
+            let (id, reversed) = self.carrier_index.as_ref().unwrap()[head][at];
+            let proof = self.egg.get(id);
+            let (row, cls) = if reversed {
+                (proof.lhs(), proof.rhs())
+            } else {
+                (proof.rhs(), proof.lhs())
+            };
+            let decoded = self.dec(row)?;
+            let mut pairs = BTreeMap::new();
+            if self.match_slots(decoded, term, &mut pairs).is_err()
+                || Renaming::completing(pairs.into_iter()).is_none()
+            {
+                continue;
+            }
+            let target = self.dec(cls)?;
+            let target_free = self.program.free_slots(&self.out.term_dag, target).len();
+            if target_free >= free {
+                continue;
+            }
+            let mut proof = self.eq(id)?;
+            if reversed {
+                proof = self.out.sym(proof);
+            }
+            occurrence = Occurrence {
+                cls,
+                row: Some((row, proof)),
+            };
+            free = target_free;
+            if free == 0 {
+                break;
             }
         }
+        self.occurrence_memo.insert(child, occurrence);
         Ok(occurrence)
     }
 

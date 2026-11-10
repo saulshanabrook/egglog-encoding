@@ -338,7 +338,7 @@ impl SlotLifter<'_> {
         // atom there matched
         let d = self.dec(o.cls)?;
         let mut pairs = BTreeMap::new();
-        let (base, rho) = if self.unify_slots(d, occ, &mut pairs).is_ok()
+        let (base, rho) = if self.match_slots(d, occ, &mut pairs).is_ok()
             && let Some(rho) = Renaming::completing(pairs.iter().map(|(k, v)| (*k, *v)))
         {
             (None, rho)
@@ -399,7 +399,7 @@ impl SlotLifter<'_> {
     ) -> LiftResult<ViewId> {
         let d = self.dec(o.cls)?;
         let mut pairs = BTreeMap::new();
-        let (base, rho) = if self.unify_slots(d, occ, &mut pairs).is_ok()
+        let (base, rho) = if self.match_slots(d, occ, &mut pairs).is_ok()
             && let Some(rho) = Renaming::completing(pairs.iter().map(|(k, v)| (*k, *v)))
         {
             (None, rho)

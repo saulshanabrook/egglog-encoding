@@ -22,6 +22,34 @@ mod tests {
     }
 
     #[test]
+    fn positional_fiats_share_large_actions_without_changing_endpoints() {
+        let mut level: Vec<String> = (0..32).map(|i| format!("(Num {i})")).collect();
+        let mut terms = level.clone();
+        while level.len() > 1 {
+            level = level
+                .chunks_exact(2)
+                .map(|children| format!("(Pair {} {})", children[0], children[1]))
+                .collect();
+            terms.extend(level.clone());
+        }
+        let mut source = format!(
+            "(datatype E (Num i64) (Pair E E))\n(function saved (i64) E :merge old)\n\
+             (let root {})\n(set (saved 0) root)\n",
+            level[0]
+        );
+        // Distinct positions in one action must keep their distinct terms, and
+        // successive extraction requests must not reuse another store's term IDs.
+        for term in terms.iter().chain(terms.iter().rev()) {
+            source.push_str(&format!("(check {term})\n"));
+        }
+        source.push_str("(check (= (saved 0) value))\n(fail (check (= (Num 0) (Num 31))))");
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(None, &source)
+            .unwrap();
+    }
+
+    #[test]
     fn constructor_merge_reads_a_dirty_view() {
         let source = r#"
             (datatype Bound (IntB i64) (Join Bound Bound) (Other i64))
