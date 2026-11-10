@@ -13,7 +13,7 @@ use super::terms::{FreshSlots, Renaming, all_slots, rename, slot_of, slot_term, 
 use super::{HashMap, HashSet};
 use crate::slotted::query::ProofNames;
 use crate::slotted::runtime::frame_from_term;
-use crate::slotted::runtime::renaming::shape;
+use crate::slotted::runtime::renaming::{readings, shape};
 use crate::slotted::runtime::terms::{group_from_term, renaming_from_term};
 use crate::slotted::runtime::{Fr, Renaming as SlotMap};
 use egglog::ast::Literal;
@@ -35,7 +35,7 @@ mod symmetry;
 
 use permutations::{compose, inverse, is_identity, slot_map_string};
 use rule_kind::{RuleKind, rule_kind};
-use shape::{ShapeKey, readings};
+use shape::ShapeKey;
 
 type LiftResult<T> = Result<T, String>;
 type SymmetryPremises = Vec<Option<(TermId, ProofId)>>;

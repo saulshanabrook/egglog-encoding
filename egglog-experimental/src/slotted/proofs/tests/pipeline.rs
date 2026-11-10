@@ -2,6 +2,32 @@ use super::*;
 use crate::slotted::{Compiler, Options, ProofMode, new_egraph_with_proofs};
 
 #[test]
+fn cached_shapes_follow_child_equalities_under_binders() {
+    let mut compiler = Compiler::new(Options {
+        proof_mode: ProofMode::Prove,
+        ..Default::default()
+    });
+    let encoded = compiler
+        .compile_program(
+            None,
+            "(datatype E (V Var) (U E) (F E) (Lam Var E :binder 0))
+             (let input (Lam $a (F (U (V $a)))))
+             (run 0)
+             (union (U (V $a)) (V $a))
+             (let target (Lam $b (F (V $b))))
+             (run 0)
+             (check (= input target))",
+        )
+        .unwrap();
+    let outputs = encoded.run(&mut new_egraph_with_proofs()).unwrap();
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, CommandOutput::UserDefined(_)))
+    );
+}
+
+#[test]
 fn restricted_group_elements_lift_to_checked_source_equalities() {
     let mut compiler = Compiler::new(Options {
         proof_mode: ProofMode::Prove,
