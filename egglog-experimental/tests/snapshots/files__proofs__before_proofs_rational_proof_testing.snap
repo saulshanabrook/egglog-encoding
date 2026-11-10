@@ -22,13 +22,9 @@ expression: snapshot
 (
 (let t (Const (rational 2 1)))
 (let t_1 (Add (Var "x") t))
-(let prop (= t_1 t_1))
-(let t_2 (Add t_1 (Const (rational 0 1))))
-(let prf
-  (Rule
-      (= t_1 t_2)
-      (name "(rewrite (Add a b) (Add (Add a b) (Const (rational 0 1))))")
-      (premises (Fiat prop))
-      (substitution (@rewrite_var__ t_1) (a (Var "x")) (b t))))
-(Trans prop prf (Sym (= t_2 t_1) prf))
+(Rule
+  (= t_1 (Add t_1 (Const (rational 0 1))))
+  (name "(rewrite (Add a b) (Add (Add a b) (Const (rational 0 1))))")
+  (premises (Fiat (= t_1 t_1)))
+  (substitution (@rewrite_var__ t_1) (a (Var "x")) (b t)))
 )

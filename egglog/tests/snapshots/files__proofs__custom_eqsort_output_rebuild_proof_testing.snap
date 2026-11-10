@@ -5,7 +5,12 @@ expression: proof_snapshot
 (
 (let t (f (Num 1) (Num 2)))
 (let t_1 (f (Num 1) (Num 3)))
-(let prf (Congr (= t_1 t) (Fiat (= t_1 t_1)) (Fiat (= (Num 3) (Num 2))) 1))
+(let prf
+  (Congr
+              (= t_1 t)
+              (Fiat (= t_1 t_1))
+              (Sym (= (Num 3) (Num 2)) (Fiat (= (Num 2) (Num 3))))
+              1))
 (Sym
   (= (W (Num 1)) (Num 2))
   (Rule
