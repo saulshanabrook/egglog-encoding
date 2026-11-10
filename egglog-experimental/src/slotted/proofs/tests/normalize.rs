@@ -6,6 +6,30 @@ use egglog::proof::Proposition;
 use egglog::util::IndexMap;
 
 #[test]
+fn irrelevant_coordinates_do_not_expand_shared_proof_diamonds() {
+    let mut dag = TermDag::default();
+    let mut program = ProofContext::default();
+    program.add_constructor("A", vec![]);
+    program.add_let(&mut dag, "a", "(A)").unwrap();
+    let a = program.lets["a"];
+    let mut store = SlottedProofStore::new(dag);
+    let base = store.fiat(a, a);
+    let mut proof = base;
+    for slot in 0..24 {
+        let renamed = store.equivariance(
+            proof,
+            Renaming::new([(2 * slot, 2 * slot + 1), (2 * slot + 1, 2 * slot)]).unwrap(),
+        );
+        proof = store.trans(proof, renamed).unwrap();
+    }
+    check_proof(&mut store, &program, proof).unwrap();
+    let normalized = store.simplify(proof);
+    assert_eq!(normalized, base);
+    check_proof(&mut store, &program, normalized).unwrap();
+    assert!(store.len() < 100);
+}
+
+#[test]
 fn transported_rules_keep_renaming_premises_in_source_coordinates() {
     let mut dag = TermDag::default();
     let mut program = ProofContext::default();

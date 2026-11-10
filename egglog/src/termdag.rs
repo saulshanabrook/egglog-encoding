@@ -552,10 +552,12 @@ impl TermDag {
 
         let size = match self.get(term_id) {
             Term::App(_, children) => {
-                1 + children
+                // Sharing can make the expanded tree larger than usize. Sizes
+                // only guide whether the pretty-printer introduces a binding.
+                children
                     .iter()
                     .map(|child| self.compute_term_size(*child, sizes))
-                    .sum::<usize>()
+                    .fold(1, usize::saturating_add)
             }
             Term::Lit(_) | Term::Var(_) => 1,
         };
@@ -736,6 +738,19 @@ mod tests {
         assert!(repr.contains('\n'));
         assert!(repr.contains("\n  "));
         assert!(repr.starts_with("(verylongfunctionnamewithmanysegments"));
+    }
+
+    #[test]
+    fn test_to_string_with_let_handles_exponential_tree_size() {
+        let mut dag = TermDag::default();
+        let mut root = dag.var("x".into());
+        for _ in 0..usize::BITS + 1 {
+            root = dag.app("pair".into(), vec![root, root]);
+        }
+        let mut sym = SymbolGen::new(String::new());
+        let rendered = dag.to_string_with_let(&mut sym, root);
+        assert!(rendered.contains("(let "));
+        assert!(rendered.len() < 10_000);
     }
 
     #[test]

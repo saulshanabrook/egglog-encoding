@@ -1,6 +1,121 @@
 use super::*;
 
 #[test]
+fn variable_expansion_replays_its_construction_witness() {
+    use crate::slotted::{Compiler, Options, ProofMode, new_egraph_with_proofs};
+    use egglog::CommandOutput;
+
+    let mut compiler = Compiler::new(Options {
+        proof_mode: ProofMode::Prove,
+        ..Default::default()
+    });
+    let encoded = compiler
+        .compile_program(
+            None,
+            "(datatype E (Start) (Wrap E) (One))
+             (let input (Start))
+             (rewrite (Start) (Wrap (One)) :name build)
+             (run 1)
+             (check (= input (Wrap (One))))",
+        )
+        .unwrap();
+    // Retain the ordinary proof before the source lifter visits the build rule.
+    let commands = encoded.to_string().replace("(slotted-prove 0 ", "(prove ");
+    let mut graph = new_egraph_with_proofs();
+    let egg = graph
+        .parse_and_run_program(None, &commands)
+        .unwrap()
+        .into_iter()
+        .find_map(|output| match output {
+            CommandOutput::ProveExists { proof_store, .. } => Some(proof_store),
+            _ => None,
+        })
+        .unwrap();
+    let request = encoded.proofs.values().next().unwrap();
+    let mut dag = TermDag::default();
+    let context = request
+        .flattened
+        .context(&mut dag, BTreeMap::new())
+        .unwrap();
+    let mut lifter = SlotLifter::new(&context, dag, &request.names, &egg);
+    let (witness, class, target) = egg
+        .proofs()
+        .find_map(|(id, proof)| {
+            if !matches!(proof.justification(), Justification::Rule { name, .. } if name == "build/apply")
+                || proof.lhs() != proof.rhs()
+                || !lifter.is_carrier_term(proof.lhs())
+            {
+                return None;
+            }
+            let target = lifter.dec(proof.lhs()).unwrap();
+            lifter.reflexive(target).is_err().then_some((id, proof.lhs(), target))
+        })
+        .expect("a newly constructed term must have its own rule witness");
+    let pattern = lifter.out.term_dag.var("total".into());
+    let subst = IndexMap::default();
+    let bridges = HashMap::default();
+    let ctx = ExpandCtx {
+        prems: &[witness],
+        subst: &subst,
+        names: HashMap::default(),
+        classes: BTreeMap::new(),
+        readings: BTreeMap::new(),
+        bridges: &bridges,
+    };
+    let expanded = lifter
+        .expand(class, pattern, &[], &ctx, HashMap::default())
+        .unwrap();
+    let (mut store, proof) = lifter.out.finish(expanded.proof);
+    super::super::check_proof(&mut store, &request.flattened, proof).unwrap();
+    assert_eq!(store.proposition(proof), &Proposition::new(target, target));
+}
+
+#[test]
+fn existence_proofs_respect_binder_scopes() {
+    use crate::slotted::proofs::{check_proof, resolve_program};
+    use egglog::ast::{Parser, parse_sexps};
+
+    for (input, target, exists) in [
+        (
+            "(Pair (Lam $0 (V $0)) (V $0))",
+            "(Pair (Lam $1 (V $1)) (V $0))",
+            true,
+        ),
+        (
+            "(Pair (Lam $0 (V $0)) (Lam $0 (V $0)))",
+            "(Pair (Lam $1 (V $1)) (Lam $2 (V $2)))",
+            true,
+        ),
+        ("(Lam $0 (V $1))", "(Lam $1 (V $1))", false),
+    ] {
+        let source =
+            format!("(datatype E (V Var) (Lam Var E :binder 0) (Pair E E)) (let input {input})");
+        let source = resolve_program(&parse_sexps(None, &source).unwrap()).unwrap();
+        let mut dag = TermDag::default();
+        let context = source.context(&mut dag, BTreeMap::new()).unwrap();
+        let target = Parser::default()
+            .get_expr_from_string(None, target)
+            .unwrap();
+        let target = context.ground_term(&mut dag, &target).unwrap();
+        let names = EncodingNames::default();
+        let egg = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+        let mut lifter = SlotLifter::new(&context, dag, &names, &egg);
+        let proof = lifter.reflexive(target);
+        if !exists {
+            assert!(
+                proof.is_err(),
+                "alpha conversion cannot capture a free slot"
+            );
+            continue;
+        }
+        let proof = proof.unwrap();
+        let (mut store, proof) = lifter.out.finish(proof);
+        check_proof(&mut store, &source, proof).unwrap();
+        assert_eq!(store.proposition(proof), &Proposition::new(target, target));
+    }
+}
+
+#[test]
 fn slot_matching_preserves_shared_constraints_and_bijections() {
     let program = ProofContext::default();
     let names = EncodingNames::default();

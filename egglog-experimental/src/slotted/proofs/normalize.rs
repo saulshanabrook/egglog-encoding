@@ -14,6 +14,19 @@ impl SlottedProofStore {
     /// Normalize an already checked proof. Check the resulting proof again before
     /// using it, just as for any other proof transformation.
     pub fn simplify(&mut self, root: ProofId) -> ProofId {
+        // Only the action on a step's endpoints matters. Keeping unrelated
+        // coordinates in the memo key can expand a shared proof exponentially
+        // when it is reached through different binder-renaming paths.
+        let support: HashMap<_, _> = self
+            .dependencies(root)
+            .into_iter()
+            .map(|id| {
+                let p = self.proposition(id);
+                let mut slots = all_slots(&self.term_dag, p.lhs);
+                slots.extend(all_slots(&self.term_dag, p.rhs));
+                (id, slots)
+            })
+            .collect();
         let root = (root, Renaming::identity());
         let mut memo = HashMap::<Key, ProofId>::default();
         let mut work = vec![(root.clone(), false)];
@@ -37,7 +50,10 @@ impl SlottedProofStore {
                     .into_iter()
                     .map(|p| (p, rho.clone()))
                     .collect(),
-            };
+            }
+            .into_iter()
+            .map(|(id, rho)| (id, rho.restricted(&support[&id])))
+            .collect();
             if !ready {
                 work.push((key, true));
                 work.extend(children.into_iter().rev().map(|k| (k, false)));

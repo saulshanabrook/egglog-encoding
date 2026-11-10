@@ -41,17 +41,37 @@ impl SlotLifter<'_> {
             .collect();
         for other in candidates {
             let mut pairs = BTreeMap::new();
-            if other == t || self.match_slots(other, t, &mut pairs).is_err() {
+            if other == t {
                 continue;
             }
-            let Some(sigma) = Renaming::completing(pairs.iter().map(|(k, v)| (*k, *v))) else {
+            let matched = match self.match_slots(other, t, &mut pairs) {
+                Ok(()) => true,
+                Err(SlotMismatch::Conflict(..)) => false,
+                Err(SlotMismatch::Terms(..)) => continue,
+            };
+            if matched && let Some(sigma) = Renaming::completing(pairs) {
+                let r = self.reflexive(other)?; // other = other
+                let reframed = self.out.reframe(r, sigma); // other = σ⁻¹·t
+                let s = self.out.sym(reframed); // t = σ·other
+                let back = self.out.trans(s, reframed).map_err(|e| e.to_string())?; // t = t
+                return Ok(self.note(back));
+            }
+            // A binder may share its source name with another scope or a free
+            // occurrence. Renaming those independently requires scoped Alpha,
+            // not a single permutation of every occurrence of that name.
+            let Some(sigma) = self
+                .program
+                .renaming_between(&mut self.out.term_dag, other, t)
+            else {
                 continue;
             };
-            let r = self.reflexive(other)?; // other = other
-            let reframed = self.out.reframe(r, sigma); // other = σ⁻¹·t
-            let s = self.out.sym(reframed); // t = σ·other
-            let back = self.out.trans(s, reframed).map_err(|e| e.to_string())?; // t = t
-            return Ok(self.note(back));
+            let r = self.reflexive(other)?;
+            let r = self.rename_both(r, &sigma);
+            let r = self.out.proof(r);
+            let r = self.out.alpha(r, t);
+            let r = self.out.plain(r);
+            let s = self.out.sym(r);
+            return self.trans(s, r);
         }
         Err(format!(
             "no proof establishes the term {}",

@@ -201,8 +201,21 @@ impl SlotLifter<'_> {
                 variables.insert(v.clone(), cls);
             }
             let t = self.dec(cls)?;
+            let proof = self.reflexive(t).or_else(|error| {
+                // A variable can name a term constructed by an earlier rewrite.
+                // Replay its direct match witness before asking for reflexivity.
+                let witness = ctx.prems.iter().copied().find(|&id| {
+                    let proof = self.egg.get(id);
+                    proof.lhs() == cls || proof.rhs() == cls
+                });
+                let Some(witness) = witness else {
+                    return Err(error);
+                };
+                self.eq(witness)?;
+                self.reflexive(t)
+            })?;
             return Ok(Expansion {
-                proof: self.reflexive(t)?,
+                proof,
                 variables,
                 occurrences,
             });
