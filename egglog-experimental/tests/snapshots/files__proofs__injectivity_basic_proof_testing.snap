@@ -13,7 +13,7 @@ expression: snapshot
       (Congr
         (= t (Pair (Leaf "b") 7 (Leaf "c")))
         (Fiat (= t (Pair (Leaf "b") 7 (Leaf "d"))))
-        (Fiat (= (Leaf "d") (Leaf "c")))
+        (Sym (= (Leaf "d") (Leaf "c")) (Fiat (= (Leaf "c") (Leaf "d"))))
         2)
       (Fiat (= t t)))
     (substitution

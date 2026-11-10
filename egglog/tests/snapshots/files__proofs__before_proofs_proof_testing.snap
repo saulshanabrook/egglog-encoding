@@ -22,13 +22,9 @@ expression: proof_snapshot
 )
 (
 (let t (Add (Var "x") (Const 2)))
-(let prop (= t t))
-(let t_1 (Add t (Const 0)))
-(let prf
-  (Rule
-      (= t t_1)
-      (name "(rewrite (Add a b) (Add (Add a b) (Const 0)))")
-      (premises (Fiat prop))
-      (substitution (@rewrite_var__ t) (a (Var "x")) (b (Const 2)))))
-(Trans prop prf (Sym (= t_1 t) prf))
+(Rule
+  (= t (Add t (Const 0)))
+  (name "(rewrite (Add a b) (Add (Add a b) (Const 0)))")
+  (premises (Fiat (= t t)))
+  (substitution (@rewrite_var__ t) (a (Var "x")) (b (Const 2))))
 )
