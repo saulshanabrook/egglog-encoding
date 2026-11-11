@@ -1,0 +1,8 @@
+[package]
+name = "pr39-query-uncacheable-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egglog-core-relations = { path = "../pr39-review-head.6VokEC/egglog/core-relations" }
+
