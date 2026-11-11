@@ -1,0 +1,50 @@
+[
+  {
+    "repository": "MISAAL",
+    "revision": "44ff893445d664cd87f52b08a138260ed2015ba8",
+    "path": "lib/sema/ARMSema.py",
+    "blob_sha1": "f4e2a9cb5f3eb27f21b4e19924dbc4647cd93696",
+    "sha256": "150ce6b12702010099defdead388df1198fe0e4740b2811783b11358d9791ee9",
+    "working_tree_matches": true
+  },
+  {
+    "repository": "Hydride",
+    "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+    "path": "codegen-generator/tools/low-level-codegen/InstSelectors/arm/RoseARMLegalizerGen.py",
+    "blob_sha1": "65e5bbb5ea3f369a7a53b645f54f6f8fef047645",
+    "sha256": "ad7cbe0e8808ff80cdbaf1374c94d28076849c30f28abe387a5d613e5b6ff8ad",
+    "working_tree_matches": true
+  },
+  {
+    "repository": "Hydride",
+    "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+    "path": "codegen-generator/targets/arm/AllSema.py",
+    "blob_sha1": "688da30e4ed066a57cb5e423fcbffd71a67aa462",
+    "sha256": "e77bec7b3171ced79bea17b95ca3d74c077bc8d791cfcfb54c34b846738d71bb",
+    "working_tree_matches": true
+  },
+  {
+    "repository": "Hydride",
+    "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+    "path": "codegen-generator/targets/arm/ARMSemanticGen.py",
+    "blob_sha1": "8add432d8272c9b8feaf7d901df49e9dc167e786",
+    "sha256": "072ad64b2841c7097dffd2e18b799c77b953dbe5294ef8e69b4e9a4961f6455a",
+    "working_tree_matches": true
+  },
+  {
+    "repository": "Hydride",
+    "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+    "path": "codegen-generator/targets/arm/intr.json",
+    "blob_sha1": "65c897aa7bc8b39ff1acbf3fcef3339aa8152993",
+    "sha256": "39d6ed68a2067de612b688911578cb10bfd0576a766ae23df36ad7daadce522f",
+    "working_tree_matches": true
+  },
+  {
+    "repository": "Hydride",
+    "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+    "path": "codegen-generator/tools/low-level-codegen/InstSelectors/arm/arm_wrappers.c.ll",
+    "blob_sha1": "7983fb5ad5734b1ab24f9bcfc52ed2d1c5ff9ac5",
+    "sha256": "ae8a3379178dbfac1801eacdda0e3ba5ad9ab77794bbe3662f7db13ea7729fa9",
+    "working_tree_matches": true
+  }
+]

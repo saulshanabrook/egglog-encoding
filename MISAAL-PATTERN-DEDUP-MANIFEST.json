@@ -1,0 +1,32 @@
+{
+  "scripts/reproduction_misaal_patterns.py": {
+    "baseline_sha256": null,
+    "sha256": "4c6689e4c568eac48e17b6dd26d4e3644abd13fdd85b643cae78326f48e870ff",
+    "bytes": 7821
+  },
+  "scripts/misaal_reproduction.py": {
+    "baseline_sha256": "22523148bcf5563ee51b8a3ded2e009d6bd689ade8a1fcfe8d13abdf13ff0403",
+    "sha256": "9fe5e6a0c05e2975d02f7c12700d4bb5a2223e87c22d7c2d9e8ca0ab0a46e819",
+    "bytes": 55562
+  },
+  "tests/test_reproduction_misaal_patterns.py": {
+    "baseline_sha256": null,
+    "sha256": "55a4b057c52301aca072e3c9d65b456f591e488b3b3f5c07c181702a7c4ec377",
+    "bytes": 12880
+  },
+  "tests/fixtures/misaal-pattern-dedup-source.json": {
+    "baseline_sha256": null,
+    "sha256": "4d075d388913cbdb575218ebabbdfc72380f6805cafbc95b5edf367fe2be8488",
+    "bytes": 45003
+  },
+  "tests/fixtures/misaal-pattern-dedup-samples.json": {
+    "baseline_sha256": null,
+    "sha256": "9509f6f333bfa798091f9ac491dc34b25c9caf71d0a9547774f81fcaf18b861e",
+    "bytes": 48022
+  },
+  "benchmarks/reproduction/misaal-pattern-deduplication.md": {
+    "baseline_sha256": null,
+    "sha256": "5032fbbf8a4ea2eb943b9aa7bc84e2a348a3d2d80900fa1ebe5bfb67baba7a2e",
+    "bytes": 3609
+  }
+}

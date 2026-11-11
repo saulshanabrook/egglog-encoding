@@ -1,0 +1,18 @@
+{
+  "case_id": "misaal-hexagon-blur3x3",
+  "request_change": {
+    "pattern_deduplication": "exact-render-last-v1"
+  },
+  "source_request": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/prerequisites/misaal-all-targets-attempt-0001/requests/misaal-hexagon-blur3x3.json",
+    "sha256": "c12cbc31dc47110c6479ade3cbc10a33a7472d99e1def518b0baa19ca6dfe6fd"
+  },
+  "source_settings": {
+    "path": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/prerequisites/misaal-all-targets-attempt-0001/settings.json",
+    "sha256": "fb0d44b4dd69c3c83bf3d14e22887906d29b8d0d904b795a5fa5eac89f8a54a8"
+  },
+  "request_sha256": "1033fc33c38f5ac99f9d557f709a35451910e329a10dafbf16bed9c3ed314eb6",
+  "preparer_sha256": "bd48384053b4bffdbc972ff2857bb03d8c9ed9a8364f5a74a8ae35ad3b492fa8",
+  "cache_behavior": "unchanged fresh empty per-parent cache; no cache copied or created",
+  "native_execution": false
+}

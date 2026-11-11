@@ -1,0 +1,171 @@
+"""Preparation must preserve source-build failures and stop on resource refusal."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts import reproduction_preparation as preparation
+from scripts import reproduction_prepare_hardboiled as hardboiled
+from scripts import reproduction_prepare_misaal as misaal
+from scripts import reproduction_prepare_misaal_cases as misaal_cases
+from scripts.reproduction_stages import run_stage
+
+
+@pytest.mark.parametrize("status", ["blocked", "resource-stopped"])
+def test_misaal_partial_requests_preserve_failures_and_bind_native_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    engine = tmp_path / "engine"
+    engine.write_text("ordinary engine")
+    llvm = tmp_path / "llvm"
+    (llvm / "lib").mkdir(parents=True)
+    (llvm / "lib/libLLVM.dylib").write_text("LLVM runtime")
+    monkeypatch.setattr(misaal, "LLVM12", llvm)
+    outputs: dict[str, str] = {}
+
+    def native(output: Path) -> Path:
+        checkout = output / "checkout"
+        checkout.mkdir()
+        (checkout / "rules").write_text("original source rules")
+        (output / "python/lib").mkdir(parents=True)
+        for name in ("library", "legalizer", "backend", "python", "llvm_as"):
+            path = output / "target" / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(name)
+            outputs[name] = str(path)
+        path = output / "request.json"
+        path.write_text(json.dumps({"checkout": str(checkout), **outputs}))
+        return path
+
+    def generators(output: Path, request: Path) -> dict:
+        output.mkdir()
+        (output / "requests").mkdir()
+        settings = output / "settings.json"
+        settings.write_text(
+            json.dumps({"misaal": {"paths": {"requests": str(output / "requests")}, "identity_paths": []}})
+        )
+        failed = {"configuration": {"target": "x86"}, "status": "blocked", "reason": "compiler rejected source"}
+        (output / "case-failed.json").write_text(json.dumps(failed))
+        return {
+            "status": status,
+            "settings": str(settings),
+            "cases": {
+                "ready": {"configuration": {"target": "x86"}, "status": "prepared"},
+                "failed": failed,
+            },
+        }
+
+    monkeypatch.setattr(misaal, "prepare", native)
+    monkeypatch.setattr(misaal_cases, "prepare_misaal_cases", generators)
+    result = preparation.prepare_family("misaal", tmp_path, engine)
+    if status == "resource-stopped":
+        assert result["status"] == "resource-stopped"
+        assert not (tmp_path / "settings.json").exists()
+    else:
+        assert result["status"] == "success" and result["generator_preparation_status"] == "blocked"
+        settings = json.loads(Path(result["settings"]).read_text())["misaal"]
+        assert settings["configuration_blockers"][0]["case_ids"] == ["failed"]
+        assert settings["configuration_blockers"][0]["reason"] == "compiler rejected source"
+        assert set(outputs.values()) <= set(result["artifacts"])
+        assert str(tmp_path / "environment/python/lib") in result["artifact_directories"]
+        original = json.loads((tmp_path / "generators/settings.json").read_text())["misaal"]
+        assert "configuration_blockers" not in original
+
+
+def test_guard_refusal_remains_a_safety_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = tmp_path / "engine"
+    engine.write_text("unused engine fixture")
+
+    def refused(output: Path, llvm: Path) -> Path:
+        steps = output / "steps"
+        steps.mkdir()
+        (steps / "001-compile.result.json").write_text(
+            json.dumps({"status": "launch-refused", "reason": "disk guard refused to launch: fewer than 10 GiB free"})
+        )
+        raise ValueError("disk guard refused to launch: fewer than 10 GiB free")
+
+    monkeypatch.setattr(hardboiled, "prepare", refused)
+    result = preparation.prepare_family("hardboiled", tmp_path, engine)
+    assert result["status"] == "resource-stopped"
+    assert any(path.endswith("001-compile.result.json") for path in result["artifacts"])
+
+
+def test_missing_engine_stops_before_dependency_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hardboiled, "prepare", lambda *_: pytest.fail("unreplayable corpus must not start builds"))
+    result = preparation.prepare_family("hardboiled", tmp_path, tmp_path / "missing-engine")
+    assert result["status"] == "preparation-blocked"
+    assert "engine is missing" in result["reason"]
+
+
+@pytest.mark.parametrize("change", ["identity-file", "deleted-identity-file", "runtime-member", "header", "binary"])
+def test_preparation_reuse_binds_runtime_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    engine = tmp_path / "engine"
+    engine.write_text("ordinary engine")
+    dependency = tmp_path / "external-llvm.dylib"
+    dependency.write_text("original external LLVM")
+    runtime = tmp_path / "racket-runtime"
+    runtime.mkdir()
+    (runtime / "existing-module").write_text("existing")
+    launches = 0
+    prepared_paths: dict[str, Path] = {}
+
+    def prepare(output: Path, llvm: Path) -> Path:
+        nonlocal launches
+        launches += 1
+        checkout = output / "sources"
+        checkout.mkdir()
+        build = output / "halide-build"
+        include = build / "include"
+        include.mkdir(parents=True)
+        (include / "Halide.h").write_text("original header")
+        binary = build / "native-optimizer"
+        binary.write_text("actual native binary fixture")
+        # Disposables stay outside the declared runtime identity.
+        (build / "unused.o").write_text("object file")
+        prepared_paths.update(header=include / "Halide.h", binary=binary)
+        path = output / "settings.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "hardboiled": {
+                        "paths": {"checkout": str(checkout), "build": str(build), "binary": str(binary)},
+                        "identity_paths": [str(dependency), str(runtime), str(include)],
+                    }
+                }
+            )
+        )
+        return path
+
+    monkeypatch.setattr(hardboiled, "prepare", prepare)
+
+    def execute(attempt: Path) -> dict:
+        return preparation.prepare_family("hardboiled", attempt, engine)
+
+    first = run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute)
+    assert first["status"] == "success"
+    assert str(dependency) in first["artifacts"]
+    assert str(runtime) in first["artifact_directories"]
+    assert str(prepared_paths["binary"]) in first["artifacts"]
+    assert str(prepared_paths["header"].parent) in first["artifact_directories"]
+    assert all(not path.endswith("unused.o") for path in first["artifacts"])
+    saved = (Path(first["attempt"]) / "stage.json").read_bytes()
+    assert run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute) == first
+    if change == "identity-file":
+        dependency.write_text("changed external LLVM")
+    elif change == "deleted-identity-file":
+        dependency.unlink()
+    elif change == "runtime-member":
+        (runtime / "new-module").write_text("new module")
+    else:
+        prepared_paths[change].write_text("changed native prerequisite")
+    second = run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute)
+    assert launches == 2 and second["attempt"] != first["attempt"]
+    assert second["status"] == ("blocked" if change == "deleted-identity-file" else "success")
+    if change == "deleted-identity-file":
+        assert "runtime dependency is missing" in second["reason"]
+    assert (Path(first["attempt"]) / "stage.json").read_bytes() == saved

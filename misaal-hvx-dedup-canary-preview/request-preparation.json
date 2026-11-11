@@ -1,0 +1,27 @@
+{
+  "status": "request-prepared",
+  "case_id": "misaal-hexagon-blur3x3",
+  "settings": "/Users/saul/p/wt/egglog-encoding/reproduction-hardboiled-misaal/misaal-hvx-dedup-canary-preview/settings.json",
+  "native_execution": false,
+  "artifacts": {
+    "original-request.json": "c12cbc31dc47110c6479ade3cbc10a33a7472d99e1def518b0baa19ca6dfe6fd",
+    "original-settings.json": "fb0d44b4dd69c3c83bf3d14e22887906d29b8d0d904b795a5fa5eac89f8a54a8",
+    "provenance.json": "d31b94bd5835ab2c36d645928b178f5aa45d49ff53154450560c40075b7e2a64",
+    "requests/misaal-hexagon-blur3x3.json": "1033fc33c38f5ac99f9d557f709a35451910e329a10dafbf16bed9c3ed314eb6",
+    "settings.json": "a714859606c66c977ae76565a8682c15ebac6c464b0ab3381f03991c1cf7f82c"
+  },
+  "command": [
+    "/Users/saul/p/egglog-encoding/.venv/bin/python",
+    "-m",
+    "scripts.suite_reproduction",
+    "--family",
+    "misaal",
+    "--case",
+    "misaal-hexagon-blur3x3",
+    "--stage",
+    "all",
+    "--settings",
+    "/Users/saul/p/wt/egglog-encoding/reproduction-hardboiled-misaal/misaal-hvx-dedup-canary-preview/settings.json"
+  ],
+  "cwd": "/Users/saul/p/egglog-encoding"
+}

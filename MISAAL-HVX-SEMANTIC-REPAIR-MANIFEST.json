@@ -1,0 +1,49 @@
+{
+  "scope": "HVX private selector only; no native build or execution",
+  "validation": {
+    "focused_python": "26 passed",
+    "broader_python": "45 passed, 1 unchanged error-message expectation failure in test_changed_library_refuses_preparation",
+    "ruff": "passed",
+    "mypy": "passed",
+    "native": "not run"
+  },
+  "files": {
+    "scripts/reproduction_misaal_hvx_lowering.py": {
+      "baseline_sha256": "117ea3e2dbc01bd3b1adf1b3e7d34a32e37f86ddb493ea594dff23cf8744f01f",
+      "sha256": "1a4ed7497903dd6f9699da8adfdf05a00b55da2d198b2654be0c89b3b95516a6"
+    },
+    "scripts/reproduction_prepare_misaal_hvx.py": {
+      "baseline_sha256": "709d210df3c05754ac0d9358d010906858fc050dac5aefdbdb5520ebaab96bd9",
+      "sha256": "f541dc6a26de3062bbc426cdf2249e139dd161502a713f778d577e44ba3e8cee"
+    },
+    "tests/test_reproduction_misaal_hvx_lowering.py": {
+      "baseline_sha256": "2691b6312c50f397ac581a2f6ece14bd958487d13ea957b06430f2d8b8137b6b",
+      "sha256": "c5dd2f752d4092bd44c6cd6ef31f3d3de332c5c6446642e3181fc99091538a06"
+    },
+    "tests/test_reproduction_prepare_misaal_hvx.py": {
+      "baseline_sha256": "da6936d79e6a6069c0633ad7a686aa24bce031939bf4c3477a3add5e3bbed294",
+      "sha256": "8b64a6213d9681acccb678c3ef6275923daed01c6d68d8dc180f8d4249ab07d1"
+    },
+    "benchmarks/reproduction/misaal-hvx-preparation.md": {
+      "baseline_sha256": "09df399f40e5fbaace8ce9a29edbd310c91810557aa038fee9f250c1dda7373f",
+      "sha256": "7f37460ef515b7494247b8ce203552a16808b502e5dd02577906d6af77a82b64"
+    },
+    "tests/fixtures/misaal-hvx/provenance.json": {
+      "baseline_sha256": "bd0c6f7d94aa9445a1a94604ee8fb9ac05e140d8fe570b1eba80777b145171ba",
+      "sha256": "f87083c866c13460d1178cd168293a32e048e67f609960d184fa064aae6e7050"
+    },
+    "tests/fixtures/misaal-hvx/source-lowerings.json": {
+      "baseline_sha256": null,
+      "sha256": "e35415f08467bd21b1269b6916215e0cc4e41a9a7714ed477809197309bbafa9"
+    },
+    "tests/fixtures/misaal-hvx/Legalizer.cpp.txt": {
+      "baseline_sha256": null,
+      "sha256": "cf595e9c1ff60c46234ba327a8ea10738b82e934b0a42f46c18fc5ab1ce79860"
+    },
+    "tests/fixtures/misaal-hvx/lowering-harness.cpp": {
+      "baseline_sha256": null,
+      "sha256": "6b8d40d0818ff221ef42662bf684c470762191d7a65662c528f199500e242c36"
+    }
+  },
+  "patch_sha256": "dadf7c2e5b830fafca4317aa8dd54db5c9533adc3bf94534ccb16113c2e3a22a"
+}

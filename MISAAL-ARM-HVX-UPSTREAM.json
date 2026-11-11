@@ -1,0 +1,116 @@
+{
+  "hydride_head": {
+    "url": "https://api.github.com/repos/akothen/Hydride/commits?per_page=1",
+    "commits": [
+      {
+        "sha": "0c97d0f9d3f8cd0494e421b9ece4b24488b614e5",
+        "date": "2025-02-17T07:55:09Z",
+        "subject": "Fix pass pipeline for AMX"
+      }
+    ]
+  },
+  "misaal_head": {
+    "url": "https://api.github.com/repos/RafaeNoor/MISAAL/commits?per_page=1",
+    "commits": [
+      {
+        "sha": "44ff893445d664cd87f52b08a138260ed2015ba8",
+        "date": "2025-12-16T21:28:11Z",
+        "subject": "Copying Halide fix from pim branch (#21)"
+      }
+    ]
+  },
+  "hvx_wrapper_history": {
+    "url": "https://api.github.com/repos/akothen/Hydride/commits?path=codegen-generator/tools/low-level-codegen/wrappers/hvx_wrappers.ll&per_page=3",
+    "commits": []
+  },
+  "arm_header_history": {
+    "url": "https://api.github.com/repos/akothen/Hydride/commits?path=codegen-generator/tools/low-level-codegen/InstSelectors/arm/ARMLegalizer.h&per_page=3",
+    "commits": []
+  },
+  "latest_wrappers": {
+    "url": "https://api.github.com/repos/akothen/Hydride/contents/codegen-generator/tools/low-level-codegen/wrappers?ref=0c97d0f9d3f8cd0494e421b9ece4b24488b614e5",
+    "error": "HTTP Error 404: Not Found"
+  },
+  "latest_arm_selector": {
+    "url": "https://api.github.com/repos/akothen/Hydride/contents/codegen-generator/tools/low-level-codegen/InstSelectors/arm?ref=0c97d0f9d3f8cd0494e421b9ece4b24488b614e5",
+    "entries": [
+      {
+        "name": ".gitignore",
+        "sha": "2a2dd1d607fa96e5c334aeecd42c67eaf16efafc",
+        "size": 15,
+        "type": "file"
+      },
+      {
+        "name": "ARMLegalizer.cpp",
+        "sha": "4ee995469ab496973a2dc3a4a7b4adf812f59caa",
+        "size": 880,
+        "type": "file"
+      },
+      {
+        "name": "RoseARMLegalizerGen.py",
+        "sha": "65e5bbb5ea3f369a7a53b645f54f6f8fef047645",
+        "size": 12656,
+        "type": "file"
+      },
+      {
+        "name": "arm_wrappers.c.ll",
+        "sha": "7983fb5ad5734b1ab24f9bcfc52ed2d1c5ff9ac5",
+        "size": 6475070,
+        "type": "file"
+      }
+    ]
+  },
+  "latest_hvx_selector": {
+    "url": "https://api.github.com/repos/akothen/Hydride/contents/codegen-generator/tools/low-level-codegen/InstSelectors/hexagon?ref=0c97d0f9d3f8cd0494e421b9ece4b24488b614e5",
+    "entries": [
+      {
+        "name": "HexInstMappings.txt",
+        "sha": "63f974f5dadde81f018171a6fc4f654c24b700ff",
+        "size": 14411,
+        "type": "file"
+      },
+      {
+        "name": "HexLegalizer.cpp",
+        "sha": "bbbf31d80a3df59e337a47ab48a4be6956d3e6be",
+        "size": 350551,
+        "type": "file"
+      },
+      {
+        "name": "HexLegalizerGeneric.cpp",
+        "sha": "49efb3b8d56f3dec9fb808ec75901178b4651229",
+        "size": 367839,
+        "type": "file"
+      },
+      {
+        "name": "HexLegalizer_new.cpp",
+        "sha": "4071b621b10b2d52984a1fa642eb1e88d3a0d129",
+        "size": 350960,
+        "type": "file"
+      },
+      {
+        "name": "RoseHexLegalizerGen.py",
+        "sha": "3bd7eeb7f79635860974977c7e83a20f662e2a8f",
+        "size": 7112,
+        "type": "file"
+      },
+      {
+        "name": "hexsemantics.py",
+        "sha": "65fc8eb34f4ff32f433d9bcff24140da5d9fbc3a",
+        "size": 295755,
+        "type": "file"
+      },
+      {
+        "name": "hexsemantics_allargs.py",
+        "sha": "678c25d143f5cc418f061aacb6df22f66e758884",
+        "size": 445489,
+        "type": "file"
+      },
+      {
+        "name": "hexsemantics_new.py",
+        "sha": "a815983395381fda662ededaf870b3c0f4d08a3e",
+        "size": 445545,
+        "type": "file"
+      }
+    ]
+  }
+}

@@ -1,0 +1,2250 @@
+--- a/scripts/reproduction_misaal_hvx_lowering.py
++++ b/scripts/reproduction_misaal_hvx_lowering.py
+@@ -1,18 +1,53 @@
+-"""Checked source repair for MISAAL's two HVX concat pseudo instructions.
+-
+-These are not LLVM Hexagon intrinsics. The pinned frontend defines them as
+-repeated bitvector concatenation; every other instruction keeps Rose's mapping.
+-"""
++"""Source-bound HVX lowering repairs; active Egglog semantics stay unchanged."""
+ 
+ from __future__ import annotations
+ 
+ import ast
++import hashlib
++import json
+ import re
+ from typing import Any
+ 
+-from scripts.reproduction_misaal_legalizer import simd_mode_replacements
+-
+ CONCAT_WIDTHS = {"hexagon_V6_interleave_2_128B": 16, "hexagon_V6_interleave_4_128B": 8}
++
++# Digests cover complete original group metadata and formal bodies, retained in
++# tests/fixtures/misaal-hvx/source-lowerings.json. The preparer also pins files.
++SOURCE_LOWERINGS = {
++    "hexagon_V6_vlsrw_128B": "bcc35c6b58ccd3e53e17adbf4cb5839787d29634830905aa886dc0453007b042",
++    "hexagon_V6_vassign_128B": "79bf6029fe973772b3662496bac8f4ea2049c63af63325b9bc56b92d11448678",
++    "hexagon_V6_lo_128B": "b2a1941e76f191ca07bc928460d6860987dd1d9f603c6ab073bc21731a131200",
++    "hvx_swizzle_1": "26bc7e99d3d7690c981accd98d20059dd7004be3f1ce9d5133a4876740fd699e",
++}
++SWIZZLE_SHAPES = (
++    (2048, 64, 0, 64, 32, 32, 2, 0),
++    (2048, 32, 0, 32, 16, 64, 2, 0),
++    (1024, 32, 0, 32, 16, 32, 2, 0),
++    (1024, 16, 0, 16, 8, 64, 2, 0),
++)
++
++
++def validate_source_lowerings(semantics: dict[str, Any], swizzles: dict[str, Any]) -> None:
++    """Bind hand-lowered operations to the complete pinned frontend definitions."""
++    for name, expected in SOURCE_LOWERINGS.items():
++        group = (swizzles if name == "hvx_swizzle_1" else semantics).get(name)
++        digest = hashlib.sha256(json.dumps(group, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
++        if digest != expected:
++            raise ValueError(f"HVX source lowering definition changed: {name}")
++
++
++def swizzle_mask(shape: tuple[int, ...]) -> list[int]:
++    """Evaluate the pinned formal's source-bit offsets, rejecting other shapes."""
++    if shape not in SWIZZLE_SHAPES:
++        raise ValueError("unsupported HVX swizzle source shape")
++    width, outer, start, end, element, stride, divisor, padding = shape
++    offsets = [
++        lane // divisor + inner * stride for lane in range(0, width, outer) for inner in range(start, end, element)
++    ]
++    if padding or any(lane % divisor for lane in range(0, width, outer)):
++        raise ValueError("HVX swizzle requires integral offsets and no padding")
++    if len(offsets) * element != width or any(offset % element or offset + element > width for offset in offsets):
++        raise ValueError("HVX swizzle offsets must be aligned and in bounds")
++    return [offset // element for offset in offsets]
+ 
+ 
+ def validate_concat_semantics(semantics: dict[str, Any]) -> None:
+@@ -91,6 +126,147 @@
+     return "\n".join(cases)
+ 
+ 
++def source_lowering_cpp() -> str:
++    """Portable LLVM operations for the four exact active source definitions.
++
++    The masked LLVM shift avoids poison, followed by zero selection for the
++    full-width Rosette shift. No target intrinsic semantics are substituted.
++    """
++    cpp = r"""      auto *Callee = CI->getCalledFunction();
++      if (!Callee)
++        return false;
++      if (!CI->getModule()->getDataLayout().isLittleEndian())
++        report_fatal_error("MISAAL HVX source requires little-endian bitvector packing");
++      StringRef SourceName = Callee->getName();
++      auto IsSource = [&](StringRef Expected) {
++        if (SourceName == Expected)
++          return true;
++        unsigned Overload;
++        return SourceName.startswith(Expected) && SourceName.size() > Expected.size() + 1 &&
++               SourceName[Expected.size()] == '.' &&
++               !SourceName.drop_front(Expected.size() + 1).getAsInteger(10, Overload);
++      };
++      auto HasWidth = [](Value *V, unsigned Bits) {
++        auto *Ty = dyn_cast<FixedVectorType>(V->getType());
++        return Ty && Ty->getElementType()->isIntegerTy() &&
++               uint64_t(Ty->getNumElements()) * Ty->getElementType()->getIntegerBitWidth() == Bits;
++      };
++      auto Annotations = [&](unsigned Start, ArrayRef<int64_t> Values) {
++        if (CI->arg_size() != Start + Values.size())
++          return false;
++        for (unsigned N = 0; N < Values.size(); ++N) {
++          auto *C = dyn_cast<ConstantInt>(CI->getArgOperand(Start + N));
++          if (!C || !C->getType()->isIntegerTy(32) || C->getSExtValue() != Values[N])
++            return false;
++        }
++        return true;
++      };
++      if (IsSource("llvm.hydride.hexagon_V6_vlsrw_128B_dsl")) {
++        if (!Annotations(3, {1024, 1024, 0, 1024, 32, 0}) ||
++            CI->getArgOperand(0)->getType() != FixedVectorType::get(Type::getInt32Ty(CI->getContext()), 1) ||
++            !HasWidth(CI->getArgOperand(1), 1024) ||
++            CI->getArgOperand(2)->getType() != FixedVectorType::get(Type::getInt32Ty(CI->getContext()), 1) ||
++            CI->getType() != FixedVectorType::get(Type::getInt32Ty(CI->getContext()), 32))
++          report_fatal_error("MISAAL vlsrw source shape changed");
++        auto *Mask = dyn_cast<Constant>(CI->getArgOperand(0));
++        auto *MaskElement = Mask ? dyn_cast_or_null<ConstantInt>(Mask->getAggregateElement(0U)) : nullptr;
++        if (!MaskElement || !MaskElement->equalsInt(31))
++          report_fatal_error("MISAAL vlsrw source mask changed");
++        IRBuilder<> Builder(CI);
++        auto *VectorTy = FixedVectorType::get(Builder.getInt32Ty(), 32);
++        auto *Vector = getBitvectorOfRequiredType(CI->getArgOperand(1), VectorTy, CI);
++        auto *Shift = getBitvectorOfRequiredType(CI->getArgOperand(2), Builder.getInt32Ty(), CI);
++        if (!Vector || !Shift)
++          report_fatal_error("MISAAL vlsrw mapped operand width changed");
++        auto *SafeShift = Builder.CreateAnd(Shift, Builder.getInt32(31));
++        auto *Shifted = Builder.CreateLShr(Vector, Builder.CreateVectorSplat(32, SafeShift));
++        auto *Result = Builder.CreateSelect(Builder.CreateICmpULT(Shift, Builder.getInt32(32)),
++                                            Shifted, Constant::getNullValue(VectorTy));
++        InstToInstMap[CI] = Result;
++        ToBeRemoved.insert(CI);
++        return true;
++      }
++"""
++    for name, offset, constants in (
++        ("hexagon_V6_vassign_128B", 0, (1024, 1024, 0, 1024, 8, 0)),
++        ("hexagon_V6_lo_128B", 32, (1024, 1024, 0, 1024, 8, 1024, 0)),
++    ):
++        mask = ", ".join(str(n) for n in range(offset, offset + 32))
++        cpp += f"""      if (IsSource("llvm.hydride.{name}_dsl")) {{
++        if (!Annotations(1, {{{", ".join(map(str, constants))}}}) ||
++            !HasWidth(CI->getArgOperand(0), 2048) ||
++            CI->getType() != FixedVectorType::get(Type::getInt8Ty(CI->getContext()), 128))
++          report_fatal_error("MISAAL half-extract source shape changed");
++        IRBuilder<> Builder(CI);
++        auto *Input = getBitvectorOfRequiredType(
++            CI->getArgOperand(0), FixedVectorType::get(Builder.getInt32Ty(), 64), CI);
++        if (!Input)
++          report_fatal_error("MISAAL half-extract mapped input width changed");
++        auto *Result = Builder.CreateShuffleVector(Input, Input, ArrayRef<int>{{{mask}}});
++        InstToInstMap[CI] = Builder.CreateBitCast(Result, CI->getType());
++        ToBeRemoved.insert(CI);
++        return true;
++      }}
++"""
++    cpp += '      if (IsSource("llvm.hydride.hvx_swizzle_1_dsl")) {\n'
++    for shape in SWIZZLE_SHAPES:
++        width, _, _, _, element, _, _, _ = shape
++        mask = ", ".join(map(str, swizzle_mask(shape)))
++        cpp += f"""        if (Annotations(1, {{{", ".join(map(str, shape))}}}) &&
++            HasWidth(CI->getArgOperand(0), {width}) &&
++            CI->getType() == FixedVectorType::get(IntegerType::get(CI->getContext(), {element}), {width // element})) {{
++          IRBuilder<> Builder(CI);
++          auto *Input = getBitvectorOfRequiredType(CI->getArgOperand(0), CI->getType(), CI);
++          if (!Input)
++            report_fatal_error("MISAAL swizzle mapped input width changed");
++          InstToInstMap[CI] = Builder.CreateShuffleVector(Input, Input, ArrayRef<int>{{{mask}}});
++          ToBeRemoved.insert(CI);
++          return true;
++        }}
++"""
++    return cpp + '        report_fatal_error("unsupported MISAAL swizzle source shape");\n      }'
++
++
++def hvx_common_replacements(source: str) -> list[tuple[str, str]]:
++    """Fail before LLVM mutation if a private HVX intrinsic map is incomplete."""
++    start = source.index("    // Some sanity checks\n", source.index("Legalizer::getArgsAfterPermutation("))
++    end = source.index("    // Generate some new args\n", start)
++    before = source[start:end]
++    replacement = r"""    // Validate the complete map before inserting any bitcasts or call.
++    if (Permutation.size() != BitvectorList.size())
++        report_fatal_error("MISAAL HVX permutation/source arity mismatch");
++    std::vector<bool> Assigned(RequiredTypes.size(), false);
++    for (int Index : Permutation) {
++        if (Index == -1) continue;
++        if (Index < 0 || unsigned(Index) >= RequiredTypes.size() || Assigned[Index])
++            report_fatal_error("MISAAL HVX invalid or duplicate permutation index");
++        Assigned[Index] = true;
++    }
++    for (bool Present : Assigned)
++        if (!Present)
++            report_fatal_error("MISAAL HVX missing intrinsic operand");
++"""
++    conversions = """                                                         RequiredTypes[PermIdx], InsertBefore);
++            if (Bitvector == nullptr)
++                return std::vector<Value *>();
++            NewArgs[PermIdx] = Bitvector;"""
++    replacements = [
++        ('#include "llvm/IR/IRBuilder.h"', '#include "llvm/IR/IRBuilder.h"\n#include "llvm/Support/ErrorHandling.h"'),
++        (before, replacement),
++        ("            if (PermIdx >= RequiredTypes.size()) continue;  // Immediate Number\n", ""),
++        (
++            conversions,
++            """                                                         RequiredTypes[PermIdx], InsertBefore);
++            if (Bitvector == nullptr || Bitvector->getType() != RequiredTypes[PermIdx])
++                report_fatal_error("MISAAL HVX incompatible intrinsic operand type");
++            NewArgs[PermIdx] = Bitvector;""",
++        ),
++    ]
++    if any(source.count(old) != 1 for old, _ in replacements):
++        raise ValueError("HVX common legalizer differs from exact repair contexts")
++    return replacements
++
++
+ def hvx_generator_replacements(source: str) -> list[tuple[str, str]]:
+     """Patch only exact pinned generator contexts; ordinary patterns stay intact."""
+     header = r'      "#include \"Legalizer.h\"",'
+@@ -98,10 +274,11 @@
+         header
+         + '\n      "#include \\"llvm/IR/IRBuilder.h\\"",'
+         + '\n      "#include \\"llvm/Support/ErrorHandling.h\\"",'
++        + '\n      "#include \\"llvm/IR/Verifier.h\\"",'
+         + '\n      "using namespace boost::multiprecision::literals;",'
+     )
+     old_body = "      {}\n    }}\n    '''.format(self.generateInstSelectorForAllInsts())"
+-    cpp = concat_lowering_cpp().replace("{", "{{").replace("}", "}}")
++    cpp = (concat_lowering_cpp() + "\n" + source_lowering_cpp()).replace("{", "{{").replace("}", "}}")
+     replacements = [
+         (header, replacement),
+         ("            ArgVal = int(ArgVal, 16)\n", "            ArgVal = int(ArgVal, 0)\n"),
+@@ -110,7 +287,14 @@
+             old_body,
+             cpp + "\n      {}\n      return false;\n    }}\n    '''.format(self.generateInstSelectorForAllInsts())",
+         ),
+-        *simd_mode_replacements(source, "hvx"),
++        (
++            "      Legalizer *L = new HexLegalizer();\n      return L->legalize(F);",
++            "      HexLegalizer Selector;\n      Legalizer *L = &Selector;\n      L->bitsimd = false;\n"
++            "      bool Changed = L->legalize(F);\n"
++            "      if (verifyFunction(F, &errs()))\n"
++            '        report_fatal_error("MISAAL HVX legalization produced invalid LLVM IR");\n'
++            "      return Changed;",
++        ),
+     ]
+     if any(source.count(old) != 1 for old, _ in replacements):
+         raise ValueError("HVX selector generator differs from exact repair contexts")
+--- a/scripts/reproduction_prepare_misaal_hvx.py
++++ b/scripts/reproduction_prepare_misaal_hvx.py
+@@ -21,10 +21,13 @@
+ from scripts.reproduction_inventory import expected_cases
+ from scripts.reproduction_misaal_hvx_lowering import (
+     CONCAT_WIDTHS,
++    SOURCE_LOWERINGS,
++    hvx_common_replacements,
+     hvx_generator_replacements,
++    source_lowering_cpp,
+     validate_concat_semantics,
++    validate_source_lowerings,
+ )
+-from scripts.reproduction_misaal_legalizer import simd_mode_replacements
+ from scripts.reproduction_prepare_misaal import HYDRIDE_REVISION, MISAAL_REVISION, Preparation, sha256_file, write_json
+ from scripts.reproduction_prepare_misaal_arm import source_assignment
+ from scripts.reproduction_prepare_misaal_cases import prepare_misaal_cases
+@@ -33,6 +36,10 @@
+ ROOT = Path(__file__).resolve().parents[1]
+ # Original 44ff/beb inputs newly consumed by HVX, outside the x86 request's file pins.
+ HVX_SOURCE_SHA256 = {
++    "lib/sema/hex_swizzles.py": "e81a883661f83667f65e296decc7f0969d4046279facb0318afc8812771ed375",
++    "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/common/Legalizer.cpp": (
++        "cf595e9c1ff60c46234ba327a8ea10738b82e934b0a42f46c18fc5ab1ce79860"
++    ),
+     "lib/sema/hexsemantics_new.py": "eef4d1fcb30db190dc1947a55040203c33aff16e7262d52b36e26fe1cc0c0b75",
+     "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py": (
+         "659d800eef85fa85877e8181d0b75e804b144a829245aed28604a5a1b8034494"
+@@ -50,12 +57,17 @@
+     frontend = checkout / "lib/sema/hexsemantics_new.py"
+     semantics = ast.literal_eval(source_assignment(frontend, "semantics"))
+     validate_concat_semantics(semantics)
++    swizzles = ast.literal_eval(source_assignment(checkout / "lib/sema/hex_swizzles.py", "hvx_swizzles"))
++    validate_source_lowerings(semantics, swizzles)
+     targets = [name for group in semantics.values() for name in group["target_instructions"]]
+     if len(targets) != len(set(targets)):
+         raise ValueError("HVX frontend contains duplicate concrete instruction names")
+     if any(re.fullmatch(r"[A-Za-z_]\w*", name) is None for name in targets):
+         raise ValueError("HVX instruction names must be safe C++ identifiers")
+-    ordinary = sorted(set(targets) - CONCAT_WIDTHS.keys())
++    excluded = set(CONCAT_WIDTHS) | SOURCE_LOWERINGS.keys()
++    ordinary = sorted(
++        name for group, value in semantics.items() if group not in excluded for name in value["target_instructions"]
++    )
+     constant_bits = []
+     for group in semantics.values():
+         for instruction in group["target_instructions"].values():
+@@ -77,6 +89,7 @@
+         raise ValueError("intrinsic-only recipe requires the original HVX wrapper to be absent")
+     inputs = [
+         frontend,
++        checkout / "lib/sema/hex_swizzles.py",
+         low / "InstSelectors/hexagon/RoseHexLegalizerGen.py",
+         low / "InstSelectors/common/Legalizer.cpp",
+         low / "InstSelectors/common/Legalizer.h",
+@@ -182,6 +195,12 @@
+         write_json(output / "inputs.json", inputs)
+         source = output / "sources/hvx"
+         source.mkdir(parents=True)
++        private_common = output / "sources/common"
++        private_common.mkdir()
++        for name in ("Legalizer.cpp", "Legalizer.h", "libpimeval.h"):
++            shutil.copy2(common / name, private_common / name)
++        common_cpp = private_common / "Legalizer.cpp"
++        preparation.patch(common_cpp, hvx_common_replacements(common_cpp.read_text()), "hvx-complete-permutations")
+         selector = source / "RoseHexLegalizerGen.py"
+         selector.write_bytes((codegen / "tools/low-level-codegen/InstSelectors/hexagon" / selector.name).read_bytes())
+         preparation.patch(selector, hvx_generator_replacements(selector.read_text()), "hvx-source-concat-selector")
+@@ -191,7 +210,7 @@
+         driver.write_text(
+             "from RoseHexLegalizerGen import RoseInstSelectorGenerator\n"
+             "from sema.hexsemantics_new import semantics\n"
+-            f"excluded = {tuple(CONCAT_WIDTHS)!r}\n"
++            f"excluded = {tuple(CONCAT_WIDTHS) + tuple(SOURCE_LOWERINGS)!r}\n"
+             "RoseInstSelectorGenerator({k: v for k, v in semantics.items() if k not in excluded})"
+             ".generateFileWithInstSelector()\n"
+         )
+@@ -214,8 +233,12 @@
+         actual = set(re.findall(r"Intrinsic::(hexagon_\w+)", text))
+         if actual != set(inputs["ordinary_intrinsics"]):
+             raise ValueError("generated HVX selector changed ordinary intrinsic coverage")
+-        if simd_mode_replacements(text, "hvx"):
+-            raise ValueError("generated HVX selector lost the SIMD pass mode repair")
++        if (
++            source_lowering_cpp() not in text
++            or "L->bitsimd = false;" not in text
++            or "verifyFunction(F, &errs())" not in text
++        ):
++            raise ValueError("generated HVX selector lost source lowering, SIMD mode or pre-ADCE verification")
+         from scripts.reproduction_misaal_hvx_lowering import concat_lowering_cpp
+ 
+         if concat_lowering_cpp() not in text or not re.search(r"return false;\s*}\s*};", text):
+@@ -223,14 +246,15 @@
+         build_source = output / "cmake"
+         build_source.mkdir()
+         cmake_file = build_source / "CMakeLists.txt"
+-        paths = [cpp, common, boost_include]
++        paths = [cpp, private_common, boost_include]
+         if any(any(character in str(path) for character in ('"', "$", ";", "\n", "\\")) for path in paths):
+             raise ValueError("unsupported special character in native HVX build path")
+         cmake_file.write_text(
+             "cmake_minimum_required(VERSION 3.16)\nproject(MisaalHVX LANGUAGES C CXX)\n"
+             "find_package(LLVM 12 REQUIRED CONFIG)\nset(CMAKE_CXX_STANDARD 14)\n"
+-            f'add_library(HVXLegalizer SHARED "{cpp}" "{common}/Legalizer.cpp")\n'
+-            f'target_include_directories(HVXLegalizer PRIVATE ${{LLVM_INCLUDE_DIRS}} "{common}" "{boost_include}")\n'
++            f'add_library(HVXLegalizer SHARED "{cpp}" "{private_common}/Legalizer.cpp")\n'
++            "target_include_directories(HVXLegalizer PRIVATE ${LLVM_INCLUDE_DIRS} "
++            f'"{private_common}" "{boost_include}")\n'
+             "if(NOT LLVM_ENABLE_RTTI)\n target_compile_options(HVXLegalizer PRIVATE -fno-rtti)\nendif()\n"
+             'target_link_options(HVXLegalizer PRIVATE "-undefined" "dynamic_lookup")\n'
+             'set_target_properties(HVXLegalizer PROPERTIES SUFFIX ".so")\n'
+@@ -270,9 +294,16 @@
+                 "legalizer_sha256": sha256_file(legalizer),
+                 "input_hashes": inputs["input_hashes"],
+                 "generated_sources": {str(cpp): sha256_file(cpp)},
+-                "prepared_sources": {str(path): sha256_file(path) for path in (selector, driver, cmake_file)},
++                "prepared_sources": {
++                    str(path): sha256_file(path)
++                    for path in (selector, driver, cmake_file, *sorted(private_common.iterdir()))
++                },
+                 "lowering_contract": {
+                     "ordinary_intrinsics": inputs["ordinary_intrinsics"],
++                    "source_lowering_contract": "active-formals-portable-v1",
++                    "source_groups": SOURCE_LOWERINGS,
++                    "permutations": "complete-unique-and-type-checked",
++                    "verification": "inside-selector-before-ADCE",
+                     "concat_input_widths": CONCAT_WIDTHS,
+                     "concat_result_width": 32,
+                     "simd_mode": True,
+@@ -296,6 +327,7 @@
+                     *seed.get("identity_paths", []),
+                     str(output / "inputs.json"),
+                     str(source),
++                    str(private_common),
+                     str(generated),
+                     str(driver),
+                     str(cmake_file),
+--- a/tests/test_reproduction_misaal_hvx_lowering.py
++++ b/tests/test_reproduction_misaal_hvx_lowering.py
+@@ -4,6 +4,7 @@
+ import copy
+ import hashlib
+ import json
++import re
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -11,9 +12,15 @@
+ 
+ from scripts.reproduction_misaal_hvx_lowering import (
+     CONCAT_WIDTHS,
++    SOURCE_LOWERINGS,
++    SWIZZLE_SHAPES,
+     concat_lowering_cpp,
++    hvx_common_replacements,
+     hvx_generator_replacements,
++    source_lowering_cpp,
++    swizzle_mask,
+     validate_concat_semantics,
++    validate_source_lowerings,
+ )
+ 
+ FIXTURES = Path(__file__).parent / "fixtures/misaal-hvx"
+@@ -103,9 +110,9 @@
+     emitted = cls.generateLegalizerPassDefinition()
+     assert concat_lowering_cpp() in emitted
+     assert emitted.count("CI->arg_size() != 3") == 2
+-    assert emitted.count("dyn_cast<FixedVectorType>") == 4
+-    assert emitted.count("getBitvectorOfRequiredType(") == 2
+-    assert emitted.count("ToBeRemoved.insert(CI);") == 2
++    assert concat_lowering_cpp().count("dyn_cast<FixedVectorType>") == 4
++    assert concat_lowering_cpp().count("getBitvectorOfRequiredType(") == 2
++    assert concat_lowering_cpp().count("ToBeRemoved.insert(CI);") == 2
+     assert "InputType->getElementType()->isIntegerTy(16)" in emitted
+     assert "InputType->getElementType()->isIntegerTy(8)" in emitted
+     assert "OutputType->getNumElements() != 2" in emitted
+@@ -115,7 +122,7 @@
+     assert "Shift < 32" in emitted
+     assert "CreateSExt" not in emitted and "UndefValue" not in emitted
+     assert "return false;\n    }" in emitted
+-    assert "L->bitsimd = false;\n      return L->legalize(F);" in emitted
++    assert "L->bitsimd = false;\n      bool Changed = L->legalize(F);" in emitted
+     assert "using namespace boost::multiprecision::literals;" in cls.genHeader()
+ 
+ 
+@@ -123,3 +130,167 @@
+     source = (FIXTURES / "RoseHexLegalizerGen.py.txt").read_text()
+     with pytest.raises(ValueError, match="repair contexts"):
+         hvx_generator_replacements(source.replace("ArgVal = int(ArgVal)", "ArgVal = str(ArgVal)"))
++
++
++class BV:
++    """A finite bitvector used only by the independent original-formal evaluator."""
++
++    def __init__(self, value: int, width: int):
++        self.value, self.width = value & ((1 << width) - 1), width
++
++
++def evaluate_formal(group: dict[str, Any], arguments: list[Any]) -> BV:
++    """Interpret the retained Rosette subset, not the lowering's index formulas."""
++    tokens = iter(re.findall(r"[^\s()\[\]]+|[()\[\]]", " ".join(ast.literal_eval(s) for s in group["semantics"])))
++
++    def parse(token: str) -> Any:
++        if token not in ("(", "["):
++            return int(token) if token.lstrip("-").isdigit() else token
++        result: list[Any] = []
++        for child in tokens:
++            if child in (")", "]"):
++                return result
++            result.append(parse(child))
++        raise AssertionError("unclosed pinned formal")
++
++    form = parse(next(tokens))
++    assert form[0] == "define"
++
++    def execute(node: Any, env: dict[str, Any]) -> Any:
++        if isinstance(node, int):
++            return node
++        if isinstance(node, str):
++            return env[node]
++        op, *args = node
++        if op == "define":
++            env[args[0]] = execute(args[1], env)
++            return None
++        if op == "for/list":
++            ((name, values),) = args[0]
++            results = []
++            for value in execute(values, env):
++                scope = {**env, name: value}
++                for statement in args[1:]:
++                    result = execute(statement, scope)
++                results.append(result)
++            return results
++        if op == "apply":
++            assert args[0] == "concat"
++            values = execute(args[1], env)
++            value, width = 0, 0
++            for part in values:
++                value = (value << part.width) | part.value
++                width += part.width
++            return BV(value, width)
++        values = [execute(arg, env) for arg in args]
++        if op == "range":
++            return list(range(*values))
++        if op == "reverse":
++            return list(reversed(values[0]))
++        if op == "+":
++            return values[0] + values[1]
++        if op == "-":
++            return values[0] - values[1]
++        if op == "*":
++            return values[0] * values[1]
++        if op == "/":
++            assert values[0] % values[1] == 0
++            return values[0] // values[1]
++        if op == "extract":
++            high, low, value = values
++            assert 0 <= low <= high < value.width
++            return BV(value.value >> low, high - low + 1)
++        if op == "bvand":
++            return BV(values[0].value & values[1].value, values[0].width)
++        if op == "bvlshr":
++            return BV(values[0].value >> values[1].value, values[0].width)
++        if op == "bvpadhighbits":
++            value, padding = values
++            return BV(value.value, value.width + padding)
++        raise AssertionError(op)
++
++    scope = dict(zip(form[1][1:], arguments, strict=True))
++    for statement in form[2:]:
++        result = execute(statement, scope)
++    assert isinstance(result, BV)
++    return result
++
++
++def test_portable_shift_matches_active_formal_at_every_boundary() -> None:
++    groups = json.loads((FIXTURES / "source-lowerings.json").read_text())
++    validate_source_lowerings(groups, groups)
++    words = [0, 1, 0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, *range(27)]
++    value = sum(word << (32 * i) for i, word in enumerate(words))
++    for shift in (0, 1, 17, 30, 31, 32, 33, 63, 64, 0x80000000, 0xFFFFFFFF):
++        result = evaluate_formal(
++            groups["hexagon_V6_vlsrw_128B"], [BV(31, 32), BV(value, 1024), BV(shift, 32), 1024, 1024, 0, 1024, 32, 0]
++        )
++        lowered = sum((word >> (shift & 31) if shift < 32 else 0) << (32 * i) for i, word in enumerate(words))
++        assert result.width == 1024 and result.value == lowered
++    # The old masked intrinsic is distinguishable from the active source.
++    assert (1 >> (32 & 31)) == 1 and (1 >> 32) == 0
++
++
++def test_source_halves_and_every_swizzle_lane() -> None:
++    groups = json.loads((FIXTURES / "source-lowerings.json").read_text())
++    # Unequal halves and distinct byte values expose hi/lo swaps and bit order.
++    words = [0x12340000 + i for i in range(64)]
++    value = sum(word << (32 * i) for i, word in enumerate(words))
++    for name, offset, tail in (("hexagon_V6_vassign_128B", 0, [0]), ("hexagon_V6_lo_128B", 1024, [1024, 0])):
++        result = evaluate_formal(groups[name], [BV(value, 2048), 1024, 1024, 0, 1024, 8, *tail])
++        expected = sum(words[i + offset // 32] << (32 * i) for i in range(32))
++        assert result.width == 1024 and result.value == expected
++    for shape in SWIZZLE_SHAPES:
++        width, _, _, _, element, _, _, _ = shape
++        values = list(range(width // element))
++        value = sum(x << (i * element) for i, x in enumerate(values))
++        original = evaluate_formal(groups["hvx_swizzle_1"], [BV(value, width), *shape])
++        mask = swizzle_mask(shape)
++        actual = [(original.value >> (i * element)) & ((1 << element) - 1) for i in range(len(mask))]
++        assert actual == [values[i] for i in mask]
++        assert sorted(mask) == list(range(len(values)))
++    assert swizzle_mask(SWIZZLE_SHAPES[2]) == [i for pair in zip(range(32), range(32, 64), strict=True) for i in pair]
++    with pytest.raises(ValueError, match="unsupported"):
++        swizzle_mask((1024, 32, 1, 32, 16, 32, 2, 0))
++
++
++@pytest.mark.parametrize("name", SOURCE_LOWERINGS)
++def test_formal_body_and_mapping_drift_rejected(name: str) -> None:
++    groups = json.loads((FIXTURES / "source-lowerings.json").read_text())
++    for field in ("semantics", "target_instructions"):
++        changed = copy.deepcopy(groups)
++        changed[name][field] = []
++        with pytest.raises(ValueError, match="source lowering definition changed"):
++            validate_source_lowerings(changed, changed)
++
++
++def test_permutation_preflight_and_verifier_are_in_the_executed_path() -> None:
++    source = (FIXTURES / "Legalizer.cpp.txt").read_text()
++    original = source
++    provenance = json.loads((FIXTURES / "provenance.json").read_text())
++    assert hashlib.sha256(source.encode()).hexdigest() == provenance["common_sha256"]
++    assert (
++        hashlib.sha256((FIXTURES / "source-lowerings.json").read_bytes()).hexdigest()
++        == provenance["source_lowerings_fixture_sha256"]
++    )
++    for old, new in hvx_common_replacements(source):
++        source = source.replace(old, new)
++    start = source.index("Legalizer::getArgsAfterPermutation(")
++    end = source.index("Legalizer::getArgsAfterPermutationForSpecialCases", start)
++    function = source[start:end]
++    assert function.index("Permutation.size() != BitvectorList.size()") < function.index("getBitvectorOfRequiredType")
++    assert "Index < 0 || unsigned(Index) >= RequiredTypes.size() || Assigned[Index]" in function
++    assert "for (bool Present : Assigned)" in function and "if (!Present)" in function
++    assert "Bitvector->getType() != RequiredTypes[PermIdx]" in function
++    # The old null-filled slot return remains only after complete preflight.
++    assert "Immediate Number" not in function
++    assert source[end:] == original[original.index("Legalizer::getArgsAfterPermutationForSpecialCases") :]
++    cls = generator_class(patched_generator())({})
++    body = cls.generatePassToRunOnFunction()
++    assert body.index("L->legalize(F)") < body.index("if (verifyFunction(F, &errs()))") < body.index("return Changed;")
++    assert 'report_fatal_error("MISAAL HVX legalization produced invalid LLVM IR")' in body
++    assert '#include "llvm/IR/Verifier.h"' in cls.genHeader()
++    assert source_lowering_cpp() in cls.generateInstSelector()
++    assert "Intrinsic::hexagon_V6_vlsrw" not in cls.generateInstSelector()
++    assert "CreateAnd(Shift, Builder.getInt32(31))" in cls.generateInstSelector()
++    assert "CreateICmpULT(Shift, Builder.getInt32(32))" in cls.generateInstSelector()
+--- a/tests/test_reproduction_prepare_misaal_hvx.py
++++ b/tests/test_reproduction_prepare_misaal_hvx.py
+@@ -8,7 +8,7 @@
+ 
+ from scripts import reproduction_prepare_misaal_cases as cases
+ from scripts import reproduction_prepare_misaal_hvx as preparation
+-from scripts.reproduction_misaal_hvx_lowering import CONCAT_WIDTHS
++from scripts.reproduction_misaal_hvx_lowering import CONCAT_WIDTHS, SOURCE_LOWERINGS
+ from tests.test_reproduction_misaal_hvx_lowering import FIXTURES, generator_class
+ from tests.test_reproduction_prepare_misaal_arm import arm_environment as arm_environment
+ from tests.test_reproduction_prepare_misaal_cases import environment as environment
+@@ -20,11 +20,17 @@
+     root, checkout, codegen = state["compiler"].parent, state["checkout"], state["codegen"]
+     monkeypatch.setattr(preparation, "ROOT", root)
+     semantics = json.loads((FIXTURES / "concat-semantics.json").read_text())
++    groups = json.loads((FIXTURES / "source-lowerings.json").read_text())
++    semantics.update({k: v for k, v in groups.items() if k != "hvx_swizzle_1"})
+     for name in ("hexagon_V6_vasrh_128B", "hexagon_V6_vasrw_128B"):
+         semantics[name] = {"target_instructions": {name: {"args": ["SYMBOLIC_BV_1024"], "arg_permute_map": [0]}}}
+     source = codegen / "tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py"
+     files = {
+         checkout / "lib/sema/hexsemantics_new.py": f"semantics = {semantics!r}\n",
++        checkout / "lib/sema/hex_swizzles.py": f"hvx_swizzles = {groups!r}\n",
++        codegen / "tools/low-level-codegen/InstSelectors/common/Legalizer.cpp": (
++            FIXTURES / "Legalizer.cpp.txt"
++        ).read_text(),
+         source: (FIXTURES / "RoseHexLegalizerGen.py.txt").read_text(),
+         codegen / "tools/rosette-lifter/RosetteLifter.py": "# Source bitvector to fixed-vector mapping",
+         codegen / "codegen/llvm/RoseLLVMCodeGen.py": "# Original opaque LLVM calls",
+@@ -71,7 +77,7 @@
+         if name == "generate-hvx-selector":
+             original = self.directory / "sources/hvx/RoseHexLegalizerGen.py"
+             generator = generator_class(original.read_text())(
+-                {k: v for k, v in semantics.items() if k not in CONCAT_WIDTHS}
++                {k: v for k, v in semantics.items() if k not in set(CONCAT_WIDTHS) | SOURCE_LOWERINGS.keys()}
+             )
+             cpp = generator.genHeader() + generator.generateLegalizerPassDeclaration()
+             cpp += generator.generateLegalizerPassDefinition() + generator.generateCodeForRegisteringPass()
+@@ -104,6 +110,15 @@
+     assert selector["status"] == "success" and selector["target"] == "hvx"
+     assert selector["lowering_contract"]["ordinary_intrinsics"] == ["hexagon_V6_vasrh_128B", "hexagon_V6_vasrw_128B"]
+     assert selector["lowering_contract"]["native_lowering_validation"] == "pending actual canary"
++    assert selector["lowering_contract"]["source_lowering_contract"] == "active-formals-portable-v1"
++    assert selector["lowering_contract"]["verification"] == "inside-selector-before-ADCE"
++    original_common = state["codegen"] / "tools/low-level-codegen/InstSelectors/common/Legalizer.cpp"
++    assert original_common.read_bytes() == (FIXTURES / "Legalizer.cpp.txt").read_bytes()
++    private_common = state["output"] / "sources/common/Legalizer.cpp"
++    assert "missing intrinsic operand" in private_common.read_text()
++    assert selector["prepared_sources"][str(private_common)] == preparation.sha256_file(private_common)
++    cmake = (state["output"] / "cmake/CMakeLists.txt").read_text()
++    assert str(private_common) in cmake and str(original_common) not in cmake
+     assert not result["generator_execution"] and not result["device_execution"]
+     assert "from sema.hexsemantics_new import semantics" in (state["output"] / "generate_hvx.py").read_text()
+     assert (
+@@ -206,6 +221,8 @@
+ ) -> None:
+     state = hvx_environment
+     semantics = json.loads((FIXTURES / "concat-semantics.json").read_text())
++    groups = json.loads((FIXTURES / "source-lowerings.json").read_text())
++    semantics.update({k: v for k, v in groups.items() if k != "hvx_swizzle_1"})
+     name = "hexagon_V6_vasrh_128B"
+     semantics[name] = {"target_instructions": {name: {"args": [f"(bv #x{1 << 512:x} 1024)"], "arg_permute_map": [-1]}}}
+     (state["checkout"] / "lib/sema/hexsemantics_new.py").write_text(f"semantics = {semantics!r}\n")
+--- a/benchmarks/reproduction/misaal-hvx-preparation.md
++++ b/benchmarks/reproduction/misaal-hvx-preparation.md
+@@ -5,7 +5,8 @@
+ lowering passed 197,376 native LLVM value checks and 36 rejection checks; see
+ [misaal-hvx-concat-diagnostic.md](misaal-hvx-concat-diagnostic.md). Full source
+ optimization and ordinary replay remain separate gates; the first blur3x3 run
+-is being checked. No target program or simulator has run. MISAAL is pinned at
++failed in native legalization after three backend calls. The portable semantic
++repair described below is implemented but has not yet been built or run. No target program or simulator has run. MISAAL is pinned at
+ `44ff893445d664cd87f52b08a138260ed2015ba8`; Hydride at
+ `beb825327fc946d65032e96f7cde9acf3d24c13e`.
+ 
+@@ -56,8 +57,7 @@
+ 
+ 1. Add the two checked concat implementations; ordinary groups still use the
+    original `Intrinsic::getDeclaration`, argument permutation and predicates.
+-   The new driver uses **MISAAL's actual frontend dictionary**, excluding only
+-   the two operations now handled explicitly. This restores the two ordinary
++   The new driver uses **MISAAL's actual frontend dictionary**, excluding the concat and portable source groups now handled explicitly. This restores the two ordinary
+    shift intrinsics missing from the old checked-in generic selector.
+ 2. Parse the source `0x`/`0b` constant prefixes with `int(..., 0)`. The original
+    generator interpreted binary `0b1` as hexadecimal 177. All four actual
+@@ -65,11 +65,10 @@
+ 3. Emit exact hexadecimal Boost `_cppi` literals instead of oversized C++
+    decimal literals; normal intrinsic mapping remains unchanged.
+ 4. Add the missing terminal `return false` in instruction selection.
+-5. Set **only** `HexLegalizationPass`'s new instance to `bitsimd=false`, using
+-   the shared reviewed helper. The common default and BitSIMD path stay intact.
+-
+-Only generated `HexLegalizer.cpp` and original common `Legalizer.cpp` are
+-compiled; competing checked-in selector variants are not globbed into the
++5. Set **only** `HexLegalizationPass`'s new instance to `bitsimd=false`, with explicit pass-local initialization. The common default and BitSIMD path stay intact.
++
++Only generated `HexLegalizer.cpp` and a checked private copy of common
++`Legalizer.cpp` are compiled; competing checked-in selector variants are not globbed into the
+ library. The output is **`libHVXLegalizer.so`**, matching the actual
+ [Halide frontend path/flag selection, misaal.cpp lines157–201](https://github.com/RafaeNoor/MISAAL/blob/44ff893445d664cd87f52b08a138260ed2015ba8/frontends/halide/src/misaal.cpp#L157).
+ LLVM12, Boost1.81, compiler/CMake and source identities are retained. Each step
+@@ -118,7 +117,7 @@
+ [RoseLowLevelCodeGen.py lines44–56](https://github.com/akothen/Hydride/blob/beb825327fc946d65032e96f7cde9acf3d24c13e/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py#L44)
+ in `llvm-link original.ll wrapper -o linked.bc`. Omitting its exact nonexistent
+ argument is justified here because all ordinary output instructions are LLVM
+-intrinsics and the only two pseudo instructions have explicit IR lowering.
++intrinsics and supported source pseudo instructions have explicit IR lowering.
+ Actual native validation remains necessary.
+ 
+ ## Original HVX graph-generation configuration
+@@ -200,3 +199,86 @@
+ These are acquisition diagnostics, not performance observations or proof of
+ complete source optimization. The prepared requests were copied unchanged
+ into `prerequisites/misaal-all-targets-attempt-0001/requests`.
++
++
++## Portable semantic repair after the first optimization canary
++
++The opt-in deduplication canary `3b9f8d9f.../attempt-0001` reached three actual
++Egglog calls. Its first native `opt` failed in ADCE after constructing
++`llvm.hexagon.V6.vlsrw.128B(vector, <null operand!>)`. The parent was stopped
++with retained manual-stop evidence after the required child failed. This is
++not a source-complete result.
++
++The updated preparer changes only private selector/common sources. Full-file
++pins cover the active frontend, swizzle formal dictionary, original generator
++and common implementation; additional group digests bind the exact formal
++bodies and metadata used by the portable lowering. Saved patches, original
++inputs and every private source hash are retained. Egglog input expressions,
++patterns, schedules, costs, cache transitions and extraction are unchanged.
++
++- **Full scalar shift:** source `vlsrw` has `(bvand RtV RtV)`, so shift counts
++  at least32 produce zero. HVX itself masks the count to five bits, as shown in
++  [Qualcomm's semantics](https://github.com/qemu/qemu/blob/v9.2.0/target/hexagon/imported/mmvec/ext.idef#L753-L760).
++  The repair uses portable vector `lshr` by `RtV & 31`, then unsigned
++  `RtV < 32 ? shifted : zero`. The mask avoids LLVM poison; the selection
++  preserves the active formal for every 32-bit count. No Hydride formal is
++  substituted. Exact arity, widths, result type and constant annotations gate
++  this branch. The original missing scalar permutation is excluded from the
++  ordinary selector generator.
++- **Half extraction:** active `vassign` extracts low1024 bits of2048;
++  active `lo` adds source offset1024 and extracts high1024. Their target
++  metadata names the opposite half; LLVM's actual meanings are confirmed in
++  [LLVM12's selection rules](https://github.com/llvm/llvm-project/blob/llvmorg-12.0.1/llvm/lib/Target/Hexagon/HexagonIntrinsicsV60.td#L21-L25).
++  Portable fixed-vector shuffles implement the active formals, followed by
++  the exact byte-vector result type. The mismatched ordinary groups are
++  excluded, not aliased to the wrong names.
++- **Swizzle:** only the four declared contexts of active `hvx_swizzle_1` are
++  supported. Masks are derived from its formal bit offsets, checked for exact
++  alignment/output size/bounds, and emitted as fixed LLVM shuffles. The
++  observed1024-bit/16-bit context interleaves lanes `[0,32,1,33,...,31,63]`.
++  Other names or parameter shapes remain explicitly unsupported.
++- **Intrinsic safety:** the private common permutation routine validates
++  arity, valid indices, uniqueness and complete destination coverage before
++  inserting a cast. Mapped types must match exactly. The pass calls
++  `verifyFunction` immediately after legalization and fails before any later
++  ADCE pass if IR is invalid. This is an executed verifier call, not a log
++  assertion or post-success audit. Other target families keep their sources.
++
++Portable packing requires the little-endian layout used by this HVX path.
++The remaining305 ordinary concrete intrinsic names retain original mapping.
++No claim is made that their original semantics are independently verified.
++The native residual-call audit and source-parent completion gates still apply.
++
++The focused Python tests interpret the retained original formal bodies and
++compare all shift boundaries, every swizzle lane and both distinguishable
++halves. They also check source drift, private-copy identities, permutation
++preflight placement and verifier placement. **These do not compile LLVM.**
++
++After review, run the existing guarded preparer for only blur3x3 in a fresh
++attempt. Before the full source canary, compile
++`tests/fixtures/misaal-hvx/lowering-harness.cpp` with that attempt's
++`generated/HexLegalizer.cpp` on the include path and its private
++`sources/common/Legalizer.cpp` as the second translation unit. Use the same
++LLVM12 includes/library, Boost1.81, one job and guard as preparation. A command
++recipe (run through the shared bounded native runner, never concurrently):
++
++```bash
++/usr/bin/clang++ \
++  $(/opt/homebrew/opt/llvm@12/bin/llvm-config --cxxflags) -std=c++14 \
++  -I<attempt>/generated -I<attempt>/sources/common -I<boost-1.81> \
++  tests/fixtures/misaal-hvx/lowering-harness.cpp \
++  <attempt>/sources/common/Legalizer.cpp \
++  $(/opt/homebrew/opt/llvm@12/bin/llvm-config --ldflags --link-shared --libs core analysis --system-libs) \
++  -Wl,-rpath,/opt/homebrew/opt/llvm@12/lib -o <attempt>/lowering-harness
++```
++
++The harness invokes the actual generated pass and constant-folds its portable
++LLVM output; it executes no HVX instruction or target program. Run `all` and
++require its19 value/permutation checks. Run each rejection separately:
++`missing`, `duplicate`, `negative`, `large`, `short`, `width`, `bad-swizzle`,
++and `invalid-ir`. Require nonzero exit and the relevant `MISAAL` diagnostic.
++For `invalid-ir`, additionally require the verifier failure and absence of
++`ADCE_WOULD_START`. Merely failing compilation or crashing is not a passed
++rejection. Preserve commands, hashes, logs and results as diagnostic evidence.
++Only after these pass should the original guarded blur3x3 parent be retried
++with fresh caches and the separately reviewed deduplication opt-in.
+--- a/tests/fixtures/misaal-hvx/provenance.json
++++ b/tests/fixtures/misaal-hvx/provenance.json
+@@ -4,5 +4,10 @@
+   "semantics_source": "lib/sema/hexsemantics_new.py",
+   "semantics_sha256": "eef4d1fcb30db190dc1947a55040203c33aff16e7262d52b36e26fe1cc0c0b75",
+   "generator_source": "codegen-generator/tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py",
+-  "generator_sha256": "659d800eef85fa85877e8181d0b75e804b144a829245aed28604a5a1b8034494"
++  "generator_sha256": "659d800eef85fa85877e8181d0b75e804b144a829245aed28604a5a1b8034494",
++  "source_lowering_groups_source": "lib/sema/hexsemantics_new.py and lib/sema/hex_swizzles.py",
++  "swizzles_sha256": "e81a883661f83667f65e296decc7f0969d4046279facb0318afc8812771ed375",
++  "common_source": "codegen-generator/tools/low-level-codegen/InstSelectors/common/Legalizer.cpp",
++  "common_sha256": "cf595e9c1ff60c46234ba327a8ea10738b82e934b0a42f46c18fc5ab1ce79860",
++  "source_lowerings_fixture_sha256": "e35415f08467bd21b1269b6916215e0cc4e41a9a7714ed477809197309bbafa9"
+ }
+--- /dev/null
++++ b/tests/fixtures/misaal-hvx/source-lowerings.json
+@@ -0,0 +1,375 @@
++{
++  "hexagon_V6_vlsrw_128B": {
++    "target_instructions": {
++      "hexagon_V6_vlsrw_128B": {
++        "args": [
++          "(bv #x0000000000000000000000000000001f 32)",
++          "SYMBOLIC_BV_1024",
++          "SYMBOLIC_BV_32",
++          "1024",
++          "1024",
++          "0",
++          "1024",
++          "32",
++          "0"
++        ],
++        "in_vectsize": 1024,
++        "out_vectsize": 1024,
++        "lanesize": 1024,
++        "in_precision": 32,
++        "out_precision": 32,
++        "in_vectsize_index": 3,
++        "out_vectsize_index": 3,
++        "in_lanesize_index": 6,
++        "out_lanesize_index": 4,
++        "in_precision_index": 7,
++        "out_precision_index": 7,
++        "arg_permute_map": [
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "None",
++        "SIMD": "True",
++        "Extensions": "['hvx']"
++      }
++    },
++    "semantics": [
++      "\"(define (hexagon_V6_vlsrw_128B  %arg0 VuV RtV %vectsize0 %outerlanesize0 %innerlaneoffset0 %innerlanesize0 %elemsize0 %arg1 )\"",
++      "\"(define VdV\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([%outer.it (reverse (range 0 %vectsize0 %outerlanesize0))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([i.new0 (reverse (range %innerlaneoffset0 %innerlanesize0 %elemsize0))])\"",
++      "\"  (define %lastidx0 (-  %elemsize0  1))\"",
++      "\"  (define %1 (+  i.new0  %lastidx0))\"",
++      "\"  (define %2 (extract  %1 i.new0 VuV))\"",
++      "\"  (define %3 (bvand  RtV  RtV))\"",
++      "\"  (define %4 (bvlshr  %2  %3))\"",
++      "\"  %4\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  VdV %arg1)\"",
++      "\")\"",
++      "\"\""
++    ]
++  },
++  "hexagon_V6_vassign_128B": {
++    "target_instructions": {
++      "hexagon_V6_hi_128B": {
++        "args": [
++          "SYMBOLIC_BV_2048",
++          "1024",
++          "1024",
++          "0",
++          "1024",
++          "8",
++          "0"
++        ],
++        "in_vectsize": 2048,
++        "out_vectsize": 1024,
++        "lanesize": 1024,
++        "in_precision": 8,
++        "out_precision": 8,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "in_lanesize_index": 4,
++        "out_lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "None",
++        "SIMD": "True",
++        "Extensions": "['hvx']"
++      }
++    },
++    "semantics": [
++      "\"(define (hexagon_V6_vassign_128B  Vu %vectsize0 %outerlanesize0 %innerlaneoffset0 %innerlanesize0 %elemsize0 %arg0 )\"",
++      "\"(define Vd\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([%outer.it (reverse (range 0 %vectsize0 %outerlanesize0))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([i.new0 (reverse (range %innerlaneoffset0 %innerlanesize0 %elemsize0))])\"",
++      "\"  (define %lastidx0 (-  %elemsize0  1))\"",
++      "\"  (define %1 (+  i.new0  %lastidx0))\"",
++      "\"  (define %2 (extract  %1 i.new0 Vu))\"",
++      "\"  %2\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  Vd %arg0)\"",
++      "\")\"",
++      "\"\""
++    ]
++  },
++  "hexagon_V6_lo_128B": {
++    "target_instructions": {
++      "hexagon_V6_lo_128B": {
++        "args": [
++          "SYMBOLIC_BV_2048",
++          "1024",
++          "1024",
++          "0",
++          "1024",
++          "8",
++          "1024",
++          "0"
++        ],
++        "in_vectsize": 2048,
++        "out_vectsize": 1024,
++        "lanesize": 1024,
++        "in_precision": 8,
++        "out_precision": 8,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "in_lanesize_index": 4,
++        "out_lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "None",
++        "SIMD": "True",
++        "Extensions": "['hvx']"
++      }
++    },
++    "semantics": [
++      "\"(define (hexagon_V6_lo_128B  Vxx %vectsize0 %outerlanesize0 %innerlaneoffset0 %innerlanesize0 %elemsize0 %arg0 %arg1 )\"",
++      "\"(define Vd\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([%outer.it (reverse (range 0 %vectsize0 %outerlanesize0))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([i.new0 (reverse (range %innerlaneoffset0 %innerlanesize0 %elemsize0))])\"",
++      "\"  (define %2 (+  i.new0  %arg0))\"",
++      "\"  (define %lastidx1 (-  %elemsize0  1))\"",
++      "\"  (define %3 (+  %2  %lastidx1))\"",
++      "\"  (define %4 (extract  %3 %2 Vxx))\"",
++      "\"  %4\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  Vd %arg1)\"",
++      "\")\"",
++      "\"\""
++    ]
++  },
++  "hvx_swizzle_1": {
++    "target_instructions": {
++      "hvx_swizzle_1": {
++        "args": [
++          "SYMBOLIC_BV_2048",
++          "2048",
++          "64",
++          "0",
++          "64",
++          "32",
++          "32",
++          "2",
++          "0"
++        ],
++        "in_vectsize": 2048,
++        "out_vectsize": 2048,
++        "lanesize": 64,
++        "in_precision": 32,
++        "out_precision": 32,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      },
++      "hvx_swizzle_61": {
++        "args": [
++          "SYMBOLIC_BV_2048",
++          "2048",
++          "32",
++          "0",
++          "32",
++          "16",
++          "64",
++          "2",
++          "0"
++        ],
++        "in_vectsize": 2048,
++        "out_vectsize": 2048,
++        "lanesize": 32,
++        "in_precision": 16,
++        "out_precision": 16,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      },
++      "hvx_swizzle_2": {
++        "args": [
++          "SYMBOLIC_BV_1024",
++          "1024",
++          "32",
++          "0",
++          "32",
++          "16",
++          "32",
++          "2",
++          "0"
++        ],
++        "in_vectsize": 1024,
++        "out_vectsize": 1024,
++        "lanesize": 32,
++        "in_precision": 16,
++        "out_precision": 16,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      },
++      "hvx_swizzle_62": {
++        "args": [
++          "SYMBOLIC_BV_1024",
++          "1024",
++          "16",
++          "0",
++          "16",
++          "8",
++          "64",
++          "2",
++          "0"
++        ],
++        "in_vectsize": 1024,
++        "out_vectsize": 1024,
++        "lanesize": 16,
++        "in_precision": 8,
++        "out_precision": 8,
++        "in_vectsize_index": 1,
++        "out_vectsize_index": 1,
++        "lanesize_index": 2,
++        "in_precision_index": 5,
++        "out_precision_index": 5,
++        "arg_permute_map": [
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      }
++    },
++    "semantics": [
++      "\"(define (hvx_swizzle_1  v0 %vectsize0 %outerlanesize0 %innerlaneoffset0 %innerlanesize0 %elemsize0 %arg0 %arg1 %arg2 )\"",
++      "\"(define dst\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([iterator.lane (reverse (range 0 %vectsize0 %outerlanesize0))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([iterator.0 (reverse (range %innerlaneoffset0 %innerlanesize0 %elemsize0))])\"",
++      "\"  (define %low.out.cofactor0 (/  iterator.lane  %arg1))\"",
++      "\"  (define %low.cofactor0 (*  iterator.0  %arg0))\"",
++      "\"  (define %low.scaled.it0 (+  %low.out.cofactor0  %low.cofactor0))\"",
++      "\"  (define %lastidx1 (-  %elemsize0  1))\"",
++      "\"  (define %high.offset0 (+  %low.scaled.it0  %lastidx1))\"",
++      "\"  (define %0 (extract  %high.offset0 %low.scaled.it0 v0))\"",
++      "\"  %0\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  dst %arg2)\"",
++      "\")\"",
++      "\"\""
++    ]
++  }
++}
+--- /dev/null
++++ b/tests/fixtures/misaal-hvx/Legalizer.cpp.txt
+@@ -0,0 +1,891 @@
++//===----------------------------------------------------------------------===//
++//
++// Common class for Legalizer for diffeerent targets.
++//
++//===----------------------------------------------------------------------===//
++
++#include "Legalizer.h"
++#include "libpimeval.h"
++#include "llvm/IR/IRBuilder.h"
++
++
++namespace llvm {
++
++    PimDataType Legalizer::convertLLVMTyToPIMTy(Type* Ty){
++        Type* ElemTy = Ty;
++
++        if(auto* VectorTy = dyn_cast<VectorType>(ElemTy)){
++            ElemTy = VectorTy->getElementType();
++        }
++
++        if(ElemTy->isIntegerTy(8)){
++            return PIM_INT8;
++        }
++
++        if(ElemTy->isIntegerTy(16)){
++            return PIM_INT16;
++        }
++
++        if(ElemTy->isIntegerTy(32)){
++            return PIM_INT32;
++        }
++
++        if(ElemTy->isIntegerTy(64)){
++            return PIM_INT64;
++        }
++
++
++        assert(false && "Unsupported element type in Hydride Bitserial legalizer");
++        return PIM_INT8;
++    }
++
++
++bool Legalizer::legalize(Function &F) {
++    InstToObjectIDMap.clear();  
++
++
++    SmallVector<Instruction *, 16> TargetAgnosticInstructions;
++    ReversePostOrderTraversal<Function *> RPOT(&F);
++
++    Instruction* RetInst = nullptr;
++    for (auto *BB : RPOT) {
++        for (Instruction &I : *BB) {
++            if(isa<ReturnInst>(&I)){
++                RetInst = &I;
++            }
++            auto *CI = dyn_cast<CallInst>(&I);
++            if (CI != nullptr)
++                TargetAgnosticInstructions.push_back(CI);
++        }
++    }
++
++
++    errs() << "BEFORE LEGALIZATION:\n";
++    errs() << F << "\n";
++
++    // Legalize the instructions
++    bool Changed = false;
++    for (auto *I : TargetAgnosticInstructions) {
++        Changed |= legalize(I);
++    }
++
++    errs() << "AFTER LEGALIZATION FUNCTION:\n";
++    errs() << F << "\n";
++
++    bool IS_BITSIMD = bitsimd;
++    // Remove all the target-agnostic intrinsics / function calls
++    if(IS_BITSIMD){
++        Module* M = F.getParent();
++        DeclarePIMInitWrapper(M);
++        DeclarePIMPrintStatsWrapper(M);
++    }
++    for (auto *I : ToBeRemoved) {
++        errs() << "Instruction to remove: "<< * I << "\n";
++        if(!IS_BITSIMD){
++            errs() << "Found in map!\n";
++            if (InstToInstMap[I]->getType() == I->getType()) {
++                I->replaceAllUsesWith(InstToInstMap[I]);  // UndefValue::get(I->getType()));
++            } else {
++                errs() << "I->getType():" << *I->getType() << "\n";
++                errs() << "InstToInstMap[I]:" << *InstToInstMap[I] << "\n";
++                I->replaceAllUsesWith(new BitCastInst(InstToInstMap[I], I->getType(), "", I));
++            }
++        } else {
++            errs() << "Not found in map!\n";
++            I->replaceAllUsesWith(UndefValue::get(I->getType()));
++        }
++        I->eraseFromParent();
++    }
++
++
++    InsertPimFreeCalls(RetInst);
++
++    // bool BrokenDebugInfo = true;
++    // if (verifyModule(*(F.getParent()), errs(), &BrokenDebugInfo) == false):
++    //   errs() << "BROKEN MODULE!!!!!!!\n";
++
++    errs() << "FINAL FUNCTION:\n";
++    errs() << F << "\n";
++
++    return Changed;
++}
++
++Value *Legalizer::getBitvectorOfRequiredType(Value *Bitvector, Type *RequiredType, Instruction *InsertBefore) {
++    errs() << "getBitvectorOfRequiredType\n";
++    errs() << "Bitvector:" << *Bitvector << "\n";
++    errs() << "RequiredVectoType:" << *RequiredType << "\n";
++    if (Bitvector->getType() != RequiredType) {
++        if (InstToInstMap[Bitvector] == nullptr) {
++            // Check if the required bitwidth and the bitwidth of given vector are the same.
++            unsigned BitvectorTypeSize = 0;
++            if (auto *BitvectorType = dyn_cast<VectorType>(Bitvector->getType())) {
++                unsigned BitvectorElemSize = BitvectorType->getElementType()->getScalarSizeInBits();
++                unsigned BitvectorNumElems = BitvectorType->getElementCount().getKnownMinValue();
++                BitvectorTypeSize = BitvectorElemSize * BitvectorNumElems;
++            } else {
++                BitvectorTypeSize = Bitvector->getType()->getScalarSizeInBits();
++            }
++            unsigned RequiredTypeSize = 0;
++            if (auto *RequiredVectoType = dyn_cast<VectorType>(RequiredType)) {
++                unsigned RequiredTypeElemSize = RequiredVectoType->getElementType()->getScalarSizeInBits();
++                unsigned RequiredTypeNumElems = RequiredVectoType->getElementCount().getKnownMinValue();
++                RequiredTypeSize = RequiredTypeElemSize * RequiredTypeNumElems;
++            } else {
++                RequiredTypeSize = RequiredType->getScalarSizeInBits();
++            }
++            if (RequiredTypeSize != BitvectorTypeSize)
++                return nullptr;
++            InstToInstMap[Bitvector] = new BitCastInst(Bitvector, RequiredType, "", InsertBefore);
++            errs() << "InstToInstMap[Bitvector]:" << *InstToInstMap[Bitvector] << "\n";
++            return InstToInstMap[Bitvector];
++        }
++        errs() << "--InstToInstMap[Bitvector]:" << *InstToInstMap[Bitvector] << "\n";
++        // Check if the required bitwidth and the bitwidth of given vector are the same.
++        unsigned BitvectorTypeSize = 0;
++        if (auto *BitvectorType = dyn_cast<VectorType>(InstToInstMap[Bitvector]->getType())) {
++            unsigned BitvectorElemSize = BitvectorType->getElementType()->getScalarSizeInBits();
++            unsigned BitvectorNumElems = BitvectorType->getElementCount().getKnownMinValue();
++            BitvectorTypeSize = BitvectorElemSize * BitvectorNumElems;
++        } else {
++            BitvectorTypeSize = InstToInstMap[Bitvector]->getType()->getScalarSizeInBits();
++        }
++        unsigned RequiredTypeSize = 0;
++        if (auto *RequiredVectoType = dyn_cast<VectorType>(RequiredType)) {
++            unsigned RequiredTypeElemSize = RequiredVectoType->getElementType()->getScalarSizeInBits();
++            unsigned RequiredTypeNumElems = RequiredVectoType->getElementCount().getKnownMinValue();
++            RequiredTypeSize = RequiredTypeElemSize * RequiredTypeNumElems;
++        } else {
++            RequiredTypeSize = RequiredType->getScalarSizeInBits();
++        }
++        if (RequiredTypeSize != BitvectorTypeSize)
++            return nullptr;
++        if (RequiredType == InstToInstMap[Bitvector]->getType()) {
++            return InstToInstMap[Bitvector];
++        } else {
++            return new BitCastInst(InstToInstMap[Bitvector], RequiredType, "", InsertBefore);
++        }
++    }
++    errs() << "Bitvector:" << *Bitvector << "\n";
++    return Bitvector;
++}
++
++std::vector<Value *> Legalizer::getArgsAfterPermutation(CallInst *OriginalInst,
++                                             Function *InstFunction, std::vector<int> &Permutation,
++                                             Instruction *InsertBefore) {
++    errs() << "getArgsAfterPermutation:"
++           << "\n";
++    errs() << "OriginalInst:" << *OriginalInst << "\n";
++    errs() << "InstFunction" << *InstFunction << "\n";
++    // Get bitvector list
++    std::vector<Value *> BitvectorList;
++    errs() << "OriginalInst->getNumOperands():" << OriginalInst->getNumOperands() << "\n";
++    for (auto &Operand : OriginalInst->args()) {
++        errs() << "OriginalInst->getOperand(I):" << *Operand << "\n";
++        BitvectorList.push_back(Operand);
++    }
++    // Get the required types
++    std::vector<Type *> RequiredTypes;
++    for (auto &Arg : InstFunction->args())
++        RequiredTypes.push_back(Arg.getType());
++    // Some sanity checks
++    // assert(BitvectorList.size() == RequiredTypes.size()
++    //      && "Error: BitvectorList.size() != RequiredTypes.size()");
++    // assert(BitvectorList.size() == Permutation.size()
++    //      && "Error: BitvectorList.size() != RequiredTypes.size()");
++    // Generate some new args
++    std::vector<Value *> NewArgs;
++    for (unsigned I = 0; I < RequiredTypes.size(); ++I)
++        NewArgs.push_back(nullptr);
++    // NewArgs.reserve(RequiredTypes.size());
++    errs() << "RequiredTypes size:" << RequiredTypes.size() << "\n";
++    errs() << "BitvectorList size:" << BitvectorList.size() << "\n";
++    for (int PermIdx : Permutation)
++        errs() << "Permutation Idx:" << PermIdx << "\n";
++    for (unsigned Idx = 0; Idx < BitvectorList.size(); Idx++) {
++        if (Permutation[Idx] != -1) {
++            errs() << "IDX:" << Idx << "\n";
++            int PermIdx = Permutation[Idx];
++            errs() << "PERM IDX:" << PermIdx << "\n";
++            if (PermIdx >= RequiredTypes.size()) continue;  // Immediate Number
++            auto *Bitvector = getBitvectorOfRequiredType(BitvectorList[Idx],
++                                                         RequiredTypes[PermIdx], InsertBefore);
++            if (Bitvector == nullptr)
++                return std::vector<Value *>();
++            NewArgs[PermIdx] = Bitvector;
++            errs() << "NewArgs[PermIdx]:" << *NewArgs[PermIdx] << "\n";
++            errs() << "----NewArgs.size(): " << NewArgs.size() << "\n";
++        }
++    }
++    errs() << "NewArgs.size(): " << NewArgs.size() << "\n";
++    return NewArgs;
++}
++
++std::vector<Value *> Legalizer::getArgsAfterPermutationForSpecialCases(CallInst *OriginalInst,
++                                                                       std::vector<int> &Permutation) {
++    // Get bitvector list
++    std::vector<Value *> BitvectorList;
++    errs() << "OriginalInst->getNumOperands():" << OriginalInst->getNumOperands() << "\n";
++    for (auto &Operand : OriginalInst->args()) {
++        errs() << "OriginalInst->getOperand(I):" << *Operand << "\n";
++        BitvectorList.push_back(Operand);
++    }
++    // Generate some new args
++    std::vector<Value *> NewArgs;
++    for (unsigned I = 0; I < BitvectorList.size(); ++I)
++        NewArgs.push_back(nullptr);
++    for (unsigned Idx = 0; Idx < BitvectorList.size(); Idx++) {
++        if (Permutation[Idx] != -1) {
++            errs() << "IDX:" << Idx << "\n";
++            int PermIdx = Permutation[Idx];
++            errs() << "PERM IDX:" << PermIdx << "\n";
++            auto *Bitvector = BitvectorList[Idx];
++            if (Bitvector == nullptr)
++                return std::vector<Value *>();
++            NewArgs[PermIdx] = Bitvector;
++            errs() << "NewArgs[PermIdx]:" << *NewArgs[PermIdx] << "\n";
++            errs() << "----NewArgs.size(): " << NewArgs.size() << "\n";
++        }
++    }
++    return NewArgs;
++}
++
++std::string Legalizer::intToHex(int512_t IntegerVal, unsigned Bitwidth, bool IgnorePrefix = false) {
++    std::stringstream Stream;
++    if (IgnorePrefix == false) {
++        if (IntegerVal >= 0) {
++            Stream << "0x"
++                   << std::setfill('0') << std::setw(Bitwidth * 2)
++                   << std::hex << IntegerVal;
++        } else {
++            Stream << "0x"
++                   << std::setfill('f') << std::setw(Bitwidth * 2)
++                   << std::hex << IntegerVal;
++        }
++    } else {
++        if (IntegerVal >= 0) {
++            Stream << std::setfill('0') << std::setw(Bitwidth * 2)
++                   << std::hex << IntegerVal;
++        } else {
++            Stream << std::setfill('f') << std::setw(Bitwidth * 2)
++                   << std::hex << IntegerVal;
++        }
++    }
++    return Stream.str();
++}
++
++bool Legalizer::isAMatch(CallInst *OriginalInst, unsigned Idx, const int512_t &OperandValue) {
++    errs() << "MATCHING INST:" << *OriginalInst << "\n";
++    errs() << "Idx:" << Idx << "\n";
++    errs() << "OriginalInst->getOperand(Idx):" << *(OriginalInst->getOperand(Idx)) << "\n";
++    if (dyn_cast<Constant>(OriginalInst->getOperand(Idx)) == nullptr)
++        return false;
++    auto *OperandVectorType = dyn_cast<VectorType>(OriginalInst->getOperand(Idx)->getType());
++    if (OperandVectorType) {
++        // Get full bitwidth of the vector
++        unsigned ElemSize = OperandVectorType->getElementType()->getScalarSizeInBits();
++        unsigned NumElems = OperandVectorType->getElementCount().getKnownMinValue();
++        errs() << "ElemSize:" << ElemSize << "\n";
++        errs() << "NumElems:" << NumElems << "\n";
++        unsigned TotalBitwidth = ElemSize * NumElems;
++        errs() << "TotalBitwidth:" << TotalBitwidth << "\n";
++        std::string CheckHexVal = intToHex(OperandValue, TotalBitwidth);
++        errs() << "CheckHexVal:" << CheckHexVal << "\n";
++        std::string ActualHexVal = "0x";
++        auto *ConstantAggZeroArray = dyn_cast<ConstantAggregateZero>(OriginalInst->getOperand(Idx));
++        if (ConstantAggZeroArray == nullptr) {
++            auto *ConstantVectorVal = dyn_cast<ConstantDataVector>(OriginalInst->getOperand(Idx));
++            if (ConstantVectorVal == nullptr) {
++                auto *ConstantVectorVal = dyn_cast<ConstantVector>(OriginalInst->getOperand(Idx));
++                for (unsigned I = 0; I < NumElems; I++) {
++                    errs() << "ConstantVectorVal->getElementAsAPInt(Idx):" << *(ConstantVectorVal->getOperand(I)) << "\n";
++                    ActualHexVal += intToHex(dyn_cast<ConstantInt>(ConstantVectorVal->getOperand(I))->getZExtValue(), ElemSize, true);
++                }
++            } else {
++                errs() << "ConstantVectorVal:" << *ConstantVectorVal << "\n";
++                for (unsigned I = 0; I < NumElems; I++) {
++                    errs() << "ConstantVectorVal->getElementAsAPInt(Idx):" << *(ConstantVectorVal->getElementAsConstant(I)) << "\n";
++                    ActualHexVal += intToHex(dyn_cast<ConstantInt>(ConstantVectorVal->getElementAsConstant(I))->getZExtValue(), ElemSize, true);
++                }
++            }
++        } else {
++            ActualHexVal += intToHex(0, TotalBitwidth, true);
++        }
++        errs() << "ActualHexVal:" << ActualHexVal << "\n";
++        if (CheckHexVal == ActualHexVal) {
++            errs() << "CheckHexVal == ActualHexVal\n";
++            errs() << "MATCH FOUND\n";
++            return true;
++        }
++        errs() << "CheckHexVal != ActualHexVal\n";
++        return false;
++    }
++    if (OperandValue >= 0) {
++        if (dyn_cast<ConstantInt>(OriginalInst->getOperand(Idx))->getZExtValue() == OperandValue) {
++            errs() << "MATCH FOUND\n";
++            return true;
++        }
++    } else {
++        if (dyn_cast<ConstantInt>(OriginalInst->getOperand(Idx))->getSExtValue() == OperandValue) {
++            errs() << "MATCH FOUND\n";
++            return true;
++        }
++    }
++    return false;
++}
++
++void Legalizer::InsertBitSIMDBroadcastAllocation(Instruction* InsertBefore){
++
++    if(InstToObjectIDMap.find(InsertBefore) != InstToObjectIDMap.end()){
++        errs() << "Pim Broadcast already allocated" << "\n";
++        return;
++    }
++
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* ParentFn = InsertBefore->getParent()->getParent();
++    Function* AllocFunc = M->getFunction(pimAllocName);
++
++    Function* AlignedAllocFunc = M->getFunction(pimAllocAssocName);
++    // pimAlloc(PimAllocEnum allocType, uint64_t numElements, PimDataType dataType)
++    if(!AllocFunc){
++        std::vector<Type*>  AllocArgsTy = {i32Ty , i64Ty, i32Ty};
++        FunctionType* AllocFuncTy = FunctionType::get(i32Ty, AllocArgsTy, /* isVarArgs */ false);
++
++        AllocFunc = Function::Create(AllocFuncTy, Function::ExternalLinkage ,pimAllocName , M);
++    }
++
++    // pimAllocAssociated(PimObjId assocId, PimDataType dataType)
++    if(!AlignedAllocFunc){
++        std::vector<Type*>  AllocArgsTy = {i32Ty, i32Ty};
++        FunctionType* AllocFuncTy = FunctionType::get(i32Ty, AllocArgsTy, /* isVarArgs */ false);
++        AlignedAllocFunc = Function::Create(AllocFuncTy, Function::ExternalLinkage ,pimAllocAssocName , M);
++    }
++
++
++
++    Value* Arg = dyn_cast<CallInst>(InsertBefore)->getArgOperand(0);
++    errs () << "Argument: "<< *Arg << "\n";
++    Type* ArgTy = Arg->getType();
++    errs () << "Argument Type: "<< *ArgTy << "\n";
++    FixedVectorType* FVInputTy = dyn_cast<FixedVectorType>(ArgTy);
++    assert(FVInputTy && "Operand must be a fixed vector llvm type");
++    Type* ElementType = FVInputTy->getElementType();
++    unsigned num_input_elements = FVInputTy->getNumElements();
++
++    FixedVectorType* FVOutputTy = dyn_cast<FixedVectorType>(InsertBefore->getType());
++    assert(FVOutputTy && "broadcast output must be a fixed vector llvm type");
++    unsigned num_output_elements = FVOutputTy->getNumElements();
++
++
++    Value* AllocationTy = ConstantInt::get(i32Ty, PIM_ALLOC_AUTO);
++    Value* PimDataType = ConstantInt::get(i32Ty, convertLLVMTyToPIMTy(ElementType));
++    Value* Lanes = ConstantInt::get(i64Ty, num_output_elements);
++
++
++    CallInst* AllocationCall = nullptr;
++    if(AlignmentMap.find(ParentFn) != AlignmentMap.end()){
++        std::vector<Value*> AllocationParams = {AlignmentMap[ParentFn] , PimDataType};
++        AllocationCall = CallInst::Create(AlignedAllocFunc, AllocationParams, "pimAssocAlloc", InsertBefore);
++    } else {
++        std::vector<Value*> AllocationParams = {AllocationTy, Lanes, PimDataType};
++        AllocationCall = CallInst::Create(AllocFunc, AllocationParams, "pimAlloc", InsertBefore);
++        AlignmentMap[ParentFn] = AllocationCall;
++    }
++    InstToObjectIDMap[InsertBefore] = AllocationCall;
++    errs() << "PimAllocation for broadcast"<< *Arg << ", AllocationCall: "<< *AllocationCall<<"\n";
++
++    // For vectors coming in through arguments, we need to generate the appropriate copy to host function
++    //if(isa<Argument>(Arg)){
++    //    InsertBitSIMDCopyToDevice(Arg, InsertBefore);
++    //}
++
++
++}
++
++
++// Generate any bitserial Allocation for operands
++// If they do not exist
++void Legalizer::InsertBitSIMDAllocations(std::vector<Value*> Args, Instruction* InsertBefore){
++
++    bool isMixedScalarPimOp;
++    if(CallInst* CI = dyn_cast<CallInst>(InsertBefore)){
++        Function* CF = CI->getCalledFunction();
++        if(CF && CF->getName().startswith(StringRef("pimBroadCast")) ||  CF->getName().contains(StringRef("pimBroadCast"))){
++            InsertBitSIMDBroadcastAllocation(InsertBefore);
++            return;
++        } else if(CF){
++            // Args takes the values of the operands and the result. Args.size() == 1 when allocating row for output value
++            isMixedScalarPimOp = (CF->getName().contains(StringRef("Scalar"))  || CF->getName().contains(StringRef("Scaled")) ) && Args.size() != 1; 
++        }
++
++    }
++
++    errs() << "Inserting BitSIMD allocations for "<<Args.size()<<" Bitvectors\n";
++
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* ParentFn = InsertBefore->getParent()->getParent();
++    Function* AllocFunc = M->getFunction(pimAllocName);
++
++    Function* AlignedAllocFunc = M->getFunction(pimAllocAssocName);
++    // pimAlloc(PimAllocEnum allocType, uint64_t numElements, PimDataType dataType)
++    if(!AllocFunc){
++        std::vector<Type*>  AllocArgsTy = {i32Ty , i64Ty, i32Ty};
++        FunctionType* AllocFuncTy = FunctionType::get(i32Ty, AllocArgsTy, /* isVarArgs */ false);
++
++        AllocFunc = Function::Create(AllocFuncTy, Function::ExternalLinkage ,pimAllocName , M);
++    }
++
++    // pimAllocAssociated(PimObjId assocId, PimDataType dataType)
++    if(!AlignedAllocFunc){
++        std::vector<Type*>  AllocArgsTy = {i32Ty, i32Ty};
++        FunctionType* AllocFuncTy = FunctionType::get(i32Ty, AllocArgsTy, /* isVarArgs */ false);
++        AlignedAllocFunc = Function::Create(AllocFuncTy, Function::ExternalLinkage ,pimAllocAssocName , M);
++    }
++
++    
++    for(int i =0; i < Args.size(); i++){
++
++        // Skip allocation for last value for mixed scalar pim ops 
++        // as we can directly use the scalar values
++        if(isMixedScalarPimOp && i == Args.size() - 1){
++            continue;
++        }
++
++        Value* Arg = Args[i];
++
++        if(InstToObjectIDMap.find(Arg) == InstToObjectIDMap.end()){
++
++            errs () << "Argument: "<< *Arg << "\n";
++            Type* ArgTy = Arg->getType();
++            errs () << "Argument Type: "<< *ArgTy << "\n";
++            FixedVectorType* FVTy = dyn_cast<FixedVectorType>(ArgTy);
++            assert(FVTy && "Operand must be a fixed vector llvm type");
++            Type* ElementType = FVTy->getElementType();
++            unsigned num_elements = FVTy->getNumElements();
++
++            
++            Value* AllocationTy = ConstantInt::get(i32Ty, PIM_ALLOC_AUTO);
++            // TODO: Replace with switch statement. Hard coded for now
++            Value* PimDataType = ConstantInt::get(i32Ty, convertLLVMTyToPIMTy(ElementType));
++            Value* Lanes = ConstantInt::get(i64Ty, num_elements);
++
++            CallInst* AllocationCall = nullptr;
++            if(AlignmentMap.find(ParentFn) != AlignmentMap.end()){
++                std::vector<Value*> AllocationParams = {AlignmentMap[ParentFn] , PimDataType};
++                AllocationCall = CallInst::Create(AlignedAllocFunc, AllocationParams, "pimAssocAlloc", InsertBefore);
++            } else {
++                std::vector<Value*> AllocationParams = {AllocationTy, Lanes, PimDataType};
++                AllocationCall = CallInst::Create(AllocFunc, AllocationParams, "pimAlloc", InsertBefore);
++                AlignmentMap[ParentFn] = AllocationCall;
++            }
++            InstToObjectIDMap[Arg] = AllocationCall;
++            errs() << "PimAllocation for "<< *Arg << ", AllocationCall: "<< *AllocationCall<<"\n";
++
++            // For vectors coming in through arguments, we need to generate the appropriate copy to host function
++            if(isa<Argument>(Arg)){
++                InsertBitSIMDCopyToDevice(Arg, InsertBefore);
++            }
++        }
++    }
++
++
++}
++
++void Legalizer::InsertBitSIMDCopyToDevice(Value* Arg, Instruction* InsertBefore){
++    Type* ArgTy = Arg->getType();
++    FixedVectorType* FVTy = dyn_cast<FixedVectorType>(ArgTy);
++    assert(FVTy && "Operand must be a fixed vector llvm type");
++    Type* ElementType = FVTy->getElementType();
++    unsigned num_elements = FVTy->getNumElements();
++
++    IRBuilder<> Builder(InsertBefore);
++    // Generate an alloca and store value into alloca
++    AllocaInst* HostAlloc = Builder.CreateAlloca(FVTy);
++    Builder.CreateStore(Arg, HostAlloc);
++
++
++    // Insert call to copy host memory to device
++
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* CopyFunc = M->getFunction(pimCopyHostToDeviceName);
++    // pimCopyHostToDevice(void* src, PimObjId dest)
++    if(!CopyFunc){
++        std::vector<Type*>  CopyArgsTy = {i8PTy, i32Ty, i64Ty, i64Ty};
++        FunctionType* CopyFuncTy = FunctionType::get(i32Ty, CopyArgsTy, /* isVarArgs */ false);
++        CopyFunc = Function::Create(CopyFuncTy, Function::ExternalLinkage ,pimCopyHostToDeviceName , M);
++    }
++
++    Value* MemoryRef = BitCastInst::CreatePointerCast(HostAlloc, i8PTy, "", InsertBefore);
++
++    Value* Bytes = ConstantInt::get(i32Ty, num_elements);
++
++    Value* ObjectID = InstToObjectIDMap[Arg];
++
++    Value* IdxStart = ConstantInt::get(i64Ty, 0);
++    Value* IdxEnd = ConstantInt::get(i64Ty, 0);
++
++    std::vector<Value*> Args = {MemoryRef, ObjectID , IdxStart, IdxEnd};
++
++    CallInst* CopyCall = CallInst::Create(CopyFunc, Args, "pimHostToDevice", InsertBefore);
++}
++
++
++
++// Replace vectorized call to call PIM ISA Directly
++void Legalizer::InsertBitSIMDCall(Function* InstFunction, std::vector<Value*> Args, Instruction* PimInst,  Instruction* InsertBefore){
++    
++    LLVMContext& ctx = PimInst->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++    Value* CopyTy = ConstantInt::get(i32Ty, PIM_COPY_V);
++    Value* Zero = ConstantInt::get(i32Ty, 0);
++
++    std::vector<Value*> ObjIDs;
++    errs() << InstFunction->getName() << "\n";
++    if(InstFunction->getName().contains(StringRef("pimBroadcast"))){
++        errs () << "Processing broadcast instruction: "<< "\n";
++        assert(InstToObjectIDMap.find(PimInst) != InstToObjectIDMap.end() && "PimResult not in InstToObjectIDMap" );
++        errs() << "ObjID for broadcast: "<< *InstToObjectIDMap[PimInst] << "\n";
++        ObjIDs.push_back(InstToObjectIDMap[PimInst]) ;
++        Value* BroadcastedValue = Args[0];
++        if(FixedVectorType* FVTy = dyn_cast<FixedVectorType>(BroadcastedValue->getType())){
++            errs() << "Need to extract value from "<< *BroadcastedValue << "\n";
++            unsigned num_elements = FVTy->getNumElements();
++            assert(num_elements == 1 && "Expected to broadcast scalar values");
++            BroadcastedValue = ExtractElementInst::Create(BroadcastedValue, Zero, "ext.0", InsertBefore);
++            errs() << "New Broadcasted value: "<< * BroadcastedValue << "\n";
++        } 
++
++        if(!BroadcastedValue->getType()->isIntegerTy(64)){
++            // Sign extend to 64
++            BroadcastedValue = new SExtInst(BroadcastedValue, i64Ty, "broad.sext", InsertBefore);
++        }
++
++        ObjIDs.push_back(BroadcastedValue);
++
++
++    } else {
++
++        bool isMixedScalarPimOp = InstFunction->getName().contains(StringRef("Scalar"))  || InstFunction->getName().contains(StringRef("Scaled")); 
++        for(int i = 0; i < Args.size(); i++){
++            Value* Arg = Args[i];
++            
++            assert(isMixedScalarPimOp || InstToObjectIDMap.find(Arg) != InstToObjectIDMap.end() && "PimArg not in InstToObjectIDMap");
++
++            // Last value for mix scalar ops is the broadcast
++            if(isMixedScalarPimOp && (i == (Args.size() - 1))){
++                // If it is a value with broadcast semantics, sign-extend it to 64-bits to conform with PIM API type
++                Value* BroadcastedValue = Arg;
++                if(FixedVectorType* FVTy = dyn_cast<FixedVectorType>(BroadcastedValue->getType())){
++                    errs() << "Need to extract value from "<< *BroadcastedValue << "\n";
++                    unsigned num_elements = FVTy->getNumElements();
++                    assert(num_elements == 1 && "Expected to broadcast scalar values");
++                    BroadcastedValue = ExtractElementInst::Create(BroadcastedValue, Zero, "ext.0", InsertBefore);
++                    errs() << "New Broadcasted value: "<< * BroadcastedValue << "\n";
++                } 
++
++                if(!BroadcastedValue->getType()->isIntegerTy(64)){
++                    // Sign extend to 64
++                    BroadcastedValue = new SExtInst(BroadcastedValue, i64Ty, "broad.sext", InsertBefore);
++                }
++                ObjIDs.push_back(BroadcastedValue);
++            } else {
++                ObjIDs.push_back(InstToObjectIDMap[Arg]);
++            }
++        }
++
++        assert(InstToObjectIDMap.find(PimInst) != InstToObjectIDMap.end() && "PimResult not in InstToObjectIDMap" );
++
++        if(isMixedScalarPimOp){
++            // For mix pim scalar ops, the destination pim object ID is the second last value
++            assert(ObjIDs.size() >= 1 && "Expected at least one value");
++            auto position = ObjIDs.end() - 1;
++            ObjIDs.insert(position, InstToObjectIDMap[PimInst]);
++        } else {
++            ObjIDs.push_back(InstToObjectIDMap[PimInst]) ;
++        }
++
++    }
++
++    errs()<< "Calling function: "<< *InstFunction <<"\n"; 
++    
++    for(auto* Arg : ObjIDs){
++        errs() <<"Arg: "<< *Arg <<"\n";
++    }
++
++
++    CallInst::Create(InstFunction, ObjIDs, "pimInst", InsertBefore);
++
++
++
++
++}
++
++bool Legalizer::ReplaceReturn(CallInst* PimInst){
++
++    // Insert call to copy host memory to device
++
++    LLVMContext& ctx = PimInst->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++
++    Module* M = PimInst->getModule();
++    Function* CopyFunc = M->getFunction(pimCopyDeviceToHostName);
++
++    if(!CopyFunc){
++        std::vector<Type*>  CopyArgsTy = {i32Ty,i8PTy, i64Ty, i64Ty};
++        FunctionType* CopyFuncTy = FunctionType::get(i32Ty, CopyArgsTy, /* isVarArgs */ false);
++        CopyFunc = Function::Create(CopyFuncTy, Function::ExternalLinkage ,pimCopyDeviceToHostName , M);
++    }
++
++
++
++    // If a user of this instruction is the return instruction then generate allocation and copy memory from device to host
++    for(auto* User: PimInst->users()){
++
++        ReturnInst* RI = dyn_cast<ReturnInst>(User);
++        if(!RI) continue;
++
++        IRBuilder<> Builder(PimInst);
++        // Generate an alloca and store value into alloca
++        AllocaInst* HostAlloc = Builder.CreateAlloca(PimInst->getType());
++
++
++        Value* MemoryRef = BitCastInst::CreatePointerCast(HostAlloc, i8PTy, "", PimInst);
++
++        Value* ObjectID = InstToObjectIDMap[PimInst];
++
++        Value* IdxStart = ConstantInt::get(i64Ty, 0);
++        Value* IdxEnd = ConstantInt::get(i64Ty, 0);
++        std::vector<Value*> Args = {ObjectID, MemoryRef, IdxStart, IdxEnd};
++
++
++        CallInst* CopyCall = CallInst::Create(CopyFunc, Args, "pimDeviceToHost", PimInst);
++
++        Builder.SetInsertPoint(PimInst);
++        Value *LoadInst = Builder.CreateLoad(PimInst->getType(), HostAlloc, "load.buffer");
++        PimInst->replaceAllUsesWith(LoadInst);
++
++
++        return true;
++
++    }
++
++
++
++    return false;
++}
++
++Function* Legalizer::CreateFunctionDecl(std::string name, CallInst* CI){
++    // 1 for return argument
++    unsigned num_symbolic_args = 1;
++
++    for(int i =0; i < CI->getNumArgOperands(); i++){
++        Value* arg = CI->getArgOperand(i);
++        if(auto* FVTy = dyn_cast<FixedVectorType>(arg->getType())){
++            if (FVTy->getNumElements() != 1){
++                num_symbolic_args++;
++            }
++        }
++    }
++
++    LLVMContext& ctx = CI->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++    Type* i64Ty = Type::getInt64Ty(ctx);
++
++    Module* M = CI->getModule();
++
++    std::string PimFuncName = name == "pimBroadCast" ? "pimBroadcastInt" : name;
++    Function* PimFunc = M->getFunction(PimFuncName);
++
++    bool isMixedScalarPimOp = (name.find("Scalar") != std::string::npos) 
++        ||  (name.find("Scaled") != std::string::npos); 
++
++    if(!PimFunc){
++
++        std::vector<Type*>  CopyArgsTy;
++        if(name == "pimBroadCast"){
++            CopyArgsTy.push_back(i32Ty);
++            CopyArgsTy.push_back(i64Ty);
++        } else {
++            for(int i = 0; i < num_symbolic_args ; i++){
++                CopyArgsTy.push_back(i32Ty);
++            }
++
++            // Add uint64_t parameter type to represent scalars
++            if (isMixedScalarPimOp){
++                CopyArgsTy.push_back(i64Ty);
++            }
++        }
++
++        FunctionType* PimFuncTy = FunctionType::get(i32Ty, CopyArgsTy, /* isVarArgs */ false);
++        PimFunc = Function::Create(PimFuncTy, Function::ExternalLinkage ,PimFuncName , M);
++    }
++
++    return PimFunc;
++
++
++}
++
++void Legalizer::DeclarePIMInitWrapper(Module* M){
++    LLVMContext& ctx = M->getContext();
++    Type* voidTy = Type::getVoidTy(ctx);
++
++    Function* InitFunc = M->getFunction(pimInitDeviceWrapperName);
++
++    if(!InitFunc){
++        std::vector<Type*>  InitArgsTy = {};
++        FunctionType* InitFuncTy = FunctionType::get(voidTy, InitArgsTy, /* isVarArgs */ false);
++        InitFunc = Function::Create(InitFuncTy, Function::ExternalLinkage ,pimInitDeviceWrapperName , M);
++
++        // Add an entry basic block to function and call PIM Init
++        BasicBlock *BB = BasicBlock::Create(ctx, "entry", InitFunc);
++        // Create return void
++        ReturnInst::Create(ctx, BB);
++
++        InsertPimInitCall(/* numRanks */ 4, /*numBankPerRank */ 128, /* numSubarrayPerBank */ 32  , /* numRows*/ 1024, /* numCols */ 1024, BB->getFirstNonPHI());
++    }
++    errs() << "Created PIM INIT fUNCTION: "<< *InitFunc <<"\n";
++}
++
++
++void Legalizer::DeclarePIMPrintStatsWrapper(Module* M){
++    LLVMContext& ctx = M->getContext();
++    Type* voidTy = Type::getVoidTy(ctx);
++
++    Function* PrintFunc = M->getFunction(pimShowStatsWrapperName);
++
++    if(!PrintFunc){
++        std::vector<Type*>  PrintArgsTy = {};
++        FunctionType* PrintFuncTy = FunctionType::get(voidTy, PrintArgsTy, /* isVarArgs */ false);
++        PrintFunc = Function::Create(PrintFuncTy, Function::ExternalLinkage ,pimShowStatsWrapperName , M);
++
++        // Add an entry basic block to function and call PIM Init
++        BasicBlock *BB = BasicBlock::Create(ctx, "entry", PrintFunc);
++        // Create return void
++        ReturnInst::Create(ctx, BB);
++
++        InsertPimPrintStatsCall(BB->getFirstNonPHI());
++    }
++
++    errs() << "Created PIM Stats fUNCTION: "<< *PrintFunc <<"\n";
++}
++
++
++void Legalizer::InsertPimPrintStatsCall(Instruction* InsertBefore){
++
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* PrintFunc = M->getFunction(pimShowStatsName);
++
++    if(!PrintFunc){
++        std::vector<Type*>  PrintArgsTy = {};
++        FunctionType* PrintFuncTy = FunctionType::get(voidTy, PrintArgsTy, /* isVarArgs */ false);
++        PrintFunc = Function::Create(PrintFuncTy, Function::ExternalLinkage ,pimShowStatsName, M);
++    }
++
++    std::vector<Value*> Args = {};
++
++
++    CallInst* PrintCall = CallInst::Create(PrintFunc, Args, "", InsertBefore);
++
++
++}
++
++
++// PimStatus status = pimCreateDevice(PIM_FUNCTIONAL, numRanks, numBankPerRank, numSubarrayPerBank, numRows, numCols);
++void Legalizer::InsertPimInitCall(int numRanks, int numBankPerRank, int numSubarrayPerBank , int numRows, int numCols, Instruction* InsertBefore){
++
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* InitFunc = M->getFunction(pimInitDeviceName);
++
++    if(!InitFunc){
++        std::vector<Type*>  InitArgsTy = {i32Ty, i32Ty,i32Ty, i32Ty, i32Ty, i32Ty};
++        FunctionType* InitFuncTy = FunctionType::get(i32Ty, InitArgsTy, /* isVarArgs */ false);
++        InitFunc = Function::Create(InitFuncTy, Function::ExternalLinkage ,pimInitDeviceName , M);
++    }
++
++    Value* DeviceSetting = ConstantInt::get(i32Ty, PIM_FUNCTIONAL);
++    Value* NumRanks = ConstantInt::get(i32Ty, numRanks);
++    Value* NumBankPerRank = ConstantInt::get(i32Ty, numBankPerRank);
++    Value* NumSubarrayPerBank = ConstantInt::get(i32Ty, numSubarrayPerBank);
++    Value* NumRows = ConstantInt::get(i32Ty, numRows);
++    Value* NumCols = ConstantInt::get(i32Ty, numCols);
++
++    std::vector<Value*> Args = {DeviceSetting, NumRanks, NumBankPerRank, NumSubarrayPerBank, NumRows, NumCols };
++
++
++    CallInst* InitCall = CallInst::Create(InitFunc, Args, "pimInit", InsertBefore);
++
++
++}
++
++void Legalizer::InsertPimFreeCalls(Instruction* InsertBefore){
++    LLVMContext& ctx = InsertBefore->getContext();
++    Type* i8PTy = Type::getInt8PtrTy(ctx);
++    Type* voidTy = Type::getVoidTy(ctx);
++    Type* i32Ty = Type::getInt32Ty(ctx);
++
++    Module* M = InsertBefore->getModule();
++    Function* FreeFunc = M->getFunction(pimFreeName);
++
++    if(!FreeFunc){
++        std::vector<Type*>  FreeArgsTy = {i32Ty};
++        FunctionType* FreeFuncTy = FunctionType::get(i32Ty, FreeArgsTy, /* isVarArgs */ false);
++        FreeFunc = Function::Create(FreeFuncTy, Function::ExternalLinkage ,pimFreeName , M);
++    }
++
++    for(auto iter = InstToObjectIDMap.begin(); iter != InstToObjectIDMap.end(); iter++){
++        Value* PimAlloc = iter->second;
++        std::vector<Value*> Args = {PimAlloc};
++        CallInst* FreeCall = CallInst::Create(FreeFunc, Args, "pimFree", InsertBefore);
++
++    }
++
++
++
++}
++
++bool Legalizer::isNameMatch(CallInst *TargetAgnoticInst, std::vector<std::string> &NameList) {
++    for (const auto &Name : NameList) {
++        if (TargetAgnoticInst->getCalledFunction()->getName().contains(Name)) {
++            errs() << "NAME MATCH!!\n";
++            return true;
++        }
++    }
++    return false;
++}
++
++}  // end of namespace llvm
+--- /dev/null
++++ b/tests/fixtures/misaal-hvx/lowering-harness.cpp
+@@ -0,0 +1,171 @@
++// Diagnostic only. Compile against the freshly prepared generated selector and
++// its PRIVATE common/Legalizer.cpp. This never executes a target instruction:
++// LLVM constant-folds the portable output and compares every resulting lane.
++#include "HexLegalizer.cpp"
++#include "llvm/Analysis/ConstantFolding.h"
++#include "llvm/IR/IRBuilder.h"
++#include <cstdint>
++#include <iostream>
++#include <string>
++#include <vector>
++
++using namespace llvm;
++
++static Constant *vectorValue(LLVMContext &C, unsigned Bits,
++                             const std::vector<uint64_t> &Values) {
++  std::vector<Constant *> Elements;
++  for (auto V : Values)
++    Elements.push_back(ConstantInt::get(IntegerType::get(C, Bits), V));
++  return ConstantVector::get(Elements);
++}
++
++static Function *functionWithCall(Module &M, const std::string &Name,
++                                  Type *Result, std::vector<Value *> Args) {
++  std::vector<Type *> Types;
++  for (auto *Arg : Args) Types.push_back(Arg->getType());
++  auto *Source = Function::Create(FunctionType::get(Result, Types, false),
++                                  Function::ExternalLinkage, Name, M);
++  auto *F = Function::Create(FunctionType::get(Result, false),
++                             Function::ExternalLinkage, "hydride.diagnostic", M);
++  IRBuilder<> B(BasicBlock::Create(M.getContext(), "entry", F));
++  B.CreateRet(B.CreateCall(Source, Args));
++  return F;
++}
++
++static void lowerAndCheck(Module &M, Function *F,
++                          const std::vector<uint64_t> &Expected) {
++  HexLegalizationPass Pass;
++  Pass.runOnFunction(*F); // Includes the actual pre-ADCE verifier.
++  if (verifyFunction(*F, &errs())) report_fatal_error("harness: invalid result");
++  for (auto &BB : *F) {
++    for (auto It = BB.begin(); It != BB.end();) {
++      Instruction *I = &*It++;
++      if (isa<ReturnInst>(I)) continue;
++      if (auto *Folded = ConstantFoldInstruction(I, M.getDataLayout())) {
++        I->replaceAllUsesWith(Folded);
++        I->eraseFromParent();
++      }
++    }
++  }
++  auto *Ret = cast<ReturnInst>(F->back().getTerminator());
++  auto *Result = dyn_cast<Constant>(Ret->getReturnValue());
++  if (!Result) report_fatal_error("harness: portable lowering did not fold");
++  auto *Ty = dyn_cast<FixedVectorType>(Result->getType());
++  if (!Ty || Ty->getNumElements() != Expected.size())
++    report_fatal_error("harness: result shape mismatch");
++  for (unsigned I = 0; I < Expected.size(); ++I) {
++    auto *Lane = dyn_cast_or_null<ConstantInt>(Result->getAggregateElement(I));
++    if (!Lane || Lane->getZExtValue() != Expected[I])
++      report_fatal_error("harness: result lane mismatch");
++  }
++}
++
++static void checkShift(uint32_t Shift, const std::string &Suffix = "") {
++  LLVMContext C;
++  Module M("shift", C);
++  M.setDataLayout("e-p:64:64");
++  std::vector<uint64_t> Words, Expected;
++  for (unsigned I = 0; I < 32; ++I) {
++    uint32_t Word = 0x80000001u + I * 1234567u;
++    Words.push_back(Word);
++    Expected.push_back(Shift >= 32 ? 0 : Word >> Shift);
++  }
++  std::vector<Value *> Args = {vectorValue(C, 32, {31}), vectorValue(C, 32, Words),
++                               vectorValue(C, 32, {Shift})};
++  for (unsigned V : {1024, 1024, 0, 1024, 32, 0})
++    Args.push_back(ConstantInt::get(Type::getInt32Ty(C), V));
++  auto *F = functionWithCall(M, "llvm.hydride.hexagon_V6_vlsrw_128B_dsl" + Suffix,
++                             FixedVectorType::get(Type::getInt32Ty(C), 32), Args);
++  lowerAndCheck(M, F, Expected);
++}
++
++static void checkHalf(bool High) {
++  LLVMContext C;
++  Module M("half", C);
++  M.setDataLayout("e-p:64:64");
++  std::vector<uint64_t> Words, Expected;
++  for (unsigned I = 0; I < 64; ++I) Words.push_back(0x9A430000u + I * 123u);
++  for (unsigned Byte = 0; Byte < 128; ++Byte)
++    Expected.push_back((Words[(High ? 32 : 0) + Byte / 4] >> (8 * (Byte % 4))) & 255);
++  std::vector<Value *> Args = {vectorValue(C, 32, Words)};
++  std::vector<unsigned> Constants = {1024, 1024, 0, 1024, 8};
++  if (High) Constants.push_back(1024);
++  Constants.push_back(0);
++  for (auto V : Constants) Args.push_back(ConstantInt::get(Type::getInt32Ty(C), V));
++  auto *F = functionWithCall(M, High ? "llvm.hydride.hexagon_V6_lo_128B_dsl"
++                                    : "llvm.hydride.hexagon_V6_vassign_128B_dsl",
++                             FixedVectorType::get(Type::getInt8Ty(C), 128), Args);
++  lowerAndCheck(M, F, Expected);
++}
++
++static void checkSwizzle(unsigned Width, unsigned Element, unsigned Stride,
++                          bool Bad = false) {
++  LLVMContext C;
++  Module M("swizzle", C);
++  M.setDataLayout("e-p:64:64");
++  std::vector<uint64_t> Values, Expected;
++  for (unsigned I = 0; I < Width / Element; ++I) Values.push_back(I);
++  // Original formal interleaves the two input halves at element granularity.
++  for (unsigned I = 0; I < Values.size() / 2; ++I) {
++    Expected.push_back(Values[I]);
++    Expected.push_back(Values[I + Values.size() / 2]);
++  }
++  std::vector<Value *> Args = {vectorValue(C, Element, Values)};
++  for (unsigned V : {Width, Element * 2, Bad ? 1u : 0u, Element * 2, Element, Stride, 2u, 0u})
++    Args.push_back(ConstantInt::get(Type::getInt32Ty(C), V));
++  auto *F = functionWithCall(M, "llvm.hydride.hvx_swizzle_1_dsl",
++                             FixedVectorType::get(IntegerType::get(C, Element), Width / Element), Args);
++  lowerAndCheck(M, F, Expected);
++}
++
++static void checkPermutation(const std::string &Mode) {
++  LLVMContext C;
++  Module M("permutation", C);
++  M.setDataLayout("e-p:64:64");
++  Type *I32 = Type::getInt32Ty(C);
++  auto *F = functionWithCall(M, "original", I32,
++                             {ConstantInt::get(I32, 1), ConstantInt::get(I32, 2)});
++  auto *Call = cast<CallInst>(&F->front().front());
++  auto *Target = Function::Create(
++      FunctionType::get(I32, {Mode == "width" ? Type::getInt64Ty(C) : I32, I32}, false),
++      Function::ExternalLinkage, "target", M);
++  std::vector<int> Map = {0, 1};
++  if (Mode == "missing") Map = {0, -1};
++  if (Mode == "duplicate") Map = {0, 0};
++  if (Mode == "negative") Map = {0, -2};
++  if (Mode == "large") Map = {0, 2};
++  if (Mode == "short") Map = {0};
++  HexLegalizer Legalizer;
++  auto Args = Legalizer.getArgsAfterPermutation(Call, Target, Map, Call);
++  if (Mode != "valid") report_fatal_error("harness: malformed permutation accepted");
++  if (Args.size() != 2 || Args[0] != Call->getArgOperand(0) || Args[1] != Call->getArgOperand(1))
++    report_fatal_error("harness: valid permutation changed operands");
++}
++
++int main(int Argc, char **Argv) {
++  const std::string Mode = Argc > 1 ? Argv[1] : "all";
++  if (Mode == "invalid-ir") {
++    LLVMContext C;
++    Module M("invalid", C);
++    auto *F = Function::Create(FunctionType::get(Type::getInt32Ty(C), false),
++                               Function::ExternalLinkage, "hydride.invalid", M);
++    ReturnInst::Create(C, ConstantInt::get(Type::getInt16Ty(C), 7), BasicBlock::Create(C, "entry", F));
++    HexLegalizationPass Pass;
++    Pass.runOnFunction(*F);
++    errs() << "ADCE_WOULD_START\n";
++    return 1; // Reaching this point is always a test failure.
++  }
++  if (Mode == "bad-swizzle") { checkSwizzle(1024, 16, 32, true); return 1; }
++  if (Mode != "all") { checkPermutation(Mode); return 0; }
++  for (uint32_t Shift : {0u, 1u, 17u, 30u, 31u, 32u, 33u, 63u, 64u, 0x80000000u, 0xffffffffu})
++    checkShift(Shift);
++  checkShift(17, ".1");
++  checkHalf(false);
++  checkHalf(true);
++  checkSwizzle(2048, 32, 32);
++  checkSwizzle(2048, 16, 64);
++  checkSwizzle(1024, 16, 32);
++  checkSwizzle(1024, 8, 64);
++  checkPermutation("valid");
++  std::cout << "19 portable-lowering/permutation checks passed; no target execution\n";
++}
