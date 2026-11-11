@@ -15,6 +15,10 @@ endpoint under that 600-second/16-GiB profile; other incomplete data stop
 publication. Source goals and matched count checks remain correctness
 requirements, separate from timing collection.
 The top-level `benchmarks/ignore.json` is the sole exclusion policy.
+The source-proof corpus also defers the full BATAX and MTTKRP second-phase
+proofs from routine tests. The other eight frozen SDQL proofs remain enabled;
+run the two deferred proofs explicitly with
+`cargo test --locked -p egglog-experimental --test slotted_proof_files -- --ignored --test-threads=1`.
 
 GitHub collapses the generated `.egg`/`.ref` pairs by default. Review the
 [input manifest](inputs/manifest.json) and [case definitions and generators](../reproduction/slotted/);

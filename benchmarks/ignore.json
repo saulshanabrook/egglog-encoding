@@ -93,5 +93,19 @@
     "kind": "resource",
     "reason": "The second BATAX phase exceeds the local 10 GiB cap in encoded multipattern mode. Uncapped validation is unestablished, so this source/native Multi-Snapshot count pair is deferred across profiles.",
     "evidence": "Fresh actual paper test exits86 after52.94s under10737418240B; capture benchmarks/local/validation/batax2-repro.json, binary5610de2337d2a2dcfc8c41136849a4871de94b9b23b29c16dc61d2add0e2bada. Fresh release CLI also exits86 after66.54s, peakRSS5722030080B, binaryd93be0578aaa0feead5e0836bd75f17620a6b985efc415c15be9316fc312cabd; capture benchmarks/local/validation/batax2-production-cap-probe.json. Source input87277868e931935c2f885433d8135bd3ca01618f911356dd46b2a16e53197cc1; pairedref902232ad6185e35f865cb27b1726b385ce35d93a4d7281f43b359c89064d43ff. These are correctness diagnostics, not paper timing observations. The native Multi/Snapshot comparison is explicitly deferred with its unavailable encoded count oracle; a goal-only run cannot replace that check. Nested timing and matched-count treatments remain registered separately. Remove only after validating the full pair on a suitable machine."
+  },
+  {
+    "file": "slotted/inputs/sdql/batax_2nd-44rules.egg",
+    "treatments": ["slotted-proof-testing"],
+    "kind": "resource",
+    "reason": "Defer the full BATAX second-phase source proof from routine tests, alongside its omission from the multipattern evaluation. It remains an explicitly runnable ignored stress test.",
+    "evidence": "User-approved deferral on 2026-11-11. Serial Rust CI job 130833354032 lost its runner during this proof after the first BATAX phase passed: https://github.com/saulshanabrook/egglog-encoding/actions/runs/43112883737/job/130833354032 . The log establishes runner shutdown, not OOM. figures/catalog.json also omits this input from slotted-multipattern-runtime."
+  },
+  {
+    "file": "slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+    "treatments": ["slotted-proof-testing"],
+    "kind": "resource",
+    "reason": "Defer the full MTTKRP second-phase source proof from routine tests, alongside its omission from the multipattern evaluation. It remains an explicitly runnable ignored stress test.",
+    "evidence": "User-approved deferral on 2026-11-11 matching the existing figures/catalog.json omission from slotted-multipattern-runtime. benchmarks/slotted/README.md records the native reference timeout at 600 seconds. This deferral does not claim that the source proof failed semantically or establish its memory requirement."
   }
 ]
