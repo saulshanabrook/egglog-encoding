@@ -314,7 +314,8 @@ fn global_action_at(
 #[derive(Clone)]
 pub struct ProofStore {
     pub(super) term_dag: TermDag,
-    proof_id: HashMap<RawProof, ProofId>,
+    /// Memo for one lifting pass; raw proof IDs belong to its single raw store.
+    proof_id: HashMap<RawProofId, ProofId>,
     pub(super) id_to_proof: DenseIdMap<ProofId, Proof>,
     /// Container constructor head -> its validator (the container's term
     /// normalizer), used by [`ProofStore::normalize_container`].
@@ -1187,7 +1188,7 @@ impl ProofStore {
         raw_store: &RawProofStore,
         raw_proof_id: RawProofId,
     ) -> ProofId {
-        if let Some(&id) = self.proof_id.get(&raw_store.store[raw_proof_id.index()]) {
+        if let Some(&id) = self.proof_id.get(&raw_proof_id) {
             return id;
         }
         let raw_proof = &raw_store.store[raw_proof_id.index()];
@@ -1265,7 +1266,7 @@ impl ProofStore {
                 if further {
                     self.head_walks.insert(firing_key, walked);
                 }
-                self.proof_id.insert(raw_proof.clone(), proof_id);
+                self.proof_id.insert(raw_proof_id, proof_id);
                 return proof_id;
             }
             RawProof::MergeFnIdx(function, old_raw, new_raw, idx) => {
@@ -1355,7 +1356,7 @@ impl ProofStore {
             RawProof::Proj(inner_raw, child_index) => {
                 let inner_id = self.lift_raw_proof(prog, globals, raw_store, *inner_raw);
                 let projected = self.push_projection(inner_id, *child_index);
-                self.proof_id.insert(raw_proof.clone(), projected);
+                self.proof_id.insert(raw_proof_id, projected);
                 return projected;
             }
             RawProof::ProjPrim(rule, body_index, arg_raws) => {
@@ -1390,14 +1391,14 @@ impl ProofStore {
                 for child_index in path {
                     projected = self.push_projection(projected, child_index);
                 }
-                self.proof_id.insert(raw_proof.clone(), projected);
+                self.proof_id.insert(raw_proof_id, projected);
                 return projected;
             }
             RawProof::CongrAll(proof_raw, child_raw) => {
                 let base_id = self.lift_raw_proof(prog, globals, raw_store, *proof_raw);
                 let child_id = self.lift_raw_proof(prog, globals, raw_store, *child_raw);
                 let expanded_id = self.expand_congr_all(base_id, child_id);
-                self.proof_id.insert(raw_proof.clone(), expanded_id);
+                self.proof_id.insert(raw_proof_id, expanded_id);
                 return expanded_id;
             }
             RawProof::ContainerNormalize(inner_raw) => {
@@ -1423,7 +1424,7 @@ impl ProofStore {
         };
 
         let proof_id = self.id_to_proof.push(proof);
-        self.proof_id.insert(raw_proof.clone(), proof_id);
+        self.proof_id.insert(raw_proof_id, proof_id);
         proof_id
     }
 
@@ -2196,6 +2197,32 @@ mod tests {
             names: EncodingNames::new(&mut SymbolGen::new("test".to_string())),
             store: IndexSet::default(),
             term_to_proof: HashMap::default(),
+        }
+    }
+
+    #[test]
+    fn lifting_shared_roots_preserves_order_and_isolates_raw_stores() {
+        for prefix in ["first", "second"] {
+            let mut raw = empty_store();
+            // The passes reuse raw proof IDs but have different term IDs.
+            if prefix == "second" {
+                raw.term_dag.lit(Literal::Int(0));
+            }
+            let a = raw.term_dag.app(format!("{prefix}-a"), vec![]);
+            let b = raw.term_dag.app(format!("{prefix}-b"), vec![]);
+            let forward = raw.add_proof(RawProof::Fiat(a, b));
+            let backward = raw.add_proof(RawProof::Sym(forward));
+            let round_trip = raw.add_proof(RawProof::Trans(forward, backward));
+            let roots = [round_trip, forward, backward, round_trip, forward];
+            let (store, lifted) = raw.lift(&vec![], &roots, HashMap::default(), HashSet::default());
+            assert_eq!(lifted.len(), roots.len());
+            for (&proof, (lhs, rhs)) in lifted.iter().zip([(a, a), (a, b), (b, a), (a, a), (a, b)])
+            {
+                assert_eq!(store.get(proof).proposition(), &Proposition::new(lhs, rhs));
+            }
+            assert_eq!(lifted[0], lifted[3]);
+            assert_eq!(lifted[1], lifted[4]);
+            assert_eq!(store.proofs().count(), 3);
         }
     }
 
