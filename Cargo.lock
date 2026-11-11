@@ -712,7 +712,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "stacker",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]

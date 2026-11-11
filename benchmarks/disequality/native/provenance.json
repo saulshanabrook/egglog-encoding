@@ -1,0 +1,129 @@
+{
+  "artifact_record": "https://zenodo.org/records/23166731",
+  "artifact_archive_url": "https://zenodo.org/records/23166731/files/die-graph.zip?download=1",
+  "verification_date": "2026-11-10",
+  "verification_scope": "Selected ZIP members retrieved by HTTP ranges; checked against archive central-directory CRC32. The full archive and container image were not downloaded.",
+  "full_archive_downloaded": false,
+  "central_directory_sha256": "c2a2edc9b27411e8c43bb4c9c445972048d7a2c1b318f0a8c3f7fa3053e1f637",
+  "members": [
+    {
+      "archive_member": "disegg.patch",
+      "sha256": "1f62bed78a804b4cd56ff379775b7d333c40624f3fcff4e37e7bbb247196eb46",
+      "size_bytes": 5244,
+      "zip_crc32_verified": true
+    },
+    {
+      "archive_member": "parameter-analysis/rand_exprs.py",
+      "sha256": "181eb52c7a65eb3cd7b5f87111d8eb6d8a0fedc59e2fa20bc43b22561c00ab21",
+      "size_bytes": 1359,
+      "zip_crc32_verified": true
+    },
+    {
+      "archive_member": "parameter-analysis/exprs.in",
+      "sha256": "6e9114194d92079a14272c25c11012ddf21753f655d5d39178fbba96b150dd3d",
+      "size_bytes": 46346326,
+      "zip_crc32_verified": true,
+      "local_path": "benchmarks/disequality/parameter-analysis.in",
+      "byte_identical": true
+    },
+    {
+      "archive_member": "parameter-analysis/nee-with-saturation/main.rs",
+      "sha256": "b914e54ebcadb62b7c06c5767a1e257b3541184b78c038bd81a5b16270e68c33",
+      "size_bytes": 3142,
+      "zip_crc32_verified": true,
+      "local_path": "benchmarks/disequality/native/authors/nee-with-saturation/main.rs",
+      "byte_identical": true
+    },
+    {
+      "archive_member": "parameter-analysis/ee/main.rs",
+      "sha256": "c5eeb9c43a58489ef24053b539c7e5597517b627ac4939cc7ee57e917bbcd7c2",
+      "size_bytes": 3503,
+      "zip_crc32_verified": true,
+      "local_path": "benchmarks/disequality/native/authors/ee/main.rs",
+      "byte_identical": true
+    },
+    {
+      "archive_member": "parameter-analysis/run.sh",
+      "sha256": "449bfc8f85df325cccb576ea9060d0eda00ebcea66919ab52a53c3bc6a60fff7",
+      "size_bytes": 483,
+      "zip_crc32_verified": true
+    },
+    {
+      "archive_member": "parameter-analysis/nee-no-saturation/main.rs",
+      "sha256": "8856152bc715f61743cdb3732a3a354a908c15da3d8f67003817c6a6c59c0549",
+      "size_bytes": 1991,
+      "zip_crc32_verified": true,
+      "local_path": "benchmarks/disequality/native/authors/nee-no-saturation/main.rs",
+      "byte_identical": true
+    },
+    {
+      "archive_member": "parameter-analysis/de/main.rs",
+      "sha256": "cfa787ff01e39bd37f66763d7dd0909b7c02a184a5aeef2ecd2e8fe28bb402b9",
+      "size_bytes": 2061,
+      "zip_crc32_verified": true,
+      "local_path": "benchmarks/disequality/native/authors/de/main.rs",
+      "byte_identical": true
+    },
+    {
+      "archive_member": "setup-container",
+      "sha256": "f69bc5e2133f3ce579ecc95885517579a9fceb826ad36b720fbacf4c12a4d834",
+      "size_bytes": 1571,
+      "zip_crc32_verified": true
+    }
+  ],
+  "parameter_sweep": {
+    "equality_pairs": 100000,
+    "disequality_pairs": [
+      0,
+      500,
+      1000,
+      1500,
+      2000,
+      2500,
+      3000,
+      3500,
+      4000,
+      4500,
+      5000,
+      5500,
+      6000,
+      6500,
+      7000,
+      7500,
+      8000,
+      8500,
+      9000,
+      9500,
+      10000
+    ],
+    "methods": [
+      "ee",
+      "de",
+      "nee-no-saturation",
+      "nee-with-saturation"
+    ]
+  },
+  "paper_figure_endpoint": {
+    "equality_pairs": 100000,
+    "disequality_pairs": 10000,
+    "timed_treatments": [
+      "egg-de",
+      "off"
+    ],
+    "observations_per_treatment": 10
+  },
+  "source_changes": "None: all four local drivers and the complete native corpus are byte-identical to the public artifact. The existing deterministic Egglog translation is unchanged.",
+  "declared_archive_md5": "eb618583cb9495ebc59108a77af13c16",
+  "full_archive_checksum_verified": false,
+  "de_dependency": {
+    "repository": "https://github.com/saulshanabrook/egg",
+    "git_revision": "09d7789439b26e131fab7be55a5a3719bbf55216",
+    "upstream_tag": "v0.9.5",
+    "upstream_revision": "c590048817a35236ce9910e7c1e0b1fac670822c",
+    "published_setup_recipe": "setup-container clones Egg v0.9.5 and applies disegg.patch",
+    "published_patch_sha256": "1f62bed78a804b4cd56ff379775b7d333c40624f3fcff4e37e7bbb247196eb46",
+    "pinned_revision_diff_byte_identical_to_published_patch": true,
+    "changed_file_count": 3,
+    "container_installed_tree_inspected": false
+  }
+}

@@ -188,7 +188,7 @@ def export_slotted_ast(records: Sequence[dict[str, Any]], destination: Path) -> 
         markdown.extend(f"- {failure}" for failure in sorted(failures))
         markdown.append("")
     markdown.extend(["Files:", ""])
-    markdown.extend(f"- `{row['file']}` (native: `{row['reference_file']}`)" for row in rows)
+    markdown.extend(f"- `{row['file']}` (reference: `{row['reference_file']}`)" for row in rows)
     contents = {
         "ast.json": json.dumps(report, indent=2, ensure_ascii=False) + "\n",
         "ast.csv": csv_output.getvalue(),

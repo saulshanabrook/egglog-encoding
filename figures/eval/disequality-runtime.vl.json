@@ -1,6 +1,6 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-  "description": "Runtime and peak RSS distributions for native DE in Disegg and extlog. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and native-DE ratio intervals remain in companion exports.",
+  "description": "Runtime and peak RSS distributions for the DE reference implementation and extlog. Standard gray/black boxes show medians and interquartile ranges, with 1.5-IQR whiskers and only generated outlier points. Individual non-outlier observations are not overlaid. Means and reference ratio intervals remain in companion exports.",
   "data": {
     "url": "../../data-cache/reports-grouped.json",
     "format": {"type": "json"}
@@ -64,7 +64,7 @@
       "groupby": ["input_id", "metric"]
     },
     {
-      "calculate": "{'egg-de':'DE · Disegg', 'off':'extlog'}[datum.input.treatment] || datum.input.treatment",
+      "calculate": "{'egg-de':'Reference', 'off':'extlog'}[datum.input.treatment] || datum.input.treatment",
       "as": "condition"
     },
     {"calculate": "datum.condition + ': ' + datum.issue", "as": "summary"},
@@ -86,7 +86,7 @@
   },
   "spec": {
     "width": 230,
-    "height": {"step": 62},
+    "height": {"step": 32},
     "layer": [
       {
         "name": "absolute_boxplots",
@@ -139,7 +139,7 @@
         "type": "nominal",
         "title": null,
         "axis": {"labelLimit": 180, "minExtent": 112, "maxExtent": 112},
-        "scale": {"domain": [ "DE · Disegg", "extlog" ]}
+        "scale": {"domain": [ "Reference", "extlog" ]}
       }
     }
   },

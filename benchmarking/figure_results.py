@@ -245,13 +245,17 @@ def latex_results(result: dict[str, Any]) -> tuple[str, str]:
         r"\providecommand{\EgglogFigureNumber}[1]{\ifcsname egglogfigure@#1\endcsname"
         r"\csname egglogfigure@#1\endcsname\else\textnormal{unavailable}\fi}"
     ]
+    display_treatments = {"off": "extlog", "egg-de": "Reference"} if result["figure"] == "disequality-runtime" else {}
     slotted = result["figure"] in ("slotted-runtime", "slotted-multipattern-runtime")
     table = [
         r"\begin{tabular}{lrr}" if slotted else r"\begin{tabular}{llrr}",
-        ("Kernel/phase" if slotted else "Workload & Comparison")
-        + r" & Runtime ratio [95\% CI] & Peak RSS ratio [95\% CI] \\",
+        r"Kernel/phase & Reference time (s) [95\% CI] & extlog time (s) [95\% CI] \\"
+        if slotted
+        else r"Workload & Comparison & Runtime ratio [95\% CI] & Peak RSS ratio [95\% CI] \\",
         r"\hline",
     ]
+    table_rows = []
+    conditions = {(row["logical_id"], row["treatment"]): row for row in result["conditions"]}
     numbers: dict[str, Any] = {
         f"{figure_key}/rounds": result["rounds"],
         f"{figure_key}/workload-count": len({row["logical_id"] for row in result["conditions"]}),
@@ -268,12 +272,22 @@ def latex_results(result: dict[str, Any]) -> tuple[str, str]:
             prefix = f"{figure_key}/{row['workload']}/{row['candidate']}-over-{row['baseline']}/{metric}"
             for field in ("ratio", "ci_low", "ci_high", "baseline_n", "candidate_n"):
                 numbers[f"{prefix}/{field.replace('_', '-')}"] = values[field]
-            if values["ratio"] is None:
+        estimates = (
+            [
+                conditions[(row["logical_id"], row[endpoint])]["metrics"]["runtime"]
+                for endpoint in ("baseline", "candidate")
+            ]
+            if slotted
+            else row["metrics"].values()
+        )
+        for values in estimates:
+            point = values["mean"] if slotted else values["ratio"]
+            if point is None:
                 cell = "unavailable"
             elif values["ci_low"] is None:
-                cell = f"{values['ratio']:.3g} [CI unavailable]"
+                cell = f"{point:.3g} [CI unavailable]"
             else:
-                cell = f"{values['ratio']:.3g} [{values['ci_low']:.3g}, {values['ci_high']:.3g}]"
+                cell = f"{point:.3g} [{values['ci_low']:.3g}, {values['ci_high']:.3g}]"
             cells.append("".join(escapes.get(ch, ch) for ch in cell))
         label = Path(row["label"]).stem if Path(row["label"]).suffix in (".egg", ".ref", ".in") else row["label"]
         if slotted:
@@ -289,19 +303,90 @@ def latex_results(result: dict[str, Any]) -> tuple[str, str]:
                     label = publication + label[len(kernel) :]
                     break
             label = label.replace("_1st", " / 1st").replace("_2nd", " / 2nd")
-        pair = f"{row['candidate']} / {row['baseline']}"
-        table.append(
-            " & ".join(
-                [
-                    *("".join(escapes.get(ch, ch) for ch in text) for text in ((label,) if slotted else (label, pair))),
-                    *cells,
-                ]
-            )
-            + r" \\"
+        pair = " / ".join(
+            display_treatments.get(row[endpoint], row[endpoint]) for endpoint in ("candidate", "baseline")
         )
+        table_rows.append(
+            (
+                row["metrics"]["runtime"]["ratio"],
+                " & ".join(
+                    [
+                        *(
+                            "".join(escapes.get(ch, ch) for ch in text)
+                            for text in ((label,) if slotted else (label, pair))
+                        ),
+                        *cells,
+                    ]
+                )
+                + r" \\",
+            )
+        )
+    if slotted:
+        table_rows.sort(key=lambda row: row[0] if row[0] is not None else math.inf)
+        memory_ratios = [
+            value
+            for row in result["comparisons"]
+            if (value := row["metrics"]["memory"]["ratio"]) is not None and math.isfinite(value)
+        ]
+        numbers[f"{figure_key}/memory/ratio-min"] = min(memory_ratios, default=None)
+        numbers[f"{figure_key}/memory/ratio-max"] = max(memory_ratios, default=None)
+    table.extend(line for _, line in table_rows)
+    speedup_pairs: list[tuple[str, str, str, str]] = []
+    workloads = {row["logical_id"]: row["workload"] for row in result["conditions"]}
+    if result["figure"] in ("disequality-runtime", "math-runtime"):
+        reference, candidate = (
+            ("egg-de", "off") if result["figure"] == "disequality-runtime" else ("egg-proof-testing", "proof-testing")
+        )
+        speedup_pairs = [(logical_id, workload, reference, candidate) for logical_id, workload in workloads.items()]
+    elif result["figure"] == "slotted-multipattern-runtime":
+        speedup_pairs = [
+            (row["logical_id"], row["workload"], row["baseline"], row["candidate"]) for row in result["comparisons"]
+        ]
+    faster_speedups = []
+    for logical_id, workload, reference, candidate in speedup_pairs:
+        reference_condition = conditions.get((logical_id, reference))
+        candidate_condition = conditions.get((logical_id, candidate))
+        speedup = None
+        if (
+            reference_condition is not None
+            and candidate_condition is not None
+            and all(
+                not endpoint["exclusion"]
+                and not endpoint.get("validation_issue")
+                and not endpoint["failed_n"]
+                and endpoint["sample_n"] == endpoint["metrics"]["runtime"]["valid_n"] == result["rounds"]
+                for endpoint in (reference_condition, candidate_condition)
+            )
+        ):
+            numerator = reference_condition["metrics"]["runtime"]["mean"]
+            denominator = candidate_condition["metrics"]["runtime"]["mean"]
+            if (
+                numerator is not None
+                and denominator is not None
+                and math.isfinite(numerator)
+                and math.isfinite(denominator)
+                and numerator >= 0
+                and denominator > 0
+            ):
+                # Divide full-precision absolute means, including both checked
+                # engines for Math; printed overhead ratios are not inputs.
+                speedup = numerator / denominator
+                if not math.isfinite(speedup):
+                    speedup = None
+        if result["figure"] == "slotted-multipattern-runtime":
+            if speedup is not None and speedup > 1:
+                faster_speedups.append(speedup)
+        else:
+            numbers[f"{figure_key}/{workload}/{reference}-over-{candidate}/runtime/speedup"] = speedup
+    if result["figure"] == "slotted-multipattern-runtime":
+        numbers[f"{figure_key}/runtime/speedup-max"] = max(faster_speedups, default=None)
     for metric, values in result["coverage"].items():
         for field, value in values.items():
             numbers[f"{figure_key}/coverage/{metric}/{field.replace('_', '-')}"] = value
+        if metric == "runtime":
+            numbers[f"{figure_key}/coverage/runtime/project-n"] = len(
+                {row["family"] for row in result["comparisons"] if row["cohort"] == "selected"}
+            )
     for key, value in numbers.items():
         rendered = (
             r"\textnormal{unavailable}"
