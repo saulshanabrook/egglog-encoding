@@ -1,0 +1,9 @@
+/target/
+/node_modules/
+/logs/
+/results*.json
+/plot.svg
+/plot.png
+/memory.svg
+/memory.png
+/__pycache__/

@@ -6,6 +6,8 @@
 	rust-format-check rust-clippy rust-doc-links rust-test
 
 BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
+REPRODUCE_ARGS ?=
+RUST_TEST_ARGS ?=
 
 # No Ubuntu release packages uv, so `make nightly` installs a pinned copy into
 # the checkout when uv is missing from PATH. uv then downloads its own CPython,
@@ -53,7 +55,7 @@ rust-format-check:
 	cargo fmt --all -- --check
 
 rust-test:
-	cargo test --workspace
+	cargo test --workspace -- $(RUST_TEST_ARGS)
 
 rust-clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -148,3 +150,65 @@ figures/parameter-analysis.png: figures/parameter-analysis.vl.json .reports-grou
 
 figures-parameter-test:
 	cd figures && $(VEGA) node --test parameter.test.mjs
+
+# Source generation and correctness diagnostics are separate from timing.
+.PHONY: reproduce-benchmarks expanded-pilot expanded-bench-recording expanded-bench expanded-coverage
+reproduce-benchmarks:
+	uv run --locked python scripts/suite_acquisition.py reproduce $(REPRODUCE_ARGS)
+
+EXPANDED_ROUNDS ?= 10
+EXPANDED_TIMEOUT_SEC ?= 300
+FIGURE_MATH_SUITE ?= math-11
+EXPANDED_ARGS = --target figures=. --rounds $(EXPANDED_ROUNDS) --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+expanded-pilot expanded-bench-recording expanded-bench expanded-coverage: export EGGLOG_BENCH_MEMORY_GUARD = 1
+expanded-pilot:
+	./bench.py --suite expanded --baseline-window --baseline-only $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+
+# One sequential plan per comparison, including missing baselines. Order an
+# explicitly requested pilot first, and keep collectors serial under make -j.
+expanded-bench-recording: $(filter expanded-pilot,$(MAKECMDGOALS))
+	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
+		--treatment proofs --compare-treatment off
+
+expanded-bench: expanded-bench-recording
+	./bench.py --suite expanded --baseline-window $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+	./bench.py --suite $(FIGURE_MATH_SUITE) $(EXPANDED_ARGS) \
+		--treatment proof-extraction --compare-treatment off
+	./bench.py --suite $(FIGURE_MATH_SUITE) $(EXPANDED_ARGS) \
+		--treatment egg-proof-extraction --compare-treatment egg
+
+expanded-coverage:
+	uv run --locked python -m benchmarking.pilot --suite expanded --coverage-only \
+		--report .reports.jsonl --coverage-output benchmarks/local/coverage.json --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+EXPANDED_SPECS := figures/expanded/math-cutoff-11.vl.json figures/expanded/proof-overhead-cdf.vl.json
+EXPANDED_IMAGES := $(EXPANDED_SPECS:.vl.json=.svg) $(EXPANDED_SPECS:.vl.json=.png)
+.PHONY: figures figures-bench figures-data figures-expanded figures-expanded-data figures-expanded-cached figures-expanded-test figure-inventory
+figures: figures-expanded
+figures-bench: expanded-bench
+figures-data figures-expanded-data: expanded-bench
+	$(MAKE) reports-grouped figure-inventory
+
+figures-expanded: expanded-bench
+	$(MAKE) figures-expanded-cached
+
+figure-inventory:
+	uv run --locked python -m benchmarking.figure_inventory --timeout-sec $(EXPANDED_TIMEOUT_SEC)
+
+# Refresh metadata first; a recursive Make sees its final write-if-changed mtime.
+figures-expanded-cached: reports-grouped
+	$(MAKE) figure-inventory
+	$(MAKE) $(EXPANDED_IMAGES)
+	@printf '%s\n' $(foreach image,$(EXPANDED_IMAGES),"$(abspath $(image))")
+
+figures/expanded/%.svg: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2svg $(notdir $<) $(notdir $@)
+
+figures/expanded/%.png: figures/expanded/%.vl.json .reports-grouped.json benchmarks/local/figure-inventory.json Makefile
+	cd figures/expanded && $(VEGA) vl2png $(notdir $<) $(notdir $@) -s 3
+
+figures-expanded-test:
+	cd figures && $(VEGA) node --test expanded.test.mjs

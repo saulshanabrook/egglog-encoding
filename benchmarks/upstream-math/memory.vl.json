@@ -1,0 +1,81 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Whole-process peak RSS: maximum of sampled process-group RSS and the child's recorded high-water mark. Stopped-run peaks are observed incomplete runs, never estimates of completed-run memory.",
+  "title": {
+    "text": "How does Math memory use grow with the iteration limit?",
+    "subtitle": {"expr": "['Seven seeds, 24 rules; no proofs, checks, or extraction.', 'Whole-process peak RSS. Dots: runs; lines: means of ' + requested_runs + ' completed runs.', 'Triangles show observed peaks for incomplete runs.']"}
+  },
+  "data": {"url": "results.json", "format": {"type": "json"}, "name": "observations"},
+  "params": [
+    {"name": "requested_runs", "expr": "data('observations')[0].metadata.requested.rounds"},
+    {"name": "memory_gib", "expr": "data('observations')[0].metadata.limits.memory_bytes / pow(1024, 3)"}
+  ],
+  "transform": [
+    {"flatten": ["rows"], "as": ["row"]},
+    {"filter": "datum.row.iterations <= datum.metadata.requested.iterations && datum.row.run <= datum.metadata.requested.rounds"},
+    {"calculate": "datum.row.engine", "as": "engine"},
+    {"calculate": "datum.row.iterations", "as": "iterations"},
+    {"calculate": "datum.row.peak_rss_bytes > 0 ? datum.row.peak_rss_bytes / 1073741824 : null", "as": "gib"},
+    {"calculate": "datum.row.status === 'success' ? datum.gib : null", "as": "success_gib"},
+    {"joinaggregate": [{"op": "min", "field": "gib", "as": "global_min"}]},
+    {"calculate": "isValid(datum.gib) ? datum.gib : (isFinite(datum.global_min) && datum.global_min > 0 ? datum.global_min : 1)", "as": "domain_value"},
+    {"extent": "domain_value", "param": "memory_extent"},
+    {"joinaggregate": [
+      {"op": "mean", "field": "success_gib", "as": "mean_gib"},
+      {"op": "valid", "field": "success_gib", "as": "successes"}
+    ], "groupby": ["engine", "iterations"]},
+    {"calculate": "datum.successes === datum.metadata.requested.rounds ? datum.mean_gib : null", "as": "complete_mean"}
+  ],
+  "vconcat": [
+    {
+      "width": 620, "height": 320,
+      "encoding": {
+        "x": {"field": "iterations", "type": "quantitative", "title": "Iterations", "scale": {"domain": [1,13]}, "axis": {"values": [1,2,3,4,5,6,7,8,9,10,11,12,13], "grid": false}},
+        "y": {"type": "quantitative", "title": "Peak resident memory (GiB, log scale)", "scale": {"type": "log", "domain": {"expr": "memory_extent[0] === memory_extent[1] ? [memory_extent[0] / 2, memory_extent[1] * 2] : memory_extent"}}, "axis": {"values": [0.001,0.003,0.01,0.03,0.1,0.3,1,3,10], "format": "~g"}},
+        "color": {"field": "engine", "type": "nominal", "scale": {"domain": ["Egg","Egglog"], "range": ["#345a80","#b25c19"]}, "legend": {"title": null, "orient": "top", "labelFontSize": 12, "symbolType": "stroke", "symbolOpacity": 1, "symbolStrokeWidth": 2}}
+      },
+      "layer": [
+        {
+          "transform": [{"filter": "isValid(datum.success_gib)"}],
+          "mark": {"type": "point", "filled": true, "size": 22, "opacity": 0.35},
+          "encoding": {"y": {"field": "success_gib"}, "tooltip": [{"field": "engine"}, {"field": "iterations"}, {"field": "gib", "title": "Peak GiB", "format": ".3f"}]}
+        },
+        {
+          "transform": [{"aggregate": [{"op": "max", "field": "complete_mean", "as": "mean"}], "groupby": ["engine","iterations"]}],
+          "mark": {"type": "line", "strokeWidth": 1.5, "point": {"filled": true, "size": 22}},
+          "encoding": {"y": {"field": "mean"}, "strokeDash": {"field": "engine", "type": "nominal", "scale": {"domain": ["Egg","Egglog"], "range": [[1,0],[6,3]]}, "legend": {"title": null, "orient": "top", "symbolOpacity": 1}}}
+        },
+        {
+          "transform": [{"filter": "datum.row.status !== 'success' && isValid(datum.gib)"}],
+          "mark": {"type": "point", "shape": "triangle-up", "filled": true, "size": 90, "opacity": 1},
+          "encoding": {"y": {"field": "gib"}, "tooltip": [{"field": "engine"}, {"field": "iterations"}, {"field": "gib", "title": "Observed incomplete peak GiB", "format": ".3f"}, {"field": "row.reason", "title": "Reason"}]}
+        }
+      ]
+    },
+    {
+      "width": 620, "height": 36,
+      "transform": [
+        {"filter": "datum.successes !== datum.metadata.requested.rounds"},
+        {"calculate": "datum.row.status === 'memory-limit' ? 2 : datum.row.status === 'resource-stopped' ? 1 : 0", "as": "stopped"},
+        {"calculate": "datum.row.status === 'timed-out' ? 1 : 0", "as": "timeout"},
+        {"calculate": "datum.row.status === 'failure' ? 1 : 0", "as": "failed"},
+        {"aggregate": [
+          {"op": "min", "field": "iterations", "as": "first_incomplete"},
+          {"op": "max", "field": "iterations", "as": "last_incomplete"},
+          {"op": "max", "field": "stopped", "as": "stopped"},
+          {"op": "max", "field": "timeout", "as": "timeout"},
+          {"op": "max", "field": "failed", "as": "failed"}
+        ], "groupby": ["engine"]},
+        {"calculate": "datum.engine + ': ' + (datum.stopped === 2 ? format(memory_gib, '~g') + ' GiB memory stop' : datum.stopped ? 'safety stop' : datum.timeout ? 'timeout' : datum.failed ? 'failed' : 'incomplete') + ' at ' + datum.first_incomplete + (datum.last_incomplete > datum.first_incomplete ? '; later cutoffs not run.' : '.')", "as": "label"}
+      ],
+      "mark": {"type": "text", "align": "left", "baseline": "middle", "fontSize": 11, "color": "#555b64"},
+      "encoding": {"x": {"value": 0}, "y": {"field": "engine", "type": "nominal", "sort": ["Egg","Egglog"], "axis": null}, "text": {"field": "label"}}
+    }
+  ],
+  "spacing": 12,
+  "config": {
+    "font": "Arial", "background": "white", "view": {"stroke": null},
+    "axis": {"labelFontSize": 11, "titleFontSize": 11, "titleFontWeight": "normal", "gridColor": "#e8eaed", "domainColor": "#a9adb3"},
+    "title": {"fontSize": 15, "anchor": "start", "subtitleFontSize": 11, "subtitlePadding": 6, "offset": 15}
+  }
+}

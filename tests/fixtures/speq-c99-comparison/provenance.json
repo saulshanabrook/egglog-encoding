@@ -1,0 +1,18 @@
+{
+  "scope": "Unit-test data only. Production always compares fresh PHI and candidate FIRs; these snapshots are never loaded by capture or preparation.",
+  "source_C_sha256": "e0fc07f40f59e83fc57f1d4e1e99f1718ffce106dcdc44c3e30ed88848228aea",
+  "files": {
+    "baseline.fir": {
+      "sha256": "88ea197d575dfd8cf55a189ff2e6d067f40b3f1369da4f95129605c716ee334f",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/baseline-frontend/application-002.fir"
+    },
+    "candidate.fir": {
+      "sha256": "464f8b10dda91b8f8d1ff87b23093846bb52f22811b4d71cea24b62b5324ef6f",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/frontend/application-002.fir"
+    },
+    "unselected.fir": {
+      "sha256": "6cd4730a381002bd17f00243b087ca3effc17a23447c31b6b489d417a3aba70c",
+      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/baseline-frontend/application-001.fir"
+    }
+  }
+}

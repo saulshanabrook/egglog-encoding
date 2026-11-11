@@ -1,0 +1,20 @@
+[workspace]
+
+[package]
+name = "upstream-math-reproduction"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "egg-math"
+path = "egg.rs"
+
+[[bin]]
+name = "egglog-math"
+path = "egglog.rs"
+
+[dependencies]
+egg = { git = "https://github.com/egraphs-good/egg", rev = "2f31b28e3f9d78e02273b6c6d4201b5b0720b343" }
+egglog = { git = "https://github.com/egraphs-good/egglog", rev = "90635860397ce710f8c0a4eeb04154a8ebc3ac05", default-features = false }
+num-rational = "0.4"

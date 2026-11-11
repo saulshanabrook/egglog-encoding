@@ -1,0 +1,151 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "description": "Independent full-executable Math runs, externally timed from process launch through blocking wait4 completion. Dots are successful wall times; lines connect means only when every requested run succeeded. Missing results are never estimated.",
+  "title": {
+    "text": "How does total Math runtime grow with the iteration limit?",
+    "subtitle": {
+      "expr": "['Seven Math seeds, 24 rules; no backoff, proofs, checks, or extraction.', 'Full executable time. Dots are runs; lines are means of ' + requested_runs + ' completed runs.', 'No warm-up; first launches are included at N=1.']"
+    }
+  },
+  "data": {"url": "results.json", "format": {"type": "json"}, "name": "observations"},
+  "transform": [
+    {"flatten": ["rows"], "as": ["row"]},
+    {
+      "filter": "datum.row.iterations <= datum.metadata.requested.iterations && datum.row.run <= datum.metadata.requested.rounds"
+    },
+    {"calculate": "datum.row.engine", "as": "engine"},
+    {"calculate": "datum.row.iterations", "as": "iterations"},
+    {"calculate": "datum.metadata.requested.rounds", "as": "rounds"},
+    {
+      "calculate": "datum.row.status === 'success' && datum.row.wall_seconds > 0 ? datum.row.wall_seconds : null",
+      "as": "seconds"
+    },
+    {
+      "calculate": "datum.row.status === 'memory-limit' ? 2 : datum.row.status === 'resource-stopped' ? 1 : 0",
+      "as": "stopped"
+    },
+    {"calculate": "datum.row.status === 'timed-out' ? 1 : 0", "as": "timeout"},
+    {"calculate": "datum.row.status === 'failure' ? 1 : 0", "as": "failed"},
+    {"joinaggregate": [{"op": "min", "field": "seconds", "as": "global_min"}]},
+    {
+      "calculate": "isValid(datum.seconds) ? datum.seconds : (isFinite(datum.global_min) && datum.global_min > 0 ? datum.global_min : 1)",
+      "as": "domain_value"
+    },
+    {"extent": "domain_value", "param": "time_extent"},
+    {
+      "joinaggregate": [
+        {"op": "mean", "field": "seconds", "as": "mean_seconds"},
+        {"op": "valid", "field": "seconds", "as": "successes"},
+        {"op": "max", "field": "stopped", "as": "any_stop"},
+        {"op": "max", "field": "timeout", "as": "any_timeout"},
+        {"op": "max", "field": "failed", "as": "any_failure"}
+      ],
+      "groupby": ["engine", "iterations", "rounds"]
+    },
+    {"calculate": "datum.successes === datum.rounds ? datum.mean_seconds : null", "as": "complete_mean"},
+    {
+      "calculate": "datum.successes === datum.rounds ? '' : datum.any_stop ? 'stopped' : datum.any_timeout ? 'timeout' : datum.any_failure ? 'failed' : datum.successes > 0 ? 'partial' : 'not run'",
+      "as": "issue"
+    }
+  ],
+  "config": {
+    "font": "Arial",
+    "background": "white",
+    "view": {"stroke": null},
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 11,
+      "titleFontWeight": "normal",
+      "gridColor": "#e8eaed",
+      "domainColor": "#a9adb3"
+    },
+    "title": {"fontSize": 15, "anchor": "start", "subtitleFontSize": 11, "subtitlePadding": 6, "offset": 15}
+  },
+  "vconcat": [
+    {
+      "width": 620,
+      "height": 320,
+      "encoding": {
+        "x": {
+          "field": "iterations",
+          "type": "quantitative",
+          "title": "Iterations",
+          "scale": {"domain": [1, 13]},
+          "axis": {"values": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], "grid": false}
+        },
+        "y": {
+          "type": "quantitative",
+          "title": "Whole-executable wall time (seconds, log scale)",
+          "scale": {
+            "type": "log",
+            "domain": {"expr": "time_extent[0] === time_extent[1] ? [time_extent[0] / 2, time_extent[1] * 2] : time_extent"}
+          },
+          "axis": {"format": "~g", "values": [1e-06, 1e-05, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100]}
+        },
+        "color": {
+          "field": "engine",
+          "type": "nominal",
+          "scale": {"domain": ["Egg", "Egglog"], "range": ["#345a80", "#b25c19"]},
+          "legend": {
+            "title": null,
+            "orient": "top",
+            "labelFontSize": 12,
+            "symbolType": "stroke",
+            "symbolOpacity": 1,
+            "symbolStrokeWidth": 2
+          }
+        }
+      },
+      "layer": [
+        {
+          "transform": [{"filter": "isValid(datum.seconds)"}],
+          "mark": {"type": "point", "filled": true, "size": 22, "opacity": 0.35},
+          "encoding": {
+            "y": {"field": "seconds"},
+            "tooltip": [{"field": "engine"}, {"field": "iterations"}, {"field": "seconds", "format": ".6g"}]
+          }
+        },
+        {
+          "transform": [{"aggregate": [{"op": "max", "field": "complete_mean", "as": "mean"}], "groupby": ["engine", "iterations"]}],
+          "mark": {"type": "line", "strokeWidth": 1.5, "point": {"filled": true, "size": 22}},
+          "encoding": {
+            "y": {"field": "mean"},
+            "strokeDash": {"field": "engine", "type": "nominal", "scale": {"domain": ["Egg", "Egglog"], "range": [[1, 0], [6, 3]]}}
+          }
+        }
+      ]
+    },
+    {
+      "width": 620,
+      "height": 36,
+      "transform": [
+        {"filter": "datum.issue !== ''"},
+        {
+          "aggregate": [
+            {"op": "min", "field": "iterations", "as": "first_incomplete"},
+            {"op": "max", "field": "iterations", "as": "last_incomplete"},
+            {"op": "max", "field": "any_stop", "as": "stopped"},
+            {"op": "max", "field": "any_timeout", "as": "timeout"},
+            {"op": "max", "field": "any_failure", "as": "failed"}
+          ],
+          "groupby": ["engine"]
+        },
+        {
+          "calculate": "datum.engine + ': ' + (datum.stopped === 2 ? format(memory_gib, '~g') + ' GiB memory stop' : datum.stopped ? 'safety stop' : datum.timeout ? 'timeout' : datum.failed ? 'failed' : 'incomplete') + ' at ' + datum.first_incomplete + (datum.last_incomplete > datum.first_incomplete ? '; later cutoffs not run.' : '.')",
+          "as": "label"
+        }
+      ],
+      "mark": {"type": "text", "align": "left", "baseline": "middle", "fontSize": 11, "color": "#555b64"},
+      "encoding": {
+        "x": {"value": 0},
+        "y": {"field": "engine", "type": "nominal", "sort": ["Egg", "Egglog"], "axis": null},
+        "text": {"field": "label"}
+      }
+    }
+  ],
+  "spacing": 12,
+  "params": [
+    {"name": "requested_runs", "expr": "data('observations')[0].metadata.requested.rounds"},
+    {"name": "memory_gib", "expr": "data('observations')[0].metadata.limits.memory_bytes / pow(1024, 3)"}
+  ]
+}

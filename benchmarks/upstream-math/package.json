@@ -1,0 +1,14 @@
+{
+  "name": "upstream-math-reproduction",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "canvas": "3.2.3",
+    "vega": "6.4.0",
+    "vega-cli": "6.4.0",
+    "vega-lite": "6.4.3"
+  }
+}
