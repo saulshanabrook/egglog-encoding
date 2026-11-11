@@ -63,9 +63,11 @@ def preparation(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         tool.chmod(0o755)
     actual_access, actual_hash = export.os.access, export.sha256_file
     monkeypatch.setattr(
-        export.os, "access", lambda path, mode, **kwargs: actual_access(compilers.get(path, path), mode, **kwargs)
+        export.os,
+        "access",
+        lambda path, mode, **kwargs: actual_access(compilers.get(path) or path, mode, **kwargs),
     )
-    monkeypatch.setattr(export, "sha256_file", lambda path: actual_hash(compilers.get(path, path)))
+    monkeypatch.setattr(export, "sha256_file", lambda path: actual_hash(compilers.get(path) or path))
     monkeypatch.setattr(export, "LLVM12", llvm)
     for relative in (
         "frontends/halide/tools/GenGen.cpp",
