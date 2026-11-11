@@ -132,7 +132,7 @@ test('all figure designs preserve missing conditions and render without warnings
       assert.equal(find(result,'absolute_runs').length,0);
       assert.equal(find(result,'ratio_points').length,0);
     } else if(['slotted-runtime','slotted-multipattern-runtime'].includes(name)) {
-      assert.equal(find(result,'slotted_ratio_status').length,2);
+      assert.equal(find(result,'slotted_ratio_status').length,1);
       assert.equal(find(result,'slotted_ratio_points').length,0);
     } else if(name.startsWith('corpus-')) {
       assert.doesNotMatch(result.svg,/unresolved baseline|failed,|missing|excluded/);
@@ -148,7 +148,7 @@ test('disequality standard boxes show only native 1.5-IQR outliers, retaining DE
   const groups=treatments.map((t,i)=>group('a',t,[1,1,1,1,1,1,1,1,1,100].map(v=>v*(i+1))));
   const result=await evaluate('disequality-runtime',treatments.map(t=>input('a',t)),groups,10);
   const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
-  for(const condition of ['DE · Disegg','extlog'])
+  for(const condition of ['Reference','extlog'])
     assert.ok(labels.includes(condition),`missing explicit condition label ${condition}`);
   const outliers=result.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.mark.marktype==='symbol');
   assert.equal(find(result,'absolute_runs').length,0,'there must be no all-run overlay');
@@ -164,7 +164,7 @@ test('disequality standard boxes show only native 1.5-IQR outliers, retaining DE
   assert.equal(result.marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')&&p.fill==='#d9d9d9').length,4);
   assert.doesNotMatch(result.svg,/NEE/);
   assert.match(result.svg,/extlog/);
-  assert.match(result.svg,/DE · Disegg/);
+  assert.match(result.svg,/Reference/);
   assert.equal(find(result,'ratio_points').length,0);
   assert.equal(find(result,'absolute_means').length,0);
 });
@@ -187,27 +187,39 @@ test('disequality selection and incomplete/quarantined conditions never create m
   assert.equal((await evaluate('disequality-runtime',inputs,[rows])).marks.filter(p=>p.mark.name?.startsWith('absolute_boxplots')).length,0);
 });
 
-test('Slotted aligns runtime/RSS ratio panels with uniform black estimates and capped intervals',async()=>{
-  const treatments=figures['slotted-runtime'].treatments;
-  const inputs=['mmm_1st-44rules','mmm_2nd-44rules'].flatMap(id=>treatments.map(t=>input(id+'-'+t,t,{logical_id:id,label:`benchmarks/slotted/inputs/sdql/${id}.egg`})));
-  const groups=inputs.map((item,i)=>group(item.file_sha256,item.treatment,[i%2?6:2,i%2?6:2],{max_rss_bytes:(i%2?100:20)*1048576}));
-  const result=await evaluate('slotted-runtime',inputs,groups);
-  const points=find(result,'slotted_ratio_points');
-  assert.equal(points.length,4);
-  assert.deepEqual(points.filter(p=>p.datum.metric==='Runtime').map(p=>p.datum.ratio),[3,3]);
-  assert.deepEqual(points.filter(p=>p.datum.metric==='Peak RSS').map(p=>p.datum.ratio),[5,5]);
-  assert.ok(points.every(p=>p.fill==='#111111'&&p.shape==='square'));
-  const a=points.find(p=>p.datum.metric==='Runtime'),b=points.find(p=>p.datum.metric==='Peak RSS');
-  assert.ok(a.mark.group.x<b.mark.group.x,'runtime must be left of RSS');
-  assert.equal(a.y,b.y,'same workload rows must align across panels');
-  assert.equal(find(result,'slotted_ratio_intervals').length,4);
-  assert.equal(find(result,'slotted_ratio_cap_low').length,4);assert.equal(find(result,'slotted_ratio_cap_high').length,4);
-  const guides=find(result,'slotted_equal');assert.equal(guides.length,2);
-  for(const guide of guides){assert.equal(guide.y,0);assert.equal(guide.y2,guide.mark.group.height);assert.equal(guide.stroke,'#727880');}
-  assert.equal(find(result,'slotted_runs').length,0);
-  assert.ok(!result.marks.some(p=>p.mark.marktype==='line'),'no lines may connect workloads');
-  const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
-  for(const label of ['MMM · 1st','MMM · 2nd'])assert.equal(labels.filter(v=>v===label).length,1,'shared workload labels');
+test('Slotted runtime ratios sort independently with one full-width panel and capped intervals',async()=>{
+  for(const name of ['slotted-runtime','slotted-multipattern-runtime']) {
+    const treatments=figures[name].treatments;
+    const ids=['mmm_1st-44rules','mmm_2nd-44rules','ttm_1st-44rules'];
+    const ratios=name==='slotted-runtime'?[12,.5,2]:[.5,12,2];
+    const inputs=ids.flatMap(id=>treatments.map(t=>input(id+'-'+t,t,{logical_id:id,label:`${id}.egg`})));
+    const groups=inputs.map((item,i)=>group(item.file_sha256,item.treatment,
+      [20,21,22].map(v=>v*(i%2?ratios[Math.floor(i/2)]:1)),
+      {max_rss_bytes:(i%2?1000000:1)*1048576}));
+    const result=await evaluate(name,inputs,groups,3);
+    const points=find(result,'slotted_ratio_points');
+    assert.equal(points.length,3);
+    assert.ok(points.every(p=>p.datum.metric==='Runtime'&&p.fill==='#111111'&&p.shape==='square'));
+    const ordered=[...points].sort((a,b)=>a.y-b.y);
+    assert.deepEqual(ordered.map(p=>p.datum.ratio),[.5,2,12]);
+    assert.ok(points.every(p=>p.mark.group.width===500),'one panel uses the available width without magnifying fonts');
+    assert.equal(find(result,'slotted_ratio_intervals').length,3);
+    assert.equal(find(result,'slotted_ratio_cap_low').length,3);assert.equal(find(result,'slotted_ratio_cap_high').length,3);
+    const guides=find(result,'slotted_equal');assert.equal(guides.length,1);
+    for(const guide of guides){assert.equal(guide.y,0);assert.equal(guide.y2,guide.mark.group.height);assert.equal(guide.stroke,'#727880');}
+    assert.equal(find(result,'slotted_runs').length,0);
+    assert.ok(!result.marks.some(p=>p.mark.marktype==='line'),'no lines may connect workloads');
+    assert.doesNotMatch(result.svg,/Peak RSS/);
+    const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
+    for(const label of ['MMM · 1st','MMM · 2nd','TTM · 1st'])assert.equal(labels.filter(v=>v===label).length,1);
+    const required=['0×','0.1×','0.25×','0.5×','0.75×','1×'];
+    const ticks=result.marks.filter(p=>p.mark.role==='axis-label'&&required.includes(p.text)&&p.opacity!==0);
+    assert.deepEqual(ticks.map(p=>p.text),required,'all sub-unit labels must remain visible');
+    for(let i=1;i<ticks.length;i++)assert.ok(ticks[i].bounds.x1-ticks[i-1].bounds.x2>=2,'numeric tick labels need clear gaps');
+    const grids=result.marks.filter(p=>p.mark.role==='axis-grid'&&p.opacity!==0);
+    for(const value of [.1,.25,.5,.75,1])
+      assert.ok(grids.some(p=>p.datum.value===value&&p.stroke==='#e8eaed'&&p.strokeWidth===.7),'light grid anchors complement the stronger dashed 1× guide');
+  }
 });
 
 test('complete SDQL ratios pair the native multipattern fork with Egglog',async()=>{
@@ -222,22 +234,22 @@ test('complete SDQL ratios pair the native multipattern fork with Egglog',async(
     {max_rss_bytes:(i%2?[5,6][Math.floor(i/2)]:1)*100*1048576}));
   const result=await evaluate(name,inputs,groups,3);
   const points=find(result,'slotted_ratio_points');
-  assert.equal(points.length,4);
+  assert.equal(points.length,2);
   assert.deepEqual(points.filter(p=>p.datum.metric==='Runtime').map(p=>p.datum.ratio),[3,4]);
-  assert.deepEqual(points.filter(p=>p.datum.metric==='Peak RSS').map(p=>p.datum.ratio),[5,6]);
+  assert.ok(points.every(p=>p.datum.metric==='Runtime'));
   assert.ok(points.every(p=>p.datum.baseline.input.treatment==='slotted-ref-multi'&&p.datum.candidate.input.treatment==='slotted'));
-  assert.equal(find(result,'slotted_ratio_intervals').length,4);
+  assert.equal(find(result,'slotted_ratio_intervals').length,2);
   const axisLabelMarks=result.marks.filter(p=>p.mark.role==='axis-label');
   const axisLabels=axisLabelMarks.map(p=>p.text);
-  assert.ok(!axisLabels.includes('0.25×'),'keep the sub-unit scale sparse');
+  assert.ok(axisLabelMarks.some(p=>p.text==='0.25×'&&p.opacity!==0),'the sub-unit scale includes a visible quarter reference');
   const halfTicks=axisLabelMarks.filter(p=>p.text==='0.5×'&&p.opacity!==0);
-  assert.equal(halfTicks.length,2,'both panels need a visible 0.5× reference');
+  assert.equal(halfTicks.length,1,'the runtime panel needs a visible 0.5× reference');
   for(const half of halfTicks) {
     const equal=axisLabelMarks.find(p=>p.mark===half.mark&&p.text==='1×');
     assert.ok(equal&&equal.opacity!==0,'the 1× reference must remain visible');
     assert.ok(half.bounds.x2+2<=equal.bounds.x1,'the 0.5× label must not crowd 1×');
   }
-  assert.match(result.svg,/Pass \/ reference \(symlog\)/);
+  assert.match(result.svg,/extlog \/ Reference \(symlog\)/);
   for(const label of ['MMM · 1st','MMM · 2nd'])
     assert.equal(axisLabels.filter(value=>value===label).length,1,'kernel/phase labels must appear once beside aligned panels');
 });
@@ -257,9 +269,9 @@ test('complete multipattern figure retains the selected original SDQL rows',asyn
     [20,21,22].map(value=>value*(i%2?3:1)),{max_rss_bytes:(i%2?5:1)*100*1048576}));
   const result=await evaluate(name,inputs,groups,3);
   const points=find(result,'slotted_ratio_points');
-  assert.equal(points.length,2*paths.length);
+  assert.equal(points.length,paths.length);
   assert.equal(find(result,'slotted_ratio_status').length,0);
-  assert.ok(points.every(p=>p.datum.ratio===(p.datum.metric==='Runtime'?3:5)));
+  assert.ok(points.every(p=>p.datum.metric==='Runtime'&&p.datum.ratio===3));
   const labels=result.marks.filter(p=>p.mark.role==='axis-label').map(p=>p.text);
   const expected=paths.map(path=>{
     const stem=path.split('/').at(-1).replace(/\.egg$/,'');
@@ -282,7 +294,11 @@ test('Slotted retains failed, missing-metric, excluded and unbounded outcomes se
     groups[0].samples[0].max_rss_bytes=null;
     const result=await evaluate(name,inputs,groups);
     assert.deepEqual(find(result,'slotted_ratio_points').map(p=>p.datum.metric),['Runtime']);
-    assert.ok(find(result,'slotted_ratio_status').some(p=>p.datum.metric==='Peak RSS'&&/metric missing/.test(p.text)));
+    assert.ok(find(result,'slotted_ratio_status').every(p=>p.datum.metric==='Runtime'&&!/metric missing/.test(p.text)));
+    const noRuntime=structuredClone(groups);noRuntime[0].samples[0].wall_sec=null;
+    const missing=await evaluate(name,inputs,noRuntime);
+    assert.equal(find(missing,'slotted_ratio_points').length,0);
+    assert.ok(find(missing,'slotted_ratio_status').some(p=>/metric missing/.test(p.text)));
     groups[1].samples[0].status='memory-limited';
     const failed=await evaluate(name,inputs,groups);
     assert.equal(find(failed,'slotted_ratio_points').length,0);
@@ -290,7 +306,7 @@ test('Slotted retains failed, missing-metric, excluded and unbounded outcomes se
     const excluded=await evaluate(name,inputs.map(i=>({...i,exclusion:{kind:'unsupported',reason:'recorded limitation'},selected_row_indices:[]})),groups);
     assert.match(excluded.svg,/excluded \(unsupported\)/);
     const one=await evaluate(name,inputs,inputs.map((item,i)=>group(item.file_sha256,item.treatment,[i?2:1])),1);
-    assert.equal(find(one,'slotted_ratio_points').length,2);
+    assert.equal(find(one,'slotted_ratio_points').length,1);
     assert.equal(find(one,'slotted_ratio_intervals').length,0);
     assert.match(one.svg,/n=1; CI unavailable/);
   }
@@ -384,7 +400,7 @@ test('executed Vega Slotted statistics match the shared export fixture',async()=
     }
     const result=await evaluate(name,fixture.inputs,fixture.groups,fixture.rounds);
     const points=find(result,'slotted_ratio_points');
-    assert.equal(points.length,2);
+    assert.equal(points.length,1);
     for(const {datum:row} of points) {
       const expected=fixture.expected[row.metric];
       for(const field of ['ratio','ratio_low','ratio_high'])assert.ok(Math.abs(row[field]-expected[field])<1e-9,`${row.metric} ${field}`);
@@ -452,12 +468,12 @@ test('Slotted interval/point alignment and status glyphs stay inside their workl
   for(const status of find(missing,'slotted_ratio_status')) {
     assert.ok(status.bounds.x1>=0&&status.bounds.x2<=status.mark.group.width,'missing status must fit horizontally');
     assert.ok(status.bounds.y1>=0&&status.bounds.y2<=status.mark.group.height,'missing status must fit its row');
-    assert.match(status.text,/Native: 0\/3 runs; missing\nEncoding: 0\/3 runs; missing/);
+    assert.match(status.text,/Reference: 0\/3 runs; missing\nextlog: 0\/3 runs; missing/);
     assert.equal(status.dy,-5,'two endpoint messages keep multiline positioning');
   }
   for(const [endpoint,selected] of [
-    ['Encoding',groups.filter(g=>g.key.treatment.includes('ref-'))],
-    ['Native',groups.filter(g=>!g.key.treatment.includes('ref-'))]
+    ['extlog',groups.filter(g=>g.key.treatment.includes('ref-'))],
+    ['Reference',groups.filter(g=>!g.key.treatment.includes('ref-'))]
   ]) {
     const standalone=await evaluate('slotted-runtime',inputs,selected,3);
     for(const status of find(standalone,'slotted_ratio_status')) {

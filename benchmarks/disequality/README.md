@@ -2,10 +2,10 @@
 
 This experiment compares relation-based Egglog NEE, its proof overhead,
 and the authors' four native implementations from
-[Dis-Equality Graphs](https://doi.org/10.1145/3704913). The author-supplied native
+[Dis-Equality Graphs](https://doi.org/10.1145/3704913). The [public artifact's](https://zenodo.org/records/23166731) native
 input is canonical; the checked-in Egglog program is its deterministic
-translation. This is a fixed-workload comparison, not a reproduction of the
-paper's parameter sweep or published timings.
+translation. The figure replicates the final configuration of the artifact's parameter
+sweep, rather than the complete sweep or the paper's published timings.
 
 ## Relation-based NEE
 
@@ -37,7 +37,7 @@ implements the paper's semantics.
 ## Workload and regeneration
 
 [parameter-analysis.in](parameter-analysis.in) is the complete, unchanged
-400,000-expression corpus supplied with the four author drivers. Native commands
+400,000-expression corpus published with the four reference drivers. Native commands
 use `INPUT.in 100000 10000`: six fixed numeral disequalities, then 100,000 equality
 pairs, then 10,000 disequality pairs. The remaining 180,000 expressions are read
 but not asserted. The numeral initialization preserves the authors' exclusive

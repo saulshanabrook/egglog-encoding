@@ -2,18 +2,22 @@
 
 The paper figure compares the authors' native DE implementation with extlog,
 with proofs off. Native EE/OEE remain correctness checks.
-The author-supplied [native corpus](parameter-analysis.in) is canonical. Its checked-in
+The [public artifact](https://zenodo.org/records/23166731)'s unchanged
+[native corpus](parameter-analysis.in) is canonical. Its checked-in
 [Egglog translation](parameter-analysis.egg) contains the same six fixed numeral
 constraints, 100,000 equality pairs, and 10,000 disequality pairs in author order,
 followed by a contradiction check. The four native drivers are unchanged.
 
-This is one fixed contradictory workload, not the paper's parameter sweep.
+The figure replicates the final configuration of the artifact's
+`parameter-analysis/run.sh`: 100,000 equality pairs and 10,000 disequality pairs.
+The script sweeps 0 through 10,000 disequality pairs in increments of 500;
+the figure does not reproduce that complete sweep or the paper's published timings.
 The native drivers read all 400,000 expressions and assert the first 220,000;
 Egglog reads the translated assertions. Native EE/OEE stop when their node count
 is unchanged; Egglog saturates its private ruleset. Implementations may perform
 different amounts of work after a contradiction becomes available.
 
-The author-supplied drivers and corpus are distributed under
+The reference drivers and corpus are distributed under
 [Apache 2.0](LICENSE-APACHE). See [source and dependency provenance](native/README.md).
 
 ## Run
