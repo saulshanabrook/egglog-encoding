@@ -141,12 +141,12 @@ def build_collection_plan(
         (
             file_spec.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),
             endpoint.treatment,
-            CacheKey.for_endpoint(endpoint, file_spec, timeout_sec),
+            CacheKey.for_endpoint(endpoint, file_spec),
         )
         for file_spec in files
         for endpoint in endpoints
     )
-    selected = store.selected_statuses_for_keys(tuple(request[2] for request in requests), rounds)
+    selected = store.selected_statuses_for_keys(tuple(request[2] for request in requests), rounds, timeout_sec)
     runs: list[BenchmarkRunPlan] = []
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
@@ -248,7 +248,7 @@ def merge_collection_plans(plans: tuple[CollectionPlan, ...], timeout_sec: int) 
     for plan in plans:
         for run in plan.runs:
             endpoint = BenchmarkEndpoint(plan.target, run.treatment, run.disequality_encoding)
-            key = CacheKey.for_endpoint(endpoint, run.file, timeout_sec)
+            key = CacheKey.for_endpoint(endpoint, run.file)
             previous = seen.get(key)
             if previous is not None:
                 if (
@@ -466,7 +466,6 @@ def label_has_enough_rows(
             target.binary_sha256_for(endpoint.treatment),
             file_spec.sha256,
             endpoint.treatment,
-            timeout_sec,
             file_spec.fact_directory_sha256,
             endpoint.disequality_encoding,
         )
@@ -474,7 +473,7 @@ def label_has_enough_rows(
         for logical_file in (files_by_endpoint[endpoint] if files_by_endpoint is not None else files)
         for file_spec in (logical_file.for_engine(TREATMENT_SPECS[endpoint.treatment].engine),)
     )
-    selected = store.selected_statuses_for_keys(keys, rounds)
+    selected = store.selected_statuses_for_keys(keys, rounds, timeout_sec)
     return all(any(status != "success" for status in selected[key]) or len(selected[key]) >= rounds for key in keys)
 
 
@@ -641,7 +640,7 @@ def flat_report_record(
     """Construct the complete persisted record for one observation."""
 
     result = observation.result
-    return {
+    record: ReportRecord = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "started_at": started_at,
         "status": result.status,
@@ -666,6 +665,9 @@ def flat_report_record(
         "error_message": result.error.message if result.error is not None else None,
         "timing_summary": observation.timing_summary,
     }
+    if result.error is not None and result.error.memory_limit_bytes is not None:
+        record["error_memory_limit_bytes"] = result.error.memory_limit_bytes
+    return record
 
 
 class CollectionETAColumn(ProgressColumn):
@@ -685,12 +687,12 @@ class CollectionETAColumn(ProgressColumn):
         self.active: tuple[CacheKey, float] | None = None
         for target, run in runs:
             key = CacheKey.for_endpoint(
-                BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file, timeout_sec
+                BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file
             )
             self.remaining[key] = run.missing_observations
             self.durations[key] = [
                 wall
-                for row in store.latest_records(key, run.required_rows)
+                for row in store.latest_records(key, run.required_rows, timeout_sec)
                 if row.record["status"] == "success"
                 and (wall := row.record["wall_sec"]) is not None
                 and isfinite(wall)
@@ -761,7 +763,7 @@ def collect_rows(
         for round_index in range(max_deficit):
             for target, run in runs:
                 key = CacheKey.for_endpoint(
-                    BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file, timeout_sec
+                    BenchmarkEndpoint(target, run.treatment, run.disequality_encoding), run.file
                 )
                 if round_index >= run.missing_observations or key in stopped:
                     continue
