@@ -132,7 +132,7 @@
           "y": {
             "field": "cdf",
             "type": "quantitative",
-            "title": "Share of selected replays",
+            "title": "Share of selected benchmarks",
             "scale": {"domain": [0, 1.08], "nice": false, "padding": 4},
             "axis": {"format": ".0%", "values": [0, 0.5, 1], "grid": false}
           }
