@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from rich.console import Console
 
+import bench
 from benchmarking import collection, models, pilot_figures, pilot_results, processes
 from benchmarking.engines import TREATMENT_SPECS, Treatment
 from benchmarking.reports.store import CacheKey, ProofSummaryRecord, ReportStore, serialize_report_record
@@ -147,6 +148,20 @@ def test_worker_counts_are_part_of_real_cache_selection(tmp_path: Path) -> None:
     )
     request = models.EndpointRequest(make_target().request, "egg", threads=4)
     assert (request.threads, request.requested_threads) == (1, 4)
+
+
+def test_public_entrypoint_dispatches_pilot_without_importing_it_from_legacy_figures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received = []
+
+    def dispatch(argv: tuple[str, ...]) -> int:
+        received.append(argv)
+        return 7
+
+    monkeypatch.setattr(pilot_figures, "main", dispatch)
+    assert bench.main(["figures", "--pilot", "--threads", "4"]) == 7
+    assert received == [("--threads", "4")]
 
 
 def test_pilot_freezes_verified_executables_before_collection(tmp_path: Path) -> None:
@@ -358,3 +373,58 @@ def test_application_proof_views_omit_term_control_even_in_an_older_snapshot() -
     assert {row["treatment"] for row in runtime["conditions"]} == {"off", "proof-extraction"}
     assert runtime["selection_sha256"] == speedup["selection_sha256"]
     assert "shape" not in pilot_figures.bound_spec(runtime)["layer"][-1]["encoding"]
+
+
+def test_compact_capability_counts_execution_separately_from_timing_and_proof_validation() -> None:
+    snapshot = snapshot_fixture()
+    proof = snapshot["conditions"][2]
+    proof["observations"] = proof["observations"][:1]
+    proof["validation"] = {"status": "unknown", "issue": "no summary", "summary": None, "observation": None}
+    proof["table_correspondence"] = "known-difference"
+    tables = pilot_results.coverage_tables(snapshot)
+    main = tables["experiment-coverage.table.tex"]
+    details = tables["experiment-coverage-details.table.tex"]
+    assert "math-proofs & 1 & 1/1; 1/1 & N/A; 0/1" in main
+    assert "Existing programs + proofs & 1 & 1/1; 1/1 & N/A; 0/1" in main
+    assert "not compared" not in main and "not checked" not in main
+    assert "not compared" in details and "known difference" in details
+    assert "math-proofs / ours & 0/1 & unknown & unknown & unknown & unknown & unknown 1/1" in details
+    assert "math-proofs & 1 & 0 & 1 & 0 & 0" in details
+    assert "Tiny workload & 1/1; 1/1 & unknown & unavailable" in tables["composition-coverage.table.tex"]
+
+
+def test_coverage_retains_reference_certificates_and_known_partial_counter_denominators() -> None:
+    snapshot = snapshot_fixture()
+    reference, proof = snapshot["conditions"][0], snapshot["conditions"][2]
+    reference["treatment"] = "egg-proof-extraction"
+    reference["validation"] = deepcopy(proof["validation"])
+    proof["validation"]["status"] = "failed"
+    proof["validation"]["summary"]["success"] = False
+    proof["validation"]["summary"]["verified_certificates"] = 1
+    tables = pilot_results.coverage_tables(snapshot)
+    assert "math-proofs & 1 & 1/1; 1/1 & 1/1; 0/1" in tables["experiment-coverage.table.tex"]
+    details = tables["experiment-coverage-details.table.tex"]
+    assert "math-proofs / reference & 1/1 & 1 & 2 & 3 & 3 & passed 1/1" in details
+    assert "math-proofs / ours & 1/1 & 1 & 2 & 3 & 1 & failed 1/1" in details
+    assert "completed-prefix counters" in details
+    unknown = deepcopy(proof)
+    unknown["logical_id"] = "sha256:another-input"
+    unknown["validation"] = {"status": "unknown", "issue": "no summary", "summary": None, "observation": None}
+    partial = pilot_results._coverage_detail_row("partial / ours", [proof, unknown])
+    assert "partial / ours & 1/2 & 1 & 2 & 3 & 1 & failed 1/2; unknown 1/2" in partial
+
+
+def test_emitted_zero_counters_are_distinct_from_absent_summaries() -> None:
+    snapshot = snapshot_fixture()
+    proof = snapshot["conditions"][2]
+    proof["validation"]["status"] = "failed"
+    proof["validation"]["summary"] = {
+        "schema_version": 1,
+        "success": False,
+        "check_requests": 0,
+        "extraction_requests": 0,
+        "produced_certificates": 0,
+        "verified_certificates": 0,
+    }
+    detail = pilot_results.coverage_tables(snapshot)["experiment-coverage-details.table.tex"]
+    assert "math-proofs / ours & 1/1 & 0 & 0 & 0 & 0 & failed 1/1" in detail

@@ -19,6 +19,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return profile_main(raw_argv[1:])
     if raw_argv and raw_argv[0] == "figures":
+        if "--pilot" in raw_argv[1:]:
+            from benchmarking.pilot_figures import main as pilot_main
+
+            return pilot_main(tuple(arg for arg in raw_argv[1:] if arg != "--pilot"))
         from benchmarking.figures import main as figures_main
 
         return figures_main(raw_argv[1:])

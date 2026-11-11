@@ -17,6 +17,7 @@ from typing import Any
 
 from scipy import stats
 
+from .engines import PROOF_ORACLES
 from .reports.analysis import _ratio_estimate, _sample_estimate
 
 PILOT_DATA_VERSION = 1
@@ -273,33 +274,148 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
     return "\n".join(macros) + "\n", "\n".join(table) + "\n"
 
 
-def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
-    """Summarize planned inputs and executed proof evidence, retaining unknowns."""
-    result = pilot_results(snapshot, "extensions-runtime")
-    headers = [
-        r"\begin{tabular}{lrrrrrr}",
-        r"Experiment & Planned & Complete & Pending & Failed & Excluded & Checked proofs \\",
-        r"\hline",
+def _coverage_evidence(conditions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Separate observed execution, checked-run counters, and comparison evidence."""
+    proof_conditions = [c for c in conditions if c["treatment"] in PROOF_ORACLES]
+    summaries = [
+        c["validation"]["summary"]
+        for c in proof_conditions
+        if c["validation"] is not None and c["validation"]["summary"] is not None
     ]
-    composition = [
-        r"\begin{tabular}{llrrrr}",
-        r"Complete Slotted case & Status & Proofs off (s) & Production (s) & Overhead [95\% CI] & Checked proofs \\",
-        r"\hline",
-    ]
-    for row in result["coverage"]:
-        comparisons = [c for c in result["comparisons"] if c["experiment"] == row["id"]]
-        candidates = [c["ours"] for c in comparisons]
-        produced = [
-            c["validation"]["summary"]
-            for c in candidates
-            if c["validation"] is not None and c["validation"]["summary"] is not None
-        ]
-        verified = sum(p["verified_certificates"] for p in produced) if produced else None
-        verified_text = "unavailable" if verified is None else str(verified)
-        headers.append(
-            f"{tex_escape(row['label'])} & {row['planned']} & {row['complete']} & {row['pending']} "
-            f"& {row['failed']} & {row['excluded']} & {verified_text} " + r"\\"
+    validation = Counter(
+        c["validation"]["status"] if c["validation"] is not None else "unknown" for c in proof_conditions
+    )
+    return {
+        "planned": len(conditions),
+        "executed": sum(any(row["status"] == "success" for row in c["observations"]) for c in conditions),
+        "proof_configs": len(proof_conditions),
+        "validation": validation,
+        "summary_n": len(summaries),
+        "counters": {
+            field: sum(summary[field] for summary in summaries) if summaries else None
+            for field in ("check_requests", "extraction_requests", "produced_certificates", "verified_certificates")
+        },
+        "outputs": Counter(c.get("ordinary_output_parity", "not-compared") for c in conditions),
+        "tables": Counter(c.get("table_correspondence", "not-checked") for c in conditions),
+    }
+
+
+def _coverage_detail_row(label: str, conditions: list[dict[str, Any]]) -> str:
+    """Format counters with their known-input denominator and distinct validation states."""
+    evidence = _coverage_evidence(conditions)
+    values = [tex_escape(label)]
+    if evidence["proof_configs"]:
+        values.append(f"{evidence['summary_n']}/{evidence['planned']}")
+        for field in ("check_requests", "extraction_requests", "produced_certificates", "verified_certificates"):
+            value = evidence["counters"][field]
+            values.append(str(value) if value is not None else "unknown")
+        values.append(
+            tex_escape(
+                "; ".join(
+                    f"{status} {evidence['validation'][status]}/{evidence['planned']}"
+                    for status in ("passed", "failed", "pending", "unknown", "excluded")
+                    if evidence["validation"][status]
+                )
+            )
         )
+    else:
+        values.extend(["N/A"] * 6)
+    for field in ("outputs", "tables"):
+        values.append(
+            tex_escape(
+                "; ".join(
+                    f"{status.replace('-', ' ')} {count}/{evidence['planned']}"
+                    for status, count in sorted(evidence[field].items())
+                )
+            )
+        )
+    return " & ".join(values) + r" \\"
+
+
+def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
+    """Keep main capability evidence compact and detailed eligibility/counters separate."""
+    result = pilot_results(snapshot, "extensions-runtime")
+    applications = pilot_results(snapshot, "applications-proof-runtime")
+    groups = [
+        (item["label"], [row for row in result["comparisons"] if row["experiment"] == item["id"]])
+        for item in result["coverage"]
+    ]
+    groups.append(("Existing programs + proofs", applications["comparisons"]))
+    headers = [
+        r"\begin{tabular}{lrll}",
+        r"Experiment & Inputs & Executed (ref; ours) & Checked (ref; ours) \\",
+        r"\hline",
+    ]
+    timing = [
+        r"\begin{tabular}{lrrrrr}",
+        r"Experiment & Inputs & Eligible timing pairs & Pending & Failed & Excluded \\",
+        r"\hline",
+    ]
+    detail_rows = []
+    for label, comparisons in groups:
+        execution, checked = [], []
+        for role in ("reference", "ours"):
+            conditions = [row[role] for row in comparisons]
+            evidence = _coverage_evidence(conditions)
+            execution.append(f"{evidence['executed']}/{len(comparisons)}")
+            checked.append(
+                f"{evidence['validation']['passed']}/{len(comparisons)}" if evidence["proof_configs"] else "N/A"
+            )
+            detail_rows.append(_coverage_detail_row(f"{label} / {role}", conditions))
+        headers.append(
+            f"{tex_escape(label)} & {len(comparisons)} & {'; '.join(execution)} & {'; '.join(checked)} " + r"\\"
+        )
+        counts = Counter(row["state"] for row in comparisons)
+        timing.append(
+            f"{tex_escape(label)} & {len(comparisons)} & "
+            + " & ".join(str(counts[state]) for state in ("complete", "pending", "failed", "excluded"))
+            + r" \\"
+        )
+    headers.append(r"\end{tabular}")
+    timing.append(r"\end{tabular}")
+    # Source/review statuses are never inferred from execution or proof success.
+    unique_inputs = {c["logical_id"]: c for c in snapshot["conditions"]}
+    parity = Counter(c.get("ordinary_output_parity", "not-compared") for c in unique_inputs.values())
+    tables = Counter(c.get("table_correspondence", "not-checked") for c in unique_inputs.values())
+    correspondence = (
+        "Ordinary outputs: "
+        + "; ".join(f"{status.replace('-', ' ')} ({count} inputs)" for status, count in sorted(parity.items()))
+        + ". Table correspondence: "
+        + "; ".join(f"{status.replace('-', ' ')} ({count} inputs)" for status, count in sorted(tables.items()))
+        + "."
+    )
+    headers.append(
+        r"\par\smallskip{\footnotesize Counts use the fixed planned denominator. "
+        r"Executed means at least one successful timed run; checked means a successful "
+        r"separate certificate-validation run. N/A denotes a proofs-off configuration. "
+        "}"
+    )
+    counter_header = [
+        r"\begin{tabular}{llrrrrlll}",
+        r"Experiment / endpoint & Summaries K/N & Checks & Extracts & Produced & Verified & "
+        r"Validation inputs & Ordinary outputs & Tables \\",
+        r"\hline",
+    ]
+    counter_note = (
+        r"\par\smallskip{\footnotesize Counters describe one separate checked launch per input, "
+        r"not certificates from timed objects. K/N gives inputs with emitted summaries; "
+        r"unknown summaries are not zero counts. Failed launches may retain completed-prefix counters. "
+        r"Table differences are reviewed input metadata, not a fresh correspondence check. "
+        + tex_escape(correspondence)
+        + "}"
+    )
+    details = timing + [r"\par\medskip"] + counter_header + detail_rows + [r"\end{tabular}", counter_note]
+    composition = [
+        r"\begin{tabular}{llll}",
+        r"Complete Slotted case & Executed (off; proofs) & Proof validation & Overhead [95\% CI] \\",
+        r"\hline",
+    ]
+    composition_details = [
+        r"\begin{tabular}{llrrr}",
+        r"Complete Slotted case & Timing pair & Proofs off (s) & Production (s) & Overhead [95\% CI] \\",
+        r"\hline",
+    ]
+    composition_counter_rows = []
     for row in pilot_results(snapshot, "composition")["comparisons"]:
         values = []
         for metric in (
@@ -313,17 +429,31 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
                 else f"{metric['mean']:.4g}"
                 + (f" [{metric['ci_low']:.4g}, {metric['ci_high']:.4g}]" if metric["ci_low"] is not None else "")
             )
-        evidence = row["ours"]["validation"]
-        count = (
-            evidence["summary"]["verified_certificates"]
-            if evidence is not None and evidence["summary"] is not None
-            else "unavailable"
-        )
+        execution = [f"{_coverage_evidence([row[role]])['executed']}/1" for role in ("reference", "ours")]
+        validation = row["ours"]["validation"]
+        status = validation["status"] if validation is not None else "unknown"
         composition.append(
-            f"{tex_escape(row['label'])} & {tex_escape(row['state'])} & {' & '.join(values)} & {count} " + r"\\"
+            f"{tex_escape(row['label'])} & {'; '.join(execution)} & {tex_escape(status)} & {values[2]} " + r"\\"
         )
-    headers.append(r"\end{tabular}")
-    composition.append(r"\end{tabular}")
+        composition_details.append(
+            f"{tex_escape(row['label'])} & {tex_escape(row['state'])} & {' & '.join(values)} " + r"\\"
+        )
+        composition_counter_rows.append(_coverage_detail_row(row["label"], [row["ours"]]))
+    composition.extend(
+        (
+            r"\end{tabular}",
+            r"\par\smallskip{\footnotesize Executed inputs and separate certificate-validation outcomes "
+            r"are reported independently.}",
+        )
+    )
+    composition_details += [
+        r"\end{tabular}",
+        r"\par\medskip",
+        *counter_header,
+        *composition_counter_rows,
+        r"\end{tabular}",
+        counter_note,
+    ]
     sources = [
         r"\begin{tabular}{llrlrrr}",
         r"Project & Acquisition & Replays & Input LOC median [range] & "
@@ -367,6 +497,8 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
     return {
         "experiment-coverage.table.tex": "\n".join(headers) + "\n",
         "composition-coverage.table.tex": "\n".join(composition) + "\n",
+        "experiment-coverage-details.table.tex": "\n".join(details) + "\n",
+        "composition-coverage-details.table.tex": "\n".join(composition_details) + "\n",
         "corpus-sources.table.tex": "\n".join(sources) + "\n",
     }
 

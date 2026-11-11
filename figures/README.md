@@ -55,7 +55,17 @@ Runtime views show arithmetic means with marginal 95% t intervals in both
 directions; speedup views use reference/candidate ratios and Fieller intervals.
 The selected observations are identical in the paired views. Shared exports are
 `experiment-coverage.table.tex`, `corpus-sources.table.tex` and
-`composition-coverage.table.tex`. Only complete, separately validated pairs get
+`composition-coverage.table.tex`. The compact capability table reports execution
+and separate proof validation for reference and candidate with fixed planned-input
+denominators, including the existing-program proof configuration. Execution
+requires at least one successful timed run. The detailed artifact exports
+`experiment-coverage-details.table.tex` and `composition-coverage-details.table.tex`
+retain timing eligibility, failure/exclusion states, absolute per-case times,
+check/extraction request counts, produced/verified certificate counts and their
+known-summary K/N denominator. These counters describe the separate checked launch;
+missing summaries stay unknown and failed runs can retain completed-prefix counters.
+Ordinary-output and table-correspondence statuses remain distinct in the detailed
+artifacts. Only complete, separately validated pairs get
 finite estimates; pending, failed and reviewed excluded cases stay in coverage.
 There is no overall aggregate speedup. Source statistics include source links,
 acquisition method, original input LOC, per-workload runtime distributions and

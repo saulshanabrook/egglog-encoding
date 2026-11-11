@@ -695,10 +695,6 @@ def render_figure_data(
 def main(argv: Sequence[str] | None = None) -> int:
     """Use the ordinary shared benchmark phases for one deduplicated figure invocation."""
     raw = tuple(sys.argv[1:] if argv is None else argv)
-    if "--pilot" in raw:
-        from .pilot_figures import main as pilot_main
-
-        return pilot_main(tuple(arg for arg in raw if arg != "--pilot"))
     args, config = parse_args(raw)
     from .collection import BenchmarkRequest, collect, current_label_bindings, plan_collection, resolve_requests
     from .reports.store import ReportStore, parse_grouped_report
