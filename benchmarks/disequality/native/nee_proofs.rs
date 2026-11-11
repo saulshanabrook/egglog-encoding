@@ -146,14 +146,10 @@ fn run(
         .without_explanation_length_optimization();
     let mut assumptions = Vec::with_capacity(disequalities + 6);
     // The released loop omits numeral 5; retain its exact six initial constraints.
-    for x in 0..5 {
-        for y in x + 1..4 {
-            graph.add_expr(
-                &format!("(ne {} {})", NUMERALS[x], NUMERALS[y])
-                    .parse()
-                    .unwrap(),
-            );
-            assumptions.push((Witness::Initial(x, y), NUMERALS[x], NUMERALS[y]));
+    for (x, &left) in NUMERALS.iter().enumerate() {
+        for (y, &right) in NUMERALS.iter().enumerate().take(4).skip(x + 1) {
+            graph.add_expr(&format!("(ne {left} {right})").parse().unwrap());
+            assumptions.push((Witness::Initial(x, y), left, right));
         }
     }
     let start = Instant::now();
