@@ -1,0 +1,5 @@
+{
+  "scripts/reproduction_misaal_patterns.py": "4c6689e4c568eac48e17b6dd26d4e3644abd13fdd85b643cae78326f48e870ff",
+  "tests/test_reproduction_misaal_patterns.py": "55a4b057c52301aca072e3c9d65b456f591e488b3b3f5c07c181702a7c4ec377",
+  "benchmarks/reproduction/misaal-hardboiled.md": "3db8333e28c959a2f44f88abf5d8aaebf2f9bed44aee3563a5603c21c8cb9d5d"
+}

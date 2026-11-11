@@ -1,0 +1,56 @@
+{
+  "status": "sealed-reviewed-offline-only",
+  "sealed_at": "2026-09-25T11:55:57.155169+00:00",
+  "root": "/Users/saul/p/egglog-encoding",
+  "mirror": "/Users/saul/p/wt/egglog-encoding/misaal-parameter-abi",
+  "write_set": [
+    "scripts/reproduction_misaal_patterns.py",
+    "tests/test_reproduction_misaal_patterns.py",
+    "benchmarks/reproduction/misaal-hardboiled.md"
+  ],
+  "baseline_sha256": {
+    "scripts/reproduction_misaal_patterns.py": "4c6689e4c568eac48e17b6dd26d4e3644abd13fdd85b643cae78326f48e870ff",
+    "tests/test_reproduction_misaal_patterns.py": "55a4b057c52301aca072e3c9d65b456f591e488b3b3f5c07c181702a7c4ec377",
+    "benchmarks/reproduction/misaal-hardboiled.md": "3db8333e28c959a2f44f88abf5d8aaebf2f9bed44aee3563a5603c21c8cb9d5d"
+  },
+  "result_sha256": {
+    "scripts/reproduction_misaal_patterns.py": "4511c92e40a95b01730f88c8d6591c6e2ef2cee09b743c4a5b7f66d642dc5d08",
+    "tests/test_reproduction_misaal_patterns.py": "4ddc990a80769089e4f0329fcd4a863c72ef297171085c6a58621d821a0ed000",
+    "benchmarks/reproduction/misaal-hardboiled.md": "cfb5ad86dca8e4a433d31857ce787aa178bb756ea2ad8a271ea84ce5e851bf95"
+  },
+  "patch": "/Users/saul/p/wt/egglog-encoding/misaal-parameter-abi/review/parameter-abi.patch",
+  "patch_sha256": "b9d3728d3a4dc6255b3411e601716493968e4aebb5759c1cd2f8af0774953e84",
+  "checks": {
+    "focused_tests": {
+      "command": "pytest -q tests/test_reproduction_misaal_patterns.py",
+      "passed": 48
+    },
+    "ruff_check": "passed",
+    "ruff_format": "passed",
+    "mypy": "passed (2 source files)",
+    "actual_source_offline_reconstruction": "passed; all 21 class methods pinned; ordinary depth2 and general depth1 scripts exactly match complete c098 methods; originals restored",
+    "git_apply_check_against_live_root": "passed"
+  },
+  "independent_review": {
+    "agent": "/root/prove_extract_design_review",
+    "result": "no concrete blocker",
+    "scope": "two-site AST restoration independently matches local Git c098; actual source pins; code/default/global gates; retained methods; default-off and dedup coexistence"
+  },
+  "native_gate": {
+    "directory": "/Users/saul/p/wt/egglog-encoding/misaal-parameter-abi/diagnostics/misaal-parameter-abi-gate-0001",
+    "manifest_sha256": "7bf234a12b4039b0de86ce5dbfc5a48fa2fbbbf86f851cb9e493a472d06a71c6",
+    "prepared_programs": 4,
+    "executed": false
+  },
+  "root_integration_required": [
+    "Enter restore_parameter_abi(module,request,record,persist) around actual source execution",
+    "Bind parameter_abi and both required source_hashes to request/acquisition identity",
+    "Run actual emitted-script gates against completed pinned runtime, then fresh full source canary"
+  ],
+  "limitations": [
+    "Mixed-revision executable c098 ABI restoration, not equivalence to undocumented register-only semantics",
+    "No checkout mutation; 44ff validation/simplification remains",
+    "Offline tests do not establish package readiness or native source success",
+    "No native jobs, builds, root source writes or commits performed"
+  ]
+}
