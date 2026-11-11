@@ -522,6 +522,84 @@ mod tests {
     }
 
     #[test]
+    fn expression_reflexive_propositions_cover_shared_and_normalized_subterms() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype N (Z) (S N) (Pair N N)) (sort V (Vec N)) (sort SN (Set N))",
+            )
+            .unwrap();
+        for (source, sort) in [
+            ("x", "N"),
+            ("(Pair x (Pair x x))", "N"),
+            ("(vec-get (vec-of x x) 0)", "N"),
+            ("(set-insert (set-of x x) (Z))", "SN"),
+            ("(vec-get (vec-of x) 3)", "N"),
+        ] {
+            let expr = egraph.parser.get_expr_from_string(None, source).unwrap();
+            let n = egraph.get_sort_by_name("N").unwrap().clone();
+            let output = egraph.get_sort_by_name(sort).unwrap().clone();
+            let expr = egraph
+                .typecheck_expr_with_bindings_and_output(
+                    &expr,
+                    &[("x".into(), crate::Span::Panic, n)],
+                    output,
+                    crate::Context::Read,
+                )
+                .unwrap();
+            let mut dag = TermDag::default();
+            dag.app("unrelated".into(), vec![]);
+            let z = dag.app("Z".into(), vec![]);
+            let mut x = z;
+            let mut expected = vec![z];
+            for _ in 0..4 {
+                x = dag.app("S".into(), vec![x]);
+                expected.push(x);
+            }
+            let bindings = [("x".into(), x)].into_iter().collect();
+            let result = eval_expr_with_subst("subterm-closure", &expr, &mut dag, &bindings);
+            if source == "(vec-get (vec-of x) 3)" {
+                assert!(result.is_err());
+                continue;
+            }
+            let (term, propositions) = result.unwrap();
+            let root = match source {
+                "x" => x,
+                "(Pair x (Pair x x))" => {
+                    let inner = dag.app("Pair".into(), vec![x, x]);
+                    let outer = dag.app("Pair".into(), vec![x, inner]);
+                    expected.extend([inner, outer]);
+                    outer
+                }
+                "(vec-get (vec-of x x) 0)" => {
+                    expected.extend([
+                        dag.app("vec-of".into(), vec![x, x]),
+                        dag.lit(Literal::Int(0)),
+                    ]);
+                    x
+                }
+                "(set-insert (set-of x x) (Z))" => {
+                    let input = dag.app("set-of".into(), vec![x]);
+                    let output = dag.app("set-of".into(), vec![x, z]);
+                    expected.extend([input, output]);
+                    output
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(term, root, "{source}");
+            assert_eq!(
+                propositions,
+                expected
+                    .into_iter()
+                    .map(|term| Proposition::new(term, term))
+                    .collect(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn primitive_globals_work_in_actions_queries_and_rule_heads() {
         let source = r#"
             (datatype Math (Num i64))
