@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "root": "/Users/saul/p/egglog-encoding",
+    "mirror": "/Users/saul/p/wt/egglog-encoding/churchroad-source-global-scope",
+    "files": {
+      "scripts/suite_capture_eggcc_churchroad.py": "344c648d2f271bf20bc4c1f1f15b5526271cdee1e9b457d298bc582a4660fe4f",
+      "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+      "tests/test_suite_capture_eggcc_churchroad.py": "b02cac6ed0736de8b5bef3ceaeeeb4325e4a42c8475150235000911002667a55",
+      "benchmarks/reproduction/churchroad-environment.md": "99d94e6a2fa1af35c79be51f779cda25fac3972bedbed83aa25d647e56d7dbac"
+    }
+  },
+  "changed_files": [
+    "scripts/suite_capture_eggcc_churchroad.py",
+    "tests/test_suite_capture_eggcc_churchroad.py",
+    "benchmarks/reproduction/churchroad-environment.md"
+  ],
+  "result_sha256": {
+    "scripts/suite_capture_eggcc_churchroad.py": "ea9188ceeeeaaaeb0fbabf9fe9caa8c3fd26230dbf9100cf978367f684e09bf6",
+    "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+    "tests/test_suite_capture_eggcc_churchroad.py": "7d8543d22a387b6a8b59c375c5736c00ff751c08ee9517838c7dc3ea6f159798",
+    "benchmarks/reproduction/churchroad-environment.md": "14b8170dbc12be003283530d912187445c2ec2e59e9115069469f5ee9076b0bb"
+  },
+  "patch": "/Users/saul/p/wt/egglog-encoding/churchroad-source-global-scope/review/adapter.patch",
+  "patch_sha256": "e7e6adfed256b8dfa0cc26aaea65dc2f94cedc5368aabfd39730920ba1e07d6f",
+  "checks": {
+    "focused_tests": "75 passed in 0.34s",
+    "lightweight_tests": {
+      "files": [
+        "tests/test_suite_capture_eggcc_churchroad.py",
+        "tests/test_reproduction_validation.py",
+        "tests/test_reproduction_prepare_churchroad.py",
+        "tests/test_reproduction_continue_churchroad.py"
+      ],
+      "result": "132 passed in 0.76s"
+    },
+    "ruff": "check passed; format clean",
+    "mypy": "Success: no issues found in 2 source files",
+    "offline_actual_captures": "both passed; wide_mul exactly matches native-passed diagnostic candidate",
+    "native_jobs": "none",
+    "builds": "none",
+    "root_source_edits": "none",
+    "commits": "none",
+    "independent_review": "Root independently reviewed the three-file diff; no blocker found.",
+    "apply_check": "git apply --check passed against the live root baseline"
+  },
+  "offline_evidence": "/Users/saul/p/wt/egglog-encoding/churchroad-source-global-scope/review/offline-captures.json",
+  "limitations": [
+    "Known paper-era Churchroad source scope only; nested lets, push/pop/include, rebinding and post-binding declaration defaults or schedule conditions fail closed.",
+    "Retained full-source captures rematerialized offline only. Root must run both fresh parents and ordinary validation at integrated identity.",
+    "Historical mapping-prefix entrypoint retains its existing phase boundary; no source/proof engine, guard, cache/catalog or proof admission change."
+  ]
+}

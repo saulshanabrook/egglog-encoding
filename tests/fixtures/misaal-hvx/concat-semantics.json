@@ -1,0 +1,116 @@
+{
+  "hexagon_V6_interleave_2_128B": {
+    "target_instructions": {
+      "hexagon_V6_interleave_2_128B": {
+        "args": [
+          "SYMBOLIC_BV_16",
+          "16",
+          "32"
+        ],
+        "in_vectsize": 16,
+        "out_vectsize": 32,
+        "lanesize": 16,
+        "in_precision": 16,
+        "out_precision": 16,
+        "in_vectsize_index": 1,
+        "out_vectsize_index": 2,
+        "in_lanesize_index": 1,
+        "out_lanesize_index": 1,
+        "in_precision_index": 1,
+        "out_precision_index": 1,
+        "arg_permute_map": [
+          -1,
+          -1,
+          -1,
+          -1,
+          0,
+          1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "Signedness": 1,
+        "Cost": "None",
+        "SIMD": "True",
+        "Extensions": "['hvx']"
+      }
+    },
+    "semantics": [
+      "\"(define (hexagon_V6_interleave_2_128B %arg0  %num1 %num2 )\"",
+      "\"(concat %arg0 %arg0 )\"",
+      "\")\""
+    ]
+  },
+  "hexagon_V6_interleave_4_128B": {
+    "target_instructions": {
+      "hexagon_V6_interleave_4_128B": {
+        "args": [
+          "SYMBOLIC_BV_8",
+          "8",
+          "32"
+        ],
+        "in_vectsize": 8,
+        "out_vectsize": 32,
+        "lanesize": 8,
+        "in_precision": 8,
+        "out_precision": 8,
+        "in_vectsize_index": 1,
+        "out_vectsize_index": 2,
+        "in_lanesize_index": 1,
+        "out_lanesize_index": 1,
+        "in_precision_index": 1,
+        "out_precision_index": 1,
+        "arg_permute_map": [
+          -1,
+          -1,
+          -1,
+          -1,
+          0,
+          1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "Signedness": 1,
+        "Cost": "None",
+        "SIMD": "True",
+        "Extensions": "['hvx']"
+      }
+    },
+    "semantics": [
+      "\"(define (hexagon_V6_interleave_4_128B %arg0  %num1 %num2 )\"",
+      "\"(concat %arg0 %arg0 %arg0 %arg0)\"",
+      "\")\""
+    ]
+  }
+}

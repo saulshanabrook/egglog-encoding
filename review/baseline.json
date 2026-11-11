@@ -1,0 +1,10 @@
+{
+  "root": "/Users/saul/p/egglog-encoding",
+  "mirror": "/Users/saul/p/wt/egglog-encoding/churchroad-source-global-scope",
+  "files": {
+    "scripts/suite_capture_eggcc_churchroad.py": "344c648d2f271bf20bc4c1f1f15b5526271cdee1e9b457d298bc582a4660fe4f",
+    "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+    "tests/test_suite_capture_eggcc_churchroad.py": "b02cac6ed0736de8b5bef3ceaeeeb4325e4a42c8475150235000911002667a55",
+    "benchmarks/reproduction/churchroad-environment.md": "99d94e6a2fa1af35c79be51f779cda25fac3972bedbed83aa25d647e56d7dbac"
+  }
+}

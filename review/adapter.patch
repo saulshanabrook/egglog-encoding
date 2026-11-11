@@ -1,0 +1,263 @@
+--- a/scripts/suite_capture_eggcc_churchroad.py
++++ b/scripts/suite_capture_eggcc_churchroad.py
+@@ -412,25 +412,65 @@
+     return records
+ 
+ 
+-def rename_churchroad_globals(source: str, query: str, rules: str) -> tuple[str, str, dict[str, str]]:
+-    """Give frontend aliases fresh base names without changing literal circuit names.
+-
+-    Egglog's shadowing check compares a global's base name with rule variables,
+-    so merely adding ``$`` does not isolate ports named ``a`` or ``b``. This
+-    token substitution applies only to the frontend actions and appended query;
+-    the original rules and both schedules remain unchanged.
++def rename_churchroad_globals(
++    source: str, query: str, rules: str, *, aliases: dict[str, str] | None = None
++) -> tuple[str, str, dict[str, str]]:
++    """Preserve paper-era global references at each command's declaration time.
++
++    The native engine resolves bare names to previously declared globals, even
++    inside later rules. Carry aliases between source parts, but leave earlier
++    rule locals alone. Fresh base names avoid current global-shadowing errors.
+     """
+-    tokens = re.compile(r';[^\n]*|"(?:\\.|[^"\\])*"|[^\s();"]+')
+-    names = re.findall(r"^\(let ([^\s()]+)", source, re.MULTILINE)
+-    aliases = {name: f"$churchroad-global-{name}" for name in names}
++    tokens = re.compile(r';[^\n]*|"(?:\\.|[^"\\])*"|[()]|[^\s();"]+')
++    bindings = dict(aliases or {})
+     occupied = {token.lstrip("$") for token in tokens.findall(source + query + rules)}
+-    if any(alias.lstrip("$") in occupied for alias in aliases.values()):
+-        raise ValueError("Churchroad global alias prefix collides with an existing atom")
+-    return (
+-        tokens.sub(lambda match: aliases.get(match[0], match[0]), source),
+-        tokens.sub(lambda match: aliases.get(match[0], match[0]), query),
+-        aliases,
+-    )
++    translated = []
++    for program in (source, query):
++        edits = []
++        for start, end, form in egglog_forms(program):
++            kind = form[1]
++            atoms = [m for m in tokens.finditer(program, start, end) if not m[0].startswith(";")]
++            if kind in {"push", "pop", "include"} or any(
++                atoms[i - 1][0] == "(" and atom[0] == "let" for i, atom in enumerate(atoms[2:], 2)
++            ):
++                raise CaptureError("Churchroad nested binding/scope needs a reviewed global adaptation")
++            name = form[2] if kind == "let" else None
++            if name is not None:
++                alias = f"$churchroad-global-{name}"
++                if name in bindings:
++                    raise CaptureError("Churchroad global rebinding needs a reviewed adaptation")
++                if alias.lstrip("$") in occupied:
++                    raise ValueError("Churchroad global alias prefix collides with an existing atom")
++                edits.append((atoms[2].start(), atoms[2].end(), alias))
++            # Declaration names, sort names, schedule names and rule attributes
++            # are not expression variables. The pinned source has no global
++            # references in declaration defaults/merges or schedule conditions.
++            if kind in {"sort", "datatype", "function", "constructor", "relation", "ruleset", "run", "run-schedule"}:
++                if bindings and any(option in form for option in (":default", ":merge", ":until")):
++                    raise CaptureError("Churchroad declaration/schedule expression needs a reviewed global adaptation")
++            else:
++                depth = 0
++                attributes = False
++                for i, atom in enumerate(atoms):
++                    if atom[0] == "(":
++                        depth += 1
++                    elif atom[0] == ")":
++                        depth -= 1
++                    elif depth == 1 and atom[0].startswith(":"):
++                        attributes = True
++                    elif (
++                        not attributes
++                        and not (kind == "let" and i == 2)
++                        and atoms[i - 1][0] != "("
++                        and atom[0] in bindings
++                    ):
++                        edits.append((atom.start(), atom.end(), bindings[atom[0]]))
++            if name is not None:
++                bindings[name] = alias
++        for start, end, replacement in sorted(edits, reverse=True):
++            program = program[:start] + replacement + program[end:]
++        translated.append(program)
++    return translated[0], translated[1], bindings
+ 
+ 
+ def capture_churchroad(cases: list[dict], destination: Path) -> list[dict]:
+@@ -719,14 +759,12 @@
+                         chunks = []
+                         check_positions = []
+                         command_count = 0
++                        aliases: dict[str, str] = {}
+                         for part in session["parts"]:
+                             program = constructors(part["program"])
+-                            if re.search(r"^\(let ", program, re.MULTILINE):
+-                                if re.search(r"\((?:rule|rewrite)\s", program):
+-                                    raise CaptureError(
+-                                        "Churchroad mixed global/rule command needs a reviewed hygienic adaptation"
+-                                    )
+-                                program, _, _ = rename_churchroad_globals(program, "", session["program"])
++                            program, _, aliases = rename_churchroad_globals(
++                                program, "", session["program"], aliases=aliases
++                            )
+                             command_count += len(egglog_forms(program))
+                             for start, end, _ in egglog_forms(part["checks"]):
+                                 check_positions.append((command_count, part["checks"][start:end]))
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -62,6 +62,63 @@
+         rename_churchroad_globals(
+             '(let a (Var "a" 16))', "(check (= a a))", "(rule ((HasType churchroad-global-a t)) ((Known t)))"
+         )
++
++
++@pytest.mark.parametrize("separate_parts", [False, True])
++def test_churchroad_globals_apply_only_after_binding_and_persist_across_parts(separate_parts: bool) -> None:
++    prelude = "(rule ((Pair a b)) ((Seen a b)) :ruleset mapping)\n"
++    bindings = '(let a (Var "a" 16))\n(let b (Var "b" 32))\n'
++    mapping = (
++        "; a b ?a ?b stay spelled this way in comments\n"
++        '(rule ((Pair a b) (Pair ?a ?b) (Label "a b"))\n'
++        "      ((Seen a b) (Seen ?a ?b)) :ruleset mapping)\n"
++        "(run-schedule (saturate (seq typing transform mapping)))\n"
++    )
++    source = prelude + bindings + mapping
++    parts = [prelude, bindings, mapping] if separate_parts else [source]
++    aliases: dict[str, str] = {}
++    result = ""
++    for part in parts:
++        adapted, _, aliases = rename_churchroad_globals(part, "", source, aliases=aliases)
++        result += adapted
++    assert result == (
++        prelude
++        + '(let $churchroad-global-a (Var "a" 16))\n(let $churchroad-global-b (Var "b" 32))\n'
++        + "; a b ?a ?b stay spelled this way in comments\n"
++        + '(rule ((Pair $churchroad-global-a $churchroad-global-b) (Pair ?a ?b) (Label "a b"))\n'
++        + "      ((Seen $churchroad-global-a $churchroad-global-b) (Seen ?a ?b)) :ruleset mapping)\n"
++        + "(run-schedule (saturate (seq typing transform mapping)))\n"
++    )
++
++
++def test_churchroad_global_translation_distinguishes_expression_variables_from_names() -> None:
++    source = "(let + 3)\n(let mapping 7)\n(ruleset mapping)\n"
++    rules = "(rule ((= n (+ mapping +))) ((Found mapping n)) :ruleset mapping)\n"
++    adapted, query, _ = rename_churchroad_globals(source + rules, "(check (= (+ mapping +) 10))", source + rules)
++    assert adapted == (
++        "(let $churchroad-global-+ 3)\n(let $churchroad-global-mapping 7)\n(ruleset mapping)\n"
++        "(rule ((= n (+ $churchroad-global-mapping $churchroad-global-+))) "
++        "((Found $churchroad-global-mapping n)) :ruleset mapping)\n"
++    )
++    assert query == "(check (= (+ $churchroad-global-mapping $churchroad-global-+) 10))"
++
++
++@pytest.mark.parametrize(
++    "later",
++    [
++        "(push)",
++        "(pop)",
++        '(include "other.egg")',
++        "(let a (A))",
++        "(rule ((A)) ((let local a)))",
++        "(run mapping 1 :until (= a (A)))",
++        "(function f () Expr :merge a)",
++    ],
++)
++def test_churchroad_unreviewed_scoping_fails_closed(later: str) -> None:
++    source = "(let a (A))\n" + later
++    with pytest.raises(CaptureError, match="reviewed"):
++        rename_churchroad_globals(source, "", source)
+ 
+ 
+ @pytest.fixture
+@@ -830,6 +887,61 @@
+     assert "enumerate-modules" not in "".join(part["program"] for part in sessions[0]["parts"])
+ 
+ 
++def test_complete_churchroad_replay_carries_globals_and_binds_translated_contract(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_churchroad: list[dict]
++) -> None:
++    source = "(let a (A))\n"
++    rules = "(ruleset mapping)\n(rule ((= e (A)) (= e a)) ((union e a)) :ruleset mapping)"
++    for event in native_churchroad:
++        payload = event["payload"]
++        if event["kind"] == "yosys-output":
++            payload["stdout"] = source
++        elif event["kind"] == "commands" and payload["program"] == "(A)":
++            payload["program"] = source
++        elif event["kind"] == "commands" and payload["program"] == "(ruleset mapping)":
++            payload["program"] = rules
++    checkout = tmp_path / "checkout"
++    checkout.mkdir()
++    (checkout / "source.v").write_text("retained source identity")
++    binary, engine = tmp_path / "compiler", tmp_path / "engine"
++    binary.write_text("native compiler identity; never executed")
++    engine.write_text("replay engine identity; never executed")
++
++    def run(command: list[str], cwd: Path, prefix: Path, **kwargs: object) -> PilotProcessResult:
++        assert command[0] == "env", "offline materialization must not run the replay engine"
++        directory = Path(command[1].split("=", 1)[1])
++        for event in native_churchroad:
++            (directory / f"event-{event['sequence']:06}.json").write_text(json.dumps(event))
++        Path(command[command.index("--out-filepath") + 1]).write_text(native_churchroad[-1]["payload"]["verilog"])
++        stdout, stderr = Path(str(prefix) + ".stdout.log"), Path(str(prefix) + ".stderr.log")
++        stdout.write_text("source output")
++        stderr.write_text("")
++        return PilotProcessResult("success", 0, 0, 0, stdout, stderr, None)
++
++    monkeypatch.setattr(capture, "run_bounded_command", run)
++    record = capture.capture_complete(
++        "churchroad",
++        [{"id": "case", "source": "source.v"}],
++        tmp_path / "attempt",
++        checkout,
++        binary,
++        engine,
++        validate_ordinary=False,
++    )[0]
++    assert record["status"] == "ordinary-validation-pending" and not record["workloads"]
++    session = record["sessions"][0]
++    original = Path(session["raw"]).read_text()
++    replay = Path(session["replay"]).read_text()
++    assert source in original and rules in original
++    assert "(= e $churchroad-global-a)" in replay and "(union e $churchroad-global-a)" in replay
++    forms = [tokens for _, _, tokens in egglog_forms(replay)]
++    expected = [tokens for _, _, tokens in egglog_forms(churchroad_sessions(native_churchroad)[0]["checks"])]
++    assert [check["tokens"] for check in session["output_contract"]["checks"]] == expected
++    for check in session["output_contract"]["checks"]:
++        assert forms[check["command"]] == check["tokens"]
++        assert check["prefix_sha256"] == hashlib.sha256(json.dumps(forms[: check["command"]]).encode()).hexdigest()
++
++
+ def test_churchroad_intermediate_selection_is_bound_to_actual_input(native_churchroad: list[dict]) -> None:
+     graph = native_churchroad[-2]["payload"]["graph"]
+     query = churchroad_selection_check(graph, {"Expr-0": "b"}, "b", input_node="a")
+--- a/benchmarks/reproduction/churchroad-environment.md
++++ b/benchmarks/reproduction/churchroad-environment.md
+@@ -49,9 +49,25 @@
+   optimality proof. Replay SHA-256 is
+   `6b74b89a3c4be27171ff3d3c7c49cba986c2d8431c9adf432416f51574b2f7d5`.
+ - `wide_mul` completed its native parent and retained three successful
+-  syntheses and one full persistent replay; ordinary replay exhausted its
+-  guard as this note is written. Do not count it as reproduced until validation
+-  succeeds. Strict proof validation has not run for either canary.
++  syntheses and one full persistent replay; the original standalone replay
++  exhausted its guard. A later complete capture (`ae146d6f…/attempt-0001`)
++  finished the source parent in 2.006 seconds. A logging-only replay probe
++  localized the slowdown to the original mapping schedule before any check.
++  The adapter had renamed input globals `a`/`b` without updating references
++  inside later rules, turning those references into unrestricted variables.
++  The pinned native engine resolves bare names using globals already declared
++  when each command is processed; earlier rule locals and `?a`/`?b` stay local.
++  Complete replay now carries that declaration-time scope across source parts.
++- The isolated `churchroad-wide-mul-replay-scope-0001/probe-0001` diagnostic
++  changed only twelve proven global-reference tokens in that retained replay.
++  The same ordinary engine completed all original schedules and fourteen
++  unchanged checks in 0.343496 seconds (51,838,976-byte observed group peak),
++  under the shared guarded heavy slot. The diagnostic, manifest and mechanical
++  diff remain under `benchmarks/local/reproduction/diagnostics/`; prior receipts
++  remain unchanged. This establishes the specific scoping repair, not final
++  admission. Fresh complete parents and ordinary validation at the integrated
++  adapter identity are still required. Strict proof validation has not run for
++  either canary; no proof-engine change is part of this repair.
+ 
+ ## Required dependency closure
+ 
