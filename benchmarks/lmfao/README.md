@@ -105,8 +105,9 @@ before optimization uses the static input. Benchmark collection does not
 regenerate the inputs.
 
 `--rounds` controls measured repetitions. The search uses 192 rewrite rounds;
-this does not imply saturation. Optimizers and generated programs use one
-thread. The focused `./bench.py lmfao --data PATH --backend PATH --output-dir PATH`
+this does not imply saturation. Egraph optimizers use `--threads` workers (one
+by default); DAG extraction uses one worker. Generated programs use the recorded
+backend compiler flags. The focused `./bench.py lmfao --data PATH --backend PATH --output-dir PATH`
 command provides additional controls: `--rewrite-rounds` generates an input
 with a different search budget, `--cpu N` sets CPU affinity, `--jobs` controls
 compilation, and `--cxxflags` supplies generated-program flags.
@@ -201,14 +202,17 @@ timeouts.
 
 ## Proof replay
 
-The generated table includes two replay rows for the selected slotted plan:
-proofs off and proofs generated and checked. Both use the same binary, input,
+The generated table includes two timed replay rows for the selected slotted plan:
+proofs off and proof production. Both use the same binary, input,
 repetition count and memory cap. Their timeout is three times the optimization
 timeout. They use the same benchmark collector and cache as the optimization
 rows; missing measurements are collected automatically by `./bench.py figures`.
 
-The `slotted-proof-testing` treatment passes `--slotted --proofs` to generate
-and check source proofs. Ordinary egglog's `proofs` treatment only records proof
+The timed `slotted-proof-extraction` treatment passes `--slotted --proof-extraction`
+to materialize and simplify source certificates without verification or serialization.
+One separate `slotted-proof-testing` launch passes `--slotted --proofs` to check
+the certificates and records executed proof counters outside the timed rows.
+Ordinary egglog's `proofs` treatment only records proof
 information. A slotted input without equality checks does not certify a plan.
 
 The LMFAO run writes `slotted/proof.egg` beside the selected plan. This
@@ -217,7 +221,7 @@ computations. To repeat just this comparison through the harness:
 
 ```sh
 ./bench.py figures/output/eval/lmfao/slotted/proof.egg --compare-treatment slotted \
-  --treatment slotted-proof-testing --rounds 1 --timeout-sec 900 \
+  --treatment slotted-proof-extraction --rounds 3 --threads 4 --timeout-sec 1500 \
   --memory-limit-gib 16 --report /tmp/lmfao-proof.jsonl
 ```
 
@@ -226,12 +230,16 @@ with `python -m benchmarking.lmfao.program --proof-plan PLAN.json --output FILE.
 
 The check is appended after rewriting and asserts no new equalities. One batch
 claim avoids copying the proof context for each query. The run repeats rewriting
-with proofs enabled, reconstructs a source proof, checks it, simplifies it, and
-checks it again before formatting the result. A completed replay includes both
-checks and formatting. DAG extraction and C++ compilation are measured separately.
+with proofs enabled, reconstructs a source proof and simplifies it in memory.
+The separate checked replay checks it before and after simplification, counting
+each certificate once. DAG extraction and C++ compilation are measured separately.
 Replay does not select or execute another plan, so its preparation and execution
 cells are blank. Proof failures prevent publication; resource failures remain
 visible with their completed/failed sample counts.
+
+`--threads 4` on the LMFAO CLI or figure command selects four egraph workers for
+optimization and both replay modes. HiGHS DAG extraction remains single-threaded;
+generated query execution uses the separately recorded backend compiler flags.
 
 These proofs cover logical query transformations. Backend code generation and
 physical sharing are checked separately by executing every output against

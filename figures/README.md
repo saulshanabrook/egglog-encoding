@@ -1,5 +1,83 @@
 # Paper benchmark figures
 
+## Claims-aligned evaluation
+
+`./bench.py figures --pilot` selects the three-observation evaluation catalog in
+[`pilot.json`](pilot.json). It preserves the legacy publication path below.
+The default worker budget is four: egglog and extlog use four workers; serial
+native references record one effective worker and four requested workers.
+Time is wall-clock seconds, with no minimum-runtime cutoff. The defaults are
+500 seconds per timed process and a 16 GiB allocation cap where supported.
+
+From a frozen source checkout, collect the application scope first or collect all
+scopes together. Each command writes all four coordinated views from the current
+snapshot, so pending native endpoints remain visible while application data arrives.
+
+```sh
+./bench.py figures --pilot applications-proof-runtime applications-proof-speedup \
+  --target claims-eval-pilot=. --rounds 3 --threads 4 \
+  --report benchmarks/local/claims-eval-pilot/reports.jsonl \
+  --output-dir benchmarks/local/claims-eval-pilot/eval
+./bench.py figures --pilot extensions-runtime extensions-speedup composition \
+  --target claims-eval-pilot=. --rounds 3 --threads 4 \
+  --report benchmarks/local/claims-eval-pilot/reports.jsonl \
+  --output-dir benchmarks/local/claims-eval-pilot/eval
+```
+
+The application scope collects all 486 replays from six projects with `off`,
+`term` and `proof-extraction` once. Its graphs show only `off` versus
+`proof-extraction` (`extlog_cp`); `off` versus `term` is the corpus congruence
+comparison in the extensions graphs. The extensions scope also contains Math, restricted
+Slotted and disequality with/without proofs, complete Slotted without proofs,
+and the same corpus congruence comparison. Complete Slotted with proofs belongs
+to `composition`: all ten cases compare our complete proofs-off and proof
+production modes. It has no published native complete-proof competitor.
+An explicitly pending reference in the catalog is not launched; its candidate
+can still be collected. Disequality certificates cover the encoded/generated-name
+axioms and disequality witness on both sides, without source-level proof lifting.
+
+Timed proof modes record, extract, materialize and simplify certificates in memory.
+They exclude verification and serialization. After timed collection, the runner
+requests one separate checked launch per distinct proof configuration, matching
+binary, input, worker count and memory cap, with the existing threefold watchdog
+allowance. `--validation-only` performs just this separate validation. Executed
+request/certificate counters come from `--proof-summary`; a missing summary is
+unknown, and prevents a finite proof-performance estimate. A failed configuration
+is retained and is not automatically retried. Safety failures stop further launches.
+Before collection, built executables are copied into a content-addressed
+`executables/` folder beside the report and their SHA-256 hashes are verified.
+Timed production and checked validation use those same frozen executable paths.
+
+The four bundle stems are `extensions-runtime`, `extensions-speedup`,
+`applications-proof-runtime` and `applications-proof-speedup`. Each has PDF, SVG,
+PNG, bound Vega-Lite specification, results JSON, numbers TeX and table TeX files.
+Runtime views show arithmetic means with marginal 95% t intervals in both
+directions; speedup views use reference/candidate ratios and Fieller intervals.
+The selected observations are identical in the paired views. Shared exports are
+`experiment-coverage.table.tex`, `corpus-sources.table.tex` and
+`composition-coverage.table.tex`. Only complete, separately validated pairs get
+finite estimates; pending, failed and reviewed excluded cases stay in coverage.
+There is no overall aggregate speedup. Source statistics include source links,
+acquisition method, original input LOC, per-workload runtime distributions and
+validation counts. Ordinary-output parity and table correspondence remain
+separate metadata; they are not inferred from proof validation or timing success.
+
+To redraw a saved snapshot without the original inputs, working cache or builds:
+
+```sh
+./bench.py figures --pilot --reuse-from benchmarks/local/claims-eval-pilot/eval \
+  --no-runs --output-dir /tmp/claims-eval-replay
+```
+
+`--no-runs` without `--reuse-from` reads the dedicated cache and current input
+inventory without collecting or building. The report schema is 11, grouped schema
+8, and portable figure-data schema 3; older working caches require recomputation.
+Effective worker count is part of each endpoint cache identity. Pilot snapshots
+are portable data version 1 and retain all source, binary, input and selection
+provenance. Rendering finishes before existing files are replaced.
+
+## Legacy figure publication
+
 From the code repository root:
 
 ```sh
@@ -32,7 +110,7 @@ not require LMFAO. Missing or mismatched external inputs fail before collection.
 Its outputs are `lmfao.table.tex`, `lmfao.caption.tex`, `lmfao.numbers.tex`, `lmfao.md` and
 `lmfao.results.json`; plans, generated C++ and checks are retained under `lmfao/`.
 The table includes paired replays of `lmfao/slotted/proof.egg` with proofs off
-and with proofs generated and checked, collected through the same benchmark
+and with proof production, plus one separate checked validation, collected through the same benchmark
 harness; see the [proof replay instructions](../benchmarks/lmfao/README.md#proof-replay).
 Use `\input{figures/eval/lmfao.table.tex}` inside the manuscript's table and
 `\input{figures/eval/lmfao.caption.tex}` for its caption.

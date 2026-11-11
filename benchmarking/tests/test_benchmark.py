@@ -285,8 +285,8 @@ def test_comparison_permits_shared_binary_across_different_treatments() -> None:
 
     comparison = models.ComparisonSpec(baseline, candidate, (FILE_SPEC,), 2, 120)
 
-    assert baseline.cache_identity == ("sha256:shared", "off")
-    assert candidate.cache_identity == ("sha256:shared", "proofs")
+    assert baseline.cache_identity == ("sha256:shared", "off", 1)
+    assert candidate.cache_identity == ("sha256:shared", "proofs", 1)
     assert comparison.baseline.target is comparison.candidate.target
 
 

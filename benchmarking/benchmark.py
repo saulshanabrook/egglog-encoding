@@ -94,6 +94,8 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         default=DEFAULT_ROUNDS,
         help=f"rows required per endpoint/file result (default: {DEFAULT_ROUNDS})",
     )
+    parser.add_argument("--threads", type=positive_int, default=1, help="requested workers per process (default: 1)")
+    parser.add_argument("--compare-threads", type=positive_int, help="baseline worker budget (default: --threads)")
     parser.add_argument(
         "--timeout-sec",
         type=positive_int,
@@ -146,11 +148,13 @@ def endpoint_requests(args: argparse.Namespace) -> tuple[EndpointRequest, Endpoi
         baseline_target,
         cast(Treatment, str(args.compare_treatment)),
         memory_limit_bytes=args.memory_limit_bytes,
+        threads=getattr(args, "compare_threads", None) or getattr(args, "threads", 1) or 1,
     )
     candidate = EndpointRequest(
         candidate_target,
         cast(Treatment, str(args.treatment)),
         memory_limit_bytes=args.memory_limit_bytes,
+        threads=getattr(args, "threads", 1),
     )
     if baseline == candidate:
         raise ValueError("baseline and candidate endpoints must be different")
@@ -207,12 +211,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resolved_targets[baseline_request.target].binary_sha256_for(baseline_request.treatment),
                 baseline_request.treatment,
                 baseline_request.memory_limit_bytes,
+                baseline_request.threads,
+                baseline_request.requested_threads,
             ),
             candidate=BenchmarkEndpoint(
                 resolved_targets[candidate_request.target].row,
                 resolved_targets[candidate_request.target].binary_sha256_for(candidate_request.treatment),
                 candidate_request.treatment,
                 candidate_request.memory_limit_bytes,
+                candidate_request.threads,
+                candidate_request.requested_threads,
             ),
             files=files,
             rounds=int(args.rounds),

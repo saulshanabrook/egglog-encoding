@@ -352,7 +352,7 @@ def _timing_breakdowns(
     metric_estimates: dict[_MetricKey, _MetricEstimate],
 ) -> tuple[FileTimingBreakdown, ...]:
     if any(
-        not TREATMENT_SPECS[endpoint.treatment].timing_summary
+        not TREATMENT_SPECS[endpoint.treatment].timing_summary or endpoint.threads != 1
         for endpoint in (comparison.baseline, comparison.candidate)
     ):
         return ()

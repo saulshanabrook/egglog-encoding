@@ -12,19 +12,21 @@ const vega = await import(toolkit.resolve('vega'));
 const {compile} = await import(toolkit.resolve('vega-lite'));
 const {figures} = JSON.parse(await readFile(new URL('catalog.json', import.meta.url), 'utf8'));
 const input = (id, treatment, changes={}) => ({logical_id:id, label:id, family:'eggcc', file_sha256:id,
-  binary_sha256:'current', memory_limit_bytes:null, treatment, exclusion:null, validation_failures:{}, ...changes});
+  binary_sha256:'current', memory_limit_bytes:null, threads:1, treatment, exclusion:null, validation_failures:{}, ...changes});
 function group(id, treatment, values, changes={}) {
-  const key={binary_sha256:'current',file_sha256:id,treatment};
+  const key={binary_sha256:'current',file_sha256:id,treatment,threads:1};
   return {key,labels:['figures'],samples:values.map((value,index)=>({...key,row_index:index,
     started_at:new Date(Date.UTC(2026,9,1,0,0,index)).toISOString(),status:'success',timeout_sec:300,
     wall_sec:value,max_rss_bytes:value===null?null:value*1048576,...changes}))};
 }
 async function evaluate(name, inputs, groups, rounds=2, boundSpec=null, treatmentsOverride=null) {
+  groups=groups.map(g=>({...g,key:{...g.key,threads:g.key.threads??1}}));
+  inputs=inputs.map(i=>({...i,threads:i.threads??1}));
   const spec=boundSpec??JSON.parse(await readFile(new URL(figures[name].spec,import.meta.url),'utf8'));
   for(const p of spec.params) if(p.name==='selected_inputs')p.value=inputs.map(input=>({...input,
     selected_row_indices:input.selected_row_indices??groups.find(g=>g.labels.includes('figures')&&
       g.key.file_sha256===input.file_sha256&&
-      g.key.treatment===input.treatment)?.samples.slice(-rounds).map(row=>row.row_index)??[]}));
+      g.key.treatment===input.treatment&&g.key.threads===input.threads)?.samples.slice(-rounds).map(row=>row.row_index)??[]}));
     else if(p.name==='rounds')p.value=rounds;
     else if(p.name==='treatments')p.value=treatmentsOverride??figures[name].treatments;
     else if(p.name==='t_critical')p.value=({1:null,2:12.706204736432095,3:4.302652729749462,10:2.2621571628540993})[rounds];
@@ -32,7 +34,7 @@ async function evaluate(name, inputs, groups, rounds=2, boundSpec=null, treatmen
   const logger=vega.logger(vega.Warn,undefined,(...args)=>warnings.push(args));
   const runtime=compile(spec,{logger}).spec;
   const loader=vega.loader();
-  loader.load=async()=>JSON.stringify({grouped_schema_version:7,report_schema_version:9,groups});
+  loader.load=async()=>JSON.stringify({grouped_schema_version:8,report_schema_version:11,groups});
   const view=new vega.View(vega.parse(runtime),{renderer:'none',loader,logger});
   try {
     await view.runAsync();

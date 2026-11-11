@@ -146,26 +146,36 @@ def test_proof_replay_uses_the_shared_store_and_selected_plan_identity(
     source.write_text("(check (= 1 1))")
     launched = []
 
-    def observe(*args: Any) -> Any:
+    def observe(*args: Any, **kwargs: Any) -> Any:
         launched.append(args)
         return collection.ProcessObservation(
             processes.TimingResult("success", processes.TimingRow(wall_sec=2, max_rss_bytes=1024**2), None),
             make_timing_summary(),
+            {
+                "schema_version": 1,
+                "success": True,
+                "check_requests": 1,
+                "extraction_requests": 0,
+                "produced_certificates": 1,
+                "verified_certificates": 1,
+            }
+            if kwargs.get("proof_summary")
+            else None,
         )
 
     monkeypatch.setattr(collection, "preflight_collection", lambda *_: None)
     monkeypatch.setattr(collection, "run_process", observe)
     first = collect_replays(selected, source, 2, 900, 16 * 1024**3, 192)
-    assert len(launched) == store.row_count == 4
-    assert set(first) == {"slotted", "slotted-proof-testing"}
+    assert len(launched) == store.row_count == 5
+    assert set(first) == {"slotted", "slotted-proof-extraction"}
     assert {r["input_sha256"] for r in first.values()} == {sha256_file(source)}
     assert {r["binary_sha256"] for r in first.values()} == {target.binary_sha256}
     assert all(r["completed_samples"] == 2 and not r["failures"] for r in first.values())
     assert collect_replays(selected, source, 2, 900, 16 * 1024**3, 192) == first
-    assert len(launched) == store.row_count == 4
+    assert len(launched) == store.row_count == 5
     source.write_text("(check (= 2 2))")
     second = collect_replays(selected, source, 2, 900, 16 * 1024**3, 192)
-    assert len(launched) == store.row_count == 8
+    assert len(launched) == store.row_count == 10
     assert second["slotted"]["input_sha256"] != first["slotted"]["input_sha256"]
 
 
@@ -337,6 +347,19 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
         assert source.read_text().endswith("(check (= input selected_batch))\n")
         assert samples == 2 and timeout == 3 * cli.DEFAULT_TIMEOUT_SEC
         spend(5000)
+        collection.report["proof_replay_validation"] = {
+            "status": "passed",
+            "issue": None,
+            "observation": None,
+            "summary": {
+                "schema_version": 1,
+                "success": True,
+                "check_requests": 140,
+                "extraction_requests": 0,
+                "produced_certificates": 140,
+                "verified_certificates": 140,
+            },
+        }
         return {
             mode: {
                 "requested_samples": 2,
@@ -346,7 +369,7 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
                 "process_seconds": seconds_summary([seconds, seconds + 2]),
                 "peak_rss_mib": seconds_summary([1024, 1026]),
             }
-            for mode, seconds in [("slotted", 100), ("slotted-proof-testing", 400)]
+            for mode, seconds in [("slotted", 100), ("slotted-proof-extraction", 400)]
         }
 
     class Database:
@@ -444,7 +467,7 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
     assert "requests 2 observations" in comparison
     assert len([line for line in comparison.splitlines() if line.startswith("| Method")]) == 1
     assert all(line.count("|") == 7 for line in comparison.splitlines() if line.startswith("|"))
-    assert "Slotted replay (checked proofs) | 401.000 [" in comparison
+    assert "Slotted replay (proof production) | 401.000 [" in comparison
     assert "Slotted replay (proofs off) | 101.000 [" in comparison
     from benchmarking.lmfao.report import paper_results
 
@@ -456,15 +479,15 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
     assert "Samples" not in table and r"\begin{tabular}{lrrrrr}" in table
     assert r"27.000 & 40.000 & \shortstack{0.524" in table
     assert published["lmfao.md"] == comparison
-    checked = report["proof_replay"]["slotted-proof-testing"]
+    checked = report["proof_replay"]["slotted-proof-extraction"]
     checked["failures"] = [{"status": "failure"}]
     with pytest.raises(ValueError, match="proof replay"):
         paper_results(report)
     checked.update(
         completed_samples=0, process_seconds=None, peak_rss_mib=None, failures=[{"status": "memory-limited"}]
     )
-    assert "checked proofs) (memory-limited)" in paper_results(report)["lmfao.md"]
-    del report["proof_replay"]["slotted-proof-testing"]
+    assert "proof production) (memory-limited)" in paper_results(report)["lmfao.md"]
+    del report["proof_replay"]["slotted-proof-extraction"]
     with pytest.raises(ValueError, match="proof replay"):
         paper_results(report)
     # A failed extraction must stop before publishing any paper artifacts.

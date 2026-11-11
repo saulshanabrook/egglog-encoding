@@ -229,7 +229,8 @@ def _summary_section(
 
 
 def _endpoint_identity(endpoint: BenchmarkEndpoint) -> str:
-    return f"{endpoint.target.display_label} {endpoint.treatment}"
+    workers = f" · {endpoint.threads} workers" if endpoint.requested_threads != 1 else ""
+    return f"{endpoint.target.display_label} {endpoint.treatment}{workers}"
 
 
 def _deduplicate_summary_rows(

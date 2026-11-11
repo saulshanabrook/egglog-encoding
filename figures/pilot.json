@@ -1,0 +1,23 @@
+{
+  "rounds": 3,
+  "threads": 4,
+  "experiments": [
+    {"id": "math", "label": "Math", "candidate_label": "extlog_c", "reference_label": "egg", "candidate": "term", "reference": "egg", "color": "#0072b2", "files": ["../benchmarks/corpus/math/math-iteration-12.egg"]},
+    {"id": "math-proofs", "label": "Math + proofs", "candidate_label": "extlog_cp", "reference_label": "egg + proofs", "candidate": "proof-extraction", "reference": "egg-proof-extraction", "color": "#56b4e9", "files": ["../benchmarks/corpus/math/math-iteration-12.egg"]},
+    {"id": "slotted", "label": "Slotted restricted", "candidate_label": "extlog_s", "reference_label": "Slotted nested", "candidate": "slotted-no-aliasing", "reference": "slotted-ref-nested", "color": "#e69f00", "files": ["../benchmarks/slotted/inputs/sdql/*.egg"]},
+    {"id": "slotted-proofs", "label": "Slotted restricted + proofs", "candidate_label": "extlog_scp", "reference_label": "Slotted nested + proofs", "candidate": "slotted-proof-extraction-no-aliasing", "reference": "slotted-ref-nested-proofs", "color": "#b59b00", "files": ["../benchmarks/slotted/inputs/sdql/*.egg"]},
+    {"id": "slotted-complete", "label": "Slotted complete", "candidate_label": "extlog_s", "reference_label": "Slotted complete", "candidate": "slotted", "reference": "slotted-ref-multi", "color": "#009e73", "files": ["../benchmarks/slotted/inputs/sdql/*.egg"]},
+    {"id": "slotted-complete-proofs", "scope": "composition", "label": "Slotted complete + proofs", "candidate_label": "extlog_scp", "reference_label": "extlog_s (complete)", "candidate": "slotted-proof-extraction", "reference": "slotted", "color": "#66a61e", "files": ["../benchmarks/slotted/inputs/sdql/*.egg"]},
+    {"id": "disequality", "label": "Disequality", "candidate_label": "extlog_d", "reference_label": "Disegg DE", "candidate": "off", "reference": "egg-de", "color": "#d55e00", "files": ["../benchmarks/disequality/parameter-analysis.egg"]},
+    {"id": "disequality-proofs", "label": "Disequality + proofs", "candidate_label": "extlog_dcp", "reference_label": "NEE + Egg explanations (adapted driver)", "candidate": "proof-extraction", "reference": "egg-nee-proof-extraction", "color": "#cc79a7", "files": ["../benchmarks/disequality/parameter-analysis.egg"]},
+    {"id": "corpus-congruence", "label": "Congruence", "candidate_label": "extlog_c", "reference_label": "egglog", "candidate": "term", "reference": "off", "color": "#6a51a3", "files": ["../benchmarks/corpus/eggcc/*.egg", "../benchmarks/corpus/hardboiled/*.egg", "../benchmarks/corpus/misaal/*.egg", "../benchmarks/corpus/churchroad/*.egg", "../benchmarks/corpus/dialegg/*.egg", "../benchmarks/corpus/luminal/*.egg"]}
+  ],
+  "projects": {
+    "eggcc": {"label": "Eggcc", "color": "#0072b2", "source": "https://github.com/egraphs-good/eggcc", "capture": "Captured compiler invocations"},
+    "hardboiled": {"label": "HardBoiled", "color": "#d55e00", "source": "https://github.com/yihozhang/egglog-benchmarks", "capture": "Author-published egglog inputs"},
+    "misaal": {"label": "MISAAL", "color": "#009e73", "source": "https://github.com/RafaeNoor/MISAAL", "capture": "Captured compiler invocations"},
+    "churchroad": {"label": "Churchroad", "color": "#cc79a7", "source": "https://github.com/gussmith23/churchroad", "capture": "Captured compiler invocations"},
+    "dialegg": {"label": "DialEgg", "color": "#e69f00", "source": "https://github.com/AzizZayed/dialegg-cgo-artifact", "capture": "Captured artifact invocations"},
+    "luminal": {"label": "Luminal", "color": "#6a51a3", "source": "https://github.com/saulshanabrook/egglog_repro", "capture": "Saved model-optimization programs"}
+  }
+}

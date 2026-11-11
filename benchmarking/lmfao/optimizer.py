@@ -14,7 +14,14 @@ from typing import Any
 from rich.console import Console
 from scipy import stats
 
-from benchmarking.collection import BenchmarkRequest, collect, plan_collection, resolve_requests
+from benchmarking.collection import (
+    BenchmarkRequest,
+    collect,
+    plan_collection,
+    resolve_requests,
+    select_proof_validation,
+    validate_proof_requests,
+)
 from benchmarking.engines import Treatment
 from benchmarking.models import BenchmarkEndpoint, EndpointRequest, FileSpec, ResolvedTarget, TargetRequest
 from benchmarking.reports.analysis import _sample_estimate
@@ -24,7 +31,7 @@ from benchmarking.workloads import resolve_files
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES: dict[str, Treatment] = {"slotted": "slotted", "debruijn": "off"}
-REPLAY_MODES: tuple[Treatment, ...] = ("slotted", "slotted-proof-testing")
+REPLAY_MODES: tuple[Treatment, ...] = ("slotted", "slotted-proof-extraction")
 
 
 @dataclass
@@ -44,9 +51,14 @@ def measured_result(
     timeout: int,
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
+    threads: int = 1,
 ) -> dict[str, Any]:
     endpoint = BenchmarkEndpoint(
-        target.row, target.binary_sha256_for(treatment), treatment, memory_limit_bytes=memory_limit_bytes
+        target.row,
+        target.binary_sha256_for(treatment),
+        treatment,
+        memory_limit_bytes=memory_limit_bytes,
+        threads=threads,
     )
     selection = select_observations(store, endpoint, file, samples, timeout)
     rows = [row.record for row in selection.rows]
@@ -54,6 +66,7 @@ def measured_result(
     result.update(
         input_sha256=file.sha256,
         binary_sha256=endpoint.binary_sha256,
+        egraph_workers=endpoint.threads,
         source_revisions=sorted({row["target_git_sha"] for row in rows}),
         peak_rss_mib=seconds_summary(
             row["max_rss_bytes"] / 1024**2
@@ -71,19 +84,36 @@ def collect_replays(
     timeout: int,
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
+    threads: int = 1,
 ) -> dict[str, Any]:
-    """Compare checked proofs with ordinary checks on the same selected-plan input."""
+    """Time proof production and validate it separately on the selected-plan input."""
     file = resolve_files([str(source)], ROOT)[0]
     target, store = collection.target, collection.store
     requests = tuple(
-        BenchmarkRequest(EndpointRequest(target.request, mode, memory_limit_bytes=memory_limit_bytes), (file,))
+        BenchmarkRequest(
+            EndpointRequest(target.request, mode, memory_limit_bytes=memory_limit_bytes, threads=threads), (file,)
+        )
         for mode in REPLAY_MODES
     )
     targets = {target.request: target}
     pending = plan_collection(store, requests, targets, samples, timeout, False)
     collect(store, pending, requests, targets, timeout, Console(stderr=True))
+    validate_proof_requests(store, requests, targets, timeout, Console(stderr=True), validation_timeout_sec=timeout)
+    evidence = select_proof_validation(
+        store,
+        BenchmarkEndpoint(
+            target.row,
+            target.binary_sha256_for("slotted-proof-extraction"),
+            "slotted-proof-extraction",
+            memory_limit_bytes,
+            threads,
+        ),
+        file,
+        timeout,
+    )
+    collection.report["proof_replay_validation"] = evidence
     return {
-        mode: measured_result(store, target, file, mode, samples, timeout, memory_limit_bytes, rewrite_rounds)
+        mode: measured_result(store, target, file, mode, samples, timeout, memory_limit_bytes, rewrite_rounds, threads)
         for mode in REPLAY_MODES
     }
 
@@ -142,10 +172,15 @@ def optimizer_inputs(output: Path, rewrite_rounds: int) -> dict[str, FileSpec]:
 
 
 def optimizer_requests(
-    files: dict[str, FileSpec], target: TargetRequest, memory_limit_bytes: int | None
+    files: dict[str, FileSpec],
+    target: TargetRequest,
+    memory_limit_bytes: int | None,
+    threads: int = 1,
 ) -> tuple[BenchmarkRequest, ...]:
     return tuple(
-        BenchmarkRequest(EndpointRequest(target, treatment, memory_limit_bytes=memory_limit_bytes), (files[mode],))
+        BenchmarkRequest(
+            EndpointRequest(target, treatment, memory_limit_bytes=memory_limit_bytes, threads=threads), (files[mode],)
+        )
         for mode, treatment in MODES.items()
     )
 
@@ -158,18 +193,19 @@ def collect_optimizers(
     memory_limit_bytes: int | None,
     *,
     rewrite_rounds: int,
+    threads: int = 1,
 ) -> OptimizerCollection:
     """Measure LMFAO rewriting through the shared benchmark collector."""
     request = parse_target(str(ROOT))
     files = optimizer_inputs(output, rewrite_rounds)
-    requests = optimizer_requests(files, request, memory_limit_bytes)
+    requests = optimizer_requests(files, request, memory_limit_bytes, threads)
     store = ReportStore(report_path or output / "optimizer.jsonl")
     console = Console(stderr=True)
     targets = resolve_requests(requests, store, samples, timeout, False, ROOT, ROOT, console)
     pending = plan_collection(store, requests, targets, samples, timeout, False)
     collect(store, pending, requests, targets, timeout, console)
     return optimizer_report(
-        output, store, targets[request], files, samples, timeout, memory_limit_bytes, rewrite_rounds
+        output, store, targets[request], files, samples, timeout, memory_limit_bytes, rewrite_rounds, threads
     )
 
 
@@ -182,6 +218,7 @@ def optimizer_report(
     timeout: int,
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
+    threads: int = 1,
 ) -> OptimizerCollection:
     """Read the shared collection and build the extractor for plan generation."""
     subprocess.run(
@@ -200,11 +237,13 @@ def optimizer_report(
         "optimizer_report": str(store.path),
         "optimizer_timeout_seconds": timeout,
         "optimizer_memory_limit_bytes": memory_limit_bytes,
+        "egraph_workers": threads,
+        "dag_workers": 1,
     }
     successful = {}
     for mode, treatment in MODES.items():
         result = measured_result(
-            store, target, files[mode], treatment, samples, timeout, memory_limit_bytes, rewrite_rounds
+            store, target, files[mode], treatment, samples, timeout, memory_limit_bytes, rewrite_rounds, threads
         )
         report["optimizer"][mode] = result
         if result["issue"] is None and not result["failures"] and result["completed_samples"] == samples:

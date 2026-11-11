@@ -32,6 +32,8 @@ def status(message: str) -> None:
 def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = None) -> dict[str, Any]:
     provenance = verify_backend(args.backend)
     if args.cpu is not None:
+        if not hasattr(os, "sched_setaffinity"):
+            raise ValueError("CPU affinity is not supported on this platform")
         os.sched_setaffinity(0, {args.cpu})
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -39,12 +41,20 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
         collected
         if collected is not None
         else collect_optimizers(
-            out, args.samples, args.timeout, args.report, args.memory_limit_bytes, rewrite_rounds=args.rewrite_rounds
+            out,
+            args.samples,
+            args.timeout,
+            args.report,
+            args.memory_limit_bytes,
+            rewrite_rounds=args.rewrite_rounds,
+            threads=args.threads,
         )
     )
     documents, optimizer = collected.successful, collected.report
     metadata: dict[str, Any] = {
-        "cpu_affinity": sorted(os.sched_getaffinity(0)),
+        "cpu_affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+        "egraph_workers": args.threads,
+        "dag_workers": 1,
         "backend_sha256": sha256_file(args.backend),
         "backend_provenance": provenance,
         "cxx_version": subprocess.check_output(["g++", "--version"], text=True).splitlines()[0],
@@ -75,6 +85,7 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
                 "memory_limit_bytes": args.memory_limit_bytes,
                 "dag_timeout": args.dag_timeout,
                 "rewrite_rounds": args.rewrite_rounds,
+                "threads": args.threads,
             }
         status(f"Running LMFAO frontend, logical optimizer and code generation: {label}")
         directory = out / label
@@ -116,7 +127,7 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
     write_json(out / "identical-plans.json", aliases)
     replays = {}
     if "slotted" in plans:
-        status("Replaying the selected plan with proofs off and with checked proofs")
+        status("Replaying the selected plan with proofs off and with proof production")
         replays = collect_replays(
             collected,
             out / "slotted/proof.egg",
@@ -124,6 +135,7 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
             3 * args.timeout,
             args.memory_limit_bytes,
             args.rewrite_rounds,
+            args.threads,
         )
     status("Computing independent decimal answers outside pipeline timing")
     start = time.perf_counter()
@@ -213,12 +225,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dag-timeout", type=float, default=30)
     parser.add_argument("--build-timeout", type=int, default=900)
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--threads", type=int, default=1, help="Egraph workers; shared DAG extraction remains serial")
     parser.add_argument("--cxxflags", default=backend.FLAGS)
     parser.add_argument("--cpu", type=int)
     args = parser.parse_args(argv)
     if args.report == Path("-"):
         parser.error("--report requires a filesystem path, not '-'")
-    if min(args.samples, args.rewrite_rounds, args.timeout, args.build_timeout, args.jobs) < 1:
+    if min(args.samples, args.rewrite_rounds, args.timeout, args.build_timeout, args.jobs, args.threads) < 1:
         parser.error("rounds, timeouts and jobs must be positive")
     if not math.isfinite(args.dag_timeout) or args.dag_timeout <= 0:
         parser.error("DAG timeout must be finite and positive")

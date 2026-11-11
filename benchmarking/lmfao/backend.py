@@ -118,7 +118,15 @@ def optimize(config: dict[str, Any], source: Path, destination: Path) -> None:
     input_path = benchmark_input("slotted" if mode == "slotted" else "debruijn", out, config["rewrite_rounds"])
     phases["input_preparation"] = time.perf_counter() - start
     args, env = native_memory_command(
-        [config["extractor"], mode, str(input_path), str(destination), str(config["dag_timeout"])],
+        [
+            config["extractor"],
+            mode,
+            str(input_path),
+            str(destination),
+            str(config["dag_timeout"]),
+            "--threads",
+            str(config.get("threads", 1)),
+        ],
         os.environ,
         config["memory_limit_bytes"],
     )

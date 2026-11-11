@@ -16,7 +16,7 @@ from benchmarking import figures
 from benchmarking.engines import Treatment
 from benchmarking.figure_results import corpus_view_domains, figure_results, latex_results
 from benchmarking.models import Exclusion, FileSpec
-from benchmarking.reports.store import REPORT_SCHEMA_VERSION, GroupedReport, ReportStore
+from benchmarking.reports.store import GROUPED_SCHEMA_VERSION, REPORT_SCHEMA_VERSION, GroupedReport, ReportStore
 
 from .report_fixtures import make_record, make_target, write_report
 from .test_figures import catalog_fixture
@@ -41,7 +41,7 @@ def test_export_statistics_match_shared_executed_vega_fixture(name: str) -> None
         {
             "groups": fixture["groups"],
             "exclusions": {},
-            "grouped_schema_version": 7,
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
             "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
@@ -94,7 +94,12 @@ def test_intro_speedups_use_full_precision_absolute_means(name: str, treatments:
         for index, delta in zip(item["selected_row_indices"], (-0.0001, 0, 0.0001), strict=True):
             next(row for row in group["samples"] if row["row_index"] == index)["wall_sec"] = mean + delta
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        {
+            "groups": fixture["groups"],
+            "exclusions": {},
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
         "fixture",
     )
     result = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -133,8 +138,8 @@ def test_slotted_absolute_tables_sort_by_ratio_and_retain_mean_intervals(name: s
         {
             "groups": fixture["groups"] + extra["groups"],
             "exclusions": {},
-            "grouped_schema_version": 7,
-            "report_schema_version": 9,
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
     )
@@ -186,7 +191,7 @@ def test_exports_preserve_invalid_missing_and_unbounded_results_and_escape_tex(n
         {
             "groups": fixture["groups"],
             "exclusions": {},
-            "grouped_schema_version": 7,
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
             "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
@@ -273,7 +278,7 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
         {
             "groups": groups,
             "exclusions": {},
-            "grouped_schema_version": 7,
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
             "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
@@ -300,7 +305,7 @@ def test_shared_corpus_fixture_matches_export_counts_and_bound_view_layout(
         {
             "groups": fixture["groups"],
             "exclusions": {},
-            "grouped_schema_version": 7,
+            "grouped_schema_version": GROUPED_SCHEMA_VERSION,
             "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
