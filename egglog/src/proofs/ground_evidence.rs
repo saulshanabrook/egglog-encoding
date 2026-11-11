@@ -1,6 +1,7 @@
 //! Import existing evidence and compose ordinary raw proofs for ground terms.
 
 use super::ground::{Node, Row, fail};
+use super::proof_checker::gather_globals;
 use super::proof_extractor::RootExtractor;
 use super::proof_format::{ProofId, ProofStore, RawProof, RawProofId, RawProofStore};
 use crate::*;
@@ -18,6 +19,8 @@ pub(super) struct RawEquality {
 /// Raw operations and their decoded or composition-derived conclusions.
 pub(super) struct Proofs {
     pub(super) raw: RawProofStore,
+    /// Decoded evidence, with its term DAG lent to `raw` during composition.
+    decoded: ProofStore,
     conclusions: HashMap<RawProofId, RawEquality>,
     normalizers: HashMap<String, PrimitiveValidator>,
     value_heads: HashSet<String>,
@@ -72,7 +75,7 @@ impl Proofs {
             .proofs()
             .filter_map(|(id, proof)| (!matches!(proof, RawProof::Eval)).then_some(id))
             .collect::<Vec<_>>();
-        let (decoded, ids) = raw.lift(
+        let (mut decoded, ids) = raw.lift(
             &egraph.proof_check_program,
             &roots,
             normalizers.clone(),
@@ -93,7 +96,7 @@ impl Proofs {
                 )
             })
             .collect();
-        raw.term_dag = decoded.term_dag;
+        raw.term_dag = std::mem::take(&mut decoded.term_dag);
         let nodes = nodes
             .into_iter()
             .map(|node| Node {
@@ -108,6 +111,7 @@ impl Proofs {
         Ok((
             Self {
                 raw,
+                decoded,
                 conclusions,
                 normalizers,
                 value_heads,
@@ -413,11 +417,20 @@ impl Proofs {
 
     /// Lift completed roots with the ordinary lifter, preserving their order.
     pub(super) fn lift(
-        self,
+        mut self,
         program: &Vec<ResolvedNCommand>,
         roots: &[RawProofId],
     ) -> (ProofStore, Vec<ProofId>) {
-        self.raw
-            .lift(program, roots, self.normalizers, self.value_heads)
+        self.decoded.term_dag = std::mem::take(&mut self.raw.term_dag);
+        let globals = gather_globals(program, &mut self.decoded.term_dag)
+            .unwrap_or_else(|_| panic!("failed to gather globals from program"));
+        let ids = roots
+            .iter()
+            .map(|&root| {
+                self.decoded
+                    .lift_raw_proof(program, &globals, &self.raw, root)
+            })
+            .collect();
+        (self.decoded, ids)
     }
 }

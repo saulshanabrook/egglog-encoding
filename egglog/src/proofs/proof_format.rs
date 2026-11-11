@@ -314,7 +314,7 @@ fn global_action_at(
 #[derive(Clone)]
 pub struct ProofStore {
     pub(super) term_dag: TermDag,
-    /// Memo for one lifting pass; raw proof IDs belong to its single raw store.
+    /// Memo for one append-only raw store and its unchanged source program.
     proof_id: HashMap<RawProofId, ProofId>,
     pub(super) id_to_proof: DenseIdMap<ProofId, Proof>,
     /// Container constructor head -> its validator (the container's term
@@ -1181,7 +1181,10 @@ impl ProofStore {
     /// This adds new metadata to the proof, such as the substitution for rules.
     ///
     /// Panics if the raw proof is invalid with respect to the program.
-    fn lift_raw_proof(
+    /// When resuming, `raw_store` must be the same append-only store, and the
+    /// program and globals must be unchanged. Its original term DAG must remain
+    /// a prefix of `self.term_dag` so cached proof and term IDs stay valid.
+    pub(super) fn lift_raw_proof(
         &mut self,
         prog: &Vec<ResolvedNCommand>,
         globals: &HashMap<String, TermId>,
@@ -2224,6 +2227,70 @@ mod tests {
             assert_eq!(lifted[1], lifted[4]);
             assert_eq!(store.proofs().count(), 3);
         }
+    }
+
+    #[test]
+    fn lifting_resumes_after_composition_extends_the_term_dag() {
+        let program = vec![];
+        let mut raw = empty_store();
+        let a = raw.term_dag.app("a".into(), vec![]);
+        let b = raw.term_dag.app("b".into(), vec![]);
+        let fa = raw.term_dag.app("f".into(), vec![a]);
+        let change = raw.add_proof(RawProof::Fiat(a, b));
+        let exists = raw.add_proof(RawProof::Fiat(fa, fa));
+        let (mut decoded, imported) = raw.lift(
+            &program,
+            &[exists, change],
+            HashMap::default(),
+            HashSet::default(),
+        );
+        let prefix = decoded
+            .proofs()
+            .map(|(id, proof)| (id, proof.clone()))
+            .collect::<Vec<_>>();
+        raw.term_dag = std::mem::take(&mut decoded.term_dag);
+
+        // Composition appends a term absent from the imported evidence, then
+        // combines old evidence with new congruence and projection nodes.
+        let fb = raw.term_dag.app("f".into(), vec![b]);
+        let congr = raw.add_proof(RawProof::Congr(exists, 0, change));
+        let projection = raw.add_proof(RawProof::Proj(congr, 0));
+        let backward = raw.add_proof(RawProof::Sym(congr));
+        let round_trip = raw.add_proof(RawProof::Trans(congr, backward));
+        let roots = [round_trip, congr, change, projection, congr, exists];
+        let (fresh, fresh_ids) = raw.lift(&program, &roots, HashMap::default(), HashSet::default());
+
+        decoded.term_dag = std::mem::take(&mut raw.term_dag);
+        let globals = HashMap::default();
+        let resumed = roots
+            .iter()
+            .map(|&root| decoded.lift_raw_proof(&program, &globals, &raw, root))
+            .collect::<Vec<_>>();
+        assert_eq!(resumed[1], resumed[4]);
+        assert_eq!(resumed[2], imported[1]);
+        assert_eq!(resumed[5], imported[0]);
+        assert_eq!(
+            decoded.get(resumed[1]).proposition(),
+            &Proposition::new(fa, fb)
+        );
+        assert_eq!(
+            decoded.get(resumed[3]).proposition(),
+            &Proposition::new(b, b)
+        );
+        for (id, proof) in prefix {
+            assert_eq!(decoded.get(id), &proof);
+        }
+        for (resumed, fresh_id) in resumed.into_iter().zip(fresh_ids) {
+            assert_eq!(
+                decoded.get(resumed).proposition(),
+                fresh.get(fresh_id).proposition()
+            );
+            assert_eq!(
+                decoded.proof_to_string(resumed),
+                fresh.proof_to_string(fresh_id)
+            );
+        }
+        assert_eq!(decoded.proofs().count(), fresh.proofs().count());
     }
 
     /// A packed row over `columns`, as the extracted term of the constructor
