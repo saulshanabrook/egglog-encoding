@@ -222,7 +222,9 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 [budget.to_string()],
                 "source/reference schedule mismatch"
             );
-            let native = slotted_reference::run_spec(&spec, policy).unwrap();
+            let native =
+                slotted_reference::run_spec(&spec, policy, slotted_reference::ProofMode::Off)
+                    .unwrap();
             assert!(
                 !native.goals.is_empty(),
                 "paper workloads must prescribe a goal"
