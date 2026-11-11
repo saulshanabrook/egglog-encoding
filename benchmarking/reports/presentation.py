@@ -129,14 +129,20 @@ def _selection_section(
                 _git_display(endpoint.target.git_sha, endpoint.target.is_dirty),
             ),
             endpoint.treatment,
+            text_cell(
+                endpoint.threads,
+                str(endpoint.threads)
+                if endpoint.requested_threads == endpoint.threads
+                else f"{endpoint.threads} ({endpoint.requested_threads} requested)",
+            ),
         )
         for role, endpoint in (("baseline", comparison.baseline), ("candidate", comparison.candidate))
     )
     endpoint_table = _table(
         report_id("table", "selection", "endpoints"),
         "Comparison",
-        ("role", "target", "git", "treatment"),
-        ("Role", "Target", "Git", "Treatment"),
+        ("role", "target", "git", "treatment", "workers"),
+        ("Role", "Target", "Git", "Treatment", "Workers"),
         endpoint_rows,
         caption=_comparison_caption(report_path, comparison, file_labels),
     )
@@ -154,12 +160,24 @@ def _selection_section(
     ) or (
         baseline_engine == candidate_engine and comparison.baseline.binary_sha256 != comparison.candidate.binary_sha256
     )
-    if target_changed and comparison.baseline.treatment != comparison.candidate.treatment:
+    changes = [
+        name
+        for name, changed in (
+            ("target", target_changed),
+            ("treatment", comparison.baseline.treatment != comparison.candidate.treatment),
+            ("worker count", comparison.baseline.threads != comparison.candidate.threads),
+        )
+        if changed
+    ]
+    if len(changes) > 1:
+        changed_text = (
+            ("both " + " and ".join(changes)) if len(changes) == 2 else ", ".join(changes[:-1]) + ", and " + changes[-1]
+        )
         blocks.append(
             ReportMessage(
                 report_id("message", "selection", "joint-comparison"),
                 None,
-                "This comparison changes both target and treatment. "
+                f"This comparison changes {changed_text}. "
                 "Its ratios describe the joint endpoint change and do not isolate one cause.",
                 tone="warning",
             )

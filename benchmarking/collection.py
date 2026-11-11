@@ -590,6 +590,8 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         required_outputs = []
         if any(TREATMENT_SPECS[run.treatment].timing_summary and run.threads == 1 for run in binary_runs):
             required_outputs.append("--timing-summary")
+        if binary_name == "egglog-experimental" and any(run.threads > 1 for run in binary_runs):
+            required_outputs.append("--threads")
         bound = next((run.memory_limit_bytes for run in binary_runs if run.memory_limit_bytes is not None), None)
         if bound is not None:
             required_outputs.append("--memory-limit-bytes")
