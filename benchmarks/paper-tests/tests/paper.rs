@@ -59,9 +59,121 @@ struct Observations {
     comparison_in_root_class: Vec<Option<bool>>,
 }
 
-fn observe(file: &Path, mode: &str, expected: Option<&Observations>) -> Observations {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProofSummary {
+    schema_version: usize,
+    success: bool,
+    check_requests: usize,
+    extraction_requests: usize,
+    produced_certificates: usize,
+    verified_certificates: usize,
+}
+
+fn checked_summary(path: &Path) -> ProofSummary {
+    let summary: ProofSummary =
+        serde_json::from_reader(std::fs::File::open(path).unwrap()).unwrap();
+    assert_eq!(summary.schema_version, 1);
+    assert!(summary.success, "proof validation did not succeed");
+    assert!(summary.check_requests + summary.extraction_requests > 0);
+    assert_eq!(summary.produced_certificates, summary.verified_certificates);
+    summary
+}
+
+/// The full author input and both canaries use the same CSV/certificate contract.
+fn check_author_input(
+    root: &Path,
+    mode: &str,
+    input: &Path,
+    base: usize,
+    diseq_num: usize,
+    contradiction: &str,
+    sizes: Option<(usize, usize)>,
+) {
+    let proofs = mode == "egg-nee-proof-testing";
+    let binary = root
+        .join("benchmarks/local/parameter-native/target/release")
+        .join(if proofs { "egg-nee-proofs" } else { mode });
+    let method = match mode {
+        "egg-de" => "de",
+        "egg-ee" => "ee",
+        "egg-nee" => "nee-no-saturation",
+        "egg-oee" => "nee-with-saturation",
+        "egg-nee-proof-testing" => "nee-proofs",
+        _ => panic!("unmapped author driver {mode}"),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let proof_path = directory.path().join("proof-summary.json");
+    let mut command = Process::new(&binary);
+    command
+        .arg(input)
+        .arg(base.to_string())
+        .arg(diseq_num.to_string());
+    if proofs {
+        command
+            .args(["--proof-mode", "check", "--proof-summary"])
+            .arg(&proof_path);
+    }
+    let output = command.output().unwrap_or_else(|error| {
+        panic!(
+            "{}: {error}; run make check to prepare author drivers",
+            binary.display()
+        )
+    });
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut rows = text.lines();
+    let headers: Vec<_> = rows.next().unwrap().split(',').collect();
+    let values: Vec<_> = rows.next().unwrap().split(',').collect();
+    assert_eq!(headers.len(), values.len());
+    for (column, expected) in [("method", method), ("contradiction", contradiction)] {
+        let index = headers.iter().position(|&name| name == column).unwrap();
+        assert_eq!(
+            values[index],
+            expected,
+            "{mode}: {} / {column}",
+            input.display()
+        );
+    }
+    let mut counts = vec![("base", base), ("diseq_num", diseq_num)];
+    if let Some((nodes, classes)) = sizes {
+        counts.extend([("number_nodes", nodes), ("number_classes", classes)]);
+    }
+    for (column, expected) in counts {
+        let index = headers.iter().position(|&name| name == column).unwrap();
+        assert_eq!(
+            values[index].parse::<usize>().unwrap(),
+            expected,
+            "{mode}: {} / {column}",
+            input.display()
+        );
+    }
+    assert!(rows.next().is_none());
+    if proofs {
+        let summary = checked_summary(&proof_path);
+        assert_eq!(
+            (summary.check_requests, summary.extraction_requests),
+            (1, 0)
+        );
+        assert_eq!(
+            summary.produced_certificates,
+            usize::from(contradiction == "Y")
+        );
+    }
+}
+
+fn observe(
+    file: &Path,
+    mode: &str,
+    expected: Option<&Observations>,
+    egraph_threads: usize,
+) -> Observations {
     let mut graph = new_experimental_egraph_with_options(mode == "off");
-    graph.set_num_threads(1);
+    graph.set_num_threads(egraph_threads);
     graph = match mode {
         "off" => graph,
         "term" => graph.with_term_encoding_enabled(),
@@ -117,9 +229,10 @@ fn math_counts(graph: &EGraph) -> (BTreeMap<String, usize>, usize) {
     (constructors, classes.len())
 }
 
-fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
+fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_threads: usize) {
     use slotted_reference::{Matcher, Substitution};
-    paper_oracles::validate(root, file, requested).unwrap();
+    let requested = paper_oracles::correctness_modes(requested.iter().map(String::as_str));
+    paper_oracles::validate(root, file, &requested).unwrap();
     if requested.iter().any(|mode| mode.starts_with("slotted")) {
         let source = std::fs::read_to_string(file).unwrap();
         let frozen = std::fs::read_to_string(file.with_extension("ref")).unwrap();
@@ -151,27 +264,43 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             .collect();
         let before = rendered[..=boundary].join("\n");
         let tail = rendered[boundary + 1..].join("\n");
-        if requested.contains("slotted-proof-testing") {
+        for (name, no_aliasing) in [
+            ("slotted-proof-testing", false),
+            ("slotted-proof-testing-no-aliasing", true),
+        ] {
+            if !requested.contains(name) {
+                continue;
+            }
             use egglog_experimental::slotted::{
                 Compiler, Options, ProofMode, new_egraph_with_proofs,
             };
             let mut compiler = Compiler::new(Options {
+                no_aliasing,
                 proof_mode: ProofMode::Prove,
-                ..Default::default()
             });
             let mut graph = new_egraph_with_proofs();
-            graph.set_num_threads(1);
+            graph.set_num_threads(egraph_threads);
+            let summary = graph
+                .extension_state_or_default::<egglog::proof_summary::ProofSummary>()
+                .clone();
             let program = compiler.compile_program(None, &source).unwrap();
-            let expected = program.to_string().matches("(slotted-prove ").count();
-            assert!(expected > 0, "proof treatment needs ground equality claims");
             let outputs = program.run(&mut graph).unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("proof-summary.json");
+            summary.write(&path, true).unwrap();
+            let summary = checked_summary(&path);
+            assert!(
+                summary.produced_certificates
+                    >= summary.check_requests + summary.extraction_requests,
+                "{name}: every executed source request needs a certificate"
+            );
             assert_eq!(
                 outputs
                     .iter()
                     .filter(|o| matches!(o, CommandOutput::UserDefined(_)))
                     .count(),
-                expected,
-                "every source equality must produce a checked proof"
+                summary.check_requests + summary.extraction_requests,
+                "{name}: every executed source request must produce checked proofs"
             );
         }
         let mut counts = BTreeMap::new();
@@ -187,7 +316,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 },
             );
             let mut graph = egglog_experimental::slotted::new_egraph();
-            graph.set_num_threads(1);
+            graph.set_num_threads(egraph_threads);
             let lowered = compiler.compile(None, &before).unwrap();
             graph.parse_and_run_program(None, &lowered).unwrap();
             let size = egglog_experimental::slotted::export::counts(&graph).unwrap();
@@ -195,17 +324,36 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             let lowered = compiler.compile(None, &tail).unwrap();
             graph.parse_and_run_program(None, &lowered).unwrap();
         }
-        for (name, matcher, policy) in [
-            ("slotted-ref-multi", Matcher::Multi, Substitution::Snapshot),
+        for (name, matcher, policy, proofs) in [
+            (
+                "slotted-ref-multi",
+                Matcher::Multi,
+                Substitution::Snapshot,
+                false,
+            ),
             (
                 "slotted-ref-nested-snapshot",
                 Matcher::Nested,
                 Substitution::Snapshot,
+                false,
             ),
             (
                 "slotted-ref-nested",
                 Matcher::Nested,
                 Substitution::Syntactic,
+                false,
+            ),
+            (
+                "slotted-ref-multi-proof-testing",
+                Matcher::Multi,
+                Substitution::Snapshot,
+                true,
+            ),
+            (
+                "slotted-ref-nested-proof-testing",
+                Matcher::Nested,
+                Substitution::Syntactic,
+                true,
             ),
         ] {
             if !requested.contains(name) {
@@ -233,6 +381,51 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 native.goals.iter().all(|&goal| goal),
                 "{name} did not establish the prescribed target"
             );
+            if proofs {
+                // Keep explanation tracking out of the large proof-off oracles in
+                // this package. The separate native binary owns its proof feature.
+                let executable = std::env::current_exe().unwrap();
+                let binary = executable.parent().unwrap().parent().unwrap().join(format!(
+                    "slotted-reference-proofs{}",
+                    std::env::consts::EXE_SUFFIX
+                ));
+                let directory = tempfile::tempdir().unwrap();
+                let proof_path = directory.path().join("proof-summary.json");
+                let output = Process::new(&binary)
+                    .args([
+                        "--matcher",
+                        if matcher == Matcher::Multi { "multi" } else { "nested" },
+                        "--substitution",
+                        if policy == Substitution::Snapshot { "snapshot" } else { "syntactic" },
+                        "--proof-mode",
+                        "check",
+                        "--proof-summary",
+                    ])
+                    .arg(&proof_path)
+                    .arg(file.with_extension("ref"))
+                    .output()
+                    .unwrap_or_else(|error| panic!("{}: {error}; build slotted-reference-proofs separately before paper tests", binary.display()));
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let text = String::from_utf8(output.stdout).unwrap();
+                let goals: Vec<_> = text
+                    .lines()
+                    .filter(|line| line.starts_with("GOAL "))
+                    .collect();
+                assert_eq!(goals, vec!["GOAL yes"; native.goals.len()]);
+                let sizes: Vec<_> = text
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("SIZES "))
+                    .collect();
+                assert_eq!(sizes, [format!("{} {}", native.classes, native.nodes)]);
+                let summary = checked_summary(&proof_path);
+                assert_eq!(summary.check_requests, native.goals.len());
+                assert_eq!(summary.extraction_requests, 0);
+                assert_eq!(summary.produced_certificates, native.goals.len());
+            }
             if policy == Substitution::Snapshot {
                 let nested = matcher == Matcher::Nested;
                 let expected = counts.get(&nested).expect(
@@ -254,7 +447,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
     let file_identity = file.canonicalize().unwrap();
     let mut observations = BTreeMap::new();
     let mut modes = BTreeSet::new();
-    for mode in requested {
+    for mode in &requested {
         match mode.as_str() {
             "off" | "term" => {
                 modes.insert(mode.as_str());
@@ -282,7 +475,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
         }
         eprintln!("Validating {mode}");
         let reference = if mode == "off" { "term" } else { "off" };
-        let observed = observe(file, mode, observations.get(reference));
+        let observed = observe(file, mode, observations.get(reference), egraph_threads);
         observations.insert(mode, observed);
     }
     for mode in ["term", "proof-testing"] {
@@ -348,7 +541,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             );
         }
     }
-    for mode in requested {
+    for mode in &requested {
         if matches!(
             mode.as_str(),
             "egg" | "egg-proofs" | "egg-proof-extraction" | "egg-proof-testing"
@@ -385,7 +578,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 "native Math constructor/class counts differ"
             );
             let mut graph = new_experimental_egraph_with_options(policy == ProofMode::Off);
-            graph.set_num_threads(1);
+            graph.set_num_threads(egraph_threads);
             if policy == ProofMode::Check {
                 graph = graph.with_proofs_enabled().with_proof_testing();
             }
@@ -410,14 +603,11 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                 "unregistered author-driver input"
             );
             eprintln!("Validating {mode}");
-            let binary = root
-                .join("benchmarks/local/parameter-native/target/release")
-                .join(mode);
-            let (method, nodes, classes) = match mode.as_str() {
-                "egg-de" => ("de", 1_462_208, 1_362_208),
-                "egg-ee" => ("ee", 1_499_310, 1_362_209),
-                "egg-nee" => ("nee-no-saturation", 1_472_210, 1_372_210),
-                "egg-oee" => ("nee-with-saturation", 1_482_201, 1_362_210),
+            let (nodes, classes) = match mode.as_str() {
+                "egg-de" => (1_462_208, 1_362_208),
+                "egg-ee" => (1_499_310, 1_362_209),
+                "egg-nee" | "egg-nee-proof-testing" => (1_472_210, 1_372_210),
+                "egg-oee" => (1_482_201, 1_362_210),
                 _ => unreachable!(),
             };
             let canaries = root.join("benchmarks/disequality/correctness");
@@ -432,49 +622,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
                     Some((nodes, classes)),
                 ),
             ] {
-                let output = Process::new(&binary)
-                    .arg(&input)
-                    .arg(base.to_string())
-                    .arg(diseq_num.to_string())
-                    .output()
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "{}: {error}; run make check to prepare author drivers",
-                            binary.display()
-                        )
-                    });
-                assert!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                let text = String::from_utf8(output.stdout).unwrap();
-                let mut rows = text.lines();
-                let headers: Vec<_> = rows.next().unwrap().split(',').collect();
-                let values: Vec<_> = rows.next().unwrap().split(',').collect();
-                for (column, expected) in [("method", method), ("contradiction", contradiction)] {
-                    let index = headers.iter().position(|&name| name == column).unwrap();
-                    assert_eq!(
-                        values[index],
-                        expected,
-                        "{mode}: {} / {column}",
-                        input.display()
-                    );
-                }
-                let mut counts = vec![("base", base), ("diseq_num", diseq_num)];
-                if let Some((nodes, classes)) = sizes {
-                    counts.extend([("number_nodes", nodes), ("number_classes", classes)]);
-                }
-                for (column, expected) in counts {
-                    let index = headers.iter().position(|&name| name == column).unwrap();
-                    assert_eq!(
-                        values[index].parse::<usize>().unwrap(),
-                        expected,
-                        "{mode}: {} / {column}",
-                        input.display()
-                    );
-                }
-                assert!(rows.next().is_none());
+                check_author_input(root, mode, &input, base, diseq_num, contradiction, sizes);
             }
         }
     }
@@ -568,16 +716,20 @@ fn main() {
         .unwrap()
         .canonicalize()
         .unwrap();
+    let egraph_threads =
+        paper_oracles::egraph_threads(std::env::var_os("PAPER_EGRAPH_THREADS").as_deref()).unwrap();
     if raw.get(1).is_some_and(|arg| arg == "--paper-child") {
         std::env::set_current_dir(&root).unwrap();
         check_case(
             &root,
             Path::new(&raw[2]),
             &raw[3].split(',').map(str::to_owned).collect(),
+            egraph_threads,
         );
         return;
     }
     let catalog_path = root.join("figures/catalog.json");
+    eprintln!("Paper egraph workers: {egraph_threads}; native reference drivers remain serial");
     eprintln!(
         "Paper native reference internal checks: {}",
         slotted_reference::CHECKS_ENABLED
@@ -651,12 +803,21 @@ fn main() {
         "egg-ee",
         "egg-nee",
         "egg-oee",
+        "egg-nee-proof-extraction",
+        "egg-nee-proof-testing",
         "slotted",
         "slotted-proof-testing",
+        "slotted-proof-testing-no-aliasing",
+        "slotted-proof-extraction",
+        "slotted-proof-extraction-no-aliasing",
         "slotted-no-aliasing",
         "slotted-ref-multi",
         "slotted-ref-nested",
         "slotted-ref-nested-snapshot",
+        "slotted-ref-multi-proofs",
+        "slotted-ref-nested-proofs",
+        "slotted-ref-multi-proof-testing",
+        "slotted-ref-nested-proof-testing",
     ];
     for rule in &mut ignores {
         assert!(matches!(
@@ -736,6 +897,56 @@ fn main() {
         ),
     };
     let mut trials = Vec::new();
+    trials.push(Trial::test("paper/proof-dispatch/slotted", move || {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("benchmarks/slotted/inputs/smoke.egg");
+        std::fs::create_dir_all(file.parent().unwrap())?;
+        std::fs::write(&file, r#"
+            (sort E)
+            (constructor V (Var) E)
+            (constructor Lam (Var E) E :binder 0)
+            (constructor App (E E) E)
+            (rewrite (App (Lam $x body) arg) (subst body $x arg) :name "beta")
+            (let input0 (App (Lam $0 (V $0)) (V $1)))
+            (run 1)
+            (check (= input0 (V $1)))
+            (extract input0)
+        "#)?;
+        let head = "rounds 1\nctor var V\nctor lam Lam\nctor app App\nterm (app (lam $0 (var $0)) (var $1))\nrule\n";
+        let tail = "rhs root ?body[(var $x) := ?arg]\ngoal (var $1)\n";
+        std::fs::write(file.with_extension("ref"), serde_json::to_vec(&serde_json::json!({
+            "multi": format!("{head}atom root app lam arg\natom lam lam $x body\n{tail}"),
+            "nested": format!("{head}nested (app (lam $x ?body) ?arg)\n{tail}"),
+        }))?)?;
+        check_case(directory.path(), &file, &[
+            "slotted",
+            "slotted-no-aliasing",
+            "slotted-proof-extraction",
+            "slotted-proof-extraction-no-aliasing",
+            "slotted-ref-multi-proofs",
+            "slotted-ref-nested-proofs",
+        ].map(str::to_owned).into_iter().collect(), egraph_threads);
+        Ok(())
+    }));
+    let native_root = root.clone();
+    trials.push(Trial::test(
+        "paper/proof-dispatch/nee-canaries",
+        move || {
+            let directory = native_root.join("benchmarks/disequality/correctness");
+            for (file, contradiction) in [("contradiction.in", "Y"), ("consistent.in", "N")] {
+                check_author_input(
+                    &native_root,
+                    "egg-nee-proof-testing",
+                    &directory.join(file),
+                    1,
+                    0,
+                    contradiction,
+                    None,
+                );
+            }
+            Ok(())
+        },
+    ));
     let mut excluded = 0;
     let mut enabled = 0;
     let mut expected_failures = 0;
@@ -753,7 +964,7 @@ fn main() {
         modes.retain(|mode| {
             let mut matching = ignores.iter().enumerate().filter(|(_, rule)| {
                 rule.matched.contains(&file)
-                    && (rule.treatments.is_empty() || rule.treatments.contains(mode))
+                    && paper_oracles::exclusion_applies(&rule.treatments, mode)
                     && rule.memory_limit_bytes.is_none_or(|bound| {
                         // These modes run in a separate uncapped child below.
                         !(native_math && mode.starts_with("egg"))

@@ -11,6 +11,21 @@ mod paper_oracles;
 mod table_comparison;
 
 #[test]
+fn egraph_worker_configuration_defaults_and_rejects_invalid_settings() {
+    use std::ffi::OsStr;
+    assert_eq!(paper_oracles::egraph_threads(None), Ok(1));
+    for (value, expected) in [("1", 1), ("4", 4)] {
+        assert_eq!(
+            paper_oracles::egraph_threads(Some(OsStr::new(value))),
+            Ok(expected)
+        );
+    }
+    for value in ["", "0", "-1", "4.0", "many", " 4", "18446744073709551616"] {
+        assert!(paper_oracles::egraph_threads(Some(OsStr::new(value))).is_err());
+    }
+}
+
+#[test]
 fn figure_globs_exclude_pairs_and_allow_ordered_reinclusion() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../slotted/inputs/sdql")
@@ -95,6 +110,50 @@ fn recording_catalog_modes_register_strict_oracles_and_exclusion_names() {
 }
 
 #[test]
+fn slotted_and_nee_production_modes_require_matching_strict_oracles() {
+    let modes = paper_oracles::correctness_modes([
+        "egg-nee-proof-extraction",
+        "egg-nee-proof-testing",
+        "slotted-proof-extraction",
+        "slotted-proof-extraction-no-aliasing",
+        "slotted-ref-multi-proofs",
+        "slotted-ref-nested-proofs",
+    ]);
+    assert_eq!(
+        modes,
+        [
+            "egg-nee-proof-testing",
+            "slotted-proof-testing",
+            "slotted-proof-testing-no-aliasing",
+            "slotted-ref-multi-proof-testing",
+            "slotted-ref-nested-proof-testing",
+        ]
+        .map(str::to_owned)
+        .into_iter()
+        .collect()
+    );
+    for (base, proof) in [
+        ("slotted", "slotted-proof-testing"),
+        ("slotted-no-aliasing", "slotted-proof-testing-no-aliasing"),
+        ("slotted-ref-multi", "slotted-ref-multi-proof-testing"),
+        ("slotted-ref-nested", "slotted-ref-nested-proof-testing"),
+        ("egg-nee", "egg-nee-proof-testing"),
+    ] {
+        assert!(paper_oracles::exclusion_applies(&[base.to_owned()], proof));
+        assert!(paper_oracles::exclusion_applies(&[proof.to_owned()], proof));
+        assert!(!paper_oracles::exclusion_applies(&[proof.to_owned()], base));
+        assert!(!paper_oracles::exclusion_applies(
+            &["term".to_owned()],
+            proof
+        ));
+    }
+    assert!(paper_oracles::exclusion_applies(
+        &[],
+        "slotted-proof-testing"
+    ));
+}
+
+#[test]
 fn paper_registration_rejects_unmapped_oracles_and_missing_companions() {
     use std::path::Path;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +164,10 @@ fn paper_registration_rejects_unmapped_oracles_and_missing_companions() {
     let slotted = root.join("benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg");
     for (file, mode, valid) in [
         (&slotted, "slotted", true),
+        (&slotted, "slotted-proof-testing", true),
+        (&slotted, "slotted-proof-testing-no-aliasing", true),
+        (&slotted, "slotted-ref-multi-proof-testing", true),
+        (&slotted, "slotted-ref-nested-proof-testing", true),
         (&slotted, "off", false),
         (
             &root.join("benchmarks/corpus/math/math-iteration-12.egg"),
@@ -121,6 +184,12 @@ fn paper_registration_rejects_unmapped_oracles_and_missing_companions() {
             "egg-nee",
             true,
         ),
+        (
+            &root.join("benchmarks/disequality/parameter-analysis.egg"),
+            "egg-nee-proof-testing",
+            true,
+        ),
+        (&slotted, "egg-nee-proof-testing", false),
         (&slotted, "unknown", false),
     ] {
         let modes = [mode.to_owned()].into_iter().collect();
