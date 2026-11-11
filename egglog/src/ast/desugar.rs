@@ -333,7 +333,7 @@ impl std::fmt::Display for RuleLikeCommand<'_> {
 /// ```
 /// This creates a fresh constructor that can only be created if the query holds.
 /// Then `prove-exists` extracts a proof that the constructor exists.
-fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Vec<NCommand> {
+pub(crate) fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Vec<NCommand> {
     let fresh_sort = parser.symbol_gen.fresh("ExistsSort");
     let constructor_name = parser.symbol_gen.fresh("ExistsConstructor");
     let ruleset = parser.symbol_gen.fresh("exists");

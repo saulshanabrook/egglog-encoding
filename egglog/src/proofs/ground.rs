@@ -8,9 +8,10 @@
 use std::iter::once;
 
 use super::ground_evidence::{Proofs, RawEquality};
-use super::proof_checker::{gather_global_actions, gather_globals};
+use super::proof_checker::gather_global_actions;
 use super::proof_container_rebuild::rebuild_container_value_rec;
-use super::proof_format::{ProofId, ProofStore, RawProof};
+use super::proof_format::{ProofId, ProofStore, RawProof, RawProofStore, RecordedProofs};
+use super::proof_lifting::global_bindings;
 use crate::extract::find_canonical;
 use crate::*;
 
@@ -129,7 +130,7 @@ impl EGraph {
         let (typed, roots) = self
             .typecheck_term_dag(&terms, &[(root, Some(expr.output_type()))], Context::Read)
             .map_err(|error| fail(error.to_string()))?;
-        let values = lookup(self, &typed, &roots)?;
+        let values = lookup(self, &typed)?;
         Ok(values[roots[0]].value)
     }
     /// Prove equality of two existing ground terms without inserting them.
@@ -197,9 +198,16 @@ impl EGraph {
         let (typed, roots) = self
             .typecheck_term_dag(terms, &roots, Context::Read)
             .map_err(|error| fail(error.to_string()))?;
-        let values = lookup(self, &typed, &roots)?;
+        let values = lookup(self, &typed)?;
+        let input_value = values[roots[0]].value;
+        if roots[1..]
+            .iter()
+            .any(|root| values[*root].value != input_value)
+        {
+            return Err(fail("requested terms have different leaders"));
+        }
         let (mut proofs, nodes) = Proofs::import(self, values)?;
-        let globals = gather_globals(&self.proof_check_program, &mut proofs.raw.term_dag)
+        let globals = global_bindings(&self.proof_check_program, &mut proofs.raw.term_dag)
             .map_err(|error| fail(error.to_string()))?;
         let mut builder = GroundProofs {
             terms: &typed,
@@ -215,10 +223,84 @@ impl EGraph {
             let back = builder.proofs.sym(right);
             raw_proofs.push(builder.proofs.trans(input, back).proof);
         }
-        let (mut store, mut proof_ids) =
-            builder.proofs.lift(&self.proof_check_program, &raw_proofs);
+        let (store, mut proof_ids) =
+            builder
+                .proofs
+                .lift(&self.proof_check_program, &raw_proofs, None);
         proof_ids.remove(0);
-        let mut proofs = Vec::with_capacity(outputs.len());
+        self.finish_ground_proofs(store, proof_ids)
+    }
+
+    /// Prove the existence of each supplied ground term, with shared evidence.
+    /// Each root supplies its sort; roots need not have the same sort or value.
+    /// The returned proofs state each term's reflexivity, in input order.
+    /// As with [`Self::prove_extracted_terms`], globals are zero-argument calls,
+    /// container roots are unsupported, and no e-graph rows are inserted.
+    /// An empty request returns an empty proof store.
+    pub fn prove_existing_terms(
+        &self,
+        terms: &TermDag,
+        roots: &[(TermId, ArcSort)],
+    ) -> Result<(ProofStore, Vec<ProofId>), Error> {
+        let recorded = self.record_existing_terms(terms, roots)?;
+        let (store, roots) = recorded.lift(self, None);
+        self.finish_ground_proofs(store, roots)
+    }
+
+    /// Capture existing-term evidence for later lifting, with the same input
+    /// requirements as [`Self::prove_existing_terms`]. Inserts no e-graph rows.
+    pub fn record_existing_terms(
+        &self,
+        terms: &TermDag,
+        roots: &[(TermId, ArcSort)],
+    ) -> Result<RecordedProofs, Error> {
+        for (_, sort) in roots {
+            require_non_container_root(sort)?;
+        }
+        if roots.is_empty() {
+            return Ok(RecordedProofs {
+                program_len: self.proof_check_program.len(),
+                raw: RawProofStore::new(&self.proof_state.proof_names),
+                roots: Vec::new(),
+                normalizers: Default::default(),
+                value_heads: Default::default(),
+            });
+        }
+        let expected: Vec<_> = roots
+            .iter()
+            .map(|(root, sort)| (*root, Some(sort.clone())))
+            .collect();
+        let (typed, roots) = self
+            .typecheck_term_dag(terms, &expected, Context::Read)
+            .map_err(|error| fail(error.to_string()))?;
+        let values = lookup(self, &typed)?;
+        let (mut proofs, nodes) = Proofs::import(self, values)?;
+        let globals = global_bindings(&self.proof_check_program, &mut proofs.raw.term_dag)
+            .map_err(|error| fail(error.to_string()))?;
+        let mut builder = GroundProofs {
+            terms: &typed,
+            nodes: &nodes,
+            proofs,
+            globals,
+            memo: vec![None; typed.size()],
+        };
+        let mut raw_proofs = Vec::with_capacity(roots.len());
+        for root in roots {
+            let exists = builder.finish(root, None)?;
+            let back = builder.proofs.sym(exists);
+            raw_proofs.push(builder.proofs.trans(exists, back).proof);
+        }
+        Ok(builder
+            .proofs
+            .record(raw_proofs, self.proof_check_program.len()))
+    }
+
+    fn finish_ground_proofs(
+        &self,
+        mut store: ProofStore,
+        proof_ids: Vec<ProofId>,
+    ) -> Result<(ProofStore, Vec<ProofId>), Error> {
+        let mut proofs = Vec::with_capacity(proof_ids.len());
         let mut simplified = Default::default();
         for proof in proof_ids {
             let expected = store.get(proof).proposition().clone();
@@ -227,7 +309,11 @@ impl EGraph {
                     .check_proof(proof, &self.proof_check_program)
                     .map_err(|error| fail(format!("invalid ground-term proof: {error}")))?;
             }
-            let proof = store.simplify_with_cache(proof, &mut simplified);
+            let proof = if self.proof_state.simplify_proofs {
+                store.simplify_with_cache(proof, &mut simplified)
+            } else {
+                proof
+            };
             if store.get(proof).proposition() != &expected {
                 return Err(fail("proof simplification changed the requested equality"));
             }
@@ -248,14 +334,12 @@ impl EGraph {
 /// The result has `terms.size()` entries: entry `id` describes `terms.get(id)`,
 /// including non-root children. [`Proofs::import`] resolves its proof references.
 ///
-/// `terms` must have children before parents. `roots` must be nonempty, contain
-/// valid IDs from this DAG, and refer to terms of the same sort. On success,
-/// every root has the same canonical value. No e-graph rows are inserted.
+/// `terms` must have children before parents. No e-graph rows are inserted.
 ///
 /// Errors on missing rows or proof columns, unsupported or failed primitive
-/// evaluation, or unequal root values. Container values may still lack an
+/// evaluation. Container values may still lack an
 /// existence witness; this is checked when their certificates are completed.
-fn lookup(egraph: &EGraph, terms: &TypedTermDag, roots: &[TermId]) -> Result<Vec<Node>, Error> {
+fn lookup(egraph: &EGraph, terms: &TypedTermDag) -> Result<Vec<Node>, Error> {
     if egraph
         .get_sort_by_name(&egraph.proof_state.proof_names.proof_datatype)
         .is_none()
@@ -364,10 +448,6 @@ fn lookup(egraph: &EGraph, terms: &TypedTermDag, roots: &[TermId]) -> Result<Vec
             }
         };
         nodes.push(Node { value, row });
-    }
-    let input = nodes[roots[0]].value;
-    if roots[1..].iter().any(|root| nodes[*root].value != input) {
-        return Err(fail("requested terms have different leaders"));
     }
     Ok(nodes)
 }
