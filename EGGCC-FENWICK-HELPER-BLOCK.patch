@@ -1,0 +1,127 @@
+--- a/scripts/suite_capture_eggcc_churchroad.py
++++ b/scripts/suite_capture_eggcc_churchroad.py
+@@ -66,6 +66,8 @@
+     "Length-List<PtrPointees>",
+     "succ",
+ }
++# Pinned memory.egg's first ten forms, excluding comments/whitespace only.
++EGGCC_EXPR_SET_TOKENS_SHA256 = "992434eb3686e88fcd37cbe063c331f02150714343e3421ed36b550d8aac4eb8"
+ EGGCC_QUERY = '(check (Function "main" in out body) (HasType body out))'
+ EGGCC_CAPTURE_PATCH = """                // Capture this pass boundary before frontend desugaring. The one-pass
+                 // export path constructs exactly one invocation. Never overwrite a capture.
+@@ -286,11 +288,22 @@
+     declaration block. Only the six deterministic length/successor functions
+     may replace no-merge with merge-old. Keep every schedule command intact.
+     """
+-    start = source.index("(sort ExprSetPrim (Set Expr))")
+-    end = source.index("(datatype Pointees ", start)
+-    source = source[:start] + source[end:]
+-    if re.search(r"\bExprSet\b|\bExprSetPrim\b|\(ES[\s)]", source):
++    forms = egglog_forms(source)
++    starts = [i for i, (_, _, tokens) in enumerate(forms) if tokens[1:3] == ["sort", "ExprSetPrim"]]
++    ends = [i for i, (_, _, tokens) in enumerate(forms) if tokens[1:3] == ["datatype", "Pointees"]]
++    if len(starts) != 1 or len(ends) != 1 or ends[0] - starts[0] != 10:
++        raise ValueError("expected exactly the pinned ten-form ExprSet helper block before Pointees")
++    start, end = starts[0], ends[0]
++    block = [tokens for _, _, tokens in forms[start:end]]
++    if hashlib.sha256(json.dumps(block, separators=(",", ":")).encode()).hexdigest() != EGGCC_EXPR_SET_TOKENS_SHA256:
++        raise ValueError("ExprSet helper block differs from the pinned compiler")
++    if any(
++        token in {"ExprSet", "ExprSetPrim", "ES"} or token.startswith("ExprSet-")
++        for _, _, tokens in forms[:start] + forms[end:]
++        for token in tokens
++    ):
+         raise ValueError("ExprSet is referenced outside its unused helper block")
++    source = source[: forms[start][0]] + source[forms[end][0] :]
+     found = set(re.findall(r"^\(function (\S+) .*:no-merge\)$", source, re.MULTILINE))
+     if found != EGGCC_HELPERS:
+         raise ValueError(f"unexpected no-merge helper set: {sorted(found)}")
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -28,6 +28,75 @@
+ )
+ from scripts.hardboiled_replay import egglog_forms
+ from scripts.suite_capture_eggcc_churchroad import rename_churchroad_globals
++
++# Exact pinned memory.egg block, retaining its original multiline formatting.
++EXPR_SET_BLOCK = """(sort ExprSetPrim (Set Expr))
++(datatype ExprSet (ES ExprSetPrim))
++(constructor ExprSet-intersect (ExprSet ExprSet) ExprSet)
++(rewrite (ExprSet-intersect (ES set1) (ES set2)) (ES (set-intersect set1 set2))
++         :ruleset memory-helpers)
++(constructor ExprSet-union (ExprSet ExprSet) ExprSet)
++(rewrite (ExprSet-union (ES set1) (ES set2)) (ES (set-union set1 set2))
++         :ruleset memory-helpers)
++(constructor ExprSet-insert (ExprSet Expr) ExprSet)
++(rewrite (ExprSet-insert (ES set1) x) (ES (set-insert set1 x))
++         :ruleset memory-helpers)
++(function ExprSet-length (ExprSet) i64 :no-merge)
++(rule ((ES set1)) ((set (ExprSet-length (ES set1)) (set-length set1)))
++      :ruleset memory-helpers)
++"""
++
++
++@pytest.mark.parametrize("separator", [" ", "\n  ", "\n; declaration comment\n\t"])
++def test_eggcc_helper_erasure_accepts_layout_and_preserves_inactive_references(separator: str) -> None:
++    prefix = "; (sort ExprSetPrim (Set Expr)) is only a comment\n(ruleset memory-helpers)\n"
++    suffix = (
++        f"(datatype Pointees{separator}(NoPointees))\n"
++        "; (constructor CellHasValues (Expr i64) ExprSet :merge (ExprSet-intersect old new))\n"
++        "; ((set (CellHasValues e cell) (ES (set-empty))))\n"
++        '(let label "ExprSet ExprSetPrim ES ExprSet-length")\n'
++        + "".join(f"(function {name} () i64 :no-merge)\n" for name in sorted(capture.EGGCC_HELPERS))
++        + "(run-schedule (seq (saturate memory-helpers) (run hacker 1)))\n"
++    )
++    adapted = capture.adapt_eggcc(prefix + EXPR_SET_BLOCK + suffix, typing_oracle=False)
++    assert adapted.endswith(prefix + suffix.replace(":no-merge", ":merge old"))
++    assert [tokens for _, _, tokens in egglog_forms(adapted)] == [
++        tokens for _, _, tokens in egglog_forms(prefix + suffix.replace(":no-merge", ":merge old"))
++    ]
++
++
++@pytest.mark.parametrize(
++    "reference",
++    [
++        "(constructor Active () ExprSet)",
++        "(constructor Active () ExprSetPrim)",
++        "(rule ((ES x)) ((print-size)))",
++        "(rule ((= a (ExprSet-intersect x y))) ((set (Active) a)))",
++    ],
++)
++@pytest.mark.parametrize("before", [False, True])
++def test_eggcc_helper_erasure_rejects_active_outside_references(reference: str, before: bool) -> None:
++    source = EXPR_SET_BLOCK + "(datatype Pointees\n (NoPointees))\n"
++    source = reference + "\n" + source if before else source + reference
++    with pytest.raises(ValueError, match="referenced outside"):
++        capture.adapt_eggcc(source, typing_oracle=False)
++
++
++@pytest.mark.parametrize("change", ["changed-rule", "extra-form", "missing-form", "duplicate-start", "duplicate-end"])
++def test_eggcc_helper_erasure_rejects_changed_or_ambiguous_blocks(change: str) -> None:
++    source = EXPR_SET_BLOCK + "(datatype Pointees\n (NoPointees))\n"
++    if change == "changed-rule":
++        source = source.replace("(set-union set1 set2)", "(set-intersect set1 set2)")
++    elif change == "extra-form":
++        source = source.replace("(datatype Pointees", '(rule () ((panic "active")))\n(datatype Pointees')
++    elif change == "missing-form":
++        source = source.replace("(datatype ExprSet (ES ExprSetPrim))\n", "")
++    elif change == "duplicate-start":
++        source += "(sort ExprSetPrim (Set Expr))\n"
++    else:
++        source += "(datatype Pointees (Another))\n"
++    with pytest.raises(ValueError, match="pinned"):
++        capture.adapt_eggcc(source, typing_oracle=False)
+ 
+ 
+ def test_churchroad_globals_get_fresh_base_names_without_changing_circuit_literals() -> None:
+@@ -1178,8 +1247,8 @@
+     # Exercise the actual compatibility adapter: its six original no-merge
+     # helpers must change, while the appended observer declarations must not.
+     events[0]["payload"]["program"] = (
+-        "(sort ExprSetPrim (Set Expr))\n"
+-        "(datatype Pointees (NoPointees))\n"
++        EXPR_SET_BLOCK
++        + "(datatype Pointees (NoPointees))\n"
+         + "".join(f"(function {name} () i64 :no-merge)\n" for name in sorted(capture.EGGCC_HELPERS))
+         + events[0]["payload"]["program"]
+     )

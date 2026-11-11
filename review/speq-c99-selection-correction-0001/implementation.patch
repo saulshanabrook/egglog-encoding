@@ -1,0 +1,228 @@
+--- a/scripts/speq_c99_gates.py
++++ b/scripts/speq_c99_gates.py
+@@ -191,8 +191,26 @@
+     reference = artifact / "analysis/gemv.ll"
+     source_text = recorder.read_verified(reference, recorder.REFERENCE_ANALYSIS_SHA256["gemv"])
+     selected = f"define void @{c99.FUNCTION}() {{ ret void }}\n"
++    composition: dict[str, Any] = {}
++    if name == "unrelated":
++        positive = c99.SUPPORT / "speq_c99_fixture.ll"
++        positive_text = positive.read_text()
++        match = re.search(r"(?m)^define void @guarded_stride\([^\n]+\) \{\n.*?^\}\n", positive_text, re.DOTALL)
++        if match is None or len(re.findall(r"(?m)^define ", positive_text)) != 1:
++            raise ValueError("unrelated control requires the complete unique positive fixture function")
++        selected = match[0].replace("@guarded_stride(", f"@{c99.FUNCTION}(", 1)
++        composition = {
++            "reference_sha256": hashlib.sha256(source_text.encode()).hexdigest(),
++            "positive_fixture_sha256": hashlib.sha256(positive_text.encode()).hexdigest(),
++            "selected_definition_sha256": hashlib.sha256(selected.encode()).hexdigest(),
++            "only_definition_edit": f"@guarded_stride -> @{c99.FUNCTION}",
++            "function_order": ["gemv", c99.FUNCTION],
++            "module_layout": "unchanged pinned gemv module; fixture contributes only its definition",
++        }
+     fixture = output / "input.ll"
+-    fixture.write_text(selected * 2 if name == "duplicate" else source_text + (selected if name == "unrelated" else ""))
++    fixture.write_text(
++        selected * 2 if name == "duplicate" else source_text + (selected if name in ("unrelated", "empty") else "")
++    )
+     command = [
+         built["opt"],
+         f"-load-pass-plugin={built['candidate_plugin']}",
+@@ -205,14 +223,41 @@
+         "missing": "REV C99 selected definition is missing",
+         "duplicate": "redefinition of function",
+         "invalid-enable": "REV C99 diagnostic enable value must be 1",
++        "empty": "REV C99 address domain: selected function has no chained GEP",
+         "unrelated": None,
+     }
+     row = _process(command, output / "enabled", enabled="0" if name == "invalid-enable" else "1", error=errors[name])
+     if name == "unrelated":
+         baseline = _process(command, output / "disabled")
+-        if Path(row["stderr"]).read_bytes() != Path(baseline["stderr"]).read_bytes():
+-            raise ValueError("enabling selected function changed unrelated reference FIR")
+-    return {"process": row, "classification": "unrelated-unchanged" if name == "unrelated" else "selection-rejection"}
++        outputs = []
++        for process in (baseline, row):
++            text = Path(process["stderr"]).read_text()
++            regions = re.findall(r"REV Start\n(.*?)REV End\n", text, re.DOTALL)
++            if len(regions) != 2 or text != "".join(f"REV Start\n{region}REV End\n" for region in regions):
++                raise ValueError("unrelated control must retain exactly two ordered REV regions")
++            if recorder.sha256_text(regions[0]) != recorder.REFERENCE_FIR_SHA256["gemv"]:
++                raise ValueError("enabling selected function changed unrelated reference FIR")
++            outputs.append(regions)
++        enabled_lines = [line.strip() for line in outputs[1][1].splitlines()]
++        for line in (
++            "%n64 = zext i32 %n to i64",
++            "%row64 = zext i32 %row to i64",
++            "%reproduction.c99.offset.0 = add nsw i64 %row.offset, %j64",
++            "%element = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.0",
++        ):
++            if enabled_lines.count(line) != 1:
++                raise ValueError("selected positive control did not retain its exact C99 closure/address repair")
++        if outputs[0][1] == outputs[1][1] or "ptr 1 double %C" not in outputs[1][1]:
++            raise ValueError("selected positive control was not repaired with typed memory")
++        return {
++            "process": row,
++            "disabled_process": baseline,
++            "classification": "unrelated-unchanged-selected-repaired",
++            "composition": composition,
++            "input_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
++            "region_sha256": [[recorder.sha256_text(region) for region in regions] for regions in outputs],
++        }
++    return {"process": row, "classification": "selection-rejection"}
+ 
+ 
+ def run_gates(
+@@ -262,7 +307,7 @@
+         )
+         requests.extend(
+             ("selection-" + name, {"kind": "selection", "name": name})
+-            for name in ("missing", "duplicate", "invalid-enable", "unrelated")
++            for name in ("missing", "duplicate", "invalid-enable", "empty", "unrelated")
+         )
+         requests.append(("fresh-original-c", {"kind": "frontend"}))
+         if len(c99.fixture_cases()) != 16 or len(recorder.REFERENCE_ANALYSIS_SHA256) != 4:
+--- a/tests/test_speq_c99_gates.py
++++ b/tests/test_speq_c99_gates.py
+@@ -87,12 +87,19 @@
+     assert result["status"] == "success" and result["inputs_unchanged"] is True
+     assert result["corpus_admission"] is False
+     assert result["contract"] == gates.c99.CONTRACT and result["selected_function"] == gates.c99.FUNCTION
+-    assert len(calls) == len(result["gates"]) == 30
++    assert len(calls) == len(result["gates"]) == 31
+     assert calls[0][0] == "c99-build" and calls[-1][0] == "c99-fresh-original-c"
+     assert [request["name"] for _, request in calls if request["kind"] == "fixture"] == list(gates.c99.fixture_cases())
+     references = [(request["variant"], request["name"]) for _, request in calls if request["kind"] == "reference"]
+     assert references == [
+         (variant, name) for variant in ("baseline", "candidate") for name in gates.recorder.REFERENCE_ANALYSIS_SHA256
++    ]
++    assert [request["name"] for _, request in calls if request["kind"] == "selection"] == [
++        "missing",
++        "duplicate",
++        "invalid-enable",
++        "empty",
++        "unrelated",
+     ]
+     assert all(path.read_bytes() == data for path, data in before.items())
+     assert json.loads((output / "result.json").read_text()) == json.loads(json.dumps(result, default=str))
+@@ -258,3 +265,120 @@
+         and call[1]["frontend_flags"] == gates.c99.FRONTEND_FLAGS
+         for call in calls
+     )
++
++
++@pytest.mark.parametrize(
++    "fault",
++    [
++        None,
++        "enabled-reference",
++        "disabled-reference",
++        "extra-region",
++        "missing-region",
++        "trailing-error",
++        "missing-closure",
++        "wrong-address",
++        "untyped",
++        "unchanged-selected",
++        "reversed-regions",
++    ],
++)
++def test_unrelated_control_keeps_reference_and_exercises_valid_selected_definition(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
++) -> None:
++    reference = tmp_path / "artifact/analysis/gemv.ll"
++    reference.parent.mkdir(parents=True)
++    original = 'target datalayout = "e-p:64:64"\ndefine void @gemv() { ret void }\n'
++    reference.write_text(original)
++    monkeypatch.setattr(gates.recorder, "REFERENCE_ANALYSIS_SHA256", {"gemv": digest(reference)})
++    original_fir = "original unrelated GEMV\n"
++    monkeypatch.setattr(gates.recorder, "REFERENCE_FIR_SHA256", {"gemv": gates.recorder.sha256_text(original_fir)})
++    selected_fir = "\n".join(
++        [
++            "%body = λ ptr 1 double %C, i32 %j .",
++            "  %n64 = zext i32 %n to i64",
++            "  %row64 = zext i32 %row to i64",
++            "  %reproduction.c99.offset.0 = add nsw i64 %row.offset, %j64",
++            "  %element = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.0",
++            "",
++        ]
++    )
++    commands = []
++
++    def process(command: list[str], directory: Path, **kwargs: Any) -> dict[str, Any]:
++        commands.append((command, kwargs))
++        enabled = kwargs.get("enabled") == "1"
++        regions = [original_fir, selected_fir if enabled else "original selected untyped loop\n"]
++        if fault == ("enabled-reference" if enabled else "disabled-reference"):
++            regions[0] = "changed reference\n"
++        if enabled:
++            if fault == "extra-region":
++                regions.append("unaccounted function\n")
++            elif fault == "missing-region":
++                regions.pop()
++            elif fault == "missing-closure":
++                regions[1] = regions[1].replace("  %row64 = zext i32 %row to i64\n", "")
++            elif fault == "wrong-address":
++                regions[1] = regions[1].replace("ptr %C, i64", "ptr %B, i64")
++            elif fault == "untyped":
++                regions[1] = regions[1].replace("ptr 1 double %C", "ptr %C")
++            elif fault == "unchanged-selected":
++                regions[1] = "original selected untyped loop\n"
++            elif fault == "reversed-regions":
++                regions.reverse()
++        text = "".join(f"REV Start\n{region}REV End\n" for region in regions)
++        if enabled and fault == "trailing-error":
++            text += "LLVM ERROR: a real native failure\n"
++        directory.mkdir()
++        stderr = directory / "stderr.log"
++        stderr.write_text(text)
++        return {"stderr": str(stderr), "returncode": 0, "command": command}
++
++    monkeypatch.setattr(gates, "_process", process)
++    output = tmp_path / "gate"
++    output.mkdir()
++    request = {
++        "kind": "selection",
++        "name": "unrelated",
++        "artifact": str(reference.parents[1]),
++        "build": {"opt": "mock-opt", "candidate_plugin": "candidate.so"},
++    }
++    if fault:
++        with pytest.raises(ValueError):
++            gates._child(request, output)
++    else:
++        result = gates._child(request, output)
++        assert result["classification"] == "unrelated-unchanged-selected-repaired"
++        assert result["composition"]["function_order"] == ["gemv", gates.c99.FUNCTION]
++        assert result["region_sha256"][0][0] == result["region_sha256"][1][0]
++    positive = (gates.c99.SUPPORT / "speq_c99_fixture.ll").read_text()
++    definition = positive[positive.index("define void @guarded_stride(") :]
++    assert (output / "input.ll").read_text() == original + definition.replace(
++        "@guarded_stride(", f"@{gates.c99.FUNCTION}(", 1
++    )
++    assert len(commands) == 2 and commands[0][0] == commands[1][0]
++    assert [kwargs.get("enabled") for _, kwargs in commands] == ["1", None]
++
++
++def test_empty_selected_control_remains_a_domain_rejection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    source = "define void @gemv() { ret void }\n"
++    monkeypatch.setattr(gates.recorder, "read_verified", lambda *_: source)
++    calls = []
++
++    def process(command: list[str], output: Path, **kwargs: Any) -> dict[str, Any]:
++        calls.append(kwargs)
++        assert Path(command[-2]).read_text() == source + f"define void @{gates.c99.FUNCTION}() {{ ret void }}\n"
++        return {"returncode": -6}
++
++    monkeypatch.setattr(gates, "_process", process)
++    result = gates._child(
++        {
++            "kind": "selection",
++            "name": "empty",
++            "artifact": str(tmp_path),
++            "build": {"opt": "mock-opt", "candidate_plugin": "candidate.so"},
++        },
++        tmp_path,
++    )
++    assert result["classification"] == "selection-rejection"
++    assert calls == [{"enabled": "1", "error": "REV C99 address domain: selected function has no chained GEP"}]

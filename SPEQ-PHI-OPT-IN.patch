@@ -1,0 +1,399 @@
+--- a/scripts/paper_benchmarks/record_speq.py
++++ b/scripts/paper_benchmarks/record_speq.py
+@@ -28,6 +28,7 @@
+ REV_TESTS_SHA256 = "6dc7b594b2c33917c1332615a476258c2166901c2bb5900ab8f7c455bc05ba33"
+ REV_PASS_SHA256 = "3d08d63232636db679365c5b6772e8193d1ca8bdbd7cd8b48b501755c3b753c5"
+ REV_PASS_HEADER_SHA256 = "b2901e1859ad2a06b443628669e2bb8c7ab4606f8e215fe05cbf7a456e3f54a5"
++REV_MEMORY_SSA_SHA256 = "99eebae9253222fd998975546537fe47740c2979d5afdcf608a7a6efc353289e"
+ REFERENCE_ANALYSIS_SHA256 = {
+     "gemm_ref": "82b1b9e129b7cc75a0456e267ab9dcd6e747fc4feeb37488e3ddf7bb58f54ab2",
+     "gemv": "c985c5893ca005aac8822aa62a7f384c78337a319375e1b7ce92cc6ee440c3c9",
+@@ -123,9 +124,16 @@
+         default=[],
+         help="Opt-in original-C compiler flag in complete mode; repeat using --frontend-flag=VALUE",
+     )
++    parser.add_argument(
++        "--repair-phi-polarity",
++        action="store_true",
++        help="Opt in to the recorded edge-aware REV PHI repair; requires a fresh complete-mode plugin build",
++    )
+     args = parser.parse_args(argv)
+     if args.frontend_flag and not args.complete:
+         parser.error("--frontend-flag requires --complete")
++    if args.repair_phi_polarity and (not args.complete or args.rev_plugin is not None):
++        parser.error("--repair-phi-polarity requires --complete and cannot use --rev-plugin")
+     return args
+ 
+ 
+@@ -198,12 +206,27 @@
+     return completed.stdout.strip()
+ 
+ 
+-def build_rev_plugin(lleq: Path, llvm_config: Path, output: Path) -> tuple[Path, Path, str]:
++def build_rev_plugin(
++    lleq: Path, llvm_config: Path, output: Path, *, repair_phi_polarity: bool = False
++) -> tuple[Path, Path, str]:
+     """Build the pinned LLEQ REV analysis as a loadable LLVM plugin."""
+     rev_pass = lleq / "llvm/lib/Analysis/REVPass.cpp"
+     rev_header = lleq / "llvm/include/llvm/Analysis/REVPass.h"
+     read_verified(rev_pass, REV_PASS_SHA256)
+     read_verified(rev_header, REV_PASS_HEADER_SHA256)
++    read_verified(lleq / "llvm/include/llvm/Analysis/MemorySSA.h", REV_MEMORY_SSA_SHA256)
++    if repair_phi_polarity:
++        # Direct script execution needs the repository package on sys.path.
++        # Local import avoids a cycle: the diagnostic shares these source pins.
++        repository = str(Path(__file__).resolve().parents[2])
++        if repository not in sys.path:
++            sys.path.insert(0, repository)
++        from scripts.speq_phi_diagnostic import materialize
++
++        repair = output.parent / "phi-repair"
++        materialize(lleq, repair)
++        lleq = repair / "patched"
++        rev_pass = lleq / "llvm/lib/Analysis/REVPass.cpp"
+     llvm_bindir = Path(command_output((str(llvm_config), "--bindir")))
+     clangxx = llvm_bindir / "clang++"
+     opt = llvm_bindir / "opt"
+@@ -618,6 +641,9 @@
+         raise ValueError("complete mode requires one --benchmark, a fresh --source-evidence, and no --check")
+     name = benchmarks[0]
+     frontend_flags = getattr(args, "frontend_flag", [])
++    repair_phi = bool(getattr(args, "repair_phi_polarity", False))
++    if repair_phi and args.rev_plugin is not None:
++        raise ValueError("PHI polarity repair cannot use a supplied prebuilt REV plugin")
+     if name not in COMPLETE_APPLICATION_C_SHA256:
+         raise ValueError(f"exact original C is unavailable for {name}")
+     evidence = args.source_evidence.resolve()
+@@ -631,6 +657,7 @@
+         "source_c_sha256": COMPLETE_APPLICATION_C_SHA256[name],
+         "frontend_revision": LLEQ_COMMIT,
+         "frontend_flags": list(frontend_flags),
++        "phi_polarity_repair": repair_phi,
+         "parse_ir_sha256": PARSE_IR_SHA256,
+         "driver_sha256": RUN_BENCHMARK_SHA256,
+         "egglog_python": EGGLOG_PYTHON_VERSION,
+@@ -642,7 +669,16 @@
+     try:
+         lleq = args.lleq.resolve()
+         if args.rev_plugin is None:
+-            opt, plugin, llvm_version = build_rev_plugin(lleq, args.llvm_config.resolve(), evidence / "rev-plugin.so")
++            opt, plugin, llvm_version = build_rev_plugin(
++                lleq, args.llvm_config.resolve(), evidence / "rev-plugin.so", repair_phi_polarity=repair_phi
++            )
++            if repair_phi:
++                repair_receipt = evidence / "phi-repair/diagnostic.json"
++                manifest["phi_repair_evidence"] = {
++                    "path": str(repair_receipt),
++                    "sha256": hashlib.sha256(repair_receipt.read_bytes()).hexdigest(),
++                    "source_patch": json.loads(repair_receipt.read_text()),
++                }
+         else:
+             read_verified(lleq / "llvm/lib/Analysis/REVPass.cpp", REV_PASS_SHA256)
+             read_verified(lleq / "llvm/include/llvm/Analysis/REVPass.h", REV_PASS_HEADER_SHA256)
+--- a/scripts/dialegg_speq_complete.py
++++ b/scripts/dialegg_speq_complete.py
+@@ -503,6 +503,7 @@
+     """Run original C through all REV regions, then validate the whole retained session."""
+     report: dict[str, Any] = {"cases": {}}
+     frontend_flags = list(getattr(args, "speq_frontend_flag", []))
++    repair_phi = bool(getattr(args, "speq_phi_polarity_repair", False))
+     for case_id in cases:
+         row: dict[str, Any] = {
+             "status": "blocked",
+@@ -512,6 +513,7 @@
+             "ordinary_compatible": False,
+             "proof_validation": "not-run",
+             "frontend_flags": frontend_flags,
++            "phi_polarity_repair": repair_phi,
+         }
+         report["cases"][case_id] = row
+         if case_id in SPEQ_MISSING:
+@@ -540,7 +542,14 @@
+             "--output",
+             str(replay),
+         ]
+-        if args.speq_rev_plugin:
++        if repair_phi:
++            command.append("--repair-phi-polarity")
++            if args.speq_rev_plugin:
++                row["omitted_prebuilt_rev_plugin"] = {
++                    "path": str(args.speq_rev_plugin.resolve()),
++                    "reason": "PHI repair requires a fresh plugin from the recorded patched source",
++                }
++        elif args.speq_rev_plugin:
+             command.extend(["--rev-plugin", str(args.speq_rev_plugin.resolve())])
+         command.extend(f"--frontend-flag={flag}" for flag in frontend_flags)
+         native = run_complete_command(command, ROOT, case_dir / "native", args.timeout_sec)
+--- a/scripts/suite_capture_dialegg_speq.py
++++ b/scripts/suite_capture_dialegg_speq.py
+@@ -636,7 +636,7 @@
+         ("llvm/lib/Analysis/REVPass.cpp", record_speq.REV_PASS_SHA256),
+         ("llvm/include/llvm/Analysis/REVPass.h", record_speq.REV_PASS_HEADER_SHA256),
+         # The pinned frontend makes MemoryAccess::getID public for FIR names.
+-        ("llvm/include/llvm/Analysis/MemorySSA.h", "99eebae9253222fd998975546537fe47740c2979d5afdcf608a7a6efc353289e"),
++        ("llvm/include/llvm/Analysis/MemorySSA.h", record_speq.REV_MEMORY_SSA_SHA256),
+     ):
+         fetch_verified_source(
+             f"https://raw.githubusercontent.com/avery-laird/lleq/{record_speq.LLEQ_COMMIT}/{source_path}",
+@@ -750,6 +750,11 @@
+         default=[],
+         help="Explicit complete-mode original-C compiler flag (repeat; use --speq-frontend-flag=-DNAME)",
+     )
++    parser.add_argument(
++        "--speq-phi-polarity-repair",
++        action="store_true",
++        help="Opt in to the recorded REV PHI repair and rebuild its plugin in complete mode",
++    )
+     parser.add_argument("--speq-lleq", type=Path, default=STORAGE / "sources/speq/lleq")
+     parser.add_argument("--speq-rev-plugin", type=Path, help="Optional already-built pinned REV analysis plugin")
+     parser.add_argument(
+@@ -779,8 +784,8 @@
+         if args.family in ("all", "speq") and args.speq_artifact is None:
+             parser.error("complete SpEQ requires --speq-artifact; preparation/downloads are a separate stage")
+         return complete_capture(args)
+-    if args.case or args.output or args.native_egglog or args.speq_frontend_flag:
+-        parser.error("--case, --output, --native-egglog and --speq-frontend-flag require --complete")
++    if args.case or args.output or args.native_egglog or args.speq_frontend_flag or args.speq_phi_polarity_repair:
++        parser.error("case/output/backend/frontend flags and PHI repair require --complete")
+     if args.artifact_byte_limit is not None and args.artifact_byte_limit <= 0:
+         parser.error("--artifact-byte-limit must be positive")
+     if args.index_artifact_only:
+--- a/scripts/speq_phi_diagnostic.py
++++ b/scripts/speq_phi_diagnostic.py
+@@ -13,6 +13,7 @@
+ import json
+ from pathlib import Path
+ 
++from scripts.paper_benchmarks.record_speq import REV_MEMORY_SSA_SHA256 as MEMORY_SSA_SHA256
+ from scripts.paper_benchmarks.record_speq import REV_PASS_HEADER_SHA256, REV_PASS_SHA256
+ 
+ SUPPORT = Path(__file__).with_name("paper_benchmarks")
+@@ -89,6 +90,9 @@
+         raise ValueError("diagnostic output must be fresh and outside the original source")
+     cpp = source / "llvm/lib/Analysis/REVPass.cpp"
+     header = source / "llvm/include/llvm/Analysis/REVPass.h"
++    memory_header = source / "llvm/include/llvm/Analysis/MemorySSA.h"
++    if hashlib.sha256(memory_header.read_bytes()).hexdigest() != MEMORY_SSA_SHA256:
++        raise ValueError("PHI diagnostic requires the exact pinned custom MemorySSA.h")
+     original = cpp.read_text()
+     repaired = patched_rev(original)
+     if hashlib.sha256(header.read_bytes()).hexdigest() != REV_PASS_HEADER_SHA256:
+@@ -99,6 +103,8 @@
+     files = {
+         "original/REVPass.cpp": original,
+         "original/REVPass.h": header.read_text(),
++        "original/MemorySSA.h": memory_header.read_text(),
++        "patched/llvm/include/llvm/Analysis/MemorySSA.h": memory_header.read_text(),
+         "patched/llvm/lib/Analysis/REVPass.cpp": repaired,
+         "patched/llvm/include/llvm/Analysis/REVPass.h": header.read_text(),
+         "phi-cases.ll": (SUPPORT / "speq_phi_fixtures.ll").read_text(),
+--- a/scripts/reproduction_prepare_speq.py
++++ b/scripts/reproduction_prepare_speq.py
+@@ -45,6 +45,7 @@
+ REV_HASHES = {
+     "llvm/lib/Analysis/REVPass.cpp": record_speq.REV_PASS_SHA256,
+     "llvm/include/llvm/Analysis/REVPass.h": record_speq.REV_PASS_HEADER_SHA256,
++    "llvm/include/llvm/Analysis/MemorySSA.h": record_speq.REV_MEMORY_SSA_SHA256,
+     "llvm/unittests/Transforms/REV/REVTest.cpp": record_speq.REV_TESTS_SHA256,
+ }
+ PYTHON_REQUIREMENTS = f"egglog=={record_speq.EGGLOG_PYTHON_VERSION}\nlark==1.1.7\nz3-solver==4.12.2.0\n"
+--- a/tests/test_speq_phi_diagnostic.py
++++ b/tests/test_speq_phi_diagnostic.py
+@@ -45,6 +45,9 @@
+     header.parent.mkdir(parents=True)
+     cpp.write_text(original)
+     header.write_text("pinned header fixture")
++    memory_header = header.with_name("MemorySSA.h")
++    memory_header.write_text("pinned custom memory header fixture")
++    monkeypatch.setattr(diagnostic, "MEMORY_SSA_SHA256", hashlib.sha256(memory_header.read_bytes()).hexdigest())
+     monkeypatch.setattr(diagnostic, "REV_PASS_SHA256", hashlib.sha256(cpp.read_bytes()).hexdigest())
+     monkeypatch.setattr(diagnostic, "REV_PASS_HEADER_SHA256", hashlib.sha256(header.read_bytes()).hexdigest())
+     return tmp_path / "source"
+@@ -78,7 +81,7 @@
+     assert json.loads((output / "diagnostic.json").read_text()) == record
+ 
+ 
+-@pytest.mark.parametrize("changed", ["cpp", "header", "destination"])
++@pytest.mark.parametrize("changed", ["cpp", "header", "memory-header", "destination"])
+ def test_changed_source_or_existing_output_reject_before_materialization(
+     source: Path, tmp_path: Path, changed: str
+ ) -> None:
+@@ -87,6 +90,8 @@
+         (source / "llvm/lib/Analysis/REVPass.cpp").write_text("different revision")
+     elif changed == "header":
+         (source / "llvm/include/llvm/Analysis/REVPass.h").write_text("different header")
++    elif changed == "memory-header":
++        (source / "llvm/include/llvm/Analysis/MemorySSA.h").write_text("changed custom header")
+     else:
+         output.mkdir()
+     with pytest.raises(ValueError):
+@@ -137,3 +142,61 @@
+         "diamond": [11, 22],
+         "diamond_reversed": [11, 22],
+     }
++
++
++def test_normal_recorder_build_uses_pinned_isolated_repair_and_keeps_original_source(
++    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts.paper_benchmarks import record_speq
++
++    for name, digest in (
++        ("REV_PASS_SHA256", diagnostic.REV_PASS_SHA256),
++        ("REV_PASS_HEADER_SHA256", diagnostic.REV_PASS_HEADER_SHA256),
++        ("REV_MEMORY_SSA_SHA256", diagnostic.MEMORY_SSA_SHA256),
++    ):
++        monkeypatch.setattr(record_speq, name, digest)
++    original = (source / "llvm/lib/Analysis/REVPass.cpp").read_bytes()
++    commands = []
++
++    def metadata(command: tuple) -> str:
++        commands.append(command)
++        if command[-1] == "--bindir":
++            return str(tmp_path / "llvm/bin")
++        if command[-1] == "--version":
++            return "17.0.6"
++        return "-std=c++17"
++
++    def compile_plugin(command: tuple, *, check: bool) -> None:
++        assert check
++        commands.append(command)
++        compile_source = Path(command[3])
++        assert compile_source == tmp_path / "phi-repair/patched/llvm/lib/Analysis/REVPass.cpp"
++        assert diagnostic.EDGE_AWARE_PHI in compile_source.read_text()
++        assert f"-I{tmp_path / 'phi-repair/patched/llvm/include'}" in command
++        assert (tmp_path / "phi-repair/patched/llvm/include/llvm/Analysis/MemorySSA.h").is_file()
++        Path(command[-1]).write_text("mock plugin; no compiler executed")
++
++    monkeypatch.setattr(record_speq, "command_output", metadata)
++    monkeypatch.setattr(record_speq.subprocess, "run", compile_plugin)
++    result = record_speq.build_rev_plugin(
++        source, tmp_path / "llvm-config", tmp_path / "plugin.so", repair_phi_polarity=True
++    )
++    assert result == (tmp_path / "llvm/bin/opt", tmp_path / "plugin.so", "17.0.6")
++    assert len(commands) == 4
++    assert (source / "llvm/lib/Analysis/REVPass.cpp").read_bytes() == original
++    assert (tmp_path / "phi-repair/original/REVPass.cpp").read_bytes() == original
++
++
++def test_normal_recorder_rejects_changed_header_before_compilation(
++    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts.paper_benchmarks import record_speq
++
++    monkeypatch.setattr(record_speq, "REV_PASS_SHA256", diagnostic.REV_PASS_SHA256)
++    monkeypatch.setattr(record_speq, "REV_PASS_HEADER_SHA256", diagnostic.REV_PASS_HEADER_SHA256)
++    monkeypatch.setattr(record_speq, "REV_MEMORY_SSA_SHA256", diagnostic.MEMORY_SSA_SHA256)
++    (source / "llvm/include/llvm/Analysis/MemorySSA.h").write_text("wrong header")
++    monkeypatch.setattr(record_speq, "command_output", lambda _: pytest.fail("must reject before native commands"))
++    with pytest.raises(ValueError, match="MemorySSA.h"):
++        record_speq.build_rev_plugin(source, tmp_path / "llvm-config", tmp_path / "plugin", repair_phi_polarity=True)
++    assert not (tmp_path / "phi-repair").exists()
+--- a/tests/test_reproduction_prepare_speq.py
++++ b/tests/test_reproduction_prepare_speq.py
+@@ -195,6 +195,10 @@
+     assert "--generate-hashes" in commands["python-lock"]
+     assert "--require-hashes" in commands["python-download"] and "--no-index" in commands["python-install"]
+     assert "build_rev_plugin" in " ".join(commands["rev-build"])
++    custom_header = "llvm/include/llvm/Analysis/MemorySSA.h"
++    assert (arguments["output"] / "sources/lleq" / custom_header).read_bytes() == (
++        arguments["lleq_source"] / custom_header
++    ).read_bytes()
+     assert len([name for name in commands if name.startswith("reference-")]) == 4
+     assert "--complete" not in str(commands) and "-D_FORTIFY_SOURCE" not in str(commands)
+     settings = json.loads(Path(result["settings"]).read_text())["speq"]
+@@ -250,3 +254,17 @@
+     with pytest.raises(ValueError, match="fresh directory"):
+         preparation.prepare_speq(**arguments)
+     assert not launches and (arguments["output"] / "evidence").read_text() == "preserved"
++
++
++@pytest.mark.parametrize("fault", ["missing", "changed"])
++def test_custom_memoryssa_header_is_required_before_any_plugin_build(pipeline: tuple, fault: str) -> None:
++    arguments, _, launches = pipeline
++    header = arguments["lleq_source"] / "llvm/include/llvm/Analysis/MemorySSA.h"
++    if fault == "missing":
++        header.unlink()
++    else:
++        header.write_text("stock LLVM header lacks the artifact's public memory version ID")
++    result = preparation.prepare_speq(**arguments)
++    assert result["status"] == "blocked" and "MemorySSA.h" in result["reason"]
++    assert not any(row["name"] == "rev-build" for row in launches)
++    assert not (arguments["output"] / "settings.json").exists()
+--- a/tests/test_dialegg_speq_complete.py
++++ b/tests/test_dialegg_speq_complete.py
+@@ -504,3 +504,53 @@
+         assert manifest["extract_costs"] == [2]
+     else:
+         assert "extract_costs" not in manifest and "cost_evidence_unavailable" in manifest
++
++
++def test_recorder_phi_repair_is_explicit_complete_only_and_cannot_use_historical_plugin() -> None:
++    required = [
++        "--artifact=artifact",
++        "--rev-tests=REVTest.cpp",
++        "--lleq=lleq",
++        "--llvm-config=llvm-config",
++        "--benchmark=parboil_hist",
++        "--output=out.egg",
++    ]
++    assert not record_speq.parse_args(required).repair_phi_polarity
++    with pytest.raises(SystemExit):
++        record_speq.parse_args([*required, "--repair-phi-polarity"])
++    with pytest.raises(SystemExit):
++        record_speq.parse_args([*required, "--complete", "--repair-phi-polarity", "--rev-plugin=historical.so"])
++    assert record_speq.parse_args([*required, "--complete", "--repair-phi-polarity"]).repair_phi_polarity
++
++
++@pytest.mark.parametrize("repair", [False, True])
++def test_complete_phi_opt_in_records_fresh_build_instead_of_using_historical_plugin(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repair: bool
++) -> None:
++    commands = []
++
++    def run(command: list[str], cwd: Path, prefix: Path, timeout: float) -> PilotProcessResult:
++        commands.append(command)
++        out, err = prefix.with_suffix(".out"), prefix.with_suffix(".err")
++        out.write_text("")
++        err.write_text("synthetic native failure")
++        return PilotProcessResult("failure", 1, 0.0, 0, out, err, "synthetic native failure")
++
++    monkeypatch.setattr(complete, "run_complete_command", run)
++    args = argparse.Namespace(
++        speq_python=tmp_path / "python",
++        speq_artifact=tmp_path / "artifact",
++        speq_lleq=tmp_path / "lleq",
++        llvm17_config=tmp_path / "llvm-config",
++        speq_rev_plugin=tmp_path / "historical.so",
++        speq_phi_polarity_repair=repair,
++        timeout_sec=30,
++    )
++    row = complete.capture_complete_speq(args, ["speq-parboil_hist"], tmp_path)["cases"]["speq-parboil_hist"]
++    assert ("--repair-phi-polarity" in commands[0]) is repair
++    assert ("--rev-plugin" in commands[0]) is not repair
++    assert row["phi_polarity_repair"] is repair
++    if repair:
++        assert row["omitted_prebuilt_rev_plugin"]["path"] == str(tmp_path / "historical.so")
++    assert json.loads(Path(row["receipt"]).read_text())["phi_polarity_repair"] is repair
++    assert not row["source_complete"] and not row["ordinary_compatible"]
+--- a/tests/test_suite_capture_dialegg_speq.py
++++ b/tests/test_suite_capture_dialegg_speq.py
+@@ -603,10 +603,18 @@
+             "/unused/artifact",
+             "--speq-frontend-flag=-D_FORTIFY_SOURCE=0",
+             "--speq-frontend-flag=-DPOLYBENCH_USE_C99_PROTO",
++            "--speq-phi-polarity-repair",
+         ],
+     )
+     assert capture.main() == 0
+     assert received[0].speq_frontend_flag == ["-D_FORTIFY_SOURCE=0", "-DPOLYBENCH_USE_C99_PROTO"]
++    assert received[0].speq_phi_polarity_repair
+     monkeypatch.setattr(capture.sys, "argv", ["capture", "--speq-frontend-flag=-D_FORTIFY_SOURCE=0"])
+     with pytest.raises(SystemExit):
+         capture.main()
++
++
++def test_public_phi_repair_switch_cannot_enter_historical_capture(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(capture.sys, "argv", ["capture", "--speq-phi-polarity-repair"])
++    with pytest.raises(SystemExit):
++        capture.main()

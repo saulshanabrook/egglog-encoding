@@ -1,0 +1,70 @@
+--- a/llvm/lib/Analysis/REVPass.cpp
++++ b/llvm/lib/Analysis/REVPass.cpp
+@@ -27,6 +27,7 @@
+ #include "llvm/Support/Casting.h"
+ #include "llvm/Support/CommandLine.h"
+ #include "llvm/Support/Debug.h"
++#include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/YAMLTraits.h"
+ #include "llvm/Transforms/Utils/ValueMapper.h"
+ #include <queue>
+@@ -1817,17 +1818,44 @@
+ 
+   template <class PHITy>
+   BranchInst *getPhiBr(PHITy *Phi, BasicBlock **Then, BasicBlock **Else) {
++    *Then = nullptr;
++    *Else = nullptr;
+     if (Phi->getNumIncomingValues() != 2)
+       return nullptr;
+     auto *BB1 = Phi->getIncomingBlock(0);
+     auto *BB2 = Phi->getIncomingBlock(1);
++    if (BB1 == BB2)
++      return nullptr;
+     BasicBlock *CommonDenom = DT.findNearestCommonDominator(BB1, BB2);
+-    BranchInst *Br = dyn_cast<BranchInst>(CommonDenom->getTerminator());
+-    if (Br == nullptr)
+-      return Br;
+-    bool IsTrueBr = DT.dominates(cast<BasicBlock>(Br->getOperand(2)), BB1);
+-    IsTrueBr ? (*Then = BB1, *Else = BB2) : (*Then = BB2, *Else = BB1);
+-    return Br;
++    if (!CommonDenom)
++      return nullptr;
++    auto *Br = dyn_cast<BranchInst>(CommonDenom->getTerminator());
++    if (!Br || !Br->isConditional())
++      return nullptr;
++    const BasicBlock *Merge;
++    if (const auto *MemPhi = dyn_cast<MemoryPhi>(Phi))
++      Merge = MemPhi->getBlock();
++    else
++      Merge = cast<PHINode>(static_cast<const Value *>(Phi))->getParent();
++    for (BasicBlock *Pred : {BB1, BB2}) {
++      // A bypass arrives directly from the conditional branch's block. The
++      // merge itself need not dominate that predecessor or the other arm.
++      bool OnTrue = Pred == CommonDenom
++                        ? Br->getSuccessor(0) == Merge
++                        : Br->getSuccessor(0) != Merge &&
++                              DT.dominates(Br->getSuccessor(0), Pred);
++      bool OnFalse = Pred == CommonDenom
++                         ? Br->getSuccessor(1) == Merge
++                         : Br->getSuccessor(1) != Merge &&
++                               DT.dominates(Br->getSuccessor(1), Pred);
++      if (OnTrue == OnFalse)
++        return nullptr;
++      BasicBlock **Arm = OnTrue ? Then : Else;
++      if (*Arm)
++        return nullptr;
++      *Arm = Pred;
++    }
++    return *Then && *Else ? Br : nullptr;
+   }
+   // a loop has a header/latch/exit blocks,
+   // and series of BBs/instructions in the body
+@@ -1849,6 +1877,8 @@
+     }
+     BasicBlock *Then, *Else;
+     BranchInst *Br = getPhiBr(Phi, &Then, &Else);
++    if (!Br)
++      report_fatal_error("REV: unsupported PHI control-flow polarity");
+     auto *TrueVal = Phi->getIncomingValueForBlock(Then);
+     auto *FalseVal = Phi->getIncomingValueForBlock(Else);
+ 

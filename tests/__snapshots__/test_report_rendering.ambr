@@ -1,0 +1,257 @@
+# serializer version: 1
+# name: test_realistic_pair_report_markdown_snapshot
+  '''
+  # Benchmark Report
+  
+  ## Comparison
+  
+  | Role | Target | Git | Treatment |
+  | --- | --- | --- | --- |
+  | Baseline | baseline | abc123 | off |
+  | Candidate | candidate | abc123 | proofs |
+  
+  *2 file(s): math.egg, rewrite.egg · 2 round(s) per endpoint/file · 120 s timeout per run · Report: /tmp/benchmark-report.jsonl*
+  
+  *This comparison changes both target and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.*
+  
+  ## Summary — candidate proofs vs baseline off
+  
+  | Metric | Scope | File(s) | Ratio (95% CI) | Result |
+  | --- | --- | --- | ---: | --- |
+  | Wall time | Suite total | 2 files | 0.983–1.16x | CI includes 1 |
+  | Wall time | Lowest-ratio file | math.egg | 0.652–0.978x | faster |
+  | Wall time | Highest-ratio file | rewrite.egg | 1.10–1.30x | slower |
+  | Peak RSS | Lowest-ratio file | math.egg | 0.867–1.04x | CI includes 1 |
+  | Peak RSS | Highest-ratio file | rewrite.egg | 1.08–1.23x | higher RSS |
+  
+  *Ratios are candidate / baseline; below 1 is lower and above 1 is higher.*
+  
+  ## Per-file results
+  
+  ### Wall time
+  
+  | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+  | --- | ---: | ---: | ---: | --- |
+  | math.egg | 0.883–1.14 s | 683–937 ms | 0.652–0.978x | faster |
+  | rewrite.egg | 1.88–2.14 s | 2.28–2.54 s | 1.10–1.30x | slower |
+  
+  ### Peak RSS
+  
+  | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+  | --- | ---: | ---: | ---: | --- |
+  | math.egg | 89.8–101.9 MiB | 85.0–97.1 MiB | 0.867–1.04x | CI includes 1 |
+  | rewrite.egg | 118.4–130.5 MiB | 137.5–149.6 MiB | 1.08–1.23x | higher RSS |
+  
+  ## Slowdown decomposition
+  
+  | File | Wall Δ | Typecheck | Frontend | Program | Equality | Commands | Residual |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Suite total (2 files) | +200 ms | 0%  0 ms | 0%  0 ms | ◆ +58.0%  +116 ms | 0%  0 ms | 0%  0 ms | +42.0%  +84.0 ms |
+  | math.egg | -200 ms | 0%  0 ms | 0%  0 ms | ◆ +58.0%  -116 ms | 0%  0 ms | 0%  0 ms | +42.0%  -84.0 ms |
+  | rewrite.egg | +400 ms | 0%  0 ms | 0%  0 ms | ◆ +58.0%  +232 ms | 0%  0 ms | 0%  0 ms | +42.0%  +168 ms |
+  
+  *The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. Each mechanism cell is its share of that row's wall-time change followed by its signed mean time change. Frontend includes parsing, other lowering, and declaration/install commands. Program rules includes every phase of source-origin rulesets except rebuild. Equality/rebuild combines encoded maintenance rulesets with native rebuild tails. Commands includes actions/input, checks, and other schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold type mark each row's largest absolute share; contributions below 5% are dimmed and improvements are green in Rich and interactive reports. Signed values carry the same information without styling. Residual is wall time minus every recorded leaf; ! means an endpoint's mean residual is negative.*
+  
+  ## Ruleset drivers
+  
+  *Each panel unfolds the Program and Equality cells from the decomposition. Parent rows exactly match those cells and alone show wall share. Program children contain only source-rule Assembly, Search, Apply, Execution, and Merge; Equality children contain every encoded maintenance ruleset plus one global Native rebuild replaced row. ↳ marks children in every format. Zero children are hidden. Source children are ranked by absolute own-work Δ (top 5 plus an exact per-group Other); every nonzero maintenance child is shown. Important phases include every \|phase Δ\| ≥ max(1 ms, 10% of \|row Δ\|), always include the dominant phase (◆), and appear in Assembly, Search, Apply, Execution, Merge, Rebuild order; … marks omitted nonzero phases.*
+  
+  ### Ruleset drivers — math.egg
+  
+  | Driver | Δ | Wall share | Important phase changes |
+  | --- | ---: | ---: | --- |
+  | Program rules — own work | -116 ms | +58.0% | ◆ Search -80.0 ms; Apply -36.0 ms |
+  | ↳ simplify | -84.0 ms |  | ◆ Search -60.0 ms; Apply -24.0 ms |
+  | ↳ finish | -32.0 ms |  | ◆ Search -20.0 ms; Apply -12.0 ms |
+  | Equality/rebuild — net | 0 ns | 0% | 0 ns |
+  
+  *Program + Equality account for +58.0% of this file's wall-time change. Source rules shown: 2/2. Maintenance rules shown: none.*
+  
+  ### Ruleset drivers — rewrite.egg
+  
+  | Driver | Δ | Wall share | Important phase changes |
+  | --- | ---: | ---: | --- |
+  | Program rules — own work | +232 ms | +58.0% | ◆ Search +160 ms; Apply +72.0 ms |
+  | ↳ simplify | +168 ms |  | ◆ Search +120 ms; Apply +48.0 ms |
+  | ↳ finish | +64.0 ms |  | ◆ Search +40.0 ms; Apply +24.0 ms |
+  | Equality/rebuild — net | 0 ns | 0% | 0 ns |
+  
+  *Program + Equality account for +58.0% of this file's wall-time change. Source rules shown: 2/2. Maintenance rules shown: none.*
+  '''
+# ---
+# name: test_realistic_six_file_rich_120_snapshot
+  '''
+  ─────────────────────────────────────────────────── Ruleset drivers ────────────────────────────────────────────────────
+  Each panel unfolds the Program and Equality cells from the decomposition. Parent rows exactly match those cells and 
+  alone show wall share. Program children contain only source-rule Assembly, Search, Apply, Execution, and Merge; Equality
+  children contain every encoded maintenance ruleset plus one global Native rebuild replaced row. ↳ marks children in 
+  every format. Zero children are hidden. Source children are ranked by absolute own-work Δ (top 5 plus an exact per-group
+  Other); every nonzero maintenance child is shown. Important phases include every |phase Δ| ≥ max(1 ms, 10% of |row Δ|), 
+  always include the dominant phase (◆), and appear in Assembly, Search, Apply, Execution, Merge, Rebuild order; … marks 
+  omitted nonzero phases.
+                                                 Ruleset drivers — math.egg                                               
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work             -29.1 ms      +14.6%  ◆ Search -15.8 ms; Apply -7.88 ms; Merge -3.94 ms; …       
+    ↳ ruleset-11                         -4.48 ms              ◆ Search -2.42 ms; Apply -1.21 ms; …                       
+    ↳ ruleset-10                         -4.11 ms              ◆ Search -2.22 ms; Apply -1.11 ms; …                       
+    ↳ ruleset-09                         -3.74 ms              ◆ Search -2.02 ms; Apply -1.01 ms; …                       
+    ↳ ruleset-08                         -3.36 ms              ◆ Search -1.82 ms; …                                       
+    ↳ ruleset-07                         -2.99 ms              ◆ Search -1.62 ms; …                                       
+    ↳ Other (7 more source rulesets)     -10.5 ms              ◆ Search -5.66 ms; Apply -2.83 ms; Merge -1.41 ms; …       
+    Equality/rebuild — net               -1.97 ms     +0.985%  ◆ Rebuild -1.97 ms                                         
+    ↳ Native rebuild replaced            -1.97 ms              ◆ Rebuild -1.97 ms                                         
+                                                                                                                          
+  Program + Equality account for +15.6% of this file's wall-time change. Source rules shown: 5/12 plus exact Other.       
+  Maintenance rules shown: none.                                                                                          
+                                            Ruleset drivers — eggcc-extract.egg                                           
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work             -31.7 ms      +21.1%  ◆ Search -18.9 ms; Apply -9.45 ms; …                       
+    ↳ ruleset-11                         -4.87 ms              ◆ Search -2.91 ms; Apply -1.45 ms; …                       
+    ↳ ruleset-10                         -4.47 ms              ◆ Search -2.67 ms; Apply -1.33 ms; …                       
+    ↳ ruleset-09                         -4.06 ms              ◆ Search -2.42 ms; Apply -1.21 ms; …                       
+    ↳ ruleset-08                         -3.65 ms              ◆ Search -2.18 ms; Apply -1.09 ms; …                       
+    ↳ ruleset-07                         -3.25 ms              ◆ Search -1.94 ms; …                                       
+    ↳ Other (7 more source rulesets)     -11.4 ms              ◆ Search -6.79 ms; Apply -3.39 ms; …                       
+    Equality/rebuild — net               -1.18 ms     +0.788%  ◆ Rebuild -1.18 ms                                         
+    ↳ Native rebuild replaced            -1.18 ms              ◆ Rebuild -1.18 ms                                         
+                                                                                                                          
+  Program + Equality account for +21.9% of this file's wall-time change. Source rules shown: 5/12 plus exact Other.       
+  Maintenance rules shown: none.                                                                                          
+                                        Ruleset drivers — pointer-analysis-small.egg                                      
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work             -15.3 ms           —  ◆ Search -9.45 ms; Apply -4.73 ms; …                       
+    ↳ ruleset-11                         -2.35 ms              ◆ Search -1.45 ms; …                                       
+    ↳ ruleset-10                         -2.16 ms              ◆ Search -1.33 ms; …                                       
+    ↳ ruleset-09                         -1.96 ms              ◆ Search -1.21 ms; …                                       
+    ↳ ruleset-08                         -1.76 ms              ◆ Search -1.09 ms; …                                       
+    ↳ ruleset-07                         -1.57 ms              ◆ Search -970 us; …                                        
+    ↳ Other (7 more source rulesets)     -5.49 ms              ◆ Search -3.39 ms; Apply -1.70 ms; …                       
+    Equality/rebuild — net                -394 us           —  ◆ Rebuild -394 us                                          
+    ↳ Native rebuild replaced             -394 us              ◆ Rebuild -394 us                                          
+                                                                                                                          
+  Program + Equality coverage is unavailable because wall time did not change. Source rules shown: 5/12 plus exact Other. 
+  Maintenance rules shown: none.                                                                                          
+                                              Ruleset drivers — hardboiled.egg                                            
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work             +20.0 ms      +8.00%  ◆ Search +12.6 ms; Apply +6.30 ms; …                       
+    ↳ ruleset-11                         +3.08 ms              ◆ Search +1.94 ms; …                                       
+    ↳ ruleset-10                         +2.82 ms              ◆ Search +1.78 ms; …                                       
+    ↳ ruleset-09                         +2.57 ms              ◆ Search +1.62 ms; …                                       
+    ↳ ruleset-08                         +2.31 ms              ◆ Search +1.45 ms; …                                       
+    ↳ ruleset-07                         +2.05 ms              ◆ Search +1.29 ms; …                                       
+    ↳ Other (7 more source rulesets)     +7.18 ms              ◆ Search +4.52 ms; Apply +2.26 ms; …                       
+    Equality/rebuild — net                +394 us     +0.158%  ◆ Rebuild +394 us                                          
+    ↳ Native rebuild replaced             +394 us              ◆ Rebuild +394 us                                          
+                                                                                                                          
+  Program + Equality account for +8.16% of this file's wall-time change. Source rules shown: 5/12 plus exact Other.       
+  Maintenance rules shown: none.                                                                                          
+                                               Ruleset drivers — luminal.egg                                              
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work             +74.2 ms      +12.4%  ◆ Search +47.3 ms; Apply +23.6 ms; …                       
+    ↳ ruleset-11                         +11.4 ms              ◆ Search +7.27 ms; Apply +3.64 ms; …                       
+    ↳ ruleset-10                         +10.5 ms              ◆ Search +6.67 ms; Apply +3.33 ms; …                       
+    ↳ ruleset-09                         +9.51 ms              ◆ Search +6.06 ms; Apply +3.03 ms; …                       
+    ↳ ruleset-08                         +8.56 ms              ◆ Search +5.45 ms; Apply +2.73 ms; …                       
+    ↳ ruleset-07                         +7.61 ms              ◆ Search +4.85 ms; Apply +2.42 ms; …                       
+    ↳ Other (7 more source rulesets)     +26.6 ms              ◆ Search +17.0 ms; Apply +8.48 ms; …                       
+    Equality/rebuild — net               +1.18 ms     +0.197%  ◆ Rebuild +1.18 ms                                         
+    ↳ Native rebuild replaced            +1.18 ms              ◆ Rebuild +1.18 ms                                         
+                                                                                                                          
+  Program + Equality account for +12.6% of this file's wall-time change. Source rules shown: 5/12 plus exact Other.       
+  Maintenance rules shown: none.                                                                                          
+                                                Ruleset drivers — herbie.egg                                              
+                                                                                                                          
+    Driver                                      Δ  Wall share  Important phase changes                                    
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Program rules — own work              +147 ms      +14.0%  ◆ Search +94.5 ms; Apply +47.3 ms; …                       
+    ↳ ruleset-11                         +22.7 ms              ◆ Search +14.5 ms; Apply +7.27 ms; …                       
+    ↳ ruleset-10                         +20.8 ms              ◆ Search +13.3 ms; Apply +6.67 ms; …                       
+    ↳ ruleset-09                         +18.9 ms              ◆ Search +12.1 ms; Apply +6.06 ms; …                       
+    ↳ ruleset-08                         +17.0 ms              ◆ Search +10.9 ms; Apply +5.45 ms; …                       
+    ↳ ruleset-07                         +15.1 ms              ◆ Search +9.70 ms; Apply +4.85 ms; …                       
+    ↳ Other (7 more source rulesets)     +52.9 ms              ◆ Search +33.9 ms; Apply +17.0 ms; …                       
+    Equality/rebuild — net               +1.97 ms     +0.188%  ◆ Rebuild +1.97 ms                                         
+    ↳ Native rebuild replaced            +1.97 ms              ◆ Rebuild +1.97 ms                                         
+                                                                                                                          
+  Program + Equality account for +14.2% of this file's wall-time change. Source rules shown: 5/12 plus exact Other.       
+  Maintenance rules shown: none.                                                                                          
+  ──────────────────────────────────────────────── Slowdown decomposition ────────────────────────────────────────────────
+                                                                                                                          
+    File                 Wall Δ  Typecheck  Frontend           Program            Equality  Commands            Residual  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Suite total (6     +1550 ms   0%  0 ms  0%  0 ms   +10.7%  +165 ms            0%  0 ms  0%  0 ms  ◆ +89.3%  +1385 ms  
+    files)                                                                                                                
+    math.egg            -200 ms   0%  0 ms  0%  0 ms  +14.6%  -29.1 ms   +0.985%  -1.97 ms  0%  0 ms   ◆ +84.4%  -169 ms  
+    eggcc-extract.egg   -150 ms   0%  0 ms  0%  0 ms  +21.1%  -31.7 ms   +0.788%  -1.18 ms  0%  0 ms   ◆ +78.1%  -117 ms  
+    pointer-analysis-      0 ms    —  0 ms   —  0 ms       —  -15.3 ms        —  -0.394 ms   —  0 ms         —  +15.7 ms  
+    small.egg                                                                                                             
+    hardboiled.egg      +250 ms   0%  0 ms  0%  0 ms  +8.00%  +20.0 ms  +0.158%  +0.394 ms  0%  0 ms   ◆ +91.8%  +230 ms  
+    luminal.egg         +600 ms   0%  0 ms  0%  0 ms  +12.4%  +74.2 ms   +0.197%  +1.18 ms  0%  0 ms   ◆ +87.4%  +525 ms  
+    herbie.egg         +1050 ms   0%  0 ms  0%  0 ms   +14.0%  +147 ms   +0.188%  +1.97 ms  0%  0 ms   ◆ +85.8%  +901 ms  
+                                                                                                                          
+  The Suite total row sums each selected file's candidate − baseline mean; file rows are per-file mean deltas. Each       
+  mechanism cell is its share of that row's wall-time change followed by its signed mean time change. Frontend includes   
+  parsing, other lowering, and declaration/install commands. Program rules includes every phase of source-origin rulesets 
+  except rebuild. Equality/rebuild combines encoded maintenance rulesets with native rebuild tails. Commands includes     
+  actions/input, checks, and other schedules. Shares may be negative or exceed 100% when mechanisms offset. ◆ and bold    
+  type mark each row's largest absolute share; contributions below 5% are dimmed and improvements are green in Rich and   
+  interactive reports. Signed values carry the same information without styling. Residual is wall time minus every        
+  recorded leaf; ! means an endpoint's mean residual is negative.                                                         
+  ─────────────────────────────────────────────────── Per-file results ───────────────────────────────────────────────────
+                                                         Wall time                                                        
+                                                                                                                          
+    File                                      Baseline (95% CI)  Candidate (95% CI)  Ratio (95% CI)  Result               
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    math.egg                                       0.941–1.07 s          741–869 ms    0.723–0.885x  faster               
+    eggcc-extract.egg                               1.44–1.57 s         1.29–1.42 s    0.845–0.959x  faster               
+    pointer-analysis-small.egg                      1.94–2.07 s         1.94–2.07 s     0.956–1.05x  CI includes 1        
+    hardboiled.egg                                  2.44–2.57 s         2.69–2.82 s      1.06–1.14x  slower               
+    luminal.egg                                     2.94–3.07 s         3.54–3.67 s      1.17–1.23x  slower               
+    herbie.egg                                      3.44–3.57 s         4.49–4.62 s      1.27–1.33x  slower               
+                                                                                                                          
+                                                          Peak RSS                                                        
+                                                                                                                          
+    File                                      Baseline (95% CI)  Candidate (95% CI)  Ratio (95% CI)  Result               
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    math.egg                                     89.8–101.9 MiB      99.3–111.4 MiB      1.01–1.20x  higher RSS           
+    eggcc-extract.egg                           108.9–121.0 MiB     118.4–130.5 MiB      1.01–1.16x  higher RSS           
+    pointer-analysis-small.egg                  127.9–140.1 MiB     137.5–149.6 MiB      1.01–1.14x  higher RSS           
+    hardboiled.egg                              147.0–159.1 MiB     156.5–168.7 MiB      1.01–1.12x  higher RSS           
+    luminal.egg                                 166.1–178.2 MiB     175.6–187.7 MiB      1.01–1.11x  higher RSS           
+    herbie.egg                                  185.2–197.3 MiB     194.7–206.8 MiB      1.00–1.10x  higher RSS           
+                                                                                                                          
+  ────────────────────────────────────────────────────── Comparison ──────────────────────────────────────────────────────
+                                                                                                                          
+    Role                                 Target                  Git                     Treatment                        
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Baseline                             old                     abc123                  off                              
+    Candidate                            new                     abc123                  proofs                           
+                                                                                                                          
+  6 file(s): math.egg, eggcc-extract.egg, pointer-analysis-small.egg, hardboiled.egg, luminal.egg, herbie.egg · 2 round(s)
+  per endpoint/file · 120 s timeout per run · Report: six-files.jsonl                                                     
+  This comparison changes both target and treatment. Its ratios describe the joint endpoint change and do not isolate one 
+  cause.
+  ─────────────────────────────────────────── Summary — new proofs vs old off ────────────────────────────────────────────
+                                                                                                                          
+    Metric             Scope                             File(s)                       Ratio (95% CI)  Result             
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Wall time          Suite total                       6 files                           1.10–1.13x  slower             
+    Wall time          Lowest-ratio file                 math.egg                        0.723–0.885x  faster             
+    Wall time          Highest-ratio file                herbie.egg                        1.27–1.33x  slower             
+    Peak RSS           Lowest-ratio file                 herbie.egg                        1.00–1.10x  higher RSS         
+    Peak RSS           Highest-ratio file                math.egg                          1.01–1.20x  higher RSS         
+                                                                                                                          
+  Ratios are candidate / baseline; below 1 is lower and above 1 is higher.                                                
+  
+  '''
+# ---

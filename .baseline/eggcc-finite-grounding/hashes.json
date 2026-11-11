@@ -1,0 +1,5 @@
+{
+  "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+  "tests/test_suite_capture_eggcc_churchroad.py": "7d8543d22a387b6a8b59c375c5736c00ff751c08ee9517838c7dc3ea6f159798",
+  "benchmarks/reproduction/eggcc-bitwise-replay.md": "8f2baa98f50d1f4f07f54be7f00d4147db59166c9dc9844d4128fa15bbb06dcb"
+}

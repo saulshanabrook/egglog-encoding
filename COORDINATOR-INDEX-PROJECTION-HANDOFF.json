@@ -1,0 +1,35 @@
+{
+  "status": "reviewed-ready",
+  "files": {
+    "scripts/suite_reproduction.py": {
+      "baseline_sha256": "ddf8e1baf099677fffde1a6b101db66dae5241ba4c40b836a2e6beeebc2fe835",
+      "modified_sha256": "62d83e38e49b25b625fa70c89ea556426e8c4aaa9d21450ca77f505971f7be4b"
+    },
+    "tests/test_suite_reproduction.py": {
+      "baseline_sha256": "c8d723ac7d0563326b3612c059772f14e2d40d0a01e754854d8bf54f26a49c93",
+      "modified_sha256": "53d8d19fb04cea9869166b574afc1da2c9c26f5e724b4a66a0f04abdf2afbea5"
+    }
+  },
+  "patch_sha256": "11943ae2443f0461069a59edc78c7f54aa91e38fdbb83180321db130e180001d",
+  "tests": {
+    "focused": "74 passed in 0.44s",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "synthetic_fixture": {
+    "cases": 102,
+    "legacy_index_bytes": 14904642,
+    "projected_index_bytes": 124230,
+    "distinct_receipts": 2,
+    "idempotent": true
+  },
+  "production_data_loaded": false,
+  "native_jobs_run": false,
+  "streaming_repair_api": "compact_outcome(row, receipts=shared_dict)",
+  "independent_review": {
+    "agent": "/root/misaal_racket_recipe",
+    "result": "no concrete blocker",
+    "execution": "read-only; no native jobs"
+  },
+  "live_apply_check": "passed"
+}

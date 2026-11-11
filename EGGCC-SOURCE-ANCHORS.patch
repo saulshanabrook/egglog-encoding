@@ -1,0 +1,679 @@
+--- a/scripts/eggcc_churchroad_complete.py
++++ b/scripts/eggcc_churchroad_complete.py
+@@ -11,9 +11,11 @@
+ import hashlib
+ import json
+ import re
+-from collections import Counter
++from collections import Counter, defaultdict
+ from pathlib import Path
+ from typing import Any
++
++from scripts.hardboiled_replay import egglog_forms
+ 
+ 
+ class CaptureError(ValueError):
+@@ -468,8 +470,297 @@
+     return facts, roots
+ 
+ 
++def eggcc_source_anchors(graph: dict[str, Any], selection_program: str, source: str) -> tuple[str, dict[str, Any]]:
++    """Observe uniquely grounded initializer values without adding target terms.
++
++    Only constructor applications can ground an identity: a mutable custom-table
++    lookup in the final graph need not equal its value during initialization.
++    Unsupported source expressions retain the structural query path.
++    """
++    forms = egglog_forms(source)
++    trees = []
++    for _, _, tokens in forms:
++        stack: list[list[Any]] = [[]]
++        for token in tokens:
++            if token == "(":
++                stack.append([])
++            elif token == ")":
++                value = stack.pop()
++                stack[-1].append(value)
++            else:
++                stack[-1].append(token)
++        trees.append(stack[0][0])
++    plan: dict[str, Any] = {
++        "status": "structural-fallback",
++        "reason": None,
++        "classes": {},
++        "root_classes": {},
++        "unresolved_source_bindings": {},
++        "observation_tables": [],
++        "original_program_sha256": hashlib.sha256(source.encode()).hexdigest(),
++        "replay_program_sha256": hashlib.sha256(source.encode()).hexdigest(),
++        "native_graph_sha256": hashlib.sha256(json.dumps(graph, sort_keys=True).encode()).hexdigest(),
++    }
++    pending_forms = list(trees)
++    while pending_forms:
++        form = pending_forms.pop()
++        if form and isinstance(form[0], str) and form[0] in {"push", "pop", "reset", "include", "fail", "keep-best"}:
++            plan["reason"] = "source changes scope or reconstructs tables whose constructor lifetimes are not tracked"
++            return source, plan
++        pending_forms.extend(child for child in form if isinstance(child, list))
++    initializers = [
++        index
++        for index, (start, end, _) in enumerate(forms)
++        if "; Program nodes\n" in source[start:end] and "; Loop context unions\n" in source[start:end]
++    ]
++    if len(initializers) != 1:
++        plan["reason"] = "source markers do not identify one initializer command"
++        return source, plan
++    index = initializers[0]
++    init = trees[index]
++    if len(init) != 5 or init[:2] != ["rule", []] or init[3] != ":ruleset" or not isinstance(init[4], str):
++        plan["reason"] = "initializer is not one empty-body rule with an explicit ruleset"
++        return source, plan
++    ruleset = init[4]
++    uses = [i for i, (_, _, tokens) in enumerate(forms) if ruleset in tokens]
++    if (
++        index + 1 >= len(trees)
++        or trees[index + 1] != ["run", ruleset, "1"]
++        or len(uses) != 3
++        or trees[uses[0]] != ["ruleset", ruleset]
++        or uses[1:] != [index, index + 1]
++    ):
++        plan["reason"] = "initializer ruleset must be declared once and run exactly once immediately after its rule"
++        return source, plan
++    start, end, _ = forms[index]
++    initializer = source[start:end]
++    tail = re.search(r"\)\s*:ruleset\s+" + re.escape(ruleset) + r"\s*\)$", initializer)
++    if tail is None:
++        plan["reason"] = "initializer action boundary is not representable without reprinting source"
++        return source, plan
++    seed = initializer.split("; Program nodes\n", 1)[1].split("; Loop context unions\n", 1)[0]
++    seed_names = [tokens[2] for _, _, tokens in egglog_forms(seed) if tokens[:2] == ["(", "let"]]
++    seed_actions = [action for action in init[2] if action[0] == "let" and action[1] in seed_names]
++    if [action[1] for action in seed_actions] != seed_names or len(set(seed_names)) != len(seed_names):
++        raise CaptureError("initializer source bindings are duplicated or do not match its marked program nodes")
++    local_counts = Counter(action[1] for action in init[2] if action[0] == "let")
++    if any(local_counts[name] != 1 for name in seed_names):
++        raise CaptureError("initializer reassigns a retained source local")
++
++    signatures: dict[str, tuple[list[str], str]] = {}
++    eq_sorts = set()
++    for form in trees[:index]:
++        if form[0] == "datatype":
++            eq_sorts.add(form[1])
++            for variant in form[2:]:
++                arguments = variant[1:]
++                stop = next((i for i, value in enumerate(arguments) if str(value).startswith(":")), len(arguments))
++                signatures[variant[0]] = (arguments[:stop], form[1])
++        elif form[0] == "constructor":
++            signatures[form[1]] = (form[2], form[3])
++        elif form[0] == "sort" and len(form) == 2:
++            eq_sorts.add(form[1])
++    declared_tables = set(signatures) | {form[1] for form in trees if form[0] in {"function", "relation"}}
++    known_commands = {
++        "sort",
++        "datatype",
++        "constructor",
++        "function",
++        "relation",
++        "let",
++        "set",
++        "union",
++        "delete",
++        "subsume",
++        "ruleset",
++        "unstable-combined-ruleset",
++        "rule",
++        "rewrite",
++        "birewrite",
++        "run",
++        "run-schedule",
++        "check",
++        "extract",
++        "print-size",
++        "print-function",
++        "print-stats",
++    }
++    if any(form[0] not in known_commands | declared_tables for form in trees):
++        plan["reason"] = "source has an unsupported top-level command or macro; retain structural identities"
++        return source, plan
++    declared_rulesets = {form[1] for form in trees if form[0] in {"ruleset", "unstable-combined-ruleset"}}
++    scheduled_rulesets = {""}
++    for (_, _, tokens), form in zip(forms, trees, strict=True):
++        if form[0] in {"run", "run-schedule"}:
++            scheduled_rulesets.update(declared_rulesets.intersection(tokens))
++    combined = {form[1]: set(form[2:]) for form in trees if form[0] == "unstable-combined-ruleset"}
++    while True:
++        expanded = scheduled_rulesets | set().union(*(combined.get(name, set()) for name in scheduled_rulesets))
++        if expanded == scheduled_rulesets:
++            break
++        scheduled_rulesets = expanded
++    deleted_constructors = set()
++    for form in trees:
++        if form[0] in {"rule", "rewrite", "birewrite"}:
++            rule_ruleset = form[form.index(":ruleset") + 1] if ":ruleset" in form else ""
++            if rule_ruleset not in scheduled_rulesets:
++                continue
++        pending_actions = [form]
++        while pending_actions:
++            action = pending_actions.pop()
++            if (
++                action
++                and action[0] == "delete"
++                and len(action) == 2
++                and isinstance(action[1], list)
++                and action[1]
++                and action[1][0] in signatures
++            ):
++                deleted_constructors.add(action[1][0])
++            pending_actions.extend(child for child in action if isinstance(child, list))
++    plan["constructor_lifetime"] = {
++        "scheduled_rulesets": sorted(scheduled_rulesets),
++        "deleted_constructor_heads": sorted(deleted_constructors),
++        "subsumed_rows_retain_identity": True,
++    }
++    nodes = graph["nodes"]
++    class_data = graph.get("class_data", {})
++    rows: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
++    for node in nodes.values():
++        try:
++            children = tuple(nodes[child]["eclass"] for child in node["children"])
++        except KeyError as error:
++            raise CaptureError(f"native graph has a missing constructor child: {error}") from error
++        rows[(node["op"], children)].add(node["eclass"])
++    values: dict[str, str] = {}
++    candidates: dict[str, dict[str, str]] = {}
++
++    def resolve(expression: Any, expected_sort: str | None = None) -> str:
++        if isinstance(expression, str) and expression in values:
++            result = values[expression]
++        else:
++            if isinstance(expression, list):
++                if not expression or expression[0] not in signatures:
++                    raise LookupError("source call is not a declared constructor")
++                if expression[0] in deleted_constructors:
++                    raise LookupError(f"constructor {expression[0]} can be deleted by a reached source action")
++                inputs, output_sort = signatures[expression[0]]
++                if len(inputs) != len(expression) - 1 or expected_sort not in {None, output_sort}:
++                    raise CaptureError("native source constructor has inconsistent arity or sort")
++                expected_sort = output_sort
++                key = (
++                    expression[0],
++                    tuple(resolve(child, sort) for child, sort in zip(expression[1:], inputs, strict=True)),
++                )
++                choices = rows.get(key, set())
++                if len(choices) > 1:
++                    raise CaptureError(f"ambiguous native constructor identity for source call {expression[0]}")
++            elif isinstance(expression, str) and re.fullmatch(
++                r'"(?:[^"\\]|\\.)*"|true|false|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', expression
++            ):
++                choices = {
++                    value
++                    for value in rows.get((expression, ()), set())
++                    if expected_sort is None or class_data.get(value, {}).get("type") == expected_sort
++                }
++            else:
++                raise LookupError("source operand has no grounded earlier binding")
++            if len(choices) != 1:
++                raise LookupError("source value has no unique retained constructor row")
++            result = next(iter(choices))
++        actual_sort = class_data.get(result, {}).get("type")
++        if actual_sort is None:
++            raise LookupError("native graph omits the value's sort metadata")
++        if expected_sort is not None and actual_sort != expected_sort:
++            raise CaptureError("native constructor row has conflicting output sort metadata")
++        return result
++
++    for form in trees[:index]:
++        if form[0] != "let" or len(form) != 3:
++            continue
++        try:
++            class_id = resolve(form[2])
++        except LookupError:
++            continue
++        values[form[1]] = class_id
++        if class_data[class_id].get("let") == form[1] and class_data[class_id]["type"] in eq_sorts:
++            candidates[class_id] = {
++                "kind": "global",
++                "binding": form[1],
++                "sort": class_data[class_id]["type"],
++                "lookup": form[1],
++            }
++    for ordinal, action in enumerate(seed_actions):
++        name = action[1]
++        try:
++            class_id = resolve(action[2])
++        except LookupError as error:
++            values.pop(name, None)
++            plan["unresolved_source_bindings"][name] = str(error)
++            continue
++        values[name] = class_id
++        if isinstance(action[2], list) and action[2][0] == "Function":
++            plan["root_classes"][json.loads(action[2][1])] = class_id
++        sort = class_data[class_id]["type"]
++        if sort in eq_sorts and class_id not in candidates:
++            table = f"reproduction_anchor_{ordinal}"
++            candidates[class_id] = {
++                "kind": "initializer",
++                "binding": name,
++                "sort": sort,
++                "table": table,
++                "lookup": f"({table})",
++            }
++    needed = set()
++    pending: list[str] = []
++    for selection in tiger_selections(selection_program):
++        root = nodes[selection[-1][0]]
++        try:
++            name = json.loads(nodes[root["children"][0]]["op"])
++        except (KeyError, IndexError, ValueError) as error:
++            raise CaptureError("native selection root has no identifiable Function name") from error
++        if plan["root_classes"].get(name) == root["eclass"] and root["eclass"] in candidates:
++            needed.add(root["eclass"])
++        for node_id, _ in selection:
++            node = nodes[node_id]
++            kept = {"Arg": [], "Empty": [], "Const": [0]}.get(node["op"], list(range(len(node["children"]))))
++            pending.extend(child for i, child in enumerate(node["children"]) if i not in kept)
++    visited = set()
++    while pending:
++        node_id = pending.pop()
++        if node_id in visited:
++            continue
++        visited.add(node_id)
++        node = nodes[node_id]
++        if node["eclass"] in candidates:
++            needed.add(node["eclass"])
++        else:
++            pending.extend(node["children"])
++    plan["classes"] = {class_id: entry for class_id, entry in candidates.items() if class_id in needed}
++    plan["observation_tables"] = [entry for entry in plan["classes"].values() if entry["kind"] == "initializer"]
++    all_tokens = {token for _, _, tokens in forms for token in tokens}
++    if any(entry["table"] in all_tokens for entry in plan["observation_tables"]):
++        raise CaptureError("source collides with a reproduction source-anchor table")
++    declarations = "".join(
++        f"(function {entry['table']} () {entry['sort']} :merge old)\n" for entry in plan["observation_tables"]
++    )
++    assignments = "".join(f"(set ({entry['table']}) {entry['binding']})\n" for entry in plan["observation_tables"])
++    replay = source[:start] + declarations + initializer[: tail.start()] + assignments + source[start + tail.start() :]
++    if not needed:
++        plan["reason"] = "no required identity has a grounded source handle; all constraints remain structural"
++    else:
++        plan["status"] = "source-anchored"
++    plan["replay_program_sha256"] = hashlib.sha256(replay.encode()).hexdigest()
++    return replay, plan
++
++
+ def eggcc_output_checks(
+-    graph: dict[str, Any], program: str, batch: list[str], seed_program: str
++    graph: dict[str, Any],
++    program: str,
++    batch: list[str],
++    seed_program: str,
++    *,
++    source_anchors: dict[str, Any] | None = None,
+ ) -> tuple[str, list[dict[str, Any]]]:
+     """Bind every native selection to its unambiguous named application root.
+ 
+@@ -493,6 +784,8 @@
+         if set(seed_roots) != set(batch):
+             raise CaptureError("native initialization does not name exactly the selected Function batch")
+         query.facts.extend(seed_facts)
++        original_requests: set[str] = set()
++        selected_facts = []
+         for index, (node_id, child_indices) in enumerate(selection):
+             if node_id not in nodes:
+                 raise CaptureError(f"Tiger selected node absent from its input graph: {node_id}")
+@@ -509,11 +802,16 @@
+                 if nodes[selected_child]["eclass"] != nodes[original_children[position]]["eclass"]:
+                     raise CaptureError(f"Tiger child provenance disagrees with original eclass at {node_id}")
+                 substitutions[position] = f"{prefix}s{child_index}"
++            original_requests.update(
++                child for position, child in enumerate(original_children) if position not in substitutions
++            )
+             children = [
+                 substitutions[position] if position in substitutions else query.original(child)
+                 for position, child in enumerate(original_children)
+             ]
+-            query.facts.append(f"(= {prefix}s{index} {query.expression(node_id, children)})")
++            fact = f"(= {prefix}s{index} {query.expression(node_id, children)})"
++            query.facts.append(fact)
++            selected_facts.append(fact)
+         root_id = selection[-1][0]
+         root = nodes[root_id]
+         if root["op"] != "Function" or len(root["children"]) != 4:
+@@ -535,6 +833,65 @@
+         }
+         if classes != {root["eclass"]}:
+             raise CaptureError(f"ambiguous original Function identity for {name!r}")
++        witness = None
++        if source_anchors is not None:
++            handles = source_anchors["classes"]
++            input_handle = (
++                handles.get(root["eclass"]) if source_anchors["root_classes"].get(name) == root["eclass"] else None
++            )
++            if input_handle is not None:
++                query.facts[: len(seed_facts)] = [f"(= {seed_roots[name]} {input_handle['lookup']})"]
++            reachable = set()
++            pending = list(original_requests)
++            while pending:
++                node_id = pending.pop()
++                if node_id in reachable:
++                    continue
++                reachable.add(node_id)
++                if nodes[node_id]["eclass"] not in handles:
++                    pending.extend(nodes[node_id]["children"])
++            # Preserve the original variable allocation and every selected fact.
++            # Only the auxiliary original-node closure is replaced/pruned.
++            original_facts = {
++                (
++                    f"(= {variable} "
++                    f"{query.expression(node_id, [query.originals[c] for c in nodes[node_id]['children']])})"
++                ): node_id
++                for node_id, variable in query.originals.items()
++            }
++            replaced = []
++            for fact in query.facts:
++                original_node = original_facts.get(fact)
++                if original_node is None:
++                    replaced.append(fact)
++                elif original_node in reachable:
++                    handle = handles.get(nodes[original_node]["eclass"])
++                    replaced.append(f"(= {query.originals[original_node]} {handle['lookup']})" if handle else fact)
++            query.facts = replaced
++            witness = {
++                "input": {
++                    "mode": "source-handle" if input_handle else "structural",
++                    "native_class": root["eclass"],
++                    "handle": input_handle,
++                    "fallback_reason": None
++                    if input_handle
++                    else "named source root has no grounded handle in this native class",
++                },
++                "erased_fields": [
++                    {
++                        "node": node_id,
++                        "native_class": nodes[node_id]["eclass"],
++                        "handle": handles.get(nodes[node_id]["eclass"]),
++                        "fallback_reason": None
++                        if nodes[node_id]["eclass"] in handles
++                        else "no grounded source handle; retain structural closure",
++                    }
++                    for node_id in sorted(original_requests)
++                ],
++                "original_closure_nodes": len(query.originals),
++                "retained_original_nodes": len(reachable),
++                "selected_facts_sha256": hashlib.sha256("\n".join(selected_facts).encode()).hexdigest(),
++            }
+         query.facts.append(f"(= {seed_roots[name]} {prefix}s{len(selection) - 1})")
+         queries.append(query.finish())
+         roots.append(
+@@ -546,6 +903,8 @@
+                 "selected_nodes": len(selection),
+             }
+         )
++        if witness is not None:
++            roots[-1]["witness"] = witness | {"query_fact_count": len(query.facts)}
+         selected_classes[root["eclass"]] += 1
+         seen.add(name)
+     if seen != set(batch) or len(batch) != len(set(batch)):
+@@ -597,7 +956,10 @@
+         if source.count("; Program nodes\n") != 1 or source.count("; Loop context unions\n") != 1:
+             raise CaptureError("Eggcc initialization boundaries changed")
+         seed_program = source.split("; Program nodes\n", 1)[1].split("; Loop context unions\n", 1)[0]
+-        checks, roots = eggcc_output_checks(result["graph"], result["program"], batch, seed_program)
++        replay_program, source_anchors = eggcc_source_anchors(result["graph"], result["program"], source)
++        checks, roots = eggcc_output_checks(
++            result["graph"], result["program"], batch, seed_program, source_anchors=source_anchors
++        )
+         reconstructed_checks = []
+         reconstructed_roots = []
+         output_names = []
+@@ -623,6 +985,8 @@
+                 "pass": original["pass"],
+                 "batch": batch,
+                 "program": original["program"],
++                "replay_program": replay_program,
++                "source_anchors": source_anchors,
+                 "checks": checks,
+                 "roots": roots,
+                 "events": [start["sequence"], tiger["sequence"], end["sequence"]],
+--- a/scripts/suite_capture_eggcc_churchroad.py
++++ b/scripts/suite_capture_eggcc_churchroad.py
+@@ -708,7 +708,7 @@
+                     raw.write_text(session["program"])
+                     if family == "eggcc":
+                         content = (
+-                            adapt_eggcc(session["program"], typing_oracle=False)
++                            adapt_eggcc(session.get("replay_program", session["program"]), typing_oracle=False)
+                             if session["kind"] == "optimization"
+                             else session["program"]
+                         )
+@@ -742,7 +742,9 @@
+                         content += "\n" + session["checks"]
+                     replay.write_text(content)
+                     session_record = {
+-                        key: value for key, value in session.items() if key not in {"program", "checks", "parts"}
++                        key: value
++                        for key, value in session.items()
++                        if key not in {"program", "replay_program", "checks", "parts"}
+                     }
+                     session_record.update(
+                         session=index,
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -3,6 +3,7 @@
+ import copy
+ import hashlib
+ import json
++import re
+ from pathlib import Path
+ 
+ import pytest
+@@ -18,9 +19,11 @@
+     eggcc_output_checks,
+     eggcc_seed_query,
+     eggcc_sessions,
++    eggcc_source_anchors,
+     read_events,
+     tiger_selections,
+ )
++from scripts.hardboiled_replay import egglog_forms
+ from scripts.suite_capture_eggcc_churchroad import rename_churchroad_globals
+ 
+ 
+@@ -251,6 +254,170 @@
+     events[2]["payload"]["outputs"] = []
+     with pytest.raises(CaptureError, match="every requested Function"):
+         eggcc_sessions(events)
++
++
++@pytest.fixture
++def anchorable_eggcc(native_eggcc: tuple) -> tuple[dict, str, str, list[dict]]:
++    """A synthetic protocol graph with typed constructor and initializer evidence."""
++    graph, trace, seed, events = native_eggcc
++    graph["class_data"] = {
++        node["eclass"]: {"type": node["eclass"].split("-", 1)[0]} for node in graph["nodes"].values()
++    }
++    source = "\n".join(
++        [
++            "(datatype BaseType (IntT))",
++            "(datatype Type (Base BaseType))",
++            "(datatype Assumption (InFunc String) (Derived Assumption))",
++            "(datatype Constant (Int i64))",
++            "(datatype Expr (Const Constant Type Assumption) (Function String Type Type Expr))",
++            "(relation FunctionHasType (String Type Type))",
++            "(ruleset initialization)",
++            "(rule () (\n; Program nodes\n" + seed + "\n; Loop context unions\n) :ruleset initialization)",
++            "(run initialization 1)",
++        ]
++    )
++    events[0]["payload"]["program"] = source
++    return graph, trace, seed, events
++
++
++def test_eggcc_anchors_all_native_root_aliases_and_preserves_selected_facts(anchorable_eggcc: tuple) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"]
++    replay, plan = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=plan)
++    structural, _ = eggcc_output_checks(graph, trace, ["main"], seed)
++    assert len(plan["observation_tables"]) == 3
++    assert {entry["binding"] for entry in plan["observation_tables"]} == {"ty", "ctx", "fun"}
++    restored = replay
++    for entry in plan["observation_tables"]:
++        restored = restored.replace(f"(function {entry['table']} () {entry['sort']} :merge old)\n", "")
++        restored = restored.replace(f"(set ({entry['table']}) {entry['binding']})\n", "")
++    assert restored == source
++    for old, new in zip(egglog_forms(structural), egglog_forms(checks), strict=True):
++        old_facts = egglog_forms(structural[old[0] : old[1]][6:-1])
++        new_facts = egglog_forms(checks[new[0] : new[1]][6:-1])
++        assert [t for _, _, t in old_facts if re.fullmatch(r"reproduction_\d+_s\d+", t[2])] == [
++            t for _, _, t in new_facts if re.fullmatch(r"reproduction_\d+_s\d+", t[2])
++        ]
++    assert len(roots) == 2 and all(root["witness"]["input"]["mode"] == "source-handle" for root in roots)
++    assert all(root["witness"]["query_fact_count"] == 11 for root in roots)
++    assert "(Int 1)" not in checks and "(= reproduction_0_s3 2)" in checks
++    assert "(let " not in checks and "(set " not in checks and "(union " not in checks
++    sessions = eggcc_sessions(events)
++    assert sessions[0]["program"] == source
++    assert sessions[0]["replay_program"] == replay
++    assert sessions[0]["source_anchors"] == plan
++    assert plan["original_program_sha256"] == hashlib.sha256(source.encode()).hexdigest()
++    assert plan["replay_program_sha256"] == hashlib.sha256(replay.encode()).hexdigest()
++
++
++@pytest.mark.parametrize(
++    "change",
++    [
++        "second-run",
++        "nonempty-body",
++        "extra-rule",
++        "push-pop",
++        "nested-push-pop",
++        "nested-keep-best",
++        "unknown-macro",
++    ],
++)
++def test_eggcc_anchor_initializer_scope_falls_back_explicitly(anchorable_eggcc: tuple, change: str) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"]
++    if change == "second-run":
++        source += "\n(run initialization 1)"
++    elif change == "nonempty-body":
++        source = source.replace("(rule () (", "(rule ((= x (IntT))) (")
++    elif change == "extra-rule":
++        source += "\n(rule () ((IntT)) :ruleset initialization)"
++    elif change == "push-pop":
++        source += "\n(push)\n(pop)"
++    elif change == "nested-push-pop":
++        source += "\n(run-schedule (repeat 1 (push) (pop)))"
++    elif change == "nested-keep-best":
++        source += '\n(run-schedule (repeat 1 (keep-best "Function")))'
++    else:
++        source += "\n(unknown-control-macro)"
++    replay, plan = eggcc_source_anchors(graph, trace, source)
++    assert replay == source and plan["status"] == "structural-fallback" and plan["reason"]
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=plan)
++    assert checks == eggcc_output_checks(graph, trace, ["main"], seed)[0]
++    assert all(root["witness"]["input"]["fallback_reason"] for root in roots)
++
++
++def test_eggcc_anchor_rejects_ambiguous_constructor_rows(anchorable_eggcc: tuple) -> None:
++    graph, trace, _, events = anchorable_eggcc
++    graph["nodes"]["other-type"] = {"op": "IntT", "children": [], "eclass": "BaseType-other"}
++    graph["class_data"]["BaseType-other"] = {"type": "BaseType"}
++    with pytest.raises(CaptureError, match="ambiguous native constructor identity"):
++        eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++
++
++def test_eggcc_anchor_retains_ungrounded_derived_cycle(anchorable_eggcc: tuple) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    graph["nodes"]["derived-ctx"] = {"op": "Derived", "children": ["derived-ctx"], "eclass": "Assumption-derived"}
++    graph["class_data"]["Assumption-derived"] = {"type": "Assumption"}
++    graph["nodes"]["const2"]["children"][2] = "derived-ctx"
++    _, plan = eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=plan)
++    assert "Assumption-derived" not in plan["classes"]
++    for start, end, _ in egglog_forms(checks):
++        cyclic = [t for _, _, t in egglog_forms(checks[start:end][6:-1]) if "Derived" in t]
++        assert len(cyclic) == 1 and cyclic[0][2] == cyclic[0][5]
++    assert all(root["witness"]["input"]["mode"] == "source-handle" for root in roots)
++    assert all(any(field["fallback_reason"] for field in root["witness"]["erased_fields"]) for root in roots)
++
++
++def test_eggcc_anchor_uses_existing_global_only_with_verified_source_identity(anchorable_eggcc: tuple) -> None:
++    graph, trace, _, events = anchorable_eggcc
++    source = events[0]["payload"]["program"].replace(
++        "(ruleset initialization)", '(let existing-context (InFunc "main-context"))\n(ruleset initialization)'
++    )
++    graph["class_data"]["Assumption-1"]["let"] = "existing-context"
++    replay, plan = eggcc_source_anchors(graph, trace, source)
++    assert plan["classes"]["Assumption-1"]["lookup"] == "existing-context"
++    assert len(plan["observation_tables"]) == 2
++    assert replay.count('(let existing-context (InFunc "main-context"))') == 1
++    graph["class_data"]["Assumption-1"]["let"] = "unrelated-name"
++    _, plan = eggcc_source_anchors(graph, trace, source)
++    assert plan["classes"]["Assumption-1"]["kind"] == "initializer"
++    assert len(plan["observation_tables"]) == 3
++
++
++@pytest.mark.parametrize("scheduled", [False, True])
++def test_eggcc_anchor_constructor_deletion_gate_tracks_combined_schedules(
++    anchorable_eggcc: tuple, scheduled: bool
++) -> None:
++    graph, trace, seed, events = anchorable_eggcc
++    source = events[0]["payload"]["program"] + (
++        "\n(ruleset delete-types)\n"
++        "(rule ((IntT)) ((delete (IntT))) :ruleset delete-types)\n"
++        "(unstable-combined-ruleset combined-delete delete-types)\n"
++    )
++    if scheduled:
++        source += "(run combined-delete 1)\n"
++    _, plan = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=plan)
++    if scheduled:
++        assert plan["constructor_lifetime"]["deleted_constructor_heads"] == ["IntT"]
++        assert set(plan["unresolved_source_bindings"]) == {"ty", "body", "fun"}
++        assert "Type-1" not in plan["classes"]
++        assert all(root["witness"]["input"]["mode"] == "structural" for root in roots)
++        assert "(Int 1)" in checks
++    else:
++        assert plan["constructor_lifetime"]["deleted_constructor_heads"] == []
++        assert len(plan["observation_tables"]) == 3
++
++
++def test_eggcc_anchor_allows_subsumption_and_rejects_namespace_collision(anchorable_eggcc: tuple) -> None:
++    graph, trace, _, events = anchorable_eggcc
++    source = events[0]["payload"]["program"] + "\n(subsume (IntT))\n"
++    _, plan = eggcc_source_anchors(graph, trace, source)
++    assert len(plan["observation_tables"]) == 3
++    with pytest.raises(CaptureError, match="source collides"):
++        eggcc_source_anchors(graph, trace, source + "(relation reproduction_anchor_0 ())")
+ 
+ 
+ def test_native_event_files_must_be_contiguous_and_complete(tmp_path: Path, native_eggcc: tuple) -> None:
+@@ -373,10 +540,10 @@
+ def test_complete_adapter_admits_only_full_parent_and_checked_sessions(
+     tmp_path: Path,
+     monkeypatch: pytest.MonkeyPatch,
+-    native_eggcc: tuple,
++    anchorable_eggcc: tuple,
+     parent_status: str,
+ ) -> None:
+-    *_, events = native_eggcc
++    *_, events = anchorable_eggcc
+     checkout = tmp_path / "checkout"
+     checkout.mkdir()
+     (checkout / "source.bril").write_text("actual input")
+@@ -440,6 +607,13 @@
+         assert len(record["source_completion"]["outputs"]) == 3
+         assert all(session["output_contract"]["roots"] for session in record["sessions"])
+         assert record["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
++        session = record["sessions"][0]
++        assert Path(session["raw"]).read_text() == events[0]["payload"]["program"]
++        assert Path(session["replay"]).read_text().startswith(eggcc_sessions(events)[0]["replay_program"] + "\n")
++        assert session["source_anchors"]["status"] == "source-anchored"
++        assert len(session["source_anchors"]["observation_tables"]) == 3
++        assert "replay_program" not in session
++        assert session["source_anchors"]["original_program_sha256"] == session["raw_sha256"].removeprefix("sha256:")
+     elif parent_status == "materialization-failure":
+         assert record["source_completion"]["parent_completed"]
+         assert record["materialization"] == {"complete": False, "expected_sessions": 2, "materialized_sessions": 1}

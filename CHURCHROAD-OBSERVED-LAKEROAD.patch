@@ -1,0 +1,11 @@
+--- a/racket/architecture-description.rkt
++++ b/racket/architecture-description.rkt
+@@ -1074,7 +1074,7 @@
+                                                 filepath)
+                                                'P)))))
+                      'O)))
+-                  others ...)))
++                  other-outputs ...)))
+           #t]
+          [else #f]))))
+ 

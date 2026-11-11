@@ -1,0 +1,10 @@
+--- a/scripts/eggcc_churchroad_complete.py
++++ b/scripts/eggcc_churchroad_complete.py
+@@ -218,6 +218,7 @@
+         ],
+         "src/lib.rs": [
+             ("pub mod global_greedy_dag;", "pub mod global_greedy_dag;\n" + RUST_CAPTURE + CHURCHROAD_RUN),
++            ("        .arg(spec_filepath)", "        .arg(&spec_filepath)"),
+             (
+                 "    let output = command.output().unwrap();",
+                 '    reproduction_capture("synthesis-input", serde_json::json!({\n'

@@ -1,0 +1,16 @@
+{
+  "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
+  "selector_sha256": "745e093b192cf6db338022b4943cf5329d1fc4a06e2ac4d59455c70ed82998f6",
+  "generator_sha256": "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0",
+  "semantics_sha256": "bebe9f04ec1f28dfa1451eceebd9e3e12d71526cf3e4b55aead6274408e55f6e",
+  "groups": [
+    "_mm512_srav_epi16",
+    "_mm512_extracti64x2_epi64"
+  ],
+  "extraction": "Exact generated group spans (before next InstNames) plus inert function delimiter; exact JSON-decoded source dictionary groups; generator copied whole. No numeric guards altered.",
+  "fixtures": {
+    "RoseX86LegalizerGen.py.txt": "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0",
+    "original-cases.cpp.txt": "98d6f944021b54bbdb65cdf77303f390924817548ef148112f5872ba369715d8",
+    "semantics.json": "b0df89a8e592443bf9f630535346641d20e0f447217d0955a212967e74ca7b88"
+  }
+}

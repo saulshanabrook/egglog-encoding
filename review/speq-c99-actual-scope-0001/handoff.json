@@ -1,0 +1,54 @@
+{
+  "status": "review-ready-no-native-runs",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/speq-c99-actual-scope-0001/implementation.patch",
+  "patch_sha256": "a853e8eb45ef6d5b88b83f502142f4765641d708dfe429183cd2402b77efce25",
+  "baseline": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/.baseline/speq-c99-actual-scope",
+  "files": {
+    "scripts/speq_c99_gates.py": {
+      "baseline_sha256": "56fa30a8af3d1a3168fa84b46895e894403a336c4d3771c8c919a5b147086923",
+      "after_sha256": "bf457ead659a5602ae4f2634106b2705f81efb1706dcacbcd96048a199f41e51",
+      "root_baseline_matches": true
+    },
+    "tests/test_speq_c99_gates.py": {
+      "baseline_sha256": "8debcf8c7259b6a412c74948181e456cbe30a64c316c7783ae089a0de378a8b1",
+      "after_sha256": "bab35cd108812d27a94fb4f6571633101427d1b22e1c12b97113c3003b2f9b8a",
+      "root_baseline_matches": true
+    }
+  },
+  "checks": [
+    "114 focused data-only/mocked tests passed in 1.19s",
+    "Ruff check/format passed",
+    "mypy passed in 2 source files"
+  ],
+  "scope": "Remove only invented unrelated-function positive. Existing fresh original-C triple comparator and all candidate/recorder/domain/admission code are unchanged.",
+  "native_gate_count": 30,
+  "remaining_gates": {
+    "paired_build": 1,
+    "domain_fixtures": 16,
+    "disabled_references": 8,
+    "selection_negatives": [
+      "missing",
+      "duplicate",
+      "invalid-enable",
+      "empty"
+    ],
+    "fresh_original_c_triple": 1
+  },
+  "regression_coverage": "Uses actual 2897-byte six-fold init_array FIR and fresh-pair fixture bytes with real compare_frontends; rejects disabled init/selected/count drift and enabled init/blank/missing/extra/reordered/unrepaired output. No historical FIR is used by production gates.",
+  "preserved_failure_evidence": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/preparation/speq-c99-public-attempt-0001/c99-gates/selection-unrelated/enabled/stderr.log": {
+      "sha256": "fc514307220d155992457938194ce9d91a071817546ad30b45cc7c75d52bd2e3",
+      "bytes": 7288
+    },
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/preparation/speq-c99-public-attempt-0002/c99-gates/selection-unrelated/enabled/stderr.log": {
+      "sha256": "5d7d6a52017b707ff76634c6f87f4da745e2a6c11f30645ed2d94dbffeb7a1f9",
+      "bytes": 5674
+    },
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/preparation/speq-c99-public-attempt-0002/c99-gates/selection-unrelated/enabled/process.json": {
+      "sha256": "1d3965c3a961b1bacdf095a0c71b64aebd70e491ce130508a8c8a7d07ce05337",
+      "bytes": 891
+    }
+  },
+  "review": "Independent design reassessment clear; small implementation delta review requested.",
+  "remaining_execution": "Root must run new tracked preparation identity and complete source+ordinary canary; historical success is not substituted."
+}

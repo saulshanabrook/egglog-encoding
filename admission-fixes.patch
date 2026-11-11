@@ -1,0 +1,1099 @@
+--- a/scripts/dialegg_speq_complete.py
++++ b/scripts/dialegg_speq_complete.py
+@@ -392,6 +392,7 @@
+             row["reason"] = "final MLIR verification did not produce a nonempty verified module"
+             save_manifest(case_dir / "manifest.json", row)
+             continue
++        row["materialization"] = {"expected_sessions": len(raw_calls), "materialized_sessions": 0, "complete": False}
+         for invocation, raw in zip(row["invocations"], raw_calls, strict=True):
+             modern = modernize_dialegg_invocation(raw.read_text(), prelude, diagnostic_queries=False)
+             replay = raw.with_suffix(".standalone.egg")
+@@ -405,6 +406,12 @@
+                 "cost_semantics": "source constructor and dynamic costs preserved; original CLI does not print costs",
+                 "zero_root_helper": not invocation["native"]["output_count"],
+             }
++            row["materialization"]["materialized_sessions"] += 1
++        row["materialization"]["complete"] = True
++        row["status"] = "ordinary-validation-pending"
++        for invocation, raw in zip(row["invocations"], raw_calls, strict=True):
++            replay = Path(invocation["standalone"])
++            modern = replay.read_text()
+             command = [str(args.egglog.resolve()), str(replay)]
+             check = run_complete_command(command, case_dir, raw.with_suffix(".replay"), args.timeout_sec)
+             invocation["ordinary"] = {"command": command, **asdict(check)}
+@@ -426,6 +433,7 @@
+             row["status"] = "reproduced"
+             row["workloads"] = [v["standalone"] for v in row["invocations"]]
+         else:
++            row["status"] = "ordinary-validation-failed"
+             row["reason"] = "at least one ordinary replay failed or differed from the native extraction output"
+         save_manifest(case_dir / "manifest.json", row)
+         if report.get("operational_stop"):
+@@ -499,27 +507,29 @@
+             break
+         if not row["source_complete"]:
+             continue
++        expected = [tokens for _, _, tokens in egglog_forms(row["source"]["expected_stdout"])]
++        row["output_contract"] = {
++            "kind": "ordinary-best-extract",
++            "expected_terms": expected,
++            "extract_requests": [tokens for _, _, tokens in egglog_forms(replay.read_text()) if tokens[1] == "extract"],
++            "native_costs": [region["cost"] for region in row["source"]["regions"] if "cost" in region],
++            "cost_semantics": "original constructor costs preserved; replay CLI prints terms only",
++        }
++        row["materialization"] = {"expected_sessions": 1, "materialized_sessions": 1, "complete": True}
++        row["status"] = "ordinary-validation-pending"
+         command = [str(args.egglog.resolve()), str(replay)]
+         ordinary = run_complete_command(command, case_dir, case_dir / "ordinary", args.timeout_sec)
+         row["ordinary"] = {"command": command, **asdict(ordinary)}
+         if ordinary.status == "success":
+             try:
+                 outputs = validate_extract_output(replay.read_text(), ordinary.stdout_path.read_text())
+-                expected = [tokens for _, _, tokens in egglog_forms(row["source"]["expected_stdout"])]
+                 if outputs != expected:
+                     raise ValueError("standalone outputs differ from native extraction responses")
+                 row.update(status="reproduced", ordinary_compatible=True, workloads=[str(replay)])
+-                row["output_contract"] = {
+-                    "kind": "ordinary-best-extract",
+-                    "expected_terms": expected,
+-                    "extract_requests": [
+-                        tokens for _, _, tokens in egglog_forms(replay.read_text()) if tokens[1] == "extract"
+-                    ],
+-                    "native_costs": [region["cost"] for region in row["source"]["regions"] if "cost" in region],
+-                    "cost_semantics": "original constructor costs preserved; replay CLI prints terms only",
+-                }
+             except ValueError as error:
+                 row["reason"] = str(error)
++        if row["status"] != "reproduced":
++            row["status"] = "ordinary-validation-failed"
+         save_manifest(case_dir / "manifest.json", row)
+         if ordinary.status in STOP_STATUSES:
+             report["operational_stop"] = asdict(ordinary)
+--- a/scripts/misaal_reproduction.py
++++ b/scripts/misaal_reproduction.py
+@@ -395,9 +395,15 @@
+         }
+         from scripts.hardboiled_replay import check_observed_selections, egglog_forms
+         from scripts.paper_benchmarks.materialize import prefix_atoms
++        from scripts.reproduction_validation import native_check_contract
+ 
+         replay_directory = attempt / "replays"
+         replay_directory.mkdir()
++        record["materialization"] = {
++            "expected_sessions": sum(len(json.loads(child.read_text())["invocations"]) for child in children),
++            "materialized_sessions": 0,
++            "complete": False,
++        }
+         for child in children:
+             for call in json.loads(child.read_text())["invocations"]:
+                 raw = Path(call["raw"]).read_text()
+@@ -411,6 +417,7 @@
+                 boundary = next((start for start, _, tokens in forms if tokens[1] == "let"), len(raw))
+                 modern = raw[:boundary] + prefix_atoms(raw[boundary:], names)
+                 replay, selections = check_observed_selections(modern, stdout.decode())
++                extracts = [i for i, (_, _, tokens) in enumerate(egglog_forms(replay)) if tokens[1] == "extract"]
+                 destination = replay_directory / f"invocation-{len(record['invocations']):04}.egg"
+                 destination.write_text(replay)
+                 record["invocations"].append(
+@@ -421,9 +428,13 @@
+                         "replay_sha256": hashlib.sha256(replay.encode()).hexdigest(),
+                         "selections": selections,
+                         "root_count": len(selections),
++                        "output_contract": native_check_contract(
++                            replay, [(i + 1, s["check"]) for i, s in zip(extracts, selections, strict=True)], selections
++                        ),
+                         "ordinary_contract": "Original extracts plus equality checks for all actual backend selections",
+                     }
+                 )
++                record["materialization"]["materialized_sessions"] = len(record["invocations"])
+         if not record["invocations"]:
+             raise ValueError("No reached Egglog work; classify this source as a helper, not an optimization replay")
+         record.update(
+@@ -431,6 +442,7 @@
+             workloads=[item["replay"] for item in record["invocations"]],
+             reason="Native generator and LLVM feedback completed; standalone outputs await ordinary validation",
+         )
++        record["materialization"]["complete"] = True
+         return 0
+     except BaseException:
+         record.update(status="failure", reason=str(sys.exc_info()[1]), error=traceback.format_exc())
+--- a/scripts/reproduction_validation.py
++++ b/scripts/reproduction_validation.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import hashlib
+ import json
+ from dataclasses import asdict
+ from pathlib import Path
+@@ -10,6 +11,41 @@
+ from benchmarking.targets import sha256_file
+ from scripts.dialegg_speq_complete import run_complete_command, validate_extract_output
+ from scripts.hardboiled_replay import egglog_forms
++
++
++def native_check_contract(source: str, checks: list[tuple[int, str]], roots: list[dict[str, Any]]) -> dict[str, Any]:
++    """Bind native equalities to exact commands and their preceding graph state.
++
++    Callers supply the insertion positions while materializing the replay. Do
++    not rediscover an equality by searching for a matching check somewhere else.
++    """
++    forms = [tokens for _, _, tokens in egglog_forms(source)]
++    records = []
++    previous = -1
++    for position, check in checks:
++        parsed = egglog_forms(check)
++        if len(parsed) != 1 or parsed[0][2][1] != "check" or position <= previous:
++            raise ValueError("native output checks must be single ordered check commands")
++        tokens = parsed[0][2]
++        if position >= len(forms) or forms[position] != tokens:
++            raise ValueError("native output check is absent at its intended command boundary")
++        records.append(
++            {
++                "command": position,
++                "tokens": tokens,
++                "prefix_sha256": hashlib.sha256(json.dumps(forms[:position]).encode()).hexdigest(),
++            }
++        )
++        previous = position
++    if not records or not roots:
++        raise ValueError("native output contract requires all roots and checks")
++    return {
++        "kind": "query-only-native-output-equality",
++        "roots": roots,
++        "checks": records,
++        "check_sha256": hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest(),
++        "claims_optimality": False,
++    }
+ 
+ 
+ def validate_capture(
+@@ -32,6 +68,8 @@
+         "proof_validation": "not-run",
+     }
+     try:
++        if capture.get("status") not in {"reproduced", "ordinary-validation-pending", "ordinary-validation-failed"}:
++            raise ValueError("capture is blocked or incomplete; native completion alone cannot admit its prefixes")
+         if capture.get("source_completion", {}).get("status") not in {"success", "complete"}:
+             raise ValueError("the source parent did not complete; its prefixes are diagnostic only")
+         sessions = capture.get("sessions") or capture.get("invocations")
+@@ -45,6 +83,13 @@
+             ]
+         if not sessions:
+             raise ValueError("completed parent has no independently checkable output contracts")
++        materialization = capture.get("materialization", {})
++        if (
++            materialization.get("complete") is not True
++            or materialization.get("expected_sessions") != len(sessions)
++            or materialization.get("materialized_sessions") != len(sessions)
++        ):
++            raise ValueError("complete materialization of every native session is required")
+         for index, session in enumerate(sessions):
+             replay = Path(session.get("replay") or session["standalone"])
+             expected_hash = session.get("replay_sha256") or session.get("standalone_sha256")
+@@ -61,18 +106,28 @@
+             if selections is not None:
+                 if len(selections) != session["root_count"] or not selections:
+                     raise ValueError("native selection/root correspondence is incomplete")
+-                for selected in selections:
+-                    expected_check = egglog_forms(selected["check"])[0][2]
+-                    if expected_check not in forms:
+-                        raise ValueError("replay omitted a native selected-output equality")
+-            elif not contract or contract["kind"] not in {
++                extracts = [index for index, tokens in enumerate(forms) if tokens[1] == "extract"]
++                expected = native_check_contract(
++                    source,
++                    [(index + 1, selected["check"]) for index, selected in zip(extracts, selections, strict=True)],
++                    selections,
++                )
++                if contract != expected:
++                    raise ValueError("native selection contract changed or lost its extraction boundary")
++            if not contract or contract["kind"] not in {
+                 "ordinary-best-extract",
+                 "query-only-native-output-equality",
+             }:
+                 raise ValueError("unknown or absent native output contract")
+             elif contract["kind"] == "query-only-native-output-equality":
+-                if not contract["roots"] or not any(tokens[1] == "check" for tokens in forms):
+-                    raise ValueError("native output query has no roots or checks")
++                checks = contract.get("checks", [])
++                expected = native_check_contract(
++                    source,
++                    [(check["command"], " ".join(check["tokens"])) for check in checks],
++                    contract["roots"],
++                )
++                if contract != expected:
++                    raise ValueError("native check hash, ordered checks, or preceding graph state changed")
+             command = [str(engine.resolve()), "-j", "1", str(replay.resolve())]
+             process = run_complete_command(command, output, output / f"replay-{index:04}", timeout_sec)
+             row = {
+--- a/scripts/suite_capture_eggcc_churchroad.py
++++ b/scripts/suite_capture_eggcc_churchroad.py
+@@ -41,6 +41,7 @@
+     read_events,
+     write_native_patch,
+ )
++from scripts.hardboiled_replay import egglog_forms  # noqa: E402
+ from scripts.paper_benchmarks.materialize import (  # noqa: E402
+     CHURCHROAD_MAIN_SHA256,
+     CHURCHROAD_PLUGIN_SHA256,
+@@ -49,6 +50,7 @@
+     constructors,
+     read_verified,
+ )
++from scripts.reproduction_validation import native_check_contract  # noqa: E402
+ 
+ STORAGE = ROOT / "benchmarks/local"
+ BUILD = ROOT / "target/benchmark-acquisition"
+@@ -692,6 +694,11 @@
+                             }
+                         )
+                 sessions = eggcc_sessions(events) if family == "eggcc" else churchroad_sessions(events)
++                record["materialization"] = {
++                    "expected_sessions": len(sessions),
++                    "materialized_sessions": 0,
++                    "complete": False,
++                }
+                 for index, session in enumerate(sessions):
+                     raw = attempt / f"session-{index:03}-{session['kind']}.raw.egg"
+                     raw.write_text(session["program"])
+@@ -703,6 +710,8 @@
+                         )
+                     else:
+                         chunks = []
++                        check_positions = []
++                        command_count = 0
+                         for part in session["parts"]:
+                             program = constructors(part["program"])
+                             if re.search(r"^\(let ", program, re.MULTILINE):
+@@ -711,21 +720,23 @@
+                                         "Churchroad mixed global/rule command needs a reviewed hygienic adaptation"
+                                     )
+                                 program, _, _ = rename_churchroad_globals(program, "", session["program"])
++                            command_count += len(egglog_forms(program))
++                            for start, end, _ in egglog_forms(part["checks"]):
++                                check_positions.append((command_count, part["checks"][start:end]))
++                                command_count += 1
+                             chunks.append(program + "\n" + part["checks"])
+                         content = "\n".join(chunks)
+                     if "reproduction_" in session["program"].replace("; reproduction-", "; capture-"):
+                         raise CaptureError("native source collides with reserved reproduction query variables")
+                     replay = attempt / f"session-{index:03}-{session['kind']}.egg"
+-                    replay.write_text(content + ("\n" + session["checks"] if family == "eggcc" else ""))
+-                    validated = run_bounded_command(
+-                        [str(engine), "--mode", "no-messages", "-j", "1", str(replay.resolve())],
+-                        attempt,
+-                        attempt / f"validate-{index:03}",
+-                        timeout_sec=timeout_sec,
+-                        require_guard=True,
+-                        disk_reserve_bytes=10 * 1024**3,
+-                        allow_warning_pressure=True,
+-                    )
++                    if family == "eggcc":
++                        command_count = len(egglog_forms(content))
++                        check_positions = [
++                            (command_count + number, session["checks"][start:end])
++                            for number, (start, end, _) in enumerate(egglog_forms(session["checks"]))
++                        ]
++                        content += "\n" + session["checks"]
++                    replay.write_text(content)
+                     session_record = {
+                         key: value for key, value in session.items() if key not in {"program", "checks", "parts"}
+                     }
+@@ -735,16 +746,32 @@
+                         replay=str(replay),
+                         raw_sha256=sha256_file(raw),
+                         replay_sha256=sha256_file(replay),
+-                        validation=asdict(validated),
+-                        output_contract={
+-                            "kind": "query-only-native-output-equality",
+-                            "roots": session["roots"],
+-                            "check_sha256": hashlib.sha256(session["checks"].encode()).hexdigest(),
+-                            "claims_optimality": False,
+-                        },
++                        output_contract=native_check_contract(content, check_positions, session["roots"]),
+                     )
+                     record["sessions"].append(session_record)
++                    record["materialization"]["materialized_sessions"] = len(record["sessions"])
++                record["materialization"]["complete"] = True
++                record["status"] = "ordinary-validation-pending"
++                for index, session_record in enumerate(record["sessions"]):
++                    validated = run_bounded_command(
++                        [
++                            str(engine),
++                            "--mode",
++                            "no-messages",
++                            "-j",
++                            "1",
++                            str(Path(session_record["replay"]).resolve()),
++                        ],
++                        attempt,
++                        attempt / f"validate-{index:03}",
++                        timeout_sec=timeout_sec,
++                        require_guard=True,
++                        disk_reserve_bytes=10 * 1024**3,
++                        allow_warning_pressure=True,
++                    )
++                    session_record["validation"] = asdict(validated)
+                     if validated.status != "success":
++                        record["status"] = "ordinary-validation-failed"
+                         raise CaptureError(f"ordinary replay failed for session {index}: {validated.status}")
+                 record["status"] = "reproduced"
+                 record["workloads"] = [session["replay"] for session in record["sessions"]]
+@@ -762,7 +789,7 @@
+             record.get("resource_stop")
+             or process.status in {"memory-limit", "resource-stopped", "timed-out"}
+             or any(
+-                session["validation"]["status"] in {"memory-limit", "resource-stopped", "timed-out"}
++                session.get("validation", {}).get("status") in {"memory-limit", "resource-stopped", "timed-out"}
+                 for session in record["sessions"]
+             )
+         ):
+--- a/scripts/suite_capture_hardboiled_misaal.py
++++ b/scripts/suite_capture_hardboiled_misaal.py
+@@ -518,7 +518,8 @@
+ 
+ def prepare_hardboiled_capture(capture: Path, directory: Path) -> list[dict[str, Any]]:
+     """Materialize all observed roots only from completed optimization parents."""
+-    from scripts.hardboiled_replay import check_observed_selections
++    from scripts.hardboiled_replay import check_observed_selections, egglog_forms
++    from scripts.reproduction_validation import native_check_contract
+ 
+     records = json.loads(capture.read_text())
+     directory.mkdir(parents=True, exist_ok=False)
+@@ -529,6 +530,11 @@
+             "status": "blocked",
+             "workloads": [],
+             "invocations": [],
++            "materialization": {
++                "expected_sessions": len(case["raw_invocations"]),
++                "materialized_sessions": 0,
++                "complete": False,
++            },
+             "source_completion": {
+                 "status": "unverified" if case.get("optimization_complete") else "incomplete",
+                 "parent": case.get("generate"),
+@@ -570,6 +576,7 @@
+                 if original != outcome["selections"]:
+                     raise ValueError("Recorded root/selection correspondence changed")
+                 replay, selections = check_observed_selections(modernize_hardboiled(raw.decode()), stdout.decode())
++                extracts = [i for i, (_, _, tokens) in enumerate(egglog_forms(replay)) if tokens[1] == "extract"]
+                 destination = directory / f"{case['id']}-{index:04}.egg"
+                 destination.write_text(replay)
+                 row["invocations"].append(
+@@ -582,12 +589,17 @@
+                         "replay_sha256": hashlib.sha256(replay.encode()).hexdigest(),
+                         "selections": selections,
+                         "root_count": len(selections),
++                        "output_contract": native_check_contract(
++                            replay, [(i + 1, s["check"]) for i, s in zip(extracts, selections, strict=True)], selections
++                        ),
+                         "ordinary_contract": "Original extracts and equality checks for every actual sidecar selection",
+                     }
+                 )
++                row["materialization"]["materialized_sessions"] = len(row["invocations"])
+             if not row["invocations"]:
+                 raise ValueError("Completed parent has no captured optimization calls")
+             row["status"] = "ordinary-validation-pending"
++            row["materialization"]["complete"] = True
+             row["workloads"] = [invocation["replay"] for invocation in row["invocations"]]
+             row["reason"] = "Completed native optimization; every observed selection still requires ordinary validation"
+         except (OSError, KeyError, UnicodeError, ValueError) as error:
+--- a/scripts/suite_reproduction.py
++++ b/scripts/suite_reproduction.py
+@@ -18,6 +18,38 @@
+ ROOT = Path(__file__).resolve().parents[1]
+ STORAGE = ROOT / "benchmarks/local/reproduction"
+ STOP_STATUSES = {"resource-stopped", "memory-limit", "timed-out", "cancelled", "interrupted"}
++VALIDATABLE_STATUSES = {"reproduced", "ordinary-validation-pending", "ordinary-validation-failed"}
++VALIDATION_SOURCES = (
++    "scripts/reproduction_validation.py",
++    "scripts/dialegg_speq_complete.py",
++    "scripts/hardboiled_replay.py",
++    "scripts/suite_capture_dialegg_speq.py",
++    "scripts/paper_benchmarks/materialize.py",
++    "scripts/paper_benchmarks/record_speq.py",
++    "benchmarking/pilot.py",
++    "benchmarking/memory_guard.py",
++    "benchmarking/targets.py",
++)
++
++
++def misaal_request(case: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
++    """Verify the selected request and its referenced files before cache lookup."""
++    from scripts.misaal_reproduction import verified_request
++
++    request = verified_request(ROOT / settings["paths"]["requests"] / f"{case['id']}.json")
++    if (
++        request["case_id"] != case["id"]
++        or request.get("source") != case["source"]
++        or request.get("configuration") != case["configuration"]
++    ):
++        raise ValueError("MISAAL request case, source, or configuration differs from the inventory")
++    source = Path(request["checkout"]) / case["source"]
++    if source.is_dir():
++        source = source / "src" / f"{source.name}_generator.cpp"
++    relative = str(source.relative_to(request["checkout"]))
++    if relative not in request["source_hashes"]:
++        raise ValueError("MISAAL request must pin the selected source generator")
++    return request
+ 
+ 
+ def capture_case(case: dict[str, Any], settings: dict[str, Any], output: Path) -> dict[str, Any]:
+@@ -64,6 +96,7 @@
+         request = paths["requests"] / f"{case['id']}.json"
+         if not request.is_file():
+             return {"status": "pending", "reason": f"complete native request not prepared: {request}"}
++        misaal_request(case, settings)
+         return dict(capture_misaal(request, output))
+     if family == "hardboiled":
+         from scripts.suite_capture_hardboiled_misaal import capture_hardboiled, prepare_hardboiled_capture
+@@ -104,14 +137,31 @@
+             "complete",
+         }:
+             raise ValueError("adapter reported reproduction without successful source completion and replay outputs")
++        materialization = capture.get("materialization", {})
++        sessions = capture.get("sessions") or capture.get("invocations")
++        count = len(sessions) if sessions else int(bool(capture.get("output_contract")))
++        if (
++            not count
++            or materialization.get("complete") is not True
++            or materialization.get("expected_sessions") != count
++            or materialization.get("materialized_sessions") != count
++        ):
++            raise ValueError("adapter reported reproduction without complete replay materialization")
+         return "success"
+     return str(capture["status"])
+ 
+ 
+-def case_identity(case: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
++def case_identity(
++    case: dict[str, Any], settings: dict[str, Any], *, hashes: dict[Path, str | None] | None = None
++) -> dict[str, Any]:
+     """Bind source/configuration, adapters, prepared tools, and declared dependencies."""
+     paths = [ROOT / value for value in settings.get("paths", {}).values() if value is not None]
+     paths.extend(ROOT / value for value in settings.get("identity_paths", []))
++    if case["family"] == "misaal":
++        request = misaal_request(case, settings)
++        paths.extend(Path(request[key]) for key in ("backend", "llvm_as", "python", "generator"))
++        paths.extend(Path(request["checkout"]) / relative for relative in request["source_hashes"])
++        paths.extend(Path(path) for path in request.get("identity_paths", []))
+     # These are acquisition/adaptation implementations only. Hashes do not
+     # migrate or partition the existing performance observation cache.
+     scripts = [
+@@ -133,9 +183,14 @@
+         "misaal": ["scripts/misaal_reproduction.py", "scripts/suite_capture_hardboiled_misaal.py"],
+         "hardboiled": ["scripts/hardboiled_replay.py", "scripts/suite_capture_hardboiled_misaal.py"],
+     }
+-    paths.extend(ROOT / name for name in (*scripts, *family_scripts[case["family"]]))
++    paths.extend(ROOT / name for name in (*scripts, *family_scripts[case["family"]], *VALIDATION_SOURCES))
++    if hashes is None:
++        hashes = {}
+     identities: dict[str, str | None] = {}
+     for path in dict.fromkeys(paths):
++        if path in hashes:
++            identities[str(path.absolute())] = hashes[path]
++            continue
+         if path.is_dir():
+             digest = hashlib.sha256()
+             for file in sorted(path.rglob("*")):
+@@ -146,14 +201,41 @@
+             identities[str(path.absolute())] = "sha256:" + digest.hexdigest()
+         else:
+             identities[str(path.absolute())] = sha256_file(path) if path.is_file() else None
++        hashes[path] = identities[str(path.absolute())]
+     return {"case": case, "settings": settings, "inputs": identities}
+ 
+ 
+-def write_report(cases: list[dict[str, Any]], index: dict[str, Any], population: dict[str, Any]) -> None:
++def write_report(
++    cases: list[dict[str, Any]], index: dict[str, Any], population: dict[str, Any], settings: dict[str, Any]
++) -> None:
+     """Keep every expected parent visible, with corpus results separate from paper cells."""
+-    rows = [
+-        {**case, "outcome": index.get(case["id"], {"status": "pending", "reason": "not attempted"})} for case in cases
+-    ]
++    rows = []
++    hashes: dict[Path, str | None] = {}
++    for case in cases:
++        outcome = index.get(case["id"], {"status": "pending", "reason": "not attempted"})
++        if outcome["status"] == "success":
++            try:
++                config = settings[case["family"]]
++                identity = case_identity(case, config, hashes=hashes)
++                captured = outcome.get("capture_stage", outcome)
++                digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
++                if digest != captured.get("identity_sha256"):
++                    raise ValueError("source, configuration, or tool identity changed")
++                for record in (captured, outcome):
++                    if not record.get("artifacts") or any(
++                        not Path(path).is_file() or sha256_file(Path(path)) != expected
++                        for path, expected in record["artifacts"].items()
++                    ):
++                        raise ValueError("retained evidence is missing or changed")
++            except (OSError, KeyError, ValueError) as error:
++                outcome = {
++                    **outcome,
++                    "status": "pending",
++                    "historical_status": "success",
++                    "reason": f"Stale evidence: {error}",
++                }
++                index[case["id"]] = outcome
++        rows.append({**case, "outcome": outcome})
+     report = {"cases": rows, "population": population}
+     (STORAGE / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+     lines = [
+@@ -206,11 +288,12 @@
+     (STORAGE / "inventory.json").write_text(json.dumps(cases, indent=2) + "\n")
+     index_path = STORAGE / "index.json"
+     index = json.loads(index_path.read_text()) if index_path.exists() else {}
++    settings = json.loads(args.settings.read_text()) if args.settings.is_file() else {}
+     if args.stage in ("inventory", "report"):
+-        write_report(cases, index, population)
++        write_report(cases, index, population, settings)
++        index_path.write_text(json.dumps(index, indent=2) + "\n")
+         print(f"{len(selected)} selected source/configuration requests; report: {STORAGE / 'REPORT.md'}")
+         return 0
+-    settings = json.loads(args.settings.read_text()) if args.settings.is_file() else {}
+     safety_stop = False
+     try:
+         for case in selected:
+@@ -218,7 +301,11 @@
+             if config is None:
+                 index[case["id"]] = {"status": "pending", "reason": "source/tool preparation is not configured"}
+                 continue
+-            identity = case_identity(case, config)
++            try:
++                identity = case_identity(case, config)
++            except (OSError, KeyError, ValueError) as error:
++                index[case["id"]] = {"status": "pending", "reason": f"source identity is not verified: {error}"}
++                continue
+ 
+             def execute(attempt: Path, case: dict[str, Any] = case, config: dict[str, Any] = config) -> dict[str, Any]:
+                 output = attempt / "capture"
+@@ -257,13 +344,15 @@
+             index_path.write_text(json.dumps(index, indent=2) + "\n")
+             if args.stage in {"all", "validate"} and result.get("capture") and result["status"] not in STOP_STATUSES:
+                 captured = json.loads(Path(result["capture"]).read_text())
+-                if captured.get("source_completion", {}).get("status") in {"success", "complete"}:
++                if captured.get("status") in VALIDATABLE_STATUSES and captured.get("source_completion", {}).get(
++                    "status"
++                ) in {"success", "complete"}:
+                     engine = ROOT / config["paths"]["egglog"]
+                     validation_identity = {
+                         "capture_sha256": sha256_file(Path(result["capture"])),
+                         "artifacts": result["artifacts"],
+                         "engine_sha256": sha256_file(engine),
+-                        "validator_sha256": sha256_file(ROOT / "scripts/reproduction_validation.py"),
++                        "validation_sources": {name: sha256_file(ROOT / name) for name in VALIDATION_SOURCES},
+                         "timeout_sec": config.get("timeout_sec", 300),
+                     }
+ 
+@@ -297,8 +386,8 @@
+                 safety_stop = True
+                 break
+     finally:
++        write_report(cases, index, population, settings)
+         index_path.write_text(json.dumps(index, indent=2) + "\n")
+-        write_report(cases, index, population)
+     return (
+         2 if safety_stop else 0 if all(index.get(case["id"], {}).get("status") == "success" for case in selected) else 1
+     )
+--- a/tests/test_dialegg_speq_complete.py
++++ b/tests/test_dialegg_speq_complete.py
+@@ -211,6 +211,53 @@
+     assert json.loads(Path(row["receipt"]).read_text())["frontend_flags"] == flags
+     assert not row["source_complete"]
+     assert not row["ordinary_compatible"]
++
++
++@pytest.mark.parametrize("ordinary_status", ["success", "failure"])
++def test_speq_complete_session_and_root_contract_survive_ordinary_failure(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ordinary_status: str
++) -> None:
++    launches = []
++
++    def run(command: list[str], cwd: Path, prefix: Path, timeout: float) -> PilotProcessResult:
++        launches.append(command)
++        out, err = prefix.with_suffix(".out"), prefix.with_suffix(".err")
++        out.write_text("")
++        err.write_text("")
++        status = "success"
++        if "--complete" in command:
++            replay = Path(command[command.index("--output") + 1])
++            replay.write_text("(let $a (A))\n(extract $a)\n(run 1)\n(extract $a)\n")
++            replay.with_suffix(".manifest.json").write_text(
++                json.dumps(
++                    {
++                        "source_complete": True,
++                        "standalone_sha256": hashlib.sha256(replay.read_bytes()).hexdigest(),
++                        "expected_stdout": "(A)\n(B)\n",
++                        "regions": [{"cost": 1}, {"cost": 2}],
++                    }
++                )
++            )
++        else:
++            status = ordinary_status
++            out.write_text("(A)\n(B)\n" if status == "success" else "")
++        return PilotProcessResult(status, 0 if status == "success" else 1, 0, 0, out, err, None)  # type: ignore[arg-type]
++
++    monkeypatch.setattr(complete, "run_complete_command", run)
++    args = argparse.Namespace(
++        speq_python=tmp_path / "python",
++        speq_artifact=tmp_path / "artifact",
++        speq_lleq=tmp_path / "lleq",
++        llvm17_config=tmp_path / "llvm-config",
++        speq_rev_plugin=None,
++        egglog=tmp_path / "engine",
++        timeout_sec=30,
++    )
++    row = complete.capture_complete_speq(args, ["speq-polybench_gemm"], tmp_path)["cases"]["speq-polybench_gemm"]
++    assert len(launches) == 2 and row["source_completion"]["status"] == "complete"
++    assert row["materialization"] == {"complete": True, "expected_sessions": 1, "materialized_sessions": 1}
++    assert len(row["output_contract"]["expected_terms"]) == len(row["output_contract"]["extract_requests"]) == 2
++    assert row["status"] == ("reproduced" if ordinary_status == "success" else "ordinary-validation-failed")
+ 
+ 
+ class SyntheticBest:
+@@ -403,7 +450,8 @@
+     assert row["source_complete"]
+     assert row["source_completion"]["status"] == "complete"
+     assert row["ordinary_compatible"] == (not mismatch)
+-    assert row["status"] == ("blocked" if mismatch else "reproduced")
++    assert row["status"] == ("ordinary-validation-failed" if mismatch else "reproduced")
++    assert row["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
+     assert len(row["workloads"]) == (0 if mismatch else 2)
+     assert row["invocations"][0]["output_contract"]["zero_root_helper"]
+     assert len(commands) == 4  # parent, native MLIR verifier, both independent replays
+--- a/tests/test_misaal_reproduction.py
++++ b/tests/test_misaal_reproduction.py
+@@ -133,6 +133,8 @@
+     assert record["source_completion"]["parent_returncode"] == 0
+     assert record["status"] == "ordinary-validation-pending"
+     assert len(record["workloads"]) == len(record["invocations"]) == 2
++    assert record["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
++    assert all(len(call["output_contract"]["checks"]) == call["root_count"] for call in record["invocations"])
+     assert record["invocations"][0]["sha256"] == record["invocations"][1]["sha256"]
+     assert record["invocations"][0]["raw"] != record["invocations"][1]["raw"]
+     for path in record["workloads"]:
+--- a/tests/test_reproduction_validation.py
++++ b/tests/test_reproduction_validation.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -23,6 +24,7 @@
+     capture: dict[str, Any] = {
+         "status": "reproduced",
+         "source_completion": {"status": "complete"},
++        "materialization": {"complete": True, "expected_sessions": 1, "materialized_sessions": 1},
+         "invocations": [
+             {
+                 "replay": str(replay),
+@@ -79,7 +81,109 @@
+     replay = Path(session["replay"])
+     replay.write_text(replay.read_text() + "(check (= $root (B)))\n")
+     session["replay_sha256"] = sha256_file(replay)
++    session["output_contract"] = validation.native_check_contract(
++        replay.read_text(), [(3, session["selections"][0]["check"])], session["selections"]
++    )
+     assert validation.validate_capture(capture, engine, tmp_path / "present")["status"] == "success"
++
++
++@pytest.mark.parametrize("status", ["blocked", "failure", "running"])
++def test_completed_parent_with_partial_materialization_cannot_be_promoted(
++    example: tuple, tmp_path: Path, status: str
++) -> None:
++    capture, engine, launches = example
++    capture["status"] = status
++    # A valid first session remains diagnostic even if it passes in isolation.
++    capture["materialization"] = {"complete": False, "expected_sessions": 2, "materialized_sessions": 1}
++    result = validation.validate_capture(capture, engine, tmp_path / "prefix")
++    assert result["status"] == "blocked"
++    assert "blocked or incomplete" in result["reason"]
++    assert not launches and not result["workloads"]
++
++
++@pytest.mark.parametrize(
++    "marker",
++    [
++        None,
++        {"complete": False},
++        {
++            "complete": True,
++            "expected_sessions": 2,
++            "materialized_sessions": 1,
++        },
++    ],
++)
++def test_terminal_materialization_marker_and_full_session_count_are_required(
++    example: tuple, tmp_path: Path, marker: dict | None
++) -> None:
++    capture, engine, launches = example
++    capture["status"] = "ordinary-validation-pending"
++    capture["materialization"] = marker or {}
++    result = validation.validate_capture(capture, engine, tmp_path / "incomplete")
++    assert result["status"] == "blocked" and "every native session" in result["reason"]
++    assert not launches
++
++
++def test_complete_materialization_can_retry_failed_ordinary_validation(example: tuple, tmp_path: Path) -> None:
++    capture, engine, launches = example
++    capture["status"] = "ordinary-validation-failed"
++    result = validation.validate_capture(capture, engine, tmp_path / "retry")
++    assert result["status"] == "success" and len(launches) == 1
++
++
++@pytest.mark.parametrize("change", ["hash", "missing", "reorder", "move", "state"])
++def test_custom_native_checks_are_exact_ordered_and_bound_to_graph_state(
++    example: tuple, tmp_path: Path, change: str
++) -> None:
++    capture, engine, launches = example
++    session = capture["invocations"][0]
++    replay = Path(session["replay"])
++    source = "(datatype E (A) (B))\n(let $a (A))\n(let $b (B))\n(check (= $a (A)))\n(check (= $b (B)))\n"
++    contract = validation.native_check_contract(
++        source,
++        [(3, "(check (= $a (A)))"), (4, "(check (= $b (B)))")],
++        [{"name": "a"}, {"name": "b"}],
++    )
++    if change == "hash":
++        contract["check_sha256"] = "wrong"
++    elif change == "missing":
++        source = source.replace("(check (= $b (B)))", "(check (= $a $a))")
++    elif change == "reorder":
++        contract["checks"].reverse()
++    elif change == "move":
++        source = source.replace("(check (= $a (A)))", "(union $a $b)\n(check (= $a (A)))")
++    else:
++        source = source.replace("(let $b (B))", "(let $b (A))")
++    replay.write_text(source)
++    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
++    result = validation.validate_capture(capture, engine, tmp_path / "changed-contract")
++    assert result["status"] == "blocked", result
++    assert not launches and not result["workloads"]
++
++
++def test_equal_checks_at_distinct_boundaries_are_not_deduplicated() -> None:
++    check = "(check (= $a (A)))"
++    source = f"(let $a (A))\n{check}\n(run 1)\n{check}"
++    contract = validation.native_check_contract(source, [(1, check), (3, check)], [{"name": "a"}] * 2)
++    assert [record["command"] for record in contract["checks"]] == [1, 3]
++    assert contract["checks"][0]["prefix_sha256"] != contract["checks"][1]["prefix_sha256"]
++
++
++def test_native_selection_contract_cannot_skip_one_requested_root(example: tuple, tmp_path: Path) -> None:
++    capture, engine, launches = example
++    session = capture["invocations"][0]
++    replay = Path(session["replay"])
++    source = replay.read_text() + "(check (= $root (A)))\n(extract $root)\n"
++    replay.write_text(source)
++    selections = [{"check": "(check (= $root (A)))"}] * 2
++    session.update(
++        root_count=2,
++        selections=selections,
++        replay_sha256=sha256_file(replay),
++        output_contract=validation.native_check_contract(source, [(3, selections[0]["check"])], selections),
++    )
++    result = validation.validate_capture(copy.deepcopy(capture), engine, tmp_path / "missing-root")
++    assert result["status"] == "blocked" and not launches
+ 
+ 
+ @pytest.mark.parametrize("stop", ["timed-out", "resource-stopped", "memory-limit"])
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -367,7 +367,9 @@
+         churchroad_sessions(changed)
+ 
+ 
+-@pytest.mark.parametrize("parent_status", ["success", "failure", "memory-limit"])
++@pytest.mark.parametrize(
++    "parent_status", ["success", "failure", "memory-limit", "ordinary-failure", "materialization-failure"]
++)
+ def test_complete_adapter_admits_only_full_parent_and_checked_sessions(
+     tmp_path: Path,
+     monkeypatch: pytest.MonkeyPatch,
+@@ -393,14 +395,26 @@
+             directory = Path(command[1].split("=", 1)[1])
+             for event in events:
+                 (directory / f"event-{event['sequence']:06}.json").write_text(json.dumps(event))
+-            status = parent_status
++            status = parent_status if parent_status in {"success", "failure", "memory-limit"} else "success"
+         else:
++            # Even a first replay failure must retain all prepared sessions.
++            assert len(list(prefix.parent.glob("session-*.egg"))) == 4
+             program = Path(command[-1]).read_text()
+             assert "(check" in program
++            if parent_status == "ordinary-failure":
++                status = "failure"
+         return PilotProcessResult(status, 0 if status == "success" else 1, 0.01, 0, stdout, stderr, None)  # type: ignore[arg-type]
+ 
+     monkeypatch.setattr(capture, "run_bounded_command", run)
+     monkeypatch.setattr(capture, "adapt_eggcc", lambda source, **_: source)
++    if parent_status == "materialization-failure":
++
++        def incomplete(events: list[dict]) -> list[dict]:
++            sessions = eggcc_sessions(events)
++            sessions[1]["program"] = "(unterminated"
++            return sessions
++
++        monkeypatch.setattr(capture, "eggcc_sessions", incomplete)
+     records = capture.capture_complete(
+         "eggcc",
+         [{"id": "case", "source": "source.bril"}],
+@@ -410,15 +424,26 @@
+         engine,
+     )
+     record = records[0]
+-    assert record["status"] == ("reproduced" if parent_status == "success" else "blocked")
+-    assert len(called) == (3 if parent_status == "success" else 1)
++    assert record["status"] == (
++        "reproduced"
++        if parent_status == "success"
++        else "ordinary-validation-failed"
++        if parent_status == "ordinary-failure"
++        else "blocked"
++    )
++    assert len(called) == (3 if parent_status == "success" else 2 if parent_status == "ordinary-failure" else 1)
+     assert all(
+         options["require_guard"] is True and options["disk_reserve_bytes"] == 10 * 1024**3 for _, options in called
+     )
+-    if parent_status == "success":
+-        assert len(record["workloads"]) == 2
++    if parent_status in {"success", "ordinary-failure"}:
++        assert len(record["workloads"]) == (2 if parent_status == "success" else 0)
+         assert len(record["source_completion"]["outputs"]) == 3
+         assert all(session["output_contract"]["roots"] for session in record["sessions"])
++        assert record["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
++    elif parent_status == "materialization-failure":
++        assert record["source_completion"]["parent_completed"]
++        assert record["materialization"] == {"complete": False, "expected_sessions": 2, "materialized_sessions": 1}
++        assert not record["workloads"]
+     else:
+         assert not record["workloads"] and not record["source_completion"]["parent_completed"]
+     assert len(record["raw_invocations"]) == 2
+--- a/tests/test_suite_capture_hardboiled_misaal.py
++++ b/tests/test_suite_capture_hardboiled_misaal.py
+@@ -483,6 +483,15 @@
+     assert replay.count("(check ") == 2
+     assert replay.count("(Actual)") == 1
+     assert result[0]["source_completion"]["status"] == "success"
++    assert result[0]["materialization"] == {"complete": True, "expected_sessions": 1, "materialized_sessions": 1}
++    assert len(result[0]["invocations"][0]["output_contract"]["checks"]) == 2
++    parent = json.loads(receipt.read_text())
++    parent[0]["raw_invocations"].append(str(tmp_path / "missing-last-invocation.egg"))
++    receipt.write_text(json.dumps(parent))
++    partial = capture.prepare_hardboiled_capture(receipt, tmp_path / "partial")[0]
++    assert partial["source_completion"]["status"] == "success" and partial["status"] == "blocked"
++    assert partial["materialization"] == {"complete": False, "expected_sessions": 2, "materialized_sessions": 1}
++    assert len(partial["invocations"]) == 1 and not partial["workloads"]
+     native.write_text("changed after capture")
+     changed = capture.prepare_hardboiled_capture(receipt, tmp_path / "changed")
+     assert changed[0]["status"] == "blocked"
+--- a/tests/test_suite_reproduction.py
++++ b/tests/test_suite_reproduction.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import hashlib
+ import json
+ from pathlib import Path
+ from typing import Any
+@@ -28,7 +29,7 @@
+     monkeypatch.setattr(reproduction, "ROOT", tmp_path)
+     monkeypatch.setattr(reproduction, "STORAGE", storage)
+     monkeypatch.setattr(reproduction, "expected_cases", lambda *_: cases)
+-    monkeypatch.setattr(reproduction, "case_identity", lambda case, settings: {"case": case, "settings": settings})
++    monkeypatch.setattr(reproduction, "case_identity", lambda case, settings, **_: {"case": case, "settings": settings})
+     launched: list[str] = []
+ 
+     def capture(case: dict[str, Any], settings: dict[str, Any], output: Path) -> dict[str, Any]:
+@@ -36,7 +37,13 @@
+         output.mkdir()
+         replay = output / "full.egg"
+         replay.write_text("(check (= 1 1))")
+-        return {"status": "reproduced", "source_completion": {"status": "success"}, "workloads": [str(replay)]}
++        return {
++            "status": "reproduced",
++            "source_completion": {"status": "success"},
++            "workloads": [str(replay)],
++            "sessions": [{"replay": str(replay)}],
++            "materialization": {"complete": True, "expected_sessions": 1, "materialized_sessions": 1},
++        }
+ 
+     monkeypatch.setattr(reproduction, "capture_case", capture)
+     return storage, launched
+@@ -87,3 +94,167 @@
+     assert reproduction.main(["--family", "eggcc"]) == 1
+     assert launched == ["one", "two"]
+     assert "compiler failed after export" in (storage / "REPORT.md").read_text()
++
++
++def test_completed_parent_with_blocked_export_never_reaches_validation(
++    coordinator: tuple, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    storage, launched = coordinator
++
++    def capture(case: dict, settings: dict, output: Path) -> dict:
++        launched.append(case["id"])
++        return {
++            "status": "blocked",
++            "source_completion": {"status": "success"},
++            "sessions": [{"replay": "valid-prefix.egg"}],
++            "materialization": {"complete": False, "expected_sessions": 2, "materialized_sessions": 1},
++            "reason": "later session is not representable",
++        }
++
++    monkeypatch.setattr(reproduction, "capture_case", capture)
++    monkeypatch.setattr(reproduction, "validate_capture", lambda *_a, **_k: pytest.fail("partial export admitted"))
++    assert reproduction.main(["--family", "eggcc"]) == 1
++    assert launched == ["one", "two"]
++    assert all(row["status"] == "blocked" for row in json.loads((storage / "index.json").read_text()).values())
++
++
++@pytest.mark.parametrize("changed", ["settings", "artifact"])
++def test_report_refresh_marks_stale_success_pending_in_report_and_index(coordinator: tuple, changed: str) -> None:
++    storage, launched = coordinator
++    assert reproduction.main(["--family", "eggcc", "--stage", "capture"]) == 0
++    index = json.loads((storage / "index.json").read_text())
++    if changed == "settings":
++        (storage / "settings.json").write_text(json.dumps({"eggcc": {"paths": {}, "revision": "changed"}}))
++    else:
++        next(Path(path) for path in index["one"]["artifacts"] if path.endswith("full.egg")).unlink()
++    assert reproduction.main(["--stage", "report"]) == 0
++    assert launched == ["one", "two"]
++    index = json.loads((storage / "index.json").read_text())
++    report = json.loads((storage / "report.json").read_text())
++    assert index["one"]["status"] == "pending" and index["one"]["historical_status"] == "success"
++    assert "Stale evidence" in index["one"]["reason"]
++    assert report["cases"][0]["outcome"] == index["one"]
++    assert report["cases"][1]["outcome"]["status"] == ("pending" if changed == "settings" else "success")
++
++
++@pytest.mark.parametrize("family", ["eggcc", "churchroad", "hardboiled", "dialegg", "speq"])
++@pytest.mark.parametrize("helper", ["scripts/hardboiled_replay.py", "scripts/dialegg_speq_complete.py"])
++def test_imported_validation_helpers_are_in_every_capture_identity(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, family: str, helper: str
++) -> None:
++    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
++    path = tmp_path / helper
++    path.parent.mkdir(parents=True)
++    path.write_text("old validation behavior")
++    case = {"id": "case", "family": family, "source": "input", "configuration": {}}
++    before = reproduction.case_identity(case, {"paths": {}})
++    path.write_text("new validation behavior")
++    after = reproduction.case_identity(case, {"paths": {}})
++    assert before != after
++    assert before["inputs"][str(path)] != after["inputs"][str(path)]
++
++
++def test_changed_imported_validator_invalidates_validation_attempt(
++    coordinator: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    storage, launched = coordinator
++    for name in reproduction.VALIDATION_SOURCES:
++        path = tmp_path / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text("initial helper")
++    engine = tmp_path / "engine"
++    engine.write_text("ordinary engine identity")
++    (storage / "settings.json").write_text(json.dumps({"eggcc": {"paths": {"egglog": str(engine)}}}))
++    validations = []
++
++    def validate(capture: dict, engine: Path, output: Path, **kwargs: Any) -> dict:
++        validations.append(output)
++        output.mkdir()
++        (output / "receipt.json").write_text("retained ordinary validation")
++        return {"status": "success", "workloads": capture["workloads"]}
++
++    monkeypatch.setattr(reproduction, "validate_capture", validate)
++    argv = ["--family", "eggcc", "--case", "one"]
++    assert reproduction.main(argv) == 0
++    assert reproduction.main(argv) == 0
++    assert len(validations) == 1 and launched == ["one"]
++    (tmp_path / "scripts/hardboiled_replay.py").write_text("changed parser/check behavior")
++    assert reproduction.main(argv) == 0
++    assert len(validations) == 2 and launched == ["one"]
++
++
++@pytest.fixture
++def misaal_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, Path]:
++    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
++    checkout = tmp_path / "checkout"
++    sources = [
++        "lib/compiler/EggLogCompiler.py",
++        "lib/compiler/HydrideCompiler.py",
++        "generators/one/src/one_generator.cpp",
++    ]
++    source_hashes = {}
++    for name in sources:
++        path = checkout / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(name)
++        source_hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
++    request: dict[str, Any] = {
++        "case_id": "misaal-one",
++        "source": "generators/one",
++        "configuration": {"target": "paper"},
++        "revision": "a" * 40,
++        "checkout": str(checkout),
++        "source_hashes": source_hashes,
++        "expected_generator_outputs": ["native.ll"],
++    }
++    for name in ["backend", "llvm_as", "python", "generator"]:
++        path = tmp_path / name
++        path.write_text("identity fixture, never executed")
++        path.chmod(0o755)
++        request[name] = str(path)
++        request[name + "_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
++    request["generator_command"] = [request["generator"], "{output}"]
++    requests = tmp_path / "requests"
++    requests.mkdir()
++    path = requests / "misaal-one.json"
++    path.write_text(json.dumps(request))
++    case = {
++        "id": "misaal-one",
++        "family": "misaal",
++        "source": request["source"],
++        "configuration": request["configuration"],
++    }
++    return case, {"paths": {"requests": str(requests)}}, path
++
++
++@pytest.mark.parametrize("field", ["case_id", "source", "configuration"])
++def test_misaal_request_cannot_impersonate_selected_inventory_case(misaal_identity: tuple, field: str) -> None:
++    case, settings, path = misaal_identity
++    request = json.loads(path.read_text())
++    request[field] = {"target": "other"} if field == "configuration" else "another-case"
++    path.write_text(json.dumps(request))
++    with pytest.raises(ValueError, match="differs from the inventory"):
++        reproduction.case_identity(case, settings)
++
++
++@pytest.mark.parametrize("kind", ["backend", "llvm_as", "python", "generator", "source"])
++def test_misaal_referenced_inputs_are_verified_before_cache_lookup(misaal_identity: tuple, kind: str) -> None:
++    case, settings, path = misaal_identity
++    request = json.loads(path.read_text())
++    before = reproduction.case_identity(case, settings)
++    changed = (
++        Path(request[kind]) if kind != "source" else Path(request["checkout"]) / "generators/one/src/one_generator.cpp"
++    )
++    assert str(changed) in before["inputs"]
++    changed.write_text("changed after request was prepared")
++    with pytest.raises(ValueError, match="identity changed"):
++        reproduction.case_identity(case, settings)
++
++
++def test_misaal_selected_source_generator_requires_an_explicit_pin(misaal_identity: tuple) -> None:
++    case, settings, path = misaal_identity
++    request = json.loads(path.read_text())
++    del request["source_hashes"]["generators/one/src/one_generator.cpp"]
++    path.write_text(json.dumps(request))
++    with pytest.raises(ValueError, match="pin the selected source generator"):
++        reproduction.case_identity(case, settings)

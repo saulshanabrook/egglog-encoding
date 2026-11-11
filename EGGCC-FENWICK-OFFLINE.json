@@ -1,0 +1,88 @@
+{
+  "eggcc-fenwick_tree--statewalk": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-fenwick_tree--statewalk/complete/94a8b70942b70aedf046d04e9cb6d7bc18ab50d7f2bad6c9dd598f7fbb511af6/attempt-0001/capture-result.json",
+    "receipt_sha256": "94e99e275f351ac64945f6f81f21414a75854dbcc2b87dd53817642411e4c292",
+    "native_process": {
+      "status": "success",
+      "returncode": 0,
+      "wall_sec": 13.676912499999162
+    },
+    "event_hashes_verified": 16,
+    "optimization_passes": [
+      {
+        "pass": 0,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "c9eb985eafa5b4c0a596934df177251b025aab49cbab596eb8375242f1e049d3",
+        "adapted_sha256": "410391242d689d15dff1427987549d54a987b7135c6d4d87c3864f7e1139f137",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "existing-row-dag"
+      },
+      {
+        "pass": 1,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "314f35207ae16be7439c0847c704cfc1dc35f30e66683396acec8785a7865a8a",
+        "adapted_sha256": "14c1c2d2eab3c0bf4db5801dc5cd03ab9a233e337b23147783b9bfadaf5e493e",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "structural-fallback"
+      },
+      {
+        "pass": 2,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "5a3111a9e927e924497bb56bfc0032fe8d6d72007eadc07caa0f92c76a66e42b",
+        "adapted_sha256": "76b3d549d1cea8f3901baa8a437514772bac065c25c0dbf6d44be8bbc933dcdd",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "structural-fallback"
+      }
+    ],
+    "sessions": 6
+  },
+  "eggcc-fenwick_tree--no-hacker": {
+    "receipt": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-fenwick_tree--no-hacker/complete/cde6cc2963f14aced600f6deee1fddff1f3887518a3eb1700fc191f13520c553/attempt-0001/capture-result.json",
+    "receipt_sha256": "fad2906bc07db2c2acb019d1049cb39613bceffa28e7280f977624d704509b4e",
+    "native_process": {
+      "status": "success",
+      "returncode": 0,
+      "wall_sec": 12.781662791996496
+    },
+    "event_hashes_verified": 16,
+    "optimization_passes": [
+      {
+        "pass": 0,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "cff626620e7c98aecc13775ee3cc1dd39d16bff17850291bad0fc3a088172335",
+        "adapted_sha256": "20ab131cd27d0b081ba8997a54d1448e107f7b254f27f952154fe752384dfc65",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "existing-row-dag"
+      },
+      {
+        "pass": 1,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "56b11bfef41dc38942c9275d22df7498f3053344bd5e9214d37fb2596c5e76ff",
+        "adapted_sha256": "939b1da3d667ca4c9320d423240579c6a3df9cd6ed134b6c9f91ad238fb9b049",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "structural-fallback"
+      },
+      {
+        "pass": 2,
+        "roots": 2,
+        "erased_forms": 10,
+        "source_sha256": "c12826554210fd2fafbfc4c1534bba679b5458286c96f96c52d9564ce9a3ce71",
+        "adapted_sha256": "3454f6f5bc98f7161543b1af7b4215fe15fb0967bc5928430b0a664cf64c6064",
+        "all_other_bytes_unchanged_except_existing_helper_merge_adaptation": true,
+        "schedules_unchanged": true,
+        "selected_lookup_status": "existing-row-dag"
+      }
+    ],
+    "sessions": 6
+  }
+}

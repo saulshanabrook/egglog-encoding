@@ -1,0 +1,121 @@
+{
+  "status": "review-ready-no-native-runs",
+  "mirror": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad",
+  "baseline": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/.baseline/speq-c99-public",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/speq-c99-public-0001/implementation.patch",
+  "patch_sha256": "d893940ae75d28e324023643ce57c9ff684d8b7950f00681050ffbdac5016edb",
+  "files": {
+    "scripts/speq_c99_diagnostic.py": {
+      "baseline_sha256": "ea570c23d37f74bbe28a17e58809cb97c2121248de301f950a98fe43d37f53c2",
+      "after_sha256": "c8fe6a8b491585503fdccc10c0c626cef35d026bf37fc32c20e15dc306730afd",
+      "current_root_sha256": "ea570c23d37f74bbe28a17e58809cb97c2121248de301f950a98fe43d37f53c2"
+    },
+    "scripts/paper_benchmarks/record_speq.py": {
+      "baseline_sha256": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae",
+      "after_sha256": "fdb0cc163af49462e876b94f34e42fcc05f1f242e974df453b828c11816d5098",
+      "current_root_sha256": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae"
+    },
+    "scripts/reproduction_prepare_speq.py": {
+      "baseline_sha256": "4d502d6ef3d316730c1339aa369d86bb5ca9ab462aacd7caf1dc24d1603b82d5",
+      "after_sha256": "582a4ba642d1ea8c01dd43f19230682252887a34b4c9c84691bdb2db84492aa1",
+      "current_root_sha256": "4d502d6ef3d316730c1339aa369d86bb5ca9ab462aacd7caf1dc24d1603b82d5"
+    },
+    "scripts/reproduction_dispatch.py": {
+      "baseline_sha256": "1ed8c655068e4ebc02ff1158b3db3fa615404c61353fe46b7addd68078fa02e5",
+      "after_sha256": "0380525bafac75727b9ca4a44c787f1468c5fd056b91dcf1175c85b484745b60",
+      "current_root_sha256": "1ed8c655068e4ebc02ff1158b3db3fa615404c61353fe46b7addd68078fa02e5"
+    },
+    "scripts/dialegg_speq_complete.py": {
+      "baseline_sha256": "26af2c897b4b1ab60fea856d6051c9ef313638888ce0684a6f5628f219f67f8e",
+      "after_sha256": "d7d35dcad4a490baabe07d7abd8c8191ac383f74dba07813737134837ad1eb94",
+      "current_root_sha256": "26af2c897b4b1ab60fea856d6051c9ef313638888ce0684a6f5628f219f67f8e"
+    },
+    "scripts/suite_capture_dialegg_speq.py": {
+      "baseline_sha256": "726f69e4496c3f312a66f87e56c3bbd930cb41e899224886f2ac4f188c5613d0",
+      "after_sha256": "129fecdcc5fe6c704904cf02a5068505c293c9ba87f928a1464c6186197d9fb3",
+      "current_root_sha256": "726f69e4496c3f312a66f87e56c3bbd930cb41e899224886f2ac4f188c5613d0"
+    },
+    "scripts/suite_reproduction.py": {
+      "baseline_sha256": "538425d9636acfe07aba0332cd5e905d6351fb2ed350ddd6282fc9a987406190",
+      "after_sha256": "2867b58c3983e5beefde1bde6e3ad23a17b07a1d2463bf3e7181cd43d99db8cc",
+      "current_root_sha256": "538425d9636acfe07aba0332cd5e905d6351fb2ed350ddd6282fc9a987406190"
+    },
+    "scripts/reproduction_preparation.py": {
+      "baseline_sha256": "a5eee813a5a38977d69a0c90ffaf524e643969e957e7234c8d1b2804f6af2cc3",
+      "after_sha256": "357afd398a9d1e551be6bd418ace0a578e2eb83ddb4b718a615c63d613ca697a",
+      "current_root_sha256": "a5eee813a5a38977d69a0c90ffaf524e643969e957e7234c8d1b2804f6af2cc3"
+    },
+    "tests/test_speq_c99_diagnostic.py": {
+      "baseline_sha256": "61f4312028308451b0f5ede2ce53eee0e3d2284ef56f031e31b0e4b5b6128de4",
+      "after_sha256": "695f86ff06dd09014000d22c831d2df15c5ca074af4fede343f246994054bbc3",
+      "current_root_sha256": "61f4312028308451b0f5ede2ce53eee0e3d2284ef56f031e31b0e4b5b6128de4"
+    },
+    "tests/test_reproduction_prepare_speq.py": {
+      "baseline_sha256": "06a524f6b2f00844a569ea5e0fcc3a8cfcb7dd1b1264192b3cedec07c2515758",
+      "after_sha256": "e06e9f354f3b4c03f4503d22966befd5d3423b4ae5cd24fcc8df55cee7e6f5db",
+      "current_root_sha256": "06a524f6b2f00844a569ea5e0fcc3a8cfcb7dd1b1264192b3cedec07c2515758"
+    },
+    "tests/test_dialegg_speq_complete.py": {
+      "baseline_sha256": "a30e138f540a6cbd927432f0afbbe33ad32163673aa4d01cf76049d6482c4b2c",
+      "after_sha256": "59a94114e080c2099b06db4433b73c7e1b593ddcadf5948f20ff80be9725b9e7",
+      "current_root_sha256": "a30e138f540a6cbd927432f0afbbe33ad32163673aa4d01cf76049d6482c4b2c"
+    },
+    "tests/test_suite_reproduction.py": {
+      "baseline_sha256": "3fd74b44f8b23d53bd6ae4fda0fc8c598f8e549ed381247e5c6ae9fda496c3a0",
+      "after_sha256": "09d1ba2cf65ffb9c63b8d86f3cfebfca32857761af5472521532f37d918d7271",
+      "current_root_sha256": "3fd74b44f8b23d53bd6ae4fda0fc8c598f8e549ed381247e5c6ae9fda496c3a0"
+    },
+    "benchmarks/reproduction/speq-preparation.md": {
+      "baseline_sha256": "c97fbb4dc3436761f5bc393f68b4074780414d9769f7b205f71f390e15f16068",
+      "after_sha256": "76bb6e0110e40f0a40d2caf045d536228ad08de2f92cc60c71599b4d5830d4d3",
+      "current_root_sha256": "c97fbb4dc3436761f5bc393f68b4074780414d9769f7b205f71f390e15f16068"
+    },
+    "scripts/speq_c99_gates.py": {
+      "baseline_sha256": null,
+      "after_sha256": "0961f62c558833c716e46c697fc9956407606a8b302de8cf70fc8d9d8a0f5cc5",
+      "current_root_sha256": null
+    },
+    "tests/test_speq_c99_gates.py": {
+      "baseline_sha256": null,
+      "after_sha256": "a7d09f29dd716fd88920d4dc842422b32114c732fd38b0a7499c98d5b5577e61",
+      "current_root_sha256": null
+    },
+    "tests/fixtures/speq-c99-comparison/baseline.fir": {
+      "baseline_sha256": null,
+      "after_sha256": "88ea197d575dfd8cf55a189ff2e6d067f40b3f1369da4f95129605c716ee334f",
+      "current_root_sha256": null
+    },
+    "tests/fixtures/speq-c99-comparison/candidate.fir": {
+      "baseline_sha256": null,
+      "after_sha256": "464f8b10dda91b8f8d1ff87b23093846bb52f22811b4d71cea24b62b5324ef6f",
+      "current_root_sha256": null
+    },
+    "tests/fixtures/speq-c99-comparison/provenance.json": {
+      "baseline_sha256": null,
+      "after_sha256": "e02ff26e879e31d614d133c435fda36c88a18556bdde08ea19ec223aa21e11b0",
+      "current_root_sha256": null
+    },
+    "tests/fixtures/speq-c99-comparison/unselected.fir": {
+      "baseline_sha256": null,
+      "after_sha256": "6cd4730a381002bd17f00243b087ca3effc17a23447c31b6b489d417a3aba70c",
+      "current_root_sha256": null
+    }
+  },
+  "validation": {
+    "focused_tests": "260 passed in 1.37s",
+    "ruff_check": "passed;14 files",
+    "ruff_format": "14 files already formatted",
+    "mypy": "Success: no issues found in 14 source files",
+    "native": "not run; root owns the heavy slot"
+  },
+  "review": {
+    "gate_helper": "Sibling-authored; independently read by integration owner; contract-return mismatch fixed before copying. 24 isolated mocked tests also passed.",
+    "core_integration": "Parent requested immediate reviewable handoff; independent backend review queued, not claimed complete."
+  },
+  "known_overlap": "scripts/reproduction_preparation.py adds only one SpEQ kwarg; sibling owns disjoint MISAAL width policy in a separate mirror.",
+  "remaining_gates": [
+    "Parent code review and root integration tests",
+    "Fresh tracked public preparation including all 30 native C99 steps",
+    "Full original-C polybench_gemm source parent and separate ordinary exact-output validation"
+  ]
+}

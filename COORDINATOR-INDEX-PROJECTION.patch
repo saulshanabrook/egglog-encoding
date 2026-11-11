@@ -1,0 +1,323 @@
+--- a/scripts/suite_reproduction.py
++++ b/scripts/suite_reproduction.py
+@@ -33,6 +33,66 @@
+     "benchmarking/memory_guard.py",
+     "benchmarking/targets.py",
+ )
++
++
++def compact_outcome(outcome: dict[str, Any], *, receipts: dict[Path, str | None] | None = None) -> dict[str, Any]:
++    """Keep shared preparation/history as shallow links to immutable stage receipts.
++
++    Current capture and validation records retain their existing verification
++    contract. Preparation can describe an entire family, so embedding it in
++    every case would multiply its potentially large artifact inventory.
++    """
++    if receipts is None:
++        receipts = {}
++    result = dict(outcome)
++    targets = [key for key in ("preparation", "historical_outcome", "prior_outcome") if key in result]
++    if outcome.get("preparation_stage"):
++        targets.append("")
++    for key in targets:
++        record = outcome[key] if key else outcome
++        summary = {
++            name: record[name]
++            for name in (
++                "case",
++                "stage",
++                "status",
++                "reason",
++                "attempt",
++                "identity_sha256",
++                "started_at",
++                "finished_at",
++                "historical_status",
++            )
++            if name in record
++        }
++        if record.get("attempt"):
++            receipt = Path(record["attempt"]) / "stage.json"
++            summary["receipt"] = str(receipt)
++            if record.get("receipt") == str(receipt) and "receipt_sha256" in record:
++                # Retain the original identity, including missing evidence; a
++                # changed file must not silently become the historical receipt.
++                summary["receipt_sha256"] = record["receipt_sha256"]
++            else:
++                if receipt not in receipts:
++                    receipts[receipt] = sha256_file(receipt) if receipt.is_file() else None
++                summary["receipt_sha256"] = receipts[receipt]
++        if key:
++            result[key] = summary
++        else:
++            result = {**summary, "preparation_stage": True}
++    return result
++
++
++def write_index(path: Path, index: dict[str, Any]) -> None:
++    """Project before persistence and atomically replace the current index."""
++    receipts: dict[Path, str | None] = {}
++    for case, outcome in index.items():
++        index[case] = compact_outcome(outcome, receipts=receipts)
++    temporary = path.with_suffix(".tmp")
++    with temporary.open("w") as stream:
++        json.dump(index, stream, indent=2)
++        stream.write("\n")
++    temporary.replace(path)
+ 
+ 
+ def preparation_blocker(case: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any] | None:
+@@ -133,11 +193,19 @@
+     """Keep every expected parent visible, with corpus results separate from paper cells."""
+     rows = []
+     hashes: dict[Path, str | None] = {}
++    receipts: dict[Path, str | None] = {}
+     for case in cases:
+-        outcome = index.get(case["id"], {"status": "pending", "reason": "not attempted"})
++        outcome = compact_outcome(
++            index.get(case["id"], {"status": "pending", "reason": "not attempted"}), receipts=receipts
++        )
++        if case["id"] in index:
++            index[case["id"]] = outcome
+         blocker = preparation_blocker(case, settings.get(case["family"], {}))
+         if blocker and outcome["status"] != "success":
+-            outcome = {**blocker, "prior_outcome": outcome} if outcome.get("attempt") else blocker
++            prior = outcome.get("prior_outcome", outcome)
++            outcome = compact_outcome(
++                {**blocker, "prior_outcome": prior} if prior.get("attempt") else blocker, receipts=receipts
++            )
+             index[case["id"]] = outcome
+         if outcome.get("identity_sha256") and not outcome.get("preparation_stage") and outcome["status"] != "pending":
+             try:
+@@ -242,10 +310,12 @@
+     (STORAGE / "inventory.json").write_text(json.dumps(cases, indent=2) + "\n")
+     index_path = STORAGE / "index.json"
+     index = json.loads(index_path.read_text()) if index_path.exists() else {}
++    receipts: dict[Path, str | None] = {}
++    index = {case: compact_outcome(outcome, receipts=receipts) for case, outcome in index.items()}
+     settings = json.loads(args.settings.read_text()) if args.settings.is_file() else {}
+     if args.stage in ("inventory", "report"):
+         write_report(cases, index, population, settings)
+-        index_path.write_text(json.dumps(index, indent=2) + "\n")
++        write_index(index_path, index)
+         print(f"{len(selected)} selected source/configuration requests; report: {STORAGE / 'REPORT.md'}")
+         return 0
+     safety_stop = False
+@@ -321,17 +391,22 @@
+                     for case in selected:
+                         previous = index.get(case["id"], {})
+                         if case["family"] == family and previous.get("preparation_stage"):
+-                            index[case["id"]] = {
+-                                "status": "pending",
+-                                "reason": "prerequisites prepared; complete source capture is required",
+-                                "preparation": prepared,
+-                                "historical_outcome": previous,
+-                            }
++                            index[case["id"]] = compact_outcome(
++                                {
++                                    "status": "pending",
++                                    "reason": "prerequisites prepared; complete source capture is required",
++                                    "preparation": prepared,
++                                    "historical_outcome": previous,
++                                },
++                                receipts=receipts,
++                            )
+                 else:
+                     preparation_failures.add(family)
+                     for case in selected:
+                         if case["family"] == family:
+-                            index[case["id"]] = {**prepared, "preparation_stage": True}
++                            index[case["id"]] = compact_outcome(
++                                {**prepared, "preparation_stage": True}, receipts=receipts
++                            )
+                 if prepared_now and prepared["status"] in STOP_STATUSES:
+                     safety_stop = True
+                     break
+@@ -346,7 +421,10 @@
+                 continue
+             if blocker := preparation_blocker(case, config):
+                 prior = index.get(case["id"], {})
+-                index[case["id"]] = {**blocker, "prior_outcome": prior} if prior.get("attempt") else blocker
++                prior = prior.get("prior_outcome", prior)
++                index[case["id"]] = compact_outcome(
++                    {**blocker, "prior_outcome": prior} if prior.get("attempt") else blocker, receipts=receipts
++                )
+                 print(f"{case['id']}: {blocker['status']} — {blocker['reason']}", flush=True)
+                 continue
+             try:
+@@ -393,7 +471,7 @@
+             else:
+                 result = run_stage(STORAGE / "stages", case["id"], "complete", identity, execute, retry=args.retry)
+             index[case["id"]] = result
+-            index_path.write_text(json.dumps(index, indent=2) + "\n")
++            write_index(index_path, index)
+             if args.stage in {"all", "validate"} and result.get("capture") and result["status"] not in STOP_STATUSES:
+                 captured = json.loads(Path(result["capture"]).read_text())
+                 if captured.get("status") in VALIDATABLE_STATUSES and captured.get("source_completion", {}).get(
+@@ -431,7 +509,7 @@
+                     )
+                     result = {**validation, "capture_stage": result}
+             index[case["id"]] = result
+-            index_path.write_text(json.dumps(index, indent=2) + "\n")
++            write_index(index_path, index)
+             print(
+                 f"{case['id']}: {result['status']}" + (f" — {result['reason']}" if result.get("reason") else ""),
+                 flush=True,
+@@ -443,7 +521,7 @@
+                 break
+     finally:
+         write_report(cases, index, population, settings)
+-        index_path.write_text(json.dumps(index, indent=2) + "\n")
++        write_index(index_path, index)
+     unresolved_paper_cells = (
+         args.stage == "all"
+         and not args.case
+--- a/tests/test_suite_reproduction.py
++++ b/tests/test_suite_reproduction.py
+@@ -636,6 +636,146 @@
+     assert "prerequisites prepared; complete source capture is required" in (storage / "REPORT.md").read_text()
+ 
+ 
++def test_shared_preparation_receipts_do_not_expand_every_case(
++    preparation_coordinator: tuple, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    storage, captures, _ = preparation_coordinator
++    cases = [
++        {"id": f"case-{i}", "family": "eggcc", "scope": "required", "source": str(i), "configuration": {}}
++        for i in range(102)
++    ]
++    monkeypatch.setattr(reproduction, "expected_cases", lambda *_: cases)
++    successful = reproduction.prepare_family
++    payload = "large retained family artifact inventory " * 1024
++    monkeypatch.setattr(
++        reproduction,
++        "prepare_family",
++        lambda *_: {
++            "status": "preparation-blocked",
++            "reason": "dependency unavailable",
++            "artifacts": [],
++            "retained_diagnostic": payload,
++        },
++    )
++    args = ["--family", "eggcc", "--stage", "prepare"]
++    assert reproduction.main(args) == 1
++    failed = json.loads((storage / "index.json").read_text())["case-0"]
++    failed_receipt = Path(failed["receipt"])
++    failed_bytes = failed_receipt.read_bytes()
++    assert payload in failed_receipt.read_text()
++    assert failed["receipt_sha256"] == reproduction.sha256_file(failed_receipt)
++    assert "retained_diagnostic" not in failed and "identity" not in failed
++
++    def prepare(*args: Any) -> dict:
++        return {**successful(*args), "retained_diagnostic": payload}
++
++    monkeypatch.setattr(reproduction, "prepare_family", prepare)
++    assert reproduction.main([*args, "--retry"]) == 0
++    index = json.loads((storage / "index.json").read_text())
++    current = index["case-0"]
++    assert current["status"] == "pending"
++    assert current["historical_outcome"]["receipt"] == str(failed_receipt)
++    assert current["historical_outcome"]["status"] == "preparation-blocked"
++    assert current["preparation"]["status"] == "success"
++    successful_receipt = Path(current["preparation"]["receipt"])
++    successful_bytes = successful_receipt.read_bytes()
++    assert payload in successful_receipt.read_text()
++    assert captures == []
++    for name in ("index.json", "report.json"):
++        assert (storage / name).stat().st_size < 400_000
++        assert payload not in (storage / name).read_text()
++    before = (storage / "index.json").read_bytes()
++    for _ in range(3):
++        assert reproduction.main(["--stage", "report"]) == 0
++        assert (storage / "index.json").read_bytes() == before
++    assert failed_receipt.read_bytes() == failed_bytes
++    assert successful_receipt.read_bytes() == successful_bytes
++    assert json.loads((storage / "corpus/manifest.json").read_text())["workloads"] == []
++
++
++def test_projection_discards_nested_history_without_repinning_immutable_evidence(tmp_path: Path) -> None:
++    attempt = tmp_path / "attempt"
++    attempt.mkdir()
++    receipt = attempt / "stage.json"
++    receipt.write_text("original immutable receipt")
++    previous = {
++        "status": "blocked",
++        "reason": "old failure",
++        "attempt": str(attempt),
++        "identity": {"huge": "payload" * 1000},
++        "artifacts": {"also": "large"},
++        "prior_outcome": {"prior_outcome": {"identity": "earlier huge history"}},
++    }
++    current = {"status": "pending", "preparation": previous, "historical_outcome": previous}
++    projected = reproduction.compact_outcome(current)
++    expected = {
++        "status": "blocked",
++        "reason": "old failure",
++        "attempt": str(attempt),
++        "receipt": str(receipt),
++        "receipt_sha256": reproduction.sha256_file(receipt),
++    }
++    assert projected == {"status": "pending", "preparation": expected, "historical_outcome": expected}
++    assert "identity" in previous and "prior_outcome" in previous
++    receipt.write_text("changed after the reference was recorded")
++    assert reproduction.compact_outcome(projected) == projected
++    receipt.unlink()
++    assert reproduction.compact_outcome(projected) == projected
++    missing = reproduction.compact_outcome({"status": "pending", "prior_outcome": previous})
++    assert missing["prior_outcome"]["receipt_sha256"] is None
++
++
++def test_projection_preserves_current_capture_and_validation_contracts() -> None:
++    capture = {"status": "success", "identity": {"inputs": "retained"}, "artifacts": {"source": "hash"}}
++    validation = {
++        "status": "success",
++        "stage": "validate",
++        "identity": {"capture_sha256": "hash"},
++        "artifacts": {"validation": "hash"},
++        "capture_stage": capture,
++        "workloads": ["input.egg"],
++        "validations": [{"output_contract_passed": True}],
++    }
++    assert reproduction.compact_outcome(capture) == capture
++    assert reproduction.compact_outcome(validation) == validation
++
++
++def test_index_interruption_preserves_previous_complete_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    path = tmp_path / "index.json"
++    before = '{"previous": {"status": "pending"}}\n'
++    path.write_text(before)
++
++    def interrupt(value: Any, stream: Any, **kwargs: Any) -> None:
++        stream.write('{"incomplete":')
++        raise KeyboardInterrupt
++
++    with monkeypatch.context() as patch:
++        patch.setattr(reproduction.json, "dump", interrupt)
++        with pytest.raises(KeyboardInterrupt):
++            reproduction.write_index(path, {"next": {"status": "pending"}})
++    assert path.read_text() == before
++    reproduction.write_index(path, {"next": {"status": "pending"}})
++    assert json.loads(path.read_text()) == {"next": {"status": "pending"}}
++
++
++def test_repeated_blocker_report_retains_only_original_outcome_reference(coordinator: tuple) -> None:
++    storage, _ = coordinator
++    attempt = storage / "old-attempt"
++    attempt.mkdir()
++    receipt = attempt / "stage.json"
++    receipt.write_text('{"status":"blocked","reason":"native failure"}')
++    case = {"id": "one", "family": "eggcc", "scope": "required", "configuration": {"solver": "gurobi"}}
++    settings = {"eggcc": {"configuration_blockers": [{"configuration": case["configuration"], "reason": "license"}]}}
++    index: dict[str, Any] = {"one": {"status": "blocked", "attempt": str(attempt), "identity": {"large": "payload"}}}
++    reproduction.write_report([case], index, {}, settings)
++    expected = json.dumps(index, sort_keys=True)
++    for _ in range(3):
++        reproduction.write_report([case], index, {}, settings)
++        assert json.dumps(index, sort_keys=True) == expected
++    prior = index["one"]["prior_outcome"]
++    assert prior["receipt"] == str(receipt) and "identity" not in prior
++
++
+ def test_preparation_safety_stop_prevents_later_family_launch(
+     preparation_coordinator: tuple, monkeypatch: pytest.MonkeyPatch
+ ) -> None:

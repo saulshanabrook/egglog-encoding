@@ -1,0 +1,647 @@
+{
+  "meaning": "Offline materialization assertions only; no engine invocation or admission",
+  "capture": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/bf40de2ca9fd20e09f23100c85921ecfde2971e9afba91328ad0a67f8d1d1507/attempt-0001/capture-result.json",
+  "capture_sha256": "d9eb2fa090b404600bddfe68970e7a93c3457aa616b02114a9ecde839d1b2fbf",
+  "native_event": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/bf40de2ca9fd20e09f23100c85921ecfde2971e9afba91328ad0a67f8d1d1507/attempt-0001/capture/eggcc-bitwise-ops--statewalk/native-events/event-000006.json",
+  "native_event_sha256": "91563ff6f4179315e98ba6581abfbbc9aee8240e7864eb1dd6dc22ce3361c009",
+  "raw": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/bf40de2ca9fd20e09f23100c85921ecfde2971e9afba91328ad0a67f8d1d1507/attempt-0001/capture/eggcc-bitwise-ops--statewalk/session-002-optimization.raw.egg",
+  "plan": {
+    "status": "source-anchored",
+    "reason": null,
+    "classes": {
+      "Assumption-48": {
+        "kind": "global",
+        "binding": "DUMMYCTX",
+        "sort": "Assumption",
+        "lookup": "DUMMYCTX"
+      },
+      "Type-134": {
+        "kind": "initializer",
+        "binding": "__tmp7",
+        "sort": "Type",
+        "table": "reproduction_anchor_7",
+        "lookup": "(reproduction_anchor_7)"
+      },
+      "Assumption-136": {
+        "kind": "initializer",
+        "binding": "__tmp10",
+        "sort": "Assumption",
+        "table": "reproduction_anchor_10",
+        "lookup": "(reproduction_anchor_10)"
+      },
+      "Type-163": {
+        "kind": "initializer",
+        "binding": "__tmp39",
+        "sort": "Type",
+        "table": "reproduction_anchor_39",
+        "lookup": "(reproduction_anchor_39)"
+      },
+      "Expr-198": {
+        "kind": "initializer",
+        "binding": "__tmp74",
+        "sort": "Expr",
+        "table": "reproduction_anchor_74",
+        "lookup": "(reproduction_anchor_74)"
+      },
+      "Type-199": {
+        "kind": "initializer",
+        "binding": "__tmp75",
+        "sort": "Type",
+        "table": "reproduction_anchor_75",
+        "lookup": "(reproduction_anchor_75)"
+      },
+      "Expr-215": {
+        "kind": "initializer",
+        "binding": "__tmp95",
+        "sort": "Expr",
+        "table": "reproduction_anchor_95",
+        "lookup": "(reproduction_anchor_95)"
+      },
+      "Type-218": {
+        "kind": "initializer",
+        "binding": "__tmp98",
+        "sort": "Type",
+        "table": "reproduction_anchor_98",
+        "lookup": "(reproduction_anchor_98)"
+      },
+      "Type-255": {
+        "kind": "initializer",
+        "binding": "__tmp136",
+        "sort": "Type",
+        "table": "reproduction_anchor_136",
+        "lookup": "(reproduction_anchor_136)"
+      },
+      "Type-314": {
+        "kind": "initializer",
+        "binding": "__tmp196",
+        "sort": "Type",
+        "table": "reproduction_anchor_196",
+        "lookup": "(reproduction_anchor_196)"
+      },
+      "Type-366": {
+        "kind": "initializer",
+        "binding": "__tmp250",
+        "sort": "Type",
+        "table": "reproduction_anchor_250",
+        "lookup": "(reproduction_anchor_250)"
+      },
+      "Expr-422": {
+        "kind": "initializer",
+        "binding": "__tmp306",
+        "sort": "Expr",
+        "table": "reproduction_anchor_306",
+        "lookup": "(reproduction_anchor_306)"
+      },
+      "Type-423": {
+        "kind": "initializer",
+        "binding": "__tmp307",
+        "sort": "Type",
+        "table": "reproduction_anchor_307",
+        "lookup": "(reproduction_anchor_307)"
+      },
+      "Expr-438": {
+        "kind": "initializer",
+        "binding": "__tmp322",
+        "sort": "Expr",
+        "table": "reproduction_anchor_322",
+        "lookup": "(reproduction_anchor_322)"
+      },
+      "Expr-446": {
+        "kind": "initializer",
+        "binding": "__tmp330",
+        "sort": "Expr",
+        "table": "reproduction_anchor_330",
+        "lookup": "(reproduction_anchor_330)"
+      },
+      "Expr-460": {
+        "kind": "initializer",
+        "binding": "__tmp344",
+        "sort": "Expr",
+        "table": "reproduction_anchor_344",
+        "lookup": "(reproduction_anchor_344)"
+      }
+    },
+    "root_classes": {
+      "main": "Expr-198",
+      "mod2": "Expr-215",
+      "loop_subroutine": "Expr-422",
+      "OR": "Expr-438",
+      "AND": "Expr-446",
+      "XOR": "Expr-460"
+    },
+    "unresolved_source_bindings": {},
+    "observation_tables": [
+      {
+        "kind": "initializer",
+        "binding": "__tmp7",
+        "sort": "Type",
+        "table": "reproduction_anchor_7",
+        "lookup": "(reproduction_anchor_7)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp10",
+        "sort": "Assumption",
+        "table": "reproduction_anchor_10",
+        "lookup": "(reproduction_anchor_10)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp39",
+        "sort": "Type",
+        "table": "reproduction_anchor_39",
+        "lookup": "(reproduction_anchor_39)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp74",
+        "sort": "Expr",
+        "table": "reproduction_anchor_74",
+        "lookup": "(reproduction_anchor_74)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp75",
+        "sort": "Type",
+        "table": "reproduction_anchor_75",
+        "lookup": "(reproduction_anchor_75)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp95",
+        "sort": "Expr",
+        "table": "reproduction_anchor_95",
+        "lookup": "(reproduction_anchor_95)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp98",
+        "sort": "Type",
+        "table": "reproduction_anchor_98",
+        "lookup": "(reproduction_anchor_98)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp136",
+        "sort": "Type",
+        "table": "reproduction_anchor_136",
+        "lookup": "(reproduction_anchor_136)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp196",
+        "sort": "Type",
+        "table": "reproduction_anchor_196",
+        "lookup": "(reproduction_anchor_196)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp250",
+        "sort": "Type",
+        "table": "reproduction_anchor_250",
+        "lookup": "(reproduction_anchor_250)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp306",
+        "sort": "Expr",
+        "table": "reproduction_anchor_306",
+        "lookup": "(reproduction_anchor_306)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp307",
+        "sort": "Type",
+        "table": "reproduction_anchor_307",
+        "lookup": "(reproduction_anchor_307)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp322",
+        "sort": "Expr",
+        "table": "reproduction_anchor_322",
+        "lookup": "(reproduction_anchor_322)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp330",
+        "sort": "Expr",
+        "table": "reproduction_anchor_330",
+        "lookup": "(reproduction_anchor_330)"
+      },
+      {
+        "kind": "initializer",
+        "binding": "__tmp344",
+        "sort": "Expr",
+        "table": "reproduction_anchor_344",
+        "lookup": "(reproduction_anchor_344)"
+      }
+    ],
+    "original_program_sha256": "9fd1cb2e2c4624feb735e269aeb1460e7f86c6326968d21f0531a1adcde2006f",
+    "replay_program_sha256": "9fe175284ae6c5afd95a240aa77e032ad5791f91d16c9db5d6fba9c1fa4bec8a",
+    "native_graph_sha256": "32675b750651df47b5038f4680fc910b13e29886c14ae73db7833fd56e69bfa8",
+    "constructor_lifetime": {
+      "scheduled_rulesets": [
+        "",
+        "always-run",
+        "apply-drop-unions",
+        "apply-subst-unions",
+        "boundary-analysis",
+        "boundary-analysis-prep",
+        "canon",
+        "cicm-index",
+        "cleanup-drop",
+        "context",
+        "drop",
+        "error-checking",
+        "initialization",
+        "interval-analysis",
+        "is-resolved",
+        "ivt-analysis",
+        "loop-inversion",
+        "loop-iters-analysis",
+        "mem-simple",
+        "subst",
+        "subsume-after-helpers",
+        "term-subst",
+        "terms",
+        "terms-helpers",
+        "terms-helpers-helpers",
+        "type-analysis",
+        "type-helpers"
+      ],
+      "deleted_constructor_heads": [],
+      "subsumed_rows_retain_identity": true
+    }
+  },
+  "checks_sha256": "e84aeb617508b3f908ba0cdf3a103226839a810507860fac55f08d9adf36fb5a",
+  "roots": [
+    {
+      "selection": 0,
+      "name": "main",
+      "node": "function-0-Function",
+      "eclass": "Expr-198",
+      "selected_nodes": 79,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-198",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp74",
+            "sort": "Expr",
+            "table": "reproduction_anchor_74",
+            "lookup": "(reproduction_anchor_74)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-0-TupleT",
+            "native_class": "Type-134",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp7",
+              "sort": "Type",
+              "table": "reproduction_anchor_7",
+              "lookup": "(reproduction_anchor_7)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-2-TupleT",
+            "native_class": "Type-163",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp39",
+              "sort": "Type",
+              "table": "reproduction_anchor_39",
+              "lookup": "(reproduction_anchor_39)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 32,
+        "retained_original_nodes": 3,
+        "selected_facts_sha256": "1a1a5867b29c88581efd3526ce7942669560f5c2d09fb08945544d6f9e920c8f",
+        "query_fact_count": 84
+      }
+    },
+    {
+      "selection": 1,
+      "name": "mod2",
+      "node": "function-1-Function",
+      "eclass": "Expr-215",
+      "selected_nodes": 32,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-215",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp95",
+            "sort": "Expr",
+            "table": "reproduction_anchor_95",
+            "lookup": "(reproduction_anchor_95)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-3-TupleT",
+            "native_class": "Type-199",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp75",
+              "sort": "Type",
+              "table": "reproduction_anchor_75",
+              "lookup": "(reproduction_anchor_75)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 11,
+        "retained_original_nodes": 2,
+        "selected_facts_sha256": "0c4b3b6b7da440d2f8f758315b13aa8d352079b006030b756c27e4b43a7f7876",
+        "query_fact_count": 36
+      }
+    },
+    {
+      "selection": 2,
+      "name": "loop_subroutine",
+      "node": "function-2-Function",
+      "eclass": "Expr-422",
+      "selected_nodes": 226,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-422",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp306",
+            "sort": "Expr",
+            "table": "reproduction_anchor_306",
+            "lookup": "(reproduction_anchor_306)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-0-@GeneratedFreshTable4",
+            "native_class": "Assumption-48",
+            "handle": {
+              "kind": "global",
+              "binding": "DUMMYCTX",
+              "sort": "Assumption",
+              "lookup": "DUMMYCTX"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-5-TupleT",
+            "native_class": "Type-218",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp98",
+              "sort": "Type",
+              "table": "reproduction_anchor_98",
+              "lookup": "(reproduction_anchor_98)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-6-TupleT",
+            "native_class": "Type-255",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp136",
+              "sort": "Type",
+              "table": "reproduction_anchor_136",
+              "lookup": "(reproduction_anchor_136)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-7-TupleT",
+            "native_class": "Type-314",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp196",
+              "sort": "Type",
+              "table": "reproduction_anchor_196",
+              "lookup": "(reproduction_anchor_196)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-8-TupleT",
+            "native_class": "Type-366",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp250",
+              "sort": "Type",
+              "table": "reproduction_anchor_250",
+              "lookup": "(reproduction_anchor_250)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 538,
+        "retained_original_nodes": 6,
+        "selected_facts_sha256": "ce7528b8f5d8bf3984fc947d08e9e6fc2db34d5a4226ca9cde9148f474465b6b",
+        "query_fact_count": 234
+      }
+    },
+    {
+      "selection": 3,
+      "name": "OR",
+      "node": "function-3-Function",
+      "eclass": "Expr-438",
+      "selected_nodes": 29,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-438",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp322",
+            "sort": "Expr",
+            "table": "reproduction_anchor_322",
+            "lookup": "(reproduction_anchor_322)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-9-TupleT",
+            "native_class": "Type-423",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp307",
+              "sort": "Type",
+              "table": "reproduction_anchor_307",
+              "lookup": "(reproduction_anchor_307)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 23,
+        "retained_original_nodes": 2,
+        "selected_facts_sha256": "1ec7a3e0c02fcf3bab35a3bb7365624b5df97d5adb6fa16624bcea9e058648c1",
+        "query_fact_count": 33
+      }
+    },
+    {
+      "selection": 4,
+      "name": "AND",
+      "node": "function-4-Function",
+      "eclass": "Expr-446",
+      "selected_nodes": 29,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-446",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp330",
+            "sort": "Expr",
+            "table": "reproduction_anchor_330",
+            "lookup": "(reproduction_anchor_330)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-9-TupleT",
+            "native_class": "Type-423",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp307",
+              "sort": "Type",
+              "table": "reproduction_anchor_307",
+              "lookup": "(reproduction_anchor_307)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 23,
+        "retained_original_nodes": 2,
+        "selected_facts_sha256": "23a32c5f70d121006ebf3b592a3fa3cd3e0867da23e5617e435d46b6d46d3dc9",
+        "query_fact_count": 33
+      }
+    },
+    {
+      "selection": 5,
+      "name": "XOR",
+      "node": "function-5-Function",
+      "eclass": "Expr-460",
+      "selected_nodes": 33,
+      "witness": {
+        "input": {
+          "mode": "source-handle",
+          "native_class": "Expr-460",
+          "handle": {
+            "kind": "initializer",
+            "binding": "__tmp344",
+            "sort": "Expr",
+            "table": "reproduction_anchor_344",
+            "lookup": "(reproduction_anchor_344)"
+          },
+          "fallback_reason": null
+        },
+        "erased_fields": [
+          {
+            "node": "function-1-InFunc",
+            "native_class": "Assumption-136",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp10",
+              "sort": "Assumption",
+              "table": "reproduction_anchor_10",
+              "lookup": "(reproduction_anchor_10)"
+            },
+            "fallback_reason": null
+          },
+          {
+            "node": "function-9-TupleT",
+            "native_class": "Type-423",
+            "handle": {
+              "kind": "initializer",
+              "binding": "__tmp307",
+              "sort": "Type",
+              "table": "reproduction_anchor_307",
+              "lookup": "(reproduction_anchor_307)"
+            },
+            "fallback_reason": null
+          }
+        ],
+        "original_closure_nodes": 23,
+        "retained_original_nodes": 2,
+        "selected_facts_sha256": "c4fde2da9d4924a4b27ceab5e74d7eb7e8886757dddef5398333a2ff2845f4f4",
+        "query_fact_count": 37
+      }
+    }
+  ],
+  "original_source_exact_after_removing_auxiliary_observations": true,
+  "every_selected_fact_token_sequence_preserved": true
+}

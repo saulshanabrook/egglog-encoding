@@ -1,0 +1,1979 @@
+diff --git a/scripts/reproduction_misaal_x86_literals.py b/scripts/reproduction_misaal_x86_literals.py
+new file mode 100644
+index 0000000..c9ab790
+--- /dev/null
++++ b/scripts/reproduction_misaal_x86_literals.py
+@@ -0,0 +1,185 @@
++"""Repair the pinned x86 selector's binary-as-hexadecimal literal decoding.
++
++Only fresh preparation calls this materializer. Existing source/product trees and
++the LLVM lowering audit are untouched; the native gates remain mandatory.
++"""
++
++from __future__ import annotations
++
++import ast
++import hashlib
++import inspect
++import json
++import re
++from pathlib import Path
++from typing import TYPE_CHECKING, Any
++
++if TYPE_CHECKING:
++    from scripts.reproduction_prepare_misaal import Preparation
++
++SELECTOR = "codegen-generator/tools/low-level-codegen/InstSelectors/x86/x86LegalizerAllArgs.cpp"
++GENERATOR = "codegen-generator/tools/low-level-codegen/InstSelectors/x86/RoseX86LegalizerGen.py"
++SEMANTICS = "code-synthesizer/dsl-ir/x86SemanticsAllArgs.py"
++SOURCE_SHA256 = {
++    SELECTOR: "745e093b192cf6db338022b4943cf5329d1fc4a06e2ac4d59455c70ed82998f6",
++    GENERATOR: "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0",
++    SEMANTICS: "bebe9f04ec1f28dfa1451eceebd9e3e12d71526cf3e4b55aead6274408e55f6e",
++}
++EXPECTED_REPAIR_COUNTS = (1951, 1349)
++OLD_DECODE = """            ArgVal = ArgVal.replace("(bv #", "").strip()
++            ArgVal = ArgVal[:ArgVal.index(" ")]
++            ArgVal = "0" + ArgVal
++            intArg = int(ArgVal, 16)
++            ArgVal = hex(intArg)+"_cppi"  # Use boost literal to support int512_t initialization"""
++
++
++def parse_selector_literal(literal: str) -> int:
++    """Decode an integer or concrete bitvector into the selector's numeric bits.
++
++    Rosette's bv masks integers to the stated width, including negative values.
++    Legalizer compares ConstantInt hex bit patterns, so bv results are unsigned;
++    plain integer parameters retain their sign. The selector uses int512_t.
++    This self-contained function is also embedded in the acquired generator.
++    """
++    import re
++
++    text = literal.strip()
++    if re.fullmatch(r"[+-]?[0-9]+", text):
++        value = int(text, 10)
++        if abs(value).bit_length() > 512:
++            raise ValueError("selector integer exceeds int512_t")
++        return value
++    match = re.fullmatch(r"\(bv\s+(#[bB][+-]?[01]+|#[xX][+-]?[0-9a-fA-F]+|[+-]?[0-9]+)\s+([0-9]+)\)", text)
++    if match is None:
++        raise ValueError(f"unsupported selector literal: {literal!r}")
++    token, width_token = match.groups()
++    width = int(width_token)
++    if not 1 <= width <= 512:
++        raise ValueError("selector bitvector width must be in 1..512")
++    base = {"b": 2, "x": 16}[token[1].lower()] if token.startswith("#") else 10
++    value = int(token[2:] if token.startswith("#") else token, base)
++    return value % (1 << width)
++
++
++def repair_generated_cases(source: str, semantics: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
++    """Bind every emitted case/guard to its source entry before changing digits.
++
++    Rose emits names and branches in the same order, including div/rem branches
++    without wrappers. Preserve that order, every guard, permutation and action.
++    The caller hash-gates the entire source and table before materialization.
++    """
++    instructions: dict[str, Any] = {}
++    for group in semantics.values():
++        for name, info in group["target_instructions"].items():
++            if name in instructions:
++                raise ValueError(f"ambiguous semantics entry: {name}")
++            instructions[name] = info
++    groups = list(re.finditer(r"std::vector<std::string> InstNames = \{([^}]*)\};", source))
++    if not groups:
++        raise ValueError("no generated selector groups")
++    edits = []
++    changes = []
++    seen: set[str] = set()
++    for index, group in enumerate(groups):
++        end = (
++            groups[index + 1].start()
++            if index + 1 < len(groups)
++            else source.index("bool X86LegalizationPass::", group.end())
++        )
++        names = re.findall(r'"llvm\.hydride\.(\w+)_dsl"', group[1])
++        if re.sub(r'"llvm\.hydride\.\w+_dsl"|[\s,]', "", group[1]):
++            raise ValueError("unsupported generated name list")
++        cases = list(re.finditer(r"if\((isAMatch\(CI,.*?)(?=\) \{)", source[group.end() : end], re.S))
++        if len(cases) != len(names):
++            raise ValueError("generated case/name count differs")
++        for name, case in zip(names, cases, strict=True):
++            if name in seen or name not in instructions:
++                raise ValueError(f"unknown or duplicate generated case: {name}")
++            seen.add(name)
++            info = instructions[name]
++            expected = [
++                (i, arg)
++                for i, (arg, permutation) in enumerate(zip(info["args"], info["arg_permute_map"], strict=True))
++                if "SYMBOLIC_BV" not in arg and permutation == -1
++            ]
++            guard = re.compile(r'isAMatch\(CI, (\d+), (?P<value>-?\d+|int512_t\("-?\d+"\))\)')
++            guards = list(guard.finditer(case[1]))
++            if len(guards) != len(expected) or re.sub(r"[\s&]", "", guard.sub("", case[1])):
++                raise ValueError(f"unsupported guard shape: {name}")
++            for call, (argument, literal) in zip(guards, expected, strict=True):
++                token = call["value"]
++                actual = int(token.removeprefix('int512_t("').removesuffix('")'))
++                # Reproduce the original decoder only as an equality guard on
++                # the old source; the replacement uses the real radix/width.
++                old = (
++                    int("0" + literal.replace("(bv #", "").strip().split(" ")[0], 16)
++                    if "bv" in literal
++                    else int(literal)
++                )
++                if int(call[1]) != argument or actual != old:
++                    raise ValueError(f"source/selector guard mismatch: {name} argument {argument}")
++                value = parse_selector_literal(literal)
++                if value == old:
++                    continue
++                if not literal.startswith("(bv #b"):
++                    raise ValueError("pinned repair would change a non-binary source literal")
++                start = group.end() + case.start(1) + call.start("value")
++                stop = group.end() + case.start(1) + call.end("value")
++                edits.append((start, stop, str(value)))
++                changes.append(
++                    {"instruction": name, "argument": argument, "literal": literal, "before": old, "after": value}
++                )
++    for start, stop, replacement in reversed(edits):
++        source = source[:start] + replacement + source[stop:]
++    return source, changes
++
++
++def repair_generator(source: str) -> str:
++    """Replace the exact faulty decoder and embed the same tested parser."""
++    marker = "class RoseInstSelectorGenerator():"
++    if source.count(OLD_DECODE) != 1 or source.count(marker) != 1 or "def parse_selector_literal(" in source:
++        raise ValueError("selector generator decoder/context changed")
++    source = source.replace(
++        OLD_DECODE,
++        '            ArgVal = hex(parse_selector_literal(ArgVal)) + "_cppi"\n'
++        "          else:\n"
++        "            ArgVal = str(parse_selector_literal(ArgVal))",
++    )
++    return source.replace(marker, inspect.getsource(parse_selector_literal) + "\n\n" + marker)
++
++
++def patch_selector_literals(preparation: Preparation) -> None:
++    """Patch fresh pinned source only, retaining all derivations before building."""
++    hydride = preparation.directory / "sources/MISAAL/Hydride"
++    sources = {name: (hydride / name).read_text() for name in SOURCE_SHA256}
++    for name, expected in SOURCE_SHA256.items():
++        if hashlib.sha256(sources[name].encode()).hexdigest() != expected:
++            raise ValueError(f"x86 literal repair source changed: {name}")
++    definitions = [
++        node.value
++        for node in ast.parse(sources[SEMANTICS]).body
++        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "semantcs" for t in node.targets)
++    ]
++    if len(definitions) != 1:
++        raise ValueError("expected one pinned semantics dictionary")
++    selector, changes = repair_generated_cases(sources[SELECTOR], ast.literal_eval(definitions[0]))
++    generator = repair_generator(sources[GENERATOR])
++    if (len(changes), len({c["instruction"] for c in changes})) != EXPECTED_REPAIR_COUNTS:
++        raise ValueError("pinned binary literal repair coverage differs")
++    preparation.patch(hydride / SELECTOR, [(sources[SELECTOR], selector)], "legalizer-binary-literals")
++    preparation.patch(hydride / GENERATOR, [(sources[GENERATOR], generator)], "legalizer-generator-literals")
++    receipt = {
++        "contract": "x86-selector-literals-v1",
++        "source_sha256": SOURCE_SHA256,
++        "helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++        "after_sha256": {
++            SELECTOR: hashlib.sha256(selector.encode()).hexdigest(),
++            GENERATOR: hashlib.sha256(generator.encode()).hexdigest(),
++        },
++        "validated_cases": len(re.findall(r'"llvm\.hydride\.\w+_dsl"', sources[SELECTOR])),
++        "validated_guards": sources[SELECTOR].count("isAMatch(CI, "),
++        "changes": changes,
++    }
++    with (preparation.directory / "patches/legalizer-literal-derivation.json").open("x") as output:
++        json.dump(receipt, output, indent=2)
++        output.write("\n")
+diff --git a/scripts/reproduction_prepare_misaal.py b/scripts/reproduction_prepare_misaal.py
+index 5c7efc0..57b1830 100644
+--- a/scripts/reproduction_prepare_misaal.py
++++ b/scripts/reproduction_prepare_misaal.py
+@@ -24,6 +24,7 @@ from typing import Any
+ 
+ from benchmarking.pilot import run_bounded_command
+ from scripts.reproduction_misaal_legalizer import simd_mode_replacements
++from scripts.reproduction_misaal_x86_literals import patch_selector_literals
+ from scripts.reproduction_process import DISK_RESERVE_BYTES, exclusive_job
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+@@ -418,6 +419,7 @@ def prepare(directory: Path, backend: Path | None = None) -> Path:
+             "-DCMAKE_CXX_FLAGS_RELEASE=-O0 -DNDEBUG",
+         ],
+     )
++    patch_selector_literals(preparation)
+     patch_wide_literals(preparation)
+     selector = legalizer_source / "InstSelectors/x86/x86LegalizerAllArgs.cpp"
+     preparation.patch(selector, simd_mode_replacements(selector.read_text(), "x86"), "legalizer-simd-mode")
+@@ -572,6 +574,8 @@ def finish_native(preparation: Preparation, backend: Path) -> Path:
+         "benchmarks/x86/halide/blur3x3/src/blur3x3_generator.cpp",
+         "Hydride/codegen-generator/tools/low-level-codegen/RoseLowLevelCodeGen.py",
+         "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/x86/x86LegalizerAllArgs.cpp",
++        "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/x86/RoseX86LegalizerGen.py",
++        "Hydride/code-synthesizer/dsl-ir/x86SemanticsAllArgs.py",
+         "Hydride/codegen-generator/tools/low-level-codegen/wrappers/x86_wrappers.c.ll",
+     ]
+     request = {
+diff --git a/tests/test_reproduction_misaal_x86_literals.py b/tests/test_reproduction_misaal_x86_literals.py
+new file mode 100644
+index 0000000..f2d5813
+--- /dev/null
++++ b/tests/test_reproduction_misaal_x86_literals.py
+@@ -0,0 +1,209 @@
++"""Source literal semantics and real generated selector cases; no native tools."""
++
++import ast
++import hashlib
++import json
++import re
++from pathlib import Path
++from typing import Any
++
++import pytest
++
++from scripts import reproduction_misaal_x86_literals as repair
++from scripts.reproduction_prepare_misaal import Preparation
++
++FIXTURES = Path(__file__).parent / "fixtures/misaal-x86-literals"
++
++
++@pytest.mark.parametrize(
++    ("source", "expected"),
++    [
++        ("(bv #b1 1)", 1),
++        ("(bv #b0 1)", 0),
++        ("(bv #b11 2)", 3),
++        ("(bv #b10 2)", 2),
++        ("(bv #b01 2)", 1),
++        ("(bv #x00000020 32)", 32),
++        ("(bv #xFF 8)", 255),
++        ("(bv 177 8)", 177),
++        ("(bv -1 32)", 2**32 - 1),
++        ("(bv #x-1 8)", 255),
++        ("(bv #b-10 8)", 254),
++        ("(bv 257 8)", 1),
++        ("(bv -257 8)", 255),
++        ("(bv -1 512)", 2**512 - 1),
++        ("-1", -1),
++        ("177", 177),
++    ],
++)
++def test_width_radix_and_signed_bits(source: str, expected: int) -> None:
++    assert repair.parse_selector_literal(source) == expected
++
++
++@pytest.mark.parametrize(
++    "source",
++    [
++        "(bv #b2 1)",
++        "(bv #xg 8)",
++        "(bv #o1 1)",
++        "(bv #b 1)",
++        "(bv 1 0)",
++        "(bv 1 -1)",
++        "(bv 1 513)",
++        "(bv 1 1.0)",
++        "(bv 1.5 8)",
++        "(bv 1 8) extra",
++        "(bv 1 8 0)",
++        "(bv 1)",
++        "#b1",
++        "1x",
++        "",
++        str(2**512),
++    ],
++)
++def test_unsupported_literals_fail_closed(source: str) -> None:
++    with pytest.raises(ValueError):
++        repair.parse_selector_literal(source)
++
++
++def generated_method(source: str, instructions: dict[str, Any]) -> str:
++    # Compile the actual generator class, omitting only external import/main
++    # execution. These fixture cases are present in the checked-in selector.
++    class Validity:
++        def checkValidityOnTarget(self, name: str, target: str) -> bool:
++            assert target == "x86"
++            return name in instructions
++
++    namespace: dict[str, Any] = {"RoseISAValidityChecker": Validity}
++    tree = ast.parse(source)
++    selected: list[ast.stmt] = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef))]
++    exec(compile(ast.Module(body=selected, type_ignores=[]), "original-generator", "exec"), namespace)
++    result = namespace["RoseInstSelectorGenerator"]({}).generateAPattern("unused", instructions)
++    assert isinstance(result, str)
++    return result
++
++
++def test_actual_generator_and_checked_in_cases_agree_on_srav_and_two_bit_literals() -> None:
++    provenance = json.loads((FIXTURES / "provenance.json").read_text())
++    for name, expected in provenance["fixtures"].items():
++        assert hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest() == expected
++    source = (FIXTURES / "original-cases.cpp.txt").read_text()
++    semantics = json.loads((FIXTURES / "semantics.json").read_text())
++    generator = (FIXTURES / "RoseX86LegalizerGen.py.txt").read_text()
++    assert hashlib.sha256(generator.encode()).hexdigest() == repair.SOURCE_SHA256[repair.GENERATOR]
++    fixed, changes = repair.repair_generated_cases(source, semantics)
++    assert len(changes) == 17  # Nine SRAV guards and eight two-bit guards in two extract cases.
++    assert {c["literal"] for c in changes} == {"(bv #b1 1)", "(bv #b11 2)", "(bv #b10 2)", "(bv #b01 2)", "(bv #b00 2)"}
++    actual = [c for c in changes if c["instruction"] == "_mm512_srav_epi32"]
++    assert actual == [
++        {"instruction": "_mm512_srav_epi32", "argument": 4, "literal": "(bv #b1 1)", "before": 177, "after": 1}
++    ]
++    # Only the offending digits change, preserving all original branch bodies.
++    assert re.sub(r"isAMatch\(CI, \d+, -?\d+\)", "GUARD", source) == re.sub(
++        r"isAMatch\(CI, \d+, -?\d+\)", "GUARD", fixed
++    )
++    for group in semantics.values():
++        instructions = group["target_instructions"]
++        original = generated_method(generator, instructions)
++        regenerated = generated_method(repair.repair_generator(generator), instructions)
++        expected = original
++        for old, new in [
++            ("0xb1_cppi", "0x1_cppi"),
++            ("0xb11_cppi", "0x3_cppi"),
++            ("0xb10_cppi", "0x2_cppi"),
++            ("0xb01_cppi", "0x1_cppi"),
++            ("0xb00_cppi", "0x0_cppi"),
++        ]:
++            expected = expected.replace(old, new)
++        assert regenerated == expected
++    # The full 14-guard native 512/32 branch now matches its captured arguments.
++    branch = fixed[fixed.index("if(isAMatch(CI", fixed.index('"_mm512_srav_epi16_wrapper"')) :]
++    branch = branch[: branch.index('"_mm512_srav_epi32_wrapper"')]
++    guards = re.findall(r"isAMatch\(CI, (\d+), (-?\d+)\)", branch)
++    guards = guards[-14:]
++    values = {
++        1: 0,
++        3: 4294967295,
++        4: 1,
++        5: 32,
++        6: 512,
++        7: 512,
++        8: 0,
++        9: 512,
++        10: 32,
++        11: 0,
++        12: 32,
++        13: 32,
++        14: 1,
++        15: 0,
++    }
++    assert len(guards) == len(values)
++    assert all(values[int(index)] == int(value) for index, value in guards)
++    assert values[4] != 177
++
++
++def test_real_generator_rejects_malformed_bv_and_retains_negative_bits() -> None:
++    generator = repair.repair_generator((FIXTURES / "RoseX86LegalizerGen.py.txt").read_text())
++    info: dict[str, Any] = {"_mm_srav_epi32": {"args": ["(bv -1 32)", "-1"], "arg_permute_map": [-1, -1]}}
++    emitted = generated_method(generator, info)
++    assert "isAMatch(CI, 0, 0xffffffff_cppi)" in emitted
++    assert "isAMatch(CI, 1, -1)" in emitted
++    for malformed in ["(bv #b2 1)", "1garbage", "0x1"]:
++        info["_mm_srav_epi32"]["args"][0] = malformed
++        with pytest.raises(ValueError, match="unsupported selector literal"):
++            generated_method(generator, info)
++
++
++@pytest.mark.parametrize("drift", ["guard", "order", "duplicate", "syntax"])
++def test_source_or_generated_case_drift_refused(drift: str) -> None:
++    source = (FIXTURES / "original-cases.cpp.txt").read_text()
++    table = json.loads((FIXTURES / "semantics.json").read_text())
++    if drift == "guard":
++        source = source.replace("isAMatch(CI, 4, 177)", "isAMatch(CI, 4, 1)", 1)
++    elif drift == "order":
++        source = source.replace('"llvm.hydride._mm512_srav_epi16_dsl"', '"llvm.hydride._mm_srav_epi16_dsl"', 1)
++    elif drift == "duplicate":
++        table["duplicate"] = table["_mm512_srav_epi16"]
++    else:
++        source = source.replace("isAMatch(CI, 4, 177)", "customMatch(CI, 4, 177)", 1)
++    with pytest.raises(ValueError):
++        repair.repair_generated_cases(source, table)
++
++
++def test_materializer_hash_gates_before_mutation(tmp_path: Path) -> None:
++    hydride = tmp_path / "sources/MISAAL/Hydride"
++    for relative in repair.SOURCE_SHA256:
++        path = hydride / relative
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text("wrong source")
++    with pytest.raises(ValueError, match="source changed"):
++        repair.patch_selector_literals(Preparation(tmp_path))
++    assert not (tmp_path / "patches").exists()
++    assert all((hydride / name).read_text() == "wrong source" for name in repair.SOURCE_SHA256)
++
++
++def test_materializer_keeps_derivations_and_only_patches_fresh_sources(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    table = json.loads((FIXTURES / "semantics.json").read_text())
++    files = {
++        repair.SELECTOR: (FIXTURES / "original-cases.cpp.txt").read_text(),
++        repair.GENERATOR: (FIXTURES / "RoseX86LegalizerGen.py.txt").read_text(),
++        repair.SEMANTICS: "semantcs = " + repr(table) + "\n",
++    }
++    hashes = {key: hashlib.sha256(value.encode()).hexdigest() for key, value in files.items()}
++    monkeypatch.setattr(repair, "SOURCE_SHA256", hashes)
++    monkeypatch.setattr(repair, "EXPECTED_REPAIR_COUNTS", (17, 11))
++    for name, text in files.items():
++        path = tmp_path / "sources/MISAAL/Hydride" / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(text)
++    repair.patch_selector_literals(Preparation(tmp_path))
++    receipt = json.loads((tmp_path / "patches/legalizer-literal-derivation.json").read_text())
++    assert receipt["source_sha256"] == hashes
++    assert len(receipt["changes"]) == 17
++    assert (tmp_path / "sources/MISAAL/Hydride" / repair.SEMANTICS).read_text() == files[repair.SEMANTICS]
++    for name, digest in receipt["after_sha256"].items():
++        assert hashlib.sha256((tmp_path / "sources/MISAAL/Hydride" / name).read_bytes()).hexdigest() == digest
++    with pytest.raises(ValueError, match="source changed"):
++        repair.patch_selector_literals(Preparation(tmp_path, continuation=True))
+diff --git a/tests/test_reproduction_prepare_misaal.py b/tests/test_reproduction_prepare_misaal.py
+index d57ecbf..e935898 100644
+--- a/tests/test_reproduction_prepare_misaal.py
++++ b/tests/test_reproduction_prepare_misaal.py
+@@ -361,6 +361,15 @@ def test_fresh_preparation_repairs_sources_before_native_builds(
+     original = matching_branch + f"  isAMatch(CI, 3, {value});\n" * 12 + tail + pass_body
+     calls = []
+ 
++    def literal_repair(attempt: preparation.Preparation) -> None:
++        # This test isolates ordering from the separate source-pinned literal
++        # materializer tests. It must run before wide/SIMD/no-match changes.
++        assert attempt.directory == tmp_path
++        assert selector.read_text() == original
++        calls.append("literal-repair")
++
++    monkeypatch.setattr(preparation, "patch_selector_literals", literal_repair)
++
+     class ReachedLegalizerBuild(Exception):
+         pass
+ 
+@@ -400,7 +409,7 @@ def test_fresh_preparation_repairs_sources_before_native_builds(
+     if selector_drift:
+         with pytest.raises(ValueError, match="legalizer-no-match-return expected exactly one context"):
+             preparation.prepare(tmp_path, backend)
+-        assert calls[-1] == "legalizer-configure"
++        assert calls[-1] == "literal-repair"
+         assert not (tmp_path / "patches/legalizer-no-match-return.patch").exists()
+         return
+     with pytest.raises(ReachedLegalizerBuild):
+diff --git a/benchmarks/reproduction/misaal-x86-selector-literals.md b/benchmarks/reproduction/misaal-x86-selector-literals.md
+new file mode 100644
+index 0000000..f521c96
+--- /dev/null
++++ b/benchmarks/reproduction/misaal-x86-selector-literals.md
+@@ -0,0 +1,96 @@
++# MISAAL x86 selector literal repair
++
++This is a source-backed candidate, not a successful native reproduction. Native
++selector gates and new complete source-parent captures remain required.
++
++The retained `tensor_shr` call selects 32-bit arithmetic right shift in 16 lanes.
++Its generic name `_mm512_srav_epi16_dsl` covers several lane widths; parameters
++select `_mm512_srav_epi32_wrapper`. Fourteen constant guards must match. Thirteen
++match; argument 4 is the one-bit value 1, but the generated guard requires 177.
++`RoseX86LegalizerGen.py:75–80` removes `#`, prefixes `0`, and always parses base 16:
++`(bv #b1 1)` becomes hexadecimal `0b1`, or decimal 177. Common
++`Legalizer.cpp:276–330` correctly reports actual `0x01` versus expected `0xb1`.
++The correct wrapper and AVX512 shift intrinsic already exist. This mismatch is
++independent of the host CPU; the diagnostic never executes target instructions.
++
++The failed `conv_nn` lowering has the same cause in all 18 residual calls:
++three 512-bit, four 256-bit, and eleven 128-bit SRAV32 calls. Its 68 required LLVM
++functions are present, and none returns direct undef/poison. This is a selector
++failure after selected results exist, not successful source-parent completion.
++The lowering audit must continue to reject it.
++
++Pinned source: MISAAL `44ff893445d664cd87f52b08a138260ed2015ba8`, Hydride
++`beb825327fc946d65032e96f7cde9acf3d24c13e`. The new materializer verifies the
++entire original selector, generator, and semantics-table hashes. It validates
++all 2,025 emitted cases and 24,536 guards against their source entries, then
++changes only 1,951 binary-literal guards in 1,349 cases:
++
++| Source literal | Old integer | Correct integer | Guards |
++|---|---:|---:|---:|
++| `#b1` | 177 | 1 | 1,577 |
++| `#b0` | 176 | 0 | 350 |
++| `#b11` | 2,833 | 3 | 6 |
++| `#b10` | 2,832 | 2 | 6 |
++| `#b01` | 2,817 | 1 | 6 |
++| `#b00` | 2,816 | 0 | 6 |
++
++No other selector bytes change in this repair: names, branch order, permutations,
++actions, hex constants, and all 265 scalar `-1` guards remain intact. The generator
++embeds the same tested radix/width decoder, so regeneration retains the repair.
++Bitvector values use their stated width, including two's-complement negative
++values; plain signed scalar parameters remain signed. This matches vendored
++Rosette `bitvector.rkt`'s `sfinitize`/`ufinitize` at lines104–130. Malformed tokens
++and unsupported widths fail explicitly. Source changes or ambiguous cases also
++fail before any source file is patched.
++
++Fresh preparation calls this repair before the existing wide-integer,
++SIMD-mode, and missing-return repairs. `Preparation.patch` retains original/new
++hashes and exact patches; `legalizer-literal-derivation.json` binds each changed
++guard to its source literal, helper hash, and coverage counts. New requests also
++pin the generator and semantics table. The new helper must be included in the
++coordinator's preparation identity. Existing prepared source trees, libraries,
++requests, and failed receipts must not be changed.
++
++The small tracked tests compile the actual original Python generator class
++without external import/main execution and exercise its real SRAV and two-bit
++extract cases. They also test width/radix/signed behavior, malformed tokens,
++source/guard drift, fresh-only materialization, and ordering of existing repairs.
++These are data-only tests; they do not establish native lowering correctness.
++
++## Required root-owned gates
++
++The separately sealed ignored package `misaal-x86-selector-gate-0001` contains
++an original-source snapshot, the exact retained tensor input plus source wrapper
++bodies, source-derived 128/256-bit fixtures, and Boolean/width negative controls.
++Its driver builds a new complete selector plugin under a fresh output directory
++with the existing guarded `Preparation` runner (one build job,5 GiB RSS,10 GiB disk
++reserve). It checks the old plugin remains unlowered, the fixed plugin selects
++the precise expected wrapper for each positive, and both deliberately wrong
++selectors remain unlowered. All emitted modules must pass LLVM verification.
++It then applies the new plugin to the complete retained tensor/convolution
++linked inputs and requires the unchanged audit for all 1/68 requested functions.
++The guard stops the sequence on a resource or compiler failure. Source/plugin/
++tool hashes and request/result logs are retained; no settings are published.
++
++After those gates pass, use the normal MISAAL preparation recipe in a new
++immutable attempt, followed by new `tensor_shr` and `conv_nn` complete source
++captures and ordinary replay. For a standalone fresh x86 dependency rebuild:
++
++```sh
++.venv/bin/python -m scripts.reproduction_prepare_misaal \
++  --storage benchmarks/local/reproduction/preparation/misaal-x86-literals-v1 \
++  --backend /absolute/path/to/the/recorded/original/egglog
++```
++
++This builds fresh source and library outputs; it is not the historical
++`--repair-wide-literals` continuation. The combined public preparation stage
++must then produce the per-case requests and sealed Racket prerequisites. Keep
++source timeout, pattern-cache transitions, rule/schedule/cost behavior, and the
++original selected-output/LLVM audits unchanged. Passing only the reduced gate
++does not admit a corpus workload.
++
++Evidence origins: `stages/misaal-x86-tensor_shr/complete/89071253…/attempt-0001`
++and `stages/misaal-x86-conv_nn/complete/db3d430e…/attempt-0001`, under
++`benchmarks/local/reproduction`; exact paths and hashes are in the ignored gate
++manifest. Its LLVM/source identity is an auditable diagnostic snapshot, not a
++claim of hermetic system-toolchain reproduction or full LLVM equivalence.
+diff --git a/tests/fixtures/misaal-x86-literals/RoseX86LegalizerGen.py.txt b/tests/fixtures/misaal-x86-literals/RoseX86LegalizerGen.py.txt
+new file mode 100644
+index 0000000..fec017f
+--- /dev/null
++++ b/tests/fixtures/misaal-x86-literals/RoseX86LegalizerGen.py.txt
+@@ -0,0 +1,321 @@
++#############################################################
++#
++# Target-specific Instruction Selection Generator
++#
++#############################################################
++
++
++from RoseCodeEmitter import *
++from RoseAbstractions import *
++from RoseContext import *
++from RosetteCodeEmitter import *
++from RoseFunctionInfo import *
++from RoseCodeGenerator import *
++from RoseToolsUtils import *
++from RoseSimilarityCheckerUtilities import *
++from RoseValidityChecker import *
++
++
++
++class RoseInstSelectorGenerator():
++  def __init__(self, ISASemantics : dict):
++    self.ISASemantics = ISASemantics
++
++  def genHeader(self):
++    String = GenHeadersForAutoGenFiles("//")
++    Content = [
++      "#include \"llvm/IR/Function.h\"",
++      "#include \"llvm/IR/LLVMContext.h\"",
++      "#include \"llvm/IR/Module.h\"",
++      "#include \"llvm/IR/Instructions.h\"",
++      "#include \"llvm/IR/IntrinsicInst.h\"",
++      "#include \"llvm/IR/Type.h\"",
++      "#include \"llvm/InitializePasses.h\"",
++      "#include \"llvm/Pass.h\"",
++      "#include \"llvm/Support/CommandLine.h\"",
++      "#include \"llvm/Support/Debug.h\"",
++      "#include \"llvm/Transforms/Scalar.h\"",
++      "#include \"Legalizer.h\"",
++    ]
++    return String + "\n".join(Content)
++  
++  def generateLegalizerPassDeclaration(self):
++    String = '''
++namespace llvm {
++
++class X86LegalizationPass : public FunctionPass {
++public:
++    static char ID;
++
++    X86LegalizationPass() : FunctionPass(ID) {}
++
++    bool runOnFunction(Function &F);
++
++    void getAnalysisUsage(AnalysisUsage &AU) const {}
++};
++
++}
++    '''
++    return String
++  
++
++  def generateAPattern(self, TargetAgnosticInst : str, InstDict : dict):
++    InstNames = list()
++    String = ""
++    for InstName, InstInfo in InstDict.items():
++      ValidityChecker = RoseISAValidityChecker()
++      if ValidityChecker.checkValidityOnTarget(InstName, "x86") == False:
++        if "div" not in InstName and "rem" not in InstName:
++          continue
++      InstNames.append("\"llvm.hydride." + InstName + "_dsl\"")
++      Checks = list()
++      for Idx, ArgVal in enumerate(InstInfo["args"]):
++        if "SYMBOLIC_BV" not in ArgVal and InstInfo["arg_permute_map"][Idx] == -1:
++          # If the argument value is a constant bitvectoer, convert it into an integer
++          if "bv" in ArgVal:
++            ArgVal = ArgVal.replace("(bv #", "").strip()
++            ArgVal = ArgVal[:ArgVal.index(" ")]
++            ArgVal = "0" + ArgVal
++            intArg = int(ArgVal, 16)
++            ArgVal = hex(intArg)+"_cppi"  # Use boost literal to support int512_t initialization
++          if len(Checks) == 0:
++            Checks.append(
++            '''isAMatch(CI, {}, {})'''.format(str(Idx), ArgVal))
++          else:
++            Checks.append(
++            '''       && isAMatch(CI, {}, {})'''.format(str(Idx), ArgVal)) 
++      Permutation = list()
++      for Val in InstInfo["arg_permute_map"]:
++        Permutation.append(str(Val))
++      print("Content:")
++      print(Checks)
++      if "div" in InstName and "epi" in InstName:
++        if len(Checks) != 0:
++          Pattern = '''
++            if({}) {{
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::SDiv, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }}
++          '''.format("\n".join(Checks), ",".join(Permutation))
++        else:
++          Pattern = '''
++            {{ 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::SDiv, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }} 
++          '''.format(",".join(Permutation))
++      elif "div" in InstName and "epu" in InstName:
++        if len(Checks) != 0:
++          Pattern = '''
++            if({}) {{
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::UDiv, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }}
++          '''.format("\n".join(Checks), ",".join(Permutation))
++        else:
++          Pattern = '''
++            {{ 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::UDiv, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }} 
++          '''.format(",".join(Permutation))
++      elif "rem" in InstName and "epi" in InstName:
++        if len(Checks) != 0:
++          Pattern = '''
++            if({}) {{
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::SRem, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }}
++          '''.format("\n".join(Checks), ",".join(Permutation))
++        else:
++          Pattern = '''
++            {{ 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::SRem, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }} 
++          '''.format(",".join(Permutation))
++      elif "rem" in InstName and "epu" in InstName:
++        if len(Checks) != 0:
++          Pattern = '''
++            if({}) {{
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::URem, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }}
++          '''.format("\n".join(Checks), ",".join(Permutation))
++        else:
++          Pattern = '''
++            {{ 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutationForSpecialCases(CI, Permutation);    
++              auto *NewInst = BinaryOperator::Create(Instruction::URem, Args[0], Args[1], "", CI);
++              errs() << \"NEW INSTUCTION:\" << *NewInst << \"\\n\"; 
++              InstToInstMap[CI] = NewInst; 
++              ToBeRemoved.insert(CI); 
++              return true; 
++            }} 
++          '''.format(",".join(Permutation))
++      else:
++        if len(Checks) != 0:
++          Pattern = '''
++            if({}) {{
++              auto *InstFunction = I->getModule()->getFunction(\"{}\"); 
++              errs() << "INST FUNCTION NAME: " << \"{}\" << \"\\n\"; 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {{
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, \"\", CI); 
++                errs() << \"NEW INSTUCTION:\" << *NewCallInst << \"\\n\"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }}
++            }} 
++          '''.format("\n".join(Checks), InstName + "_wrapper", InstName + "_wrapper", ",".join(Permutation))
++        else:
++          Pattern = '''
++            {{ 
++              auto *InstFunction = I->getModule()->getFunction(\"{}\"); 
++              std::vector<int> Permutation = {{{}}}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {{
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, \"\", CI); 
++                errs() << \"NEW INSTUCTION:\" << *NewCallInst << \"\\n\"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true;
++              }}
++            }} 
++          '''.format(InstName + "_wrapper", ",".join(Permutation))
++      String += Pattern
++
++    FinalPattern = '''
++    {{
++      std::vector<std::string> InstNames = {{{}}};
++      if(isNameMatch(CI, InstNames)) {{ 
++        {} 
++      }} 
++    }}
++    '''.format(",\n".join(InstNames), String)
++    print("FinalPattern:")
++    print(FinalPattern)
++    return FinalPattern
++
++  def generateInstSelectorForAllInsts(self):
++    Content = list()
++    for TargetAgnosticInst, InstList in self.ISASemantics.items():
++      #print("TargetAgnosticInst:")
++      #print(TargetAgnosticInst)
++      #print("InstList:")
++      #print(InstList)
++      Content.append(self.generateAPattern(TargetAgnosticInst, InstList["target_instructions"]))
++    return "\n".join(Content)
++
++  def generateInstSelector(self):
++    Content = '''
++virtual bool legalize(Instruction *I) {{
++  auto *CI = dyn_cast<CallInst>(I);
++  if (CI == nullptr) {{
++    return false;
++  }}
++  if (InstToInstMap[CI] != nullptr) {{
++    return false;
++  }}
++  {}
++}}
++    '''.format(self.generateInstSelectorForAllInsts())
++    return Content
++    
++  def generatePassToRunOnFunction(self):
++    String = '''
++bool X86LegalizationPass::runOnFunction(Function &F) {
++  if (F.getName().contains("hydride") == false) {
++    return false;
++  }
++  // Initialize the legalizer
++  errs() << "LEGALIZATION BEGIN\\n";
++  Legalizer *L = new X86Legalizer();
++  return L->legalize(F);
++}
++    '''
++    return String
++
++  def generateLegalizerPassDefinition(self):
++    String = '''
++using namespace llvm;
++
++class X86Legalizer : public Legalizer {{
++public:
++{}
++
++}};
++
++{}
++    '''.format(self.generateInstSelector(), self.generatePassToRunOnFunction())
++    return String
++
++  def generateCodeForRegisteringPass(self):
++    String = '''
++char X86LegalizationPass::ID = 0;
++static RegisterPass<X86LegalizationPass> X("x86-hydride-legalize", 
++                                          "Pass to legalize tensor intrinsics");
++    '''
++    return String
++
++  def generateFileWithInstSelector(self):
++    Content = self.genHeader()
++    Content += self.generateLegalizerPassDeclaration()
++    Content += self.generateLegalizerPassDefinition()
++    Content += self.generateCodeForRegisteringPass()
++    FileName = "x86Legalizer.cpp"
++    try:
++      File = open(FileName, "w")
++      File.write(Content)
++      print("Content:")
++      print(Content)
++      File.close()
++    except IOError:
++      print("Error making: {}".format(FileName))
++      assert False
++
++    
++
++if __name__ == '__main__':
++  from x86semantics import semantics
++  InstSelectorGenerator = RoseInstSelectorGenerator(semantics)
++  InstSelectorGenerator.generateFileWithInstSelector()
++
+diff --git a/tests/fixtures/misaal-x86-literals/original-cases.cpp.txt b/tests/fixtures/misaal-x86-literals/original-cases.cpp.txt
+new file mode 100644
+index 0000000..c28452b
+--- /dev/null
++++ b/tests/fixtures/misaal-x86-literals/original-cases.cpp.txt
+@@ -0,0 +1,337 @@
++std::vector<std::string> InstNames = {"llvm.hydride._mm512_srav_epi16_dsl",
++"llvm.hydride._mm_srav_epi16_dsl",
++"llvm.hydride._mm_srav_epi32_dsl",
++"llvm.hydride._mm512_srav_epi32_dsl",
++"llvm.hydride._mm512_srav_epi64_dsl",
++"llvm.hydride._mm256_srav_epi64_dsl",
++"llvm.hydride._mm_srav_epi64_dsl",
++"llvm.hydride._mm256_srav_epi16_dsl",
++"llvm.hydride._mm256_srav_epi32_dsl"};
++      if(isNameMatch(CI, InstNames)) { 
++        
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 65535)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 16)
++       && isAMatch(CI, 6, 512)
++       && isAMatch(CI, 7, 512)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 512)
++       && isAMatch(CI, 10, 16)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 16)
++       && isAMatch(CI, 13, 16)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi16_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi16_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 65535)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 16)
++       && isAMatch(CI, 6, 128)
++       && isAMatch(CI, 7, 128)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 128)
++       && isAMatch(CI, 10, 16)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 16)
++       && isAMatch(CI, 13, 16)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi16_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi16_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 4294967295)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 32)
++       && isAMatch(CI, 6, 128)
++       && isAMatch(CI, 7, 128)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 128)
++       && isAMatch(CI, 10, 32)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 32)
++       && isAMatch(CI, 13, 32)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi32_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi32_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 4294967295)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 32)
++       && isAMatch(CI, 6, 512)
++       && isAMatch(CI, 7, 512)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 512)
++       && isAMatch(CI, 10, 32)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 32)
++       && isAMatch(CI, 13, 32)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi32_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi32_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 18446744073709551615)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 64)
++       && isAMatch(CI, 6, 512)
++       && isAMatch(CI, 7, 512)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 512)
++       && isAMatch(CI, 10, 64)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 64)
++       && isAMatch(CI, 13, 64)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm512_srav_epi64_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm512_srav_epi64_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 18446744073709551615)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 64)
++       && isAMatch(CI, 6, 256)
++       && isAMatch(CI, 7, 256)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 256)
++       && isAMatch(CI, 10, 64)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 64)
++       && isAMatch(CI, 13, 64)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi64_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi64_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 18446744073709551615)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 64)
++       && isAMatch(CI, 6, 128)
++       && isAMatch(CI, 7, 128)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 128)
++       && isAMatch(CI, 10, 64)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 64)
++       && isAMatch(CI, 13, 64)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm_srav_epi64_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm_srav_epi64_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 65535)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 16)
++       && isAMatch(CI, 6, 256)
++       && isAMatch(CI, 7, 256)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 256)
++       && isAMatch(CI, 10, 16)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 16)
++       && isAMatch(CI, 13, 16)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi16_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi16_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 1, 0)
++       && isAMatch(CI, 3, 4294967295)
++       && isAMatch(CI, 4, 177)
++       && isAMatch(CI, 5, 32)
++       && isAMatch(CI, 6, 256)
++       && isAMatch(CI, 7, 256)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 256)
++       && isAMatch(CI, 10, 32)
++       && isAMatch(CI, 11, 0)
++       && isAMatch(CI, 12, 32)
++       && isAMatch(CI, 13, 32)
++       && isAMatch(CI, 14, 1)
++       && isAMatch(CI, 15, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm256_srav_epi32_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm256_srav_epi32_wrapper" << "\n"; 
++              std::vector<int> Permutation = {1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++           
++      } 
++    }
++    
++
++    {
++      
++std::vector<std::string> InstNames = {"llvm.hydride._mm512_extracti64x2_epi64_dsl",
++"llvm.hydride._mm512_extracti32x4_epi32_dsl"};
++      if(isNameMatch(CI, InstNames)) { 
++        
++            if(isAMatch(CI, 0, 2833)
++       && isAMatch(CI, 2, 2832)
++       && isAMatch(CI, 3, 2817)
++       && isAMatch(CI, 4, 2816)
++       && isAMatch(CI, 6, 128)
++       && isAMatch(CI, 7, 128)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 128)
++       && isAMatch(CI, 10, 128)
++       && isAMatch(CI, 11, 2)
++       && isAMatch(CI, 12, 0)
++       && isAMatch(CI, 13, 0)
++       && isAMatch(CI, 14, 0)
++       && isAMatch(CI, 15, 0)
++       && isAMatch(CI, 16, 128)
++       && isAMatch(CI, 17, 0)
++       && isAMatch(CI, 18, 256)
++       && isAMatch(CI, 19, 0)
++       && isAMatch(CI, 20, 384)
++       && isAMatch(CI, 21, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm512_extracti64x2_epi64_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm512_extracti64x2_epi64_wrapper" << "\n"; 
++              std::vector<int> Permutation = {-1,1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++          
++            if(isAMatch(CI, 0, 2833)
++       && isAMatch(CI, 2, 2832)
++       && isAMatch(CI, 3, 2817)
++       && isAMatch(CI, 4, 2816)
++       && isAMatch(CI, 6, 128)
++       && isAMatch(CI, 7, 128)
++       && isAMatch(CI, 8, 0)
++       && isAMatch(CI, 9, 128)
++       && isAMatch(CI, 10, 128)
++       && isAMatch(CI, 11, 2)
++       && isAMatch(CI, 12, 0)
++       && isAMatch(CI, 13, 0)
++       && isAMatch(CI, 14, 0)
++       && isAMatch(CI, 15, 0)
++       && isAMatch(CI, 16, 128)
++       && isAMatch(CI, 17, 0)
++       && isAMatch(CI, 18, 256)
++       && isAMatch(CI, 19, 0)
++       && isAMatch(CI, 20, 384)
++       && isAMatch(CI, 21, 0)) {
++              auto *InstFunction = I->getModule()->getFunction("_mm512_extracti32x4_epi32_wrapper"); 
++              errs() << "INST FUNCTION NAME: " << "_mm512_extracti32x4_epi32_wrapper" << "\n"; 
++              std::vector<int> Permutation = {-1,1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}; 
++              std::vector<Value *> Args = getArgsAfterPermutation(CI, InstFunction, Permutation, CI); 
++              if (Args.size() != 0) {
++                auto *NewCallInst = CallInst::Create(InstFunction, Args, "", CI); 
++                errs() << "NEW INSTUCTION:" << *NewCallInst << "\n"; 
++                InstToInstMap[CI] = NewCallInst; 
++                ToBeRemoved.insert(CI); 
++                return true; 
++              }
++            } 
++           
++      } 
++    }
++    
++
++    {
++      
++bool X86LegalizationPass::runOnFunction(Function &F) {}
+diff --git a/tests/fixtures/misaal-x86-literals/provenance.json b/tests/fixtures/misaal-x86-literals/provenance.json
+new file mode 100644
+index 0000000..09a805f
+--- /dev/null
++++ b/tests/fixtures/misaal-x86-literals/provenance.json
+@@ -0,0 +1,16 @@
++{
++  "revision": "beb825327fc946d65032e96f7cde9acf3d24c13e",
++  "selector_sha256": "745e093b192cf6db338022b4943cf5329d1fc4a06e2ac4d59455c70ed82998f6",
++  "generator_sha256": "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0",
++  "semantics_sha256": "bebe9f04ec1f28dfa1451eceebd9e3e12d71526cf3e4b55aead6274408e55f6e",
++  "groups": [
++    "_mm512_srav_epi16",
++    "_mm512_extracti64x2_epi64"
++  ],
++  "extraction": "Exact generated group spans (before next InstNames) plus inert function delimiter; exact JSON-decoded source dictionary groups; generator copied whole. No numeric guards altered.",
++  "fixtures": {
++    "RoseX86LegalizerGen.py.txt": "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0",
++    "original-cases.cpp.txt": "98d6f944021b54bbdb65cdf77303f390924817548ef148112f5872ba369715d8",
++    "semantics.json": "b0df89a8e592443bf9f630535346641d20e0f447217d0955a212967e74ca7b88"
++  }
++}
+diff --git a/tests/fixtures/misaal-x86-literals/semantics.json b/tests/fixtures/misaal-x86-literals/semantics.json
+new file mode 100644
+index 0000000..0b826f1
+--- /dev/null
++++ b/tests/fixtures/misaal-x86-literals/semantics.json
+@@ -0,0 +1,715 @@
++{
++  "_mm512_srav_epi16": {
++    "target_instructions": {
++      "_mm512_srav_epi16": {
++        "args": [
++          "SYMBOLIC_BV_512",
++          "(bv #x0000000000000000 16)",
++          "SYMBOLIC_BV_512",
++          "(bv #x000000000000ffff 16)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000010 16)",
++          "512",
++          "512",
++          "0",
++          "512",
++          "16",
++          "0",
++          "16",
++          "16",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 512,
++        "out_vectsize": 512,
++        "lanesize": 512,
++        "in_precision": 16,
++        "out_precision": 16,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '', 't': '1'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512bw']"
++      },
++      "_mm_srav_epi16": {
++        "args": [
++          "SYMBOLIC_BV_128",
++          "(bv #x0000000000000000 16)",
++          "SYMBOLIC_BV_128",
++          "(bv #x000000000000ffff 16)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000010 16)",
++          "128",
++          "128",
++          "0",
++          "128",
++          "16",
++          "0",
++          "16",
++          "16",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 128,
++        "out_vectsize": 128,
++        "lanesize": 128,
++        "in_precision": 16,
++        "out_precision": 16,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512vl', 'avx512bw']"
++      },
++      "_mm_srav_epi32": {
++        "args": [
++          "SYMBOLIC_BV_128",
++          "(bv #x00000000000000000000000000000000 32)",
++          "SYMBOLIC_BV_128",
++          "(bv #x000000000000000000000000ffffffff 32)",
++          "(bv #b1 1)",
++          "(bv #x00000000000000000000000000000020 32)",
++          "128",
++          "128",
++          "0",
++          "128",
++          "32",
++          "0",
++          "32",
++          "32",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 128,
++        "out_vectsize": 128,
++        "lanesize": 128,
++        "in_precision": 32,
++        "out_precision": 32,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      },
++      "_mm512_srav_epi32": {
++        "args": [
++          "SYMBOLIC_BV_512",
++          "(bv #x00000000000000000000000000000000 32)",
++          "SYMBOLIC_BV_512",
++          "(bv #x000000000000000000000000ffffffff 32)",
++          "(bv #b1 1)",
++          "(bv #x00000000000000000000000000000020 32)",
++          "512",
++          "512",
++          "0",
++          "512",
++          "32",
++          "0",
++          "32",
++          "32",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 512,
++        "out_vectsize": 512,
++        "lanesize": 512,
++        "in_precision": 32,
++        "out_precision": 32,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': '1'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512f']"
++      },
++      "_mm512_srav_epi64": {
++        "args": [
++          "SYMBOLIC_BV_512",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000000 64)",
++          "SYMBOLIC_BV_512",
++          "(bv #x000000000000000000000000000000000000000000000000ffffffffffffffff 64)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000040 64)",
++          "512",
++          "512",
++          "0",
++          "512",
++          "64",
++          "0",
++          "64",
++          "64",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 512,
++        "out_vectsize": 512,
++        "lanesize": 512,
++        "in_precision": 64,
++        "out_precision": 64,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': '1'}}, {'Skylake': {'l': '1', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512f']"
++      },
++      "_mm256_srav_epi64": {
++        "args": [
++          "SYMBOLIC_BV_256",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000000 64)",
++          "SYMBOLIC_BV_256",
++          "(bv #x000000000000000000000000000000000000000000000000ffffffffffffffff 64)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000040 64)",
++          "256",
++          "256",
++          "0",
++          "256",
++          "64",
++          "0",
++          "64",
++          "64",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 256,
++        "out_vectsize": 256,
++        "lanesize": 256,
++        "in_precision": 64,
++        "out_precision": 64,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512vl', 'avx512f']"
++      },
++      "_mm_srav_epi64": {
++        "args": [
++          "SYMBOLIC_BV_128",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000000 64)",
++          "SYMBOLIC_BV_128",
++          "(bv #x000000000000000000000000000000000000000000000000ffffffffffffffff 64)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000000000000000000000000000000000000000000000000000040 64)",
++          "128",
++          "128",
++          "0",
++          "128",
++          "64",
++          "0",
++          "64",
++          "64",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 128,
++        "out_vectsize": 128,
++        "lanesize": 128,
++        "in_precision": 64,
++        "out_precision": 64,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': ''}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512vl', 'avx512f']"
++      },
++      "_mm256_srav_epi16": {
++        "args": [
++          "SYMBOLIC_BV_256",
++          "(bv #x0000000000000000 16)",
++          "SYMBOLIC_BV_256",
++          "(bv #x000000000000ffff 16)",
++          "(bv #b1 1)",
++          "(bv #x0000000000000010 16)",
++          "256",
++          "256",
++          "0",
++          "256",
++          "16",
++          "0",
++          "16",
++          "16",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 256,
++        "out_vectsize": 256,
++        "lanesize": 256,
++        "in_precision": 16,
++        "out_precision": 16,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512vl', 'avx512bw']"
++      },
++      "_mm256_srav_epi32": {
++        "args": [
++          "SYMBOLIC_BV_256",
++          "(bv #x00000000000000000000000000000000 32)",
++          "SYMBOLIC_BV_256",
++          "(bv #x000000000000000000000000ffffffff 32)",
++          "(bv #b1 1)",
++          "(bv #x00000000000000000000000000000020 32)",
++          "256",
++          "256",
++          "0",
++          "256",
++          "32",
++          "0",
++          "32",
++          "32",
++          "1",
++          "0"
++        ],
++        "in_vectsize": 256,
++        "out_vectsize": 256,
++        "lanesize": 256,
++        "in_precision": 32,
++        "out_precision": 32,
++        "in_vectsize_index": 6,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 13,
++        "out_precision_index": 13,
++        "arg_permute_map": [
++          1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": 0,
++        "Cost": "[{'Icelake': {'l': '1', 't': '0.5'}}, {'Skylake': {'l': '1', 't': '0.5'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx2']"
++      }
++    },
++    "semantics": [
++      "\"(define (_mm512_srav_epi16  count.norm %arg5.norm a.norm %arg4.norm %arg6.norm %arg0.norm %vectsize0.norm %outerlanesize0.norm %innerlaneoffset0.norm %innerlanesize0.norm %elemsize0.norm %arg1.norm %arg2.norm %arg3.norm %arg7.norm %arg8.norm )\"",
++      "\"(define dst.norm\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([%outer.it.norm (reverse (range 0 %vectsize0.norm %outerlanesize0.norm))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([j0.new.norm (reverse (range %innerlaneoffset0.norm %innerlanesize0.norm %elemsize0.norm))])\"",
++      "\"  (define %lastidx0.norm (-  %arg2.norm  1))\"",
++      "\"  (define %1.norm (+  j0.new.norm  %lastidx0.norm))\"",
++      "\"  (define %2.norm (extract  %1.norm j0.new.norm count.norm))\"",
++      "\"  (define %3.ab0.norm (bvlt %2.norm %arg0.norm %arg1.norm ))\"",
++      "\"  (cond\"",
++      "\"  [(equal? %3.ab0.norm #t)\"",
++      "\"   (begin\"",
++      "\"   (define %lastidx1.norm (-  %arg3.norm  1))\"",
++      "\"   (define %4.norm (+  j0.new.norm  %lastidx1.norm))\"",
++      "\"   (define %5.norm (extract  %4.norm j0.new.norm a.norm))\"",
++      "\"   (define %7.norm (extract  %4.norm j0.new.norm count.norm))\"",
++      "\"   (define %8.norm (bvashr  %5.norm  %7.norm))\"",
++      "\"   %8.norm\"",
++      "\"   )]\"",
++      "\"  [else (begin\"",
++      "\"   (define %lastidx2.norm (-  %arg3.norm  1))\"",
++      "\"   (define %11.norm (+  j0.new.norm  %lastidx2.norm))\"",
++      "\"   (define %lastidx3.norm (-  %arg7.norm  1))\"",
++      "\"   (define %highidx0.norm (+  %11.norm  %lastidx3.norm))\"",
++      "\"   (define %12.norm (extract  %highidx0.norm %11.norm a.norm))\"",
++      "\"   (define %cond0.norm (bveq  %12.norm  %arg6.norm))\"",
++      "\"   (define %13.norm (if (equal? %cond0.norm #t) %arg4.norm %arg5.norm))\"",
++      "\"   %13.norm\"",
++      "\"   )]\"",
++      "\"  )\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  dst.norm %arg8.norm)\"",
++      "\")\"",
++      "\"\""
++    ]
++  },
++  "_mm512_extracti64x2_epi64": {
++    "target_instructions": {
++      "_mm512_extracti64x2_epi64": {
++        "args": [
++          "(bv #b11 2)",
++          "SYMBOLIC_BV_2",
++          "(bv #b10 2)",
++          "(bv #b01 2)",
++          "(bv #b00 2)",
++          "SYMBOLIC_BV_512",
++          "128",
++          "128",
++          "0",
++          "128",
++          "128",
++          "2",
++          "0",
++          "0",
++          "0",
++          "0",
++          "128",
++          "0",
++          "256",
++          "0",
++          "384",
++          "0"
++        ],
++        "in_vectsize": 512,
++        "out_vectsize": 128,
++        "lanesize": 128,
++        "in_precision": 128,
++        "out_precision": 128,
++        "in_vectsize_index": null,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 10,
++        "out_precision_index": 10,
++        "arg_permute_map": [
++          -1,
++          1,
++          -1,
++          -1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '3', 't': '1'}}, {'Skylake': {'l': '3', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512dq']"
++      },
++      "_mm512_extracti32x4_epi32": {
++        "args": [
++          "(bv #b11 2)",
++          "SYMBOLIC_BV_2",
++          "(bv #b10 2)",
++          "(bv #b01 2)",
++          "(bv #b00 2)",
++          "SYMBOLIC_BV_512",
++          "128",
++          "128",
++          "0",
++          "128",
++          "128",
++          "2",
++          "0",
++          "0",
++          "0",
++          "0",
++          "128",
++          "0",
++          "256",
++          "0",
++          "384",
++          "0"
++        ],
++        "in_vectsize": 512,
++        "out_vectsize": 128,
++        "lanesize": 128,
++        "in_precision": 128,
++        "out_precision": 128,
++        "in_vectsize_index": null,
++        "out_vectsize_index": 6,
++        "in_lanesize_index": 9,
++        "out_lanesize_index": 7,
++        "in_precision_index": 10,
++        "out_precision_index": 10,
++        "arg_permute_map": [
++          -1,
++          1,
++          -1,
++          -1,
++          -1,
++          0,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1,
++          -1
++        ],
++        "Signedness": null,
++        "Cost": "[{'Icelake': {'l': '3', 't': '1'}}, {'Skylake': {'l': '3', 't': '1'}}]",
++        "SIMD": "True",
++        "Extensions": "['avx512f']"
++      }
++    },
++    "semantics": [
++      "\"(define (_mm512_extracti64x2_epi64  %arg0.norm imm8.norm %arg1.norm %arg2.norm %arg3.norm a.norm %vectsize0.norm %outerlanesize0.norm %innerlaneoffset0.norm %innerlanesize0.norm %elemsize0.norm %arg4.norm %arg5.norm %arg6.norm %arg7.norm %arg8.norm %arg9.norm %arg10.norm %arg11.norm %arg12.norm %arg13.norm %arg14.norm )\"",
++      "\"(define dst.norm\"",
++      "\"(apply\"",
++      "\"concat\"",
++      "\"(for/list ([%outer.it.norm (reverse (range 0 %vectsize0.norm %outerlanesize0.norm))])\"",
++      "\" (apply\"",
++      "\" concat\"",
++      "\" (for/list ([%inner.it.norm (reverse (range %innerlaneoffset0.norm %innerlanesize0.norm %elemsize0.norm))])\"",
++      "\"  (define %lastidx0.norm (-  %arg4.norm  1))\"",
++      "\"  (define %highidx0.norm (+  %lastidx0.norm  %arg5.norm))\"",
++      "\"  (define %0.norm (extract  %highidx0.norm %arg5.norm imm8.norm))\"",
++      "\"  (define %cond0.norm (bveq  %0.norm  %arg3.norm))\"",
++      "\"  (define %cond1.norm (bveq  %0.norm  %arg2.norm))\"",
++      "\"  (define %cond2.norm (bveq  %0.norm  %arg1.norm))\"",
++      "\"  (define %cond3.norm (bveq  %0.norm  %arg0.norm))\"",
++      "\"  (cond\"",
++      "\"  [(equal? %cond0.norm #t)\"",
++      "\"   (begin\"",
++      "\"   (define %lastidx2.norm (-  %elemsize0.norm  1))\"",
++      "\"   (define %highidx2.norm (+  %lastidx2.norm  %arg7.norm))\"",
++      "\"   (define %1.norm (extract  %highidx2.norm %arg7.norm a.norm))\"",
++      "\"   %1.norm\"",
++      "\"   )]\"",
++      "\"  [(equal? %cond1.norm #t)\"",
++      "\"   (begin\"",
++      "\"   (define %lastidx4.norm (-  %elemsize0.norm  1))\"",
++      "\"   (define %highidx4.norm (+  %lastidx4.norm  %arg9.norm))\"",
++      "\"   (define %2.norm (extract  %highidx4.norm %arg9.norm a.norm))\"",
++      "\"   %2.norm\"",
++      "\"   )]\"",
++      "\"  [(equal? %cond2.norm #t)\"",
++      "\"   (begin\"",
++      "\"   (define %lastidx6.norm (-  %elemsize0.norm  1))\"",
++      "\"   (define %highidx6.norm (+  %lastidx6.norm  %arg11.norm))\"",
++      "\"   (define %3.norm (extract  %highidx6.norm %arg11.norm a.norm))\"",
++      "\"   %3.norm\"",
++      "\"   )]\"",
++      "\"  [(equal? %cond3.norm #t)\"",
++      "\"   (begin\"",
++      "\"   (define %lastidx8.norm (-  %elemsize0.norm  1))\"",
++      "\"   (define %highidx8.norm (+  %lastidx8.norm  %arg13.norm))\"",
++      "\"   (define %4.norm (extract  %highidx8.norm %arg13.norm a.norm))\"",
++      "\"   %4.norm\"",
++      "\"   )]\"",
++      "\"  )\"",
++      "\" )\"",
++      "\" )\"",
++      "\")\"",
++      "\")\"",
++      "\")\"",
++      "\"(bvpadhighbits  dst.norm %arg14.norm)\"",
++      "\")\"",
++      "\"\""
++    ]
++  }
++}

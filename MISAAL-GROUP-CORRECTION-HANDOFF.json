@@ -1,0 +1,31 @@
+{
+  "files": {
+    "benchmarking/pilot.py": {
+      "baseline_sha256": "7e730b29aceeaa5fb02afa940f0fcc2d3ac5244a2dfcae956b091b07ea7a856c",
+      "modified_sha256": "423a2790fa38ba796173743ae0e41bb9b04363dcd537b1728eba116ddfe0a253"
+    },
+    "tests/test_pilot_outputs.py": {
+      "baseline_sha256": "17123b32e3c4f2e7987894b84bc0faa233aba06d954412d012a6d60c2b1caa6e",
+      "modified_sha256": "bc536f88d98556b7adfb642b23ee3cd12bd8002cb6a2982aa943fb80a8a7a03a"
+    }
+  },
+  "patch_sha256": "6467823e0bc842d8ad48bcc188a89390820e3291123ed8c7b20ddb3fb2412396",
+  "ignored_driver": "diagnostics/misaal-known-launch-0002",
+  "driver_files": {
+    "diagnostics/misaal-known-launch-0002/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "diagnostics/misaal-known-launch-0002/README.md": "40978f1a703bf0e1fdac6c2eb90325ef932f9f2f13bd2206e9bca29016784525",
+    "diagnostics/misaal-known-launch-0002/correction-evidence.json": "5931fbf3364461491c221f013164b35bcd2e02c551859a6d07d0e20f6af3cc51",
+    "diagnostics/misaal-known-launch-0002/run.py": "6bb63665ccf7203c84b3889a6276376ff6eff0b56343e061a6b8988a78b37211",
+    "diagnostics/misaal-known-launch-0002/test_run.py": "a561550bdc549f00da1f9850250b892468567572a5f440cd782c17eb91996472"
+  },
+  "validation": {
+    "focused_tests": "66 passed in 0.25s",
+    "ruff": "passed, four Python files",
+    "mypy": "passed --follow-imports silent, four Python files",
+    "independent_review": "No concrete blocker found in scoped correction; parent notified by reviewer",
+    "native_fixture": "unrun; prior failure preserved"
+  },
+  "root_evidence": "benchmarks/local/reproduction/diagnostics/macos-unreaped-group-0001.json",
+  "source": "https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/kern_sig.c",
+  "native_execution_by_implementer": false
+}

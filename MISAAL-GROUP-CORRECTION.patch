@@ -1,0 +1,220 @@
+diff --git a/benchmarking/pilot.py b/benchmarking/pilot.py
+--- a/benchmarking/pilot.py
++++ b/benchmarking/pilot.py
+@@ -45,6 +45,39 @@
+     stdout_path: Path
+     stderr_path: Path
+     message: str | None
++
++
++def _kill_retained_root_group(pid: int) -> None:
++    """Signal an unreaped root group; verify macOS's zombie-only EPERM case.
++
++    The caller must retain this child with WNOWAIT until its final wait. Never
++    waive EPERM by errno alone: both child exit and absence of live group members
++    must be observed successfully while the root PID is still reserved.
++    """
++    try:
++        os.killpg(pid, signal.SIGKILL)
++    except ProcessLookupError:
++        return
++    except PermissionError as signal_error:
++        if sys.platform != "darwin":
++            raise
++        exited = getattr(os, "waitid")(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)  # noqa: B009
++        if exited is None or exited.si_pid != pid:
++            raise
++        snapshot = subprocess.run(
++            ["ps", "-axo", "pid=,pgid=,stat="], capture_output=True, text=True, check=True, timeout=1
++        )
++        seen = set()
++        for line in snapshot.stdout.splitlines():
++            columns = line.split()
++            if len(columns) != 3:
++                raise ValueError("Incomplete retained-root group membership snapshot") from signal_error
++            member, group = map(int, columns[:2])
++            if member in seen or member < 0 or group < 0:
++                raise ValueError("Ambiguous retained-root group membership snapshot") from signal_error
++            seen.add(member)
++            if group == pid and not columns[2].startswith("Z"):
++                raise
+ 
+ 
+ def run_bounded_command(
+@@ -153,21 +186,33 @@
+                     break
+                 time.sleep(min(0.05, max(0, timeout_sec - (time.monotonic() - start))))
+         finally:
+-            try:
+-                if cleanup_descendants is not None:
+-                    # Stop source/LLVM work promptly on any stop; the retained
+-                    # root PID makes this group signal safe throughout drain.
+-                    with suppress(ProcessLookupError):
+-                        os.killpg(process.pid, signal.SIGKILL)
+-                    cleanup_descendants()
+-            except Exception as error:
+-                status = "resource-stopped"
+-                previous = f"{message}; " if message else ""
+-                message = previous + f"descendant cleanup failed: {error}"
+-            finally:
++            if cleanup_descendants is None:
+                 with suppress(ProcessLookupError):
+                     os.killpg(process.pid, signal.SIGKILL)
+                 process.wait()
++            else:
++                cleanup_errors = []
++                try:
++                    try:
++                        _kill_retained_root_group(process.pid)
++                    except Exception as error:
++                        cleanup_errors.append(f"initial root signal failed: {type(error).__name__}: {error}")
++                    finally:
++                        try:
++                            cleanup_descendants()
++                        except Exception as error:
++                            cleanup_errors.append(f"descendant cleanup failed: {type(error).__name__}: {error}")
++                finally:
++                    try:
++                        _kill_retained_root_group(process.pid)
++                    except Exception as error:
++                        cleanup_errors.append(f"final root signal failed: {type(error).__name__}: {error}")
++                    finally:
++                        process.wait()
++                if cleanup_errors:
++                    status = "resource-stopped"
++                    previous = f"{message}; " if message else ""
++                    message = previous + "; ".join(cleanup_errors)
+     if status == "success" and process.returncode != 0:
+         status = "failure"
+         with stderr_path.open("rb") as log:
+diff --git a/tests/test_pilot_outputs.py b/tests/test_pilot_outputs.py
+--- a/tests/test_pilot_outputs.py
++++ b/tests/test_pilot_outputs.py
+@@ -303,3 +303,127 @@
+     with pytest.raises(RuntimeError, match="unexpected implementation bug"):
+         pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run")
+     assert events == ["kill", "wait"]
++
++
++@pytest.mark.parametrize(
++    "group",
++    [
++        "empty",
++        "zombie",
++        "unrelated-live",
++        "live-child",
++        "unknown-state",
++        "malformed",
++        "duplicate",
++        "monitor-error",
++        "root-running",
++        "wrong-root",
++        "linux",
++    ],
++)
++def test_permission_error_is_waived_only_for_confirmed_exited_empty_macos_group(
++    monkeypatch: pytest.MonkeyPatch, group: str
++) -> None:
++    monkeypatch.setattr(pilot.sys, "platform", "linux" if group == "linux" else "darwin")
++
++    def denied(*_args: Any) -> None:
++        raise PermissionError(1, "Operation not permitted")
++
++    monkeypatch.setattr(pilot.os, "killpg", denied)
++
++    def exited(_kind: int, pid: int, flags: int) -> Any:
++        assert flags & pilot.os.WNOWAIT
++        return None if group == "root-running" else SimpleNamespace(si_pid=999 if group == "wrong-root" else pid)
++
++    monkeypatch.setattr(pilot.os, "waitid", exited)
++    snapshots = {
++        "empty": "",
++        "zombie": "123 123 Z\n",
++        "unrelated-live": "123 123 Z+\n999 999 R\n",
++        "live-child": "123 123 Z\n124 123 S\n",
++        "unknown-state": "123 123 ?\n",
++        "malformed": "123 123\n",
++        "duplicate": "123 123 Z\n123 123 Z\n",
++    }
++
++    def snapshot(*args: Any, **kwargs: Any) -> Any:
++        assert args == (["ps", "-axo", "pid=,pgid=,stat="],) and kwargs["check"] and kwargs["timeout"] == 1
++        if group == "monitor-error":
++            raise OSError("monitor unavailable")
++        if group not in snapshots:
++            pytest.fail("unconfirmed root must not waive EPERM using telemetry")
++        return SimpleNamespace(stdout=snapshots[group])
++
++    monkeypatch.setattr(pilot.subprocess, "run", snapshot)
++    if group in {"empty", "zombie", "unrelated-live"}:
++        pilot._kill_retained_root_group(123)
++    else:
++        with pytest.raises((PermissionError, OSError, ValueError)):
++            pilot._kill_retained_root_group(123)
++
++
++@pytest.mark.parametrize("failed_signals", [{1}, {2}, {1, 2}])
++@pytest.mark.parametrize("callback_fails", [False, True])
++def test_signal_failures_cannot_skip_callback_or_wait_and_remain_failures(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_signals: set[int], callback_fails: bool
++) -> None:
++    events: list[str] = []
++    process = SimpleNamespace(pid=123, returncode=None, poll=lambda: pytest.fail("must retain root"))
++
++    def wait() -> int:
++        events.append("wait")
++        process.returncode = 0
++        return 0
++
++    process.wait = wait
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_a, **_k: process)
++    monkeypatch.setattr(pilot.MemoryGuard, "from_environment", lambda **_: None)
++    monkeypatch.setattr(pilot.os, "waitid", lambda *_: SimpleNamespace(si_pid=123))
++    count = 0
++
++    def signal_root(_pid: int) -> None:
++        nonlocal count
++        count += 1
++        events.append(f"signal{count}")
++        if count in failed_signals:
++            raise PermissionError(1, f"denied phase {count}")
++
++    monkeypatch.setattr(pilot, "_kill_retained_root_group", signal_root)
++
++    def cleanup() -> None:
++        events.append("callback")
++        if callback_fails:
++            raise ValueError("callback failure")
++
++    result = pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run", cleanup_descendants=cleanup)
++    assert events == ["signal1", "callback", "signal2", "wait"]
++    assert result.status == "resource-stopped" and result.returncode == 0
++    for number in failed_signals:
++        assert f"denied phase {number}" in str(result.message)
++    assert ("callback failure" in str(result.message)) is callback_fails
++
++
++@pytest.mark.parametrize("interrupted_signal", [1, 2])
++def test_signal_interruption_still_runs_callback_and_final_wait(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted_signal: int
++) -> None:
++    events: list[str] = []
++    process = SimpleNamespace(pid=123, returncode=0, wait=lambda: events.append("wait"))
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_a, **_k: process)
++    monkeypatch.setattr(pilot.MemoryGuard, "from_environment", lambda **_: None)
++    monkeypatch.setattr(pilot.os, "waitid", lambda *_: SimpleNamespace(si_pid=123))
++    count = 0
++
++    def signal_root(_pid: int) -> None:
++        nonlocal count
++        count += 1
++        events.append(f"signal{count}")
++        if count == interrupted_signal:
++            raise KeyboardInterrupt
++
++    monkeypatch.setattr(pilot, "_kill_retained_root_group", signal_root)
++    with pytest.raises(KeyboardInterrupt):
++        pilot.run_bounded_command(
++            ["fake"], tmp_path, tmp_path / "run", cleanup_descendants=lambda: events.append("callback")
++        )
++    assert events == ["signal1", "callback", "signal2", "wait"]

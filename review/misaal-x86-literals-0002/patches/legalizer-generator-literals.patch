@@ -1,0 +1,52 @@
+--- a/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/x86/RoseX86LegalizerGen.py
++++ b/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/x86/RoseX86LegalizerGen.py
+@@ -15,6 +15,34 @@
+ from RoseSimilarityCheckerUtilities import *
+ from RoseValidityChecker import *
+ 
++
++
++def parse_selector_literal(literal: str) -> int:
++    """Decode an integer or concrete bitvector into the selector's numeric bits.
++
++    Rosette's bv masks integers to the stated width, including negative values.
++    Legalizer compares ConstantInt hex bit patterns, so bv results are unsigned;
++    plain integer parameters retain their sign. The selector uses int512_t.
++    This self-contained function is also embedded in the acquired generator.
++    """
++    import re
++
++    text = literal.strip()
++    if re.fullmatch(r"[+-]?[0-9]+", text):
++        value = int(text, 10)
++        if abs(value).bit_length() > 512:
++            raise ValueError("selector integer exceeds int512_t")
++        return value
++    match = re.fullmatch(r"\(bv\s+(#[bB][+-]?[01]+|#[xX][+-]?[0-9a-fA-F]+|[+-]?[0-9]+)\s+([0-9]+)\)", text)
++    if match is None:
++        raise ValueError(f"unsupported selector literal: {literal!r}")
++    token, width_token = match.groups()
++    width = int(width_token)
++    if not 1 <= width <= 512:
++        raise ValueError("selector bitvector width must be in 1..512")
++    base = {"b": 2, "x": 16}[token[1].lower()] if token.startswith("#") else 10
++    value = int(token[2:] if token.startswith("#") else token, base)
++    return value % (1 << width)
+ 
+ 
+ class RoseInstSelectorGenerator():
+@@ -73,11 +101,9 @@
+         if "SYMBOLIC_BV" not in ArgVal and InstInfo["arg_permute_map"][Idx] == -1:
+           # If the argument value is a constant bitvectoer, convert it into an integer
+           if "bv" in ArgVal:
+-            ArgVal = ArgVal.replace("(bv #", "").strip()
+-            ArgVal = ArgVal[:ArgVal.index(" ")]
+-            ArgVal = "0" + ArgVal
+-            intArg = int(ArgVal, 16)
+-            ArgVal = hex(intArg)+"_cppi"  # Use boost literal to support int512_t initialization
++            ArgVal = hex(parse_selector_literal(ArgVal)) + "_cppi"
++          else:
++            ArgVal = str(parse_selector_literal(ArgVal))
+           if len(Checks) == 0:
+             Checks.append(
+             '''isAMatch(CI, {}, {})'''.format(str(Idx), ArgVal))

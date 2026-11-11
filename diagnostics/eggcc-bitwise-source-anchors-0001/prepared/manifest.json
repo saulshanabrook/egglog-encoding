@@ -1,0 +1,16 @@
+{
+  "status": "prepared-and-pure-transform-tested; no native runs",
+  "source_replay": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/bf40de2ca9fd20e09f23100c85921ecfde2971e9afba91328ad0a67f8d1d1507/attempt-0001/capture/eggcc-bitwise-ops--statewalk/session-002-optimization.egg",
+  "source_capture": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/eggcc-bitwise-ops--statewalk/complete/bf40de2ca9fd20e09f23100c85921ecfde2971e9afba91328ad0a67f8d1d1507/attempt-0001/capture-result.json",
+  "original_sha256": "ced29250ea65acb944aba02f05d92070c7aa0431017e85e26c3431ecf06f7768",
+  "capture_sha256": "d9eb2fa090b404600bddfe68970e7a93c3457aa616b02114a9ecde839d1b2fbf",
+  "native_graph_event_sha256": "91563ff6f4179315e98ba6581abfbbc9aee8240e7864eb1dd6dc22ce3361c009",
+  "driver_sha256": "01aa28eb876594eb43df4c5be26db7e722a92681d3f3a0e4ceeab81f961aa20a",
+  "variants": {
+    "baseline-counts.egg": "b42bfec0abcd36469505f511bddd15c7defbcfff8b5dead3d2b4a62d3feca39a",
+    "anchored.egg": "89dc1d760ddb4b6280a1f6d9fc5e2c8e16fe61e52923d3b4ab02ba206057731d",
+    "negative-input.egg": "c8485db55363126fc9baf7a88d8ef5f939db34e056be9204b182bac8131a6ed3"
+  },
+  "tests": "4 pure transformation tests, Ruff, focused mypy pass; no main/native invocation",
+  "admitted": false
+}

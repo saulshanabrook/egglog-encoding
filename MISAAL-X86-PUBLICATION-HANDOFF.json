@@ -1,0 +1,40 @@
+{
+  "base_settings_sha256": "f77c32677ebf57950ae04e2a5c28149cee4161e3126f81b896df1e0aa6eb583d",
+  "corpus_admission": false,
+  "execution_instructions": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/misaal-x86-selector-publication-0001/README.md",
+  "files": {
+    "README.md": "958f997c873ad4c482540b3c8c024f8e89444c84d4e3d0c707ec62d4cf4e7158",
+    "manifest.json": "30c806f30091e7d13036046d9084f0d14abec1ad48041bad8964e3e2edbb5932",
+    "publish.py": "681af494968076fd000426e98d27ab234471f09b19a30b4a7c82f6c30d8efe5f",
+    "test_publication.py": "a9aa70b28d873ab66ebc8ba57eae1ba79e05d5cb1177e235f53f17610032cb73"
+  },
+  "native_executed": false,
+  "package": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/misaal-x86-selector-publication-0001",
+  "preservation": "No old request/settings/source/product is changed. Other100 cases remain pending; no configuration blockers or successes invented.",
+  "publication_executed": false,
+  "remaining_gates": [
+    "Actual sealed native selector SUCCESS required before publication",
+    "Root executes data-only publication into fresh output",
+    "Complete native source and separate ordinary validation for misaal-x86-tensor_shr and misaal-x86-conv_nn",
+    "Broader collection only after root reviews both canaries"
+  ],
+  "request_population": {
+    "arm": 31,
+    "hexagon": 39,
+    "total": 102,
+    "x86": 32
+  },
+  "required_native_gate_manifest_sha256": "103268c7ce384c36f95f284fbb9baecbe42c3fa60f98c36689a5178e2ee4c331",
+  "review": {
+    "agent": "/root/misaal_racket_recipe",
+    "result": "no concrete blocker",
+    "scope": "read-only; exact package/implementation/102 current request pins verified; missing historical dedup pins handled; no added blockers"
+  },
+  "root_install_directory": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/misaal-x86-selector-publication-0001",
+  "status": "reviewed-recipe-only",
+  "tests": {
+    "command": ".venv/bin/python -m unittest discover -s review/misaal-x86-selector-publication-0001 -p test_publication.py -q",
+    "passed": 8,
+    "scope": "synthetic data-only"
+  }
+}

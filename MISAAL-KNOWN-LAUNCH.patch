@@ -1,0 +1,1508 @@
+diff --git a/benchmarking/pilot.py b/benchmarking/pilot.py
+--- a/benchmarking/pilot.py
++++ b/benchmarking/pilot.py
+@@ -11,7 +11,7 @@
+ import subprocess
+ import sys
+ import time
+-from collections.abc import Mapping, Sequence
++from collections.abc import Callable, Mapping, Sequence
+ from contextlib import suppress
+ from dataclasses import asdict, dataclass
+ from datetime import UTC, datetime
+@@ -57,6 +57,8 @@
+     allow_warning_pressure: bool = False,
+     require_guard: bool = False,
+     disk_reserve_bytes: int = 0,
++    sample_rss: Callable[[int], int] | None = None,
++    cleanup_descendants: Callable[[], None] | None = None,
+ ) -> PilotProcessResult:
+     """Monitor an isolated process group's aggregate RSS and retain disk logs.
+ 
+@@ -70,6 +72,10 @@
+ 
+     if timeout_sec <= 0 or memory_limit_bytes <= 0:
+         raise ValueError("pilot process timeout and memory limit must be positive")
++    if cleanup_descendants is not None and not all(
++        hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
++    ):
++        raise ValueError("descendant cleanup requires non-consuming root exit observation (waitid/WNOWAIT)")
+     guard = (
+         MemoryGuard(allow_warning_pressure=allow_warning_pressure)
+         if require_guard
+@@ -91,13 +97,32 @@
+     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+         process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+         try:
+-            while process.poll() is None:
++            while True:
++                if cleanup_descendants is None:
++                    if process.poll() is not None:
++                        break
++                else:
++                    # Keep the root PID unreaped through group cleanup. A poll()
++                    # here would permit PID/PGID reuse during detached drain.
++                    try:
++                        # Typeshed omits this macOS API; availability is checked above.
++                        exited = getattr(os, "waitid")(  # noqa: B009
++                            os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
++                        )
++                    except Exception as error:
++                        status = "resource-stopped"
++                        message = f"root exit monitoring failed: {error}"
++                        break
++                    if exited is not None and exited.si_pid == process.pid:
++                        break
+                 # Both macOS and Linux expose RSS in KiB through ps. Monitoring
+                 # the session's group includes descendants spawned by a driver.
+                 try:
+-                    rss = group_rss_bytes(process.pid)
+-                except (OSError, ValueError, subprocess.SubprocessError) as error:
+-                    if guard is None:
++                    rss = (sample_rss or group_rss_bytes)(process.pid)
++                except Exception as error:
++                    if sample_rss is None and (
++                        guard is None or not isinstance(error, (OSError, ValueError, subprocess.SubprocessError))
++                    ):
+                         raise
+                     status = "resource-stopped"
+                     message = f"memory monitoring failed: {error}"
+@@ -128,9 +153,21 @@
+                     break
+                 time.sleep(min(0.05, max(0, timeout_sec - (time.monotonic() - start))))
+         finally:
+-            with suppress(ProcessLookupError):
+-                os.killpg(process.pid, signal.SIGKILL)
+-            process.wait()
++            try:
++                if cleanup_descendants is not None:
++                    # Stop source/LLVM work promptly on any stop; the retained
++                    # root PID makes this group signal safe throughout drain.
++                    with suppress(ProcessLookupError):
++                        os.killpg(process.pid, signal.SIGKILL)
++                    cleanup_descendants()
++            except Exception as error:
++                status = "resource-stopped"
++                previous = f"{message}; " if message else ""
++                message = previous + f"descendant cleanup failed: {error}"
++            finally:
++                with suppress(ProcessLookupError):
++                    os.killpg(process.pid, signal.SIGKILL)
++                process.wait()
+     if status == "success" and process.returncode != 0:
+         status = "failure"
+         with stderr_path.open("rb") as log:
+diff --git a/scripts/misaal_reproduction.py b/scripts/misaal_reproduction.py
+--- a/scripts/misaal_reproduction.py
++++ b/scripts/misaal_reproduction.py
+@@ -26,7 +26,7 @@
+ import time
+ import traceback
+ from collections.abc import Iterator
+-from contextlib import contextmanager
++from contextlib import contextmanager, nullcontext
+ from dataclasses import asdict
+ from pathlib import Path
+ from types import ModuleType
+@@ -56,6 +56,21 @@
+     if re.fullmatch(r"[0-9a-f]{40}", request["revision"]) is None:
+         raise ValueError("MISAAL request must record a full source revision")
+     checkout = Path(request["checkout"]).resolve()
++    if containment := request.get("racket_group_containment"):
++        from scripts.reproduction_misaal_groups import CONTRACT, SOURCE, SOURCE_SHA256
++
++        if containment != CONTRACT or request["source_hashes"].get(SOURCE) != SOURCE_SHA256:
++            raise ValueError("Unsupported pinned Racket group containment request")
++        if not isinstance(request.get("racket"), str) or not isinstance(request.get("racket_sha256"), str):
++            raise ValueError("Registered Racket containment requires a pinned executable path and SHA-256")
++        racket = Path(request["racket"])
++        if (
++            not racket.is_absolute()
++            or not racket.is_file()
++            or not os.access(racket, os.X_OK)
++            or hashlib.sha256(racket.read_bytes()).hexdigest() != request["racket_sha256"]
++        ):
++            raise ValueError("MISAAL Racket executable identity changed")
+     required = {"lib/compiler/EggLogCompiler.py", "lib/compiler/HydrideCompiler.py"}
+     if not required.issubset(request["source_hashes"]):
+         raise ValueError("Request must pin both observed compiler implementations")
+@@ -523,7 +538,18 @@
+         egg_compiler.execute_egglog_file = capture_backend
+         hydride_compiler.run_llvm_legalizer = checked_legalizer
+         sys.argv = [str(program)]
++        containment: Any = nullcontext()
++        if request.get("racket_group_containment"):
++            from scripts.reproduction_misaal_groups import observe_racket_launch
++
++            endpoint = os.environ.get("MISAAL_RACKET_GROUP_SOCKET")
++            if endpoint is None:
++                raise ValueError("Known Racket launch containment has no live guard endpoint")
++            containment = observe_racket_launch(
++                importlib.import_module("utils.DSLInstructionUtils"), request, Path(endpoint)
++            )
+         with (
++            containment,
+             accelerate_pattern_preparation(
+                 pattern_module,
+                 request,
+@@ -600,7 +626,7 @@
+     record["materialization"]["complete"] = True
+ 
+ 
+-def run_frontend(request_path: Path, attempt: Path) -> int:
++def run_frontend(request_path: Path, attempt: Path, *, group_endpoint: Path | None = None) -> int:
+     """Keep the native parent alive until all compiler outputs are verified."""
+     request = verified_request(request_path)
+     patterns = Path(request["checkout"]) / "lib/patterns"
+@@ -613,6 +639,11 @@
+         if key.startswith(("HL_", "HYDRIDE_", "MISAAL_")):
+             del environment[key]
+     environment.update(request["environment"])
++    environment.pop("MISAAL_RACKET_GROUP_SOCKET", None)
++    if request.get("racket_group_containment"):
++        if group_endpoint is None:
++            raise ValueError("Known Racket launch containment requires the guarded capture entrypoint")
++        environment["MISAAL_RACKET_GROUP_SOCKET"] = str(group_endpoint)
+     cache_contract = request.get("pattern_cache_contract")
+     if cache_contract is not None:
+         if cache_contract.get("environment") != "MISAAL_PATTERN_CACHE_DIR":
+@@ -728,15 +759,22 @@
+ 
+ 
+ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
+-    """Run one complete source attempt in one guarded native process group.
++    """Run one source parent with inherited children and registered Racket groups.
+ 
+     Call directly from a coordinator, not from another session-creating guard.
+-    LLVM/backend children deliberately inherit this group's resource boundary.
++    LLVM/backend children inherit the root group; pinned detached Racket groups
++    require the outer guard's live launch lease and aggregate RSS accounting.
+     """
+     from benchmarking.pilot import run_bounded_command
+ 
+     request_path, output = request_path.resolve(), output.resolve()
+     request = verified_request(request_path)
++    from scripts.reproduction_misaal_groups import CONTRACT, RacketGroups
++
++    if request.get("racket_group_containment") != CONTRACT:
++        raise ValueError(
++            "Complete MISAAL capture requires a prepared registered-group contract and pinned Racket executable"
++        )
+     output.mkdir(parents=True, exist_ok=False)
+     save_receipt(output / "request.json", request)
+     command = [
+@@ -748,16 +786,24 @@
+         "--output",
+         str(output / "generation"),
+     ]
+-    process = run_bounded_command(
+-        command,
+-        ROOT,
+-        output / "process",
+-        timeout_sec=request.get("source_timeout_sec", 900),
+-        memory_limit_bytes=5 * 1024**3,
+-        require_guard=True,
+-        disk_reserve_bytes=10 * 1024**3,
+-        allow_warning_pressure=True,
+-    )
++    groups = RacketGroups(output / "group-containment")
++    command.extend(["--group-endpoint", str(groups.endpoint)])
++    try:
++        process = run_bounded_command(
++            command,
++            ROOT,
++            output / "process",
++            timeout_sec=request.get("source_timeout_sec", 900),
++            memory_limit_bytes=5 * 1024**3,
++            require_guard=True,
++            disk_reserve_bytes=10 * 1024**3,
++            allow_warning_pressure=True,
++            sample_rss=groups.sample,
++            cleanup_descendants=groups.close,
++        )
++    finally:
++        if not groups.closed:
++            groups.close()
+     save_receipt(output / "process.json", asdict(process))
+     receipt = output / "generation/capture.json"
+     record = (
+@@ -773,6 +819,12 @@
+     )
+     record["process"] = asdict(process)
+     record["source_timeout_sec"] = request.get("source_timeout_sec", 900)
++    record["process_accounting"] = {
++        "contract": groups.record["contract"],
++        "scope": groups.record["scope"],
++        "receipt": str(groups.directory / "groups.json"),
++        "sha256": hashlib.sha256((groups.directory / "groups.json").read_bytes()).hexdigest(),
++    }
+     if process.status != "success":
+         record.update(status=process.status, reason=process.message or "Source attempt did not finish", workloads=[])
+         if not record["source_capture_complete"]:
+@@ -1059,6 +1111,7 @@
+     parser.add_argument("--request", type=Path)
+     parser.add_argument("--output", type=Path, required=True)
+     parser.add_argument("--script", type=Path)
++    parser.add_argument("--group-endpoint", type=Path)
+     parser.add_argument("arguments", nargs="*")
+     args = parser.parse_args(argv)
+     sys.path.insert(0, str(ROOT))
+@@ -1086,7 +1139,7 @@
+     if args.mode == "child":
+         return observe_python(request_path, output, args.arguments)
+     if args.mode == "frontend":
+-        return run_frontend(request_path, output)
++        return run_frontend(request_path, output, group_endpoint=args.group_endpoint)
+     result = capture_misaal(request_path, output)
+     return 0 if result["status"] == "ordinary-validation-pending" else 1
+ 
+diff --git a/scripts/suite_reproduction.py b/scripts/suite_reproduction.py
+--- a/scripts/suite_reproduction.py
++++ b/scripts/suite_reproduction.py
+@@ -65,6 +65,8 @@
+         request = misaal_request(case, settings, ROOT)
+         paths.append(ROOT / settings["paths"]["requests"] / f"{case['id']}.json")
+         paths.extend(Path(request[key]) for key in ("backend", "llvm_as", "python", "generator"))
++        if "racket" in request:
++            paths.append(Path(request["racket"]))
+         paths.extend(Path(request["checkout"]) / relative for relative in request["source_hashes"])
+         paths.extend(Path(path) for path in request.get("identity_paths", []))
+     # These are acquisition/adaptation implementations only. Hashes do not
+@@ -90,6 +92,7 @@
+             "scripts/suite_capture_hardboiled_misaal.py",
+             "scripts/reproduction_misaal_legalizer.py",
+             "scripts/reproduction_misaal_patterns.py",
++            "scripts/reproduction_misaal_groups.py",
+         ],
+         "hardboiled": ["scripts/hardboiled_replay.py", "scripts/suite_capture_hardboiled_misaal.py"],
+     }
+diff --git a/tests/test_pilot_outputs.py b/tests/test_pilot_outputs.py
+--- a/tests/test_pilot_outputs.py
++++ b/tests/test_pilot_outputs.py
+@@ -3,7 +3,9 @@
+ from __future__ import annotations
+ 
+ import json
++import signal
+ from pathlib import Path
++from types import SimpleNamespace
+ from typing import Any
+ 
+ import pytest
+@@ -12,6 +14,58 @@
+ from benchmarking.targets import sha256_file
+ 
+ from .report_fixtures import make_record
++
++
++@pytest.mark.parametrize("mode", ["default", "sample-error", "cleanup-error", "immediate-exit", "cleanup-interrupt"])
++def test_optional_descendant_hooks_always_preserve_root_cleanup(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
++) -> None:
++    events: list[Any] = []
++    polls = iter([0] if mode == "immediate-exit" else [None, 0])
++    process = SimpleNamespace(pid=123, returncode=0, poll=lambda: next(polls), wait=lambda: events.append("wait"))
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_args, **_kwargs: process)
++    exits = iter([SimpleNamespace(si_pid=123)] if mode == "immediate-exit" else [None, SimpleNamespace(si_pid=123)])
++    monkeypatch.setattr(pilot.os, "waitid", lambda *_: next(exits))
++    monkeypatch.setattr(pilot.MemoryGuard, "from_environment", lambda **_: None)
++
++    def default_sample(pid: int) -> int:
++        events.append(("default-rss", pid))
++        return 5
++
++    monkeypatch.setattr(pilot, "group_rss_bytes", default_sample)
++    monkeypatch.setattr(pilot.os, "killpg", lambda *args: events.append(("killpg", *args)))
++    monkeypatch.setattr(pilot.time, "sleep", lambda _: None)
++
++    def sample(pid: int) -> int:
++        events.append(("custom-rss", pid))
++        if mode == "sample-error":
++            raise RuntimeError("custom monitor failed")
++        return 7
++
++    def cleanup() -> None:
++        events.append("descendant-cleanup")
++        if mode == "cleanup-error":
++            raise RuntimeError("custom cleanup failed")
++        if mode == "cleanup-interrupt":
++            raise KeyboardInterrupt
++
++    kwargs: dict[str, Any] = {} if mode == "default" else {"sample_rss": sample, "cleanup_descendants": cleanup}
++    if mode == "cleanup-interrupt":
++        with pytest.raises(KeyboardInterrupt):
++            pilot.run_bounded_command(["never-executed"], tmp_path, tmp_path / "output", **kwargs)
++    else:
++        result = pilot.run_bounded_command(["never-executed"], tmp_path, tmp_path / "output", **kwargs)
++        if mode in {"sample-error", "cleanup-error"}:
++            assert result.status == "resource-stopped" and "failed" in str(result.message)
++        else:
++            assert result.status == "success"
++    assert events[-2:] == [("killpg", 123, signal.SIGKILL), "wait"]
++    if mode == "default":
++        assert events[0] == ("default-rss", 123) and "descendant-cleanup" not in events
++    else:
++        assert "descendant-cleanup" in events
++    if mode == "immediate-exit":
++        assert not any(isinstance(event, tuple) and event[0] == "custom-rss" for event in events)
+ 
+ 
+ def test_pilot_evidence_cannot_alias_an_empty_measured_cache(
+@@ -179,3 +233,73 @@
+         assert result["preparation_status"] == "proof-query-blocked"
+         assert result["preparation_reason"] == "No derived query"
+         assert result["measurements"] == [{"treatment": "off", "status": "success", "timeout_sec": 120, "rows": 1}]
++
++
++@pytest.mark.parametrize("failure", [None, "waitid", "cleanup", "interrupt"])
++def test_scoped_cleanup_retains_root_identity_and_stops_root_before_drain(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
++) -> None:
++    events: list[Any] = []
++    process = SimpleNamespace(
++        pid=123, returncode=None, poll=lambda: pytest.fail("custom cleanup must not reap with poll")
++    )
++
++    def wait() -> int:
++        events.append("wait")
++        process.returncode = 7
++        return 7
++
++    process.wait = wait
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_a, **_k: process)
++    monkeypatch.setattr(pilot.MemoryGuard, "from_environment", lambda **_: None)
++    monkeypatch.setattr(pilot.os, "killpg", lambda *args: events.append(("kill", *args)))
++
++    def waitid(kind: int, pid: int, flags: int) -> Any:
++        events.append(("waitid", kind, pid, flags))
++        assert flags & pilot.os.WNOWAIT
++        if failure == "waitid":
++            raise OSError("cannot observe root")
++        return SimpleNamespace(si_pid=pid)
++
++    monkeypatch.setattr(pilot.os, "waitid", waitid)
++
++    def cleanup() -> None:
++        events.append("drain")
++        if failure == "cleanup":
++            raise ValueError("cleanup failed")
++        if failure == "interrupt":
++            raise KeyboardInterrupt
++
++    if failure == "interrupt":
++        with pytest.raises(KeyboardInterrupt):
++            pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run", cleanup_descendants=cleanup)
++    else:
++        result = pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run", cleanup_descendants=cleanup)
++        assert result.returncode == 7  # Actual final wait, never the waitid status.
++        assert result.status == ("resource-stopped" if failure else "failure")
++    assert events[1:] == [("kill", 123, signal.SIGKILL), "drain", ("kill", 123, signal.SIGKILL), "wait"]
++
++
++def test_scoped_cleanup_requires_wnowait_before_spawning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.delattr(pilot.os, "WNOWAIT")
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_a, **_k: pytest.fail("unsupported guard must not spawn"))
++    with pytest.raises(ValueError, match="non-consuming root exit"):
++        pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run", cleanup_descendants=lambda: None)
++
++
++def test_default_runner_still_propagates_unexpected_monitor_bug(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    events = []
++    process = SimpleNamespace(pid=123, returncode=None, poll=lambda: None, wait=lambda: events.append("wait"))
++    monkeypatch.setattr(pilot.subprocess, "Popen", lambda *_a, **_kw: process)
++    monkeypatch.setattr(pilot.MemoryGuard, "from_environment", lambda **_: SimpleNamespace(check=lambda _: None))
++    monkeypatch.setattr(pilot.os, "killpg", lambda *_: events.append("kill"))
++
++    def broken(_pid: int) -> int:
++        raise RuntimeError("unexpected implementation bug")
++
++    monkeypatch.setattr(pilot, "group_rss_bytes", broken)
++    with pytest.raises(RuntimeError, match="unexpected implementation bug"):
++        pilot.run_bounded_command(["fake"], tmp_path, tmp_path / "run")
++    assert events == ["kill", "wait"]
+diff --git a/tests/test_misaal_reproduction.py b/tests/test_misaal_reproduction.py
+--- a/tests/test_misaal_reproduction.py
++++ b/tests/test_misaal_reproduction.py
+@@ -297,15 +297,30 @@
+     protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_timeout: int | float | None
+ ) -> None:
+     from benchmarking.pilot import PilotProcessResult
+-
+-    request = json.loads(protocol_request.read_text())
++    from scripts import reproduction_misaal_groups as group_scope
++
++    request = json.loads(protocol_request.read_text())
++    source = Path(request["checkout"]) / group_scope.SOURCE
++    source.parent.mkdir()
++    source.write_text("protocol-only source; never imported")
++    digest = hashlib.sha256(source.read_bytes()).hexdigest()
++    monkeypatch.setattr(group_scope, "SOURCE_SHA256", digest)
++    monkeypatch.setattr(group_scope, "process_snapshot", lambda: {})
++    request["source_hashes"][group_scope.SOURCE] = digest
++    request.update(
++        racket_group_containment=group_scope.CONTRACT,
++        racket=request["backend"],
++        racket_sha256=request["backend_sha256"],
++    )
+     if source_timeout is not None:
+         request["source_timeout_sec"] = source_timeout
+-        protocol_request.write_text(json.dumps(request))
++    protocol_request.write_text(json.dumps(request))
+     original_request = protocol_request.read_bytes()
+     calls: list[dict[str, Any]] = []
+ 
+     def stopped(command: list[str], cwd: Path, output: Path, **kwargs: Any) -> PilotProcessResult:
++        assert "--group-endpoint" in command
++        assert callable(kwargs.pop("sample_rss")) and callable(kwargs.pop("cleanup_descendants"))
+         calls.append(kwargs)
+         return PilotProcessResult("resource-stopped", None, 0, 0, output, output, "test guard stop")
+ 
+@@ -320,11 +335,22 @@
+             "allow_warning_pressure": True,
+         }
+     ]
++    assert result["process_accounting"]["contract"] == group_scope.CONTRACT
++    assert Path(result["process_accounting"]["receipt"]).is_file()
+     assert result["source_timeout_sec"] == (source_timeout if source_timeout is not None else 900)
+     assert protocol_request.read_bytes() == original_request
+     assert result["status"] == "resource-stopped"
+     assert result["source_capture_complete"] is False
+     assert result["workloads"] == []
++
++
++def test_public_complete_capture_rejects_uncontained_legacy_request_before_launch(
++    protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr("benchmarking.pilot.run_bounded_command", lambda *_a, **_k: pytest.fail("must not launch"))
++    with pytest.raises(ValueError, match="prepared registered-group contract"):
++        misaal.capture_misaal(protocol_request, tmp_path / "capture")
++    assert not (tmp_path / "capture").exists()
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -892,3 +918,46 @@
+     else:
+         assert receipt[0]["status"] == "success"
+     assert (tmp_path / "failure.txt").is_file()
++
++
++def test_registered_group_helper_and_racket_are_capture_identities(
++    protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts import reproduction_misaal_groups as group_scope
++    from scripts import suite_reproduction as reproduction
++
++    request = json.loads(protocol_request.read_text())
++    request.update(source="generator.cpp", configuration={})
++    source = Path(request["checkout"]) / request["source"]
++    source.write_text("pinned source generator")
++    request["source_hashes"][request["source"]] = hashlib.sha256(source.read_bytes()).hexdigest()
++    launcher = Path(request["checkout"]) / group_scope.SOURCE
++    launcher.parent.mkdir()
++    launcher.write_text("pinned mock launcher; never executed")
++    digest = hashlib.sha256(launcher.read_bytes()).hexdigest()
++    monkeypatch.setattr(group_scope, "SOURCE_SHA256", digest)
++    request["source_hashes"][group_scope.SOURCE] = digest
++    request.update(
++        racket_group_containment=group_scope.CONTRACT,
++        racket=request["backend"],
++        racket_sha256=request["backend_sha256"],
++    )
++    requests = tmp_path / "requests"
++    requests.mkdir()
++    selected = requests / f"{request['case_id']}.json"
++    selected.write_text(json.dumps(request))
++    helper = tmp_path / "scripts/reproduction_misaal_groups.py"
++    helper.parent.mkdir()
++    helper.write_text("known group protocol version one")
++    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
++    case = {"id": request["case_id"], "family": "misaal", "source": request["source"], "configuration": {}}
++    settings = {"paths": {"requests": str(requests)}}
++    initial = reproduction.case_identity(case, settings)
++    assert initial["inputs"][request["racket"]] == "sha256:" + request["racket_sha256"]
++    helper.write_text("changed group protocol")
++    revised = reproduction.case_identity(case, settings)
++    assert [path for path in initial["inputs"] if initial["inputs"][path] != revised["inputs"][path]] == [str(helper)]
++    del request["racket"]
++    selected.write_text(json.dumps(request))
++    with pytest.raises(ValueError, match="pinned executable path and SHA-256"):
++        misaal.verified_request(selected)
+diff --git a/benchmarks/reproduction/misaal-hardboiled.md b/benchmarks/reproduction/misaal-hardboiled.md
+--- a/benchmarks/reproduction/misaal-hardboiled.md
++++ b/benchmarks/reproduction/misaal-hardboiled.md
+@@ -205,3 +205,27 @@
+ and `low-level` are internal hooks and must stay inside the native guard or the
+ coordinator's guarded container. The legacy SIGTERM frontend capture and
+ intentional legalizer-abort helpers are not used by this path.
++
++Complete MISAAL capture now requires `racket_group_containment` set to
++`misaal-racket-lease-v1`, a pinned absolute `racket` executable and its
++`racket_sha256`, and the exact pinned `lib/utils/DSLInstructionUtils.py` hash in
++`source_hashes`. Old requests lacking these prerequisites fail before launch.
++The source's detached Racket group reserves a launch before fork and waits for
++an authenticated outer-guard lease before starting actual Racket work. RSS
++accounting includes the root and registered groups once each. Source-local
++`killpg` timeout/fallback remains, with confirmed group drain required; loss of
++the guard lease kills the supervisor's own group. Root shutdown retains the
++unreaped PID, stops root work first, then drains registered groups. This is a
++sampled operational guard for the pinned launch sites, not a general process
++sandbox or hard allocation limit. Receipts identify this accounting scope.
++
++The prepared ignored known-launch diagnostic fixtures test this contract
++with a Python-backed Racket stand-in, separately from package readiness. They
++must pass as real guarded processes before any longer source canary. The actual
++Racket prerequisite smoke at
++`benchmarks/local/reproduction/diagnostics/misaal-racket-prerequisite-0001`
++found Racket 9.2 but failed to load Rosette; Rosette/Hydride/MISAAL package
++readiness remains unproved. A later isolated preparation step must use the
++artifact's vendored packages, pin that environment, and prove the solver/source
++package smoke before emitting fresh guarded requests. Neither existing requests
++nor retained cache contents are rewritten by this change.
+diff --git a/scripts/reproduction_misaal_groups.py b/scripts/reproduction_misaal_groups.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/reproduction_misaal_groups.py
+@@ -0,0 +1,489 @@
++"""Contain only MISAAL's pinned, detached Racket launch behind a live lease.
++
++This is not containment for arbitrary process trees. The source launcher keeps
++its own session and local killpg timeout; no Racket work starts before the outer
++guard acknowledges that group. Losing the guard lease kills the owned group.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import inspect
++import json
++import os
++import secrets
++import select
++import shutil
++import signal
++import socket
++import struct
++import subprocess
++import sys
++import tempfile
++import time
++from collections.abc import Iterator
++from contextlib import contextmanager
++from pathlib import Path
++from types import FrameType, ModuleType
++from typing import Any
++
++CONTRACT = "misaal-racket-lease-v1"
++SOURCE = "lib/utils/DSLInstructionUtils.py"
++SOURCE_SHA256 = "e385eaa17a81bbcb8106ad33cbbe1ac2ed4307879b0f366f3b72219744b43bdb"
++
++
++def process_snapshot() -> dict[int, dict[str, int | str]]:
++    """Read one coherent process table; malformed monitoring data is a stop."""
++    result = subprocess.run(
++        ["ps", "-axo", "pid=,ppid=,pgid=,rss=,stat="],
++        check=True,
++        capture_output=True,
++        text=True,
++        timeout=1,
++    )
++    rows: dict[int, dict[str, int | str]] = {}
++    for line in result.stdout.splitlines():
++        values = line.split()
++        if len(values) != 5:
++            raise ValueError("Malformed process-group monitoring snapshot")
++        pid, parent, group, rss = map(int, values[:4])
++        if pid in rows or pid <= 0 or rss < 0:
++            raise ValueError("Inconsistent process-group monitoring snapshot")
++        rows[pid] = {"parent": parent, "group": group, "rss": rss * 1024, "state": values[4]}
++    return rows
++
++
++def peer_identity(connection: socket.socket) -> tuple[int, str]:
++    """Authenticate the connected supervisor PID using kernel socket metadata."""
++    if sys.platform == "darwin":
++        # sys/un.h: SOL_LOCAL=0, LOCAL_PEERTOKEN=6. The audit token includes
++        # both the peer PID and its kernel PID version, unlike ps lstart.
++        token = connection.getsockopt(0, 6, 32)
++        words = struct.unpack("=8I", token)
++        return words[5], f"darwin-audit:{token.hex()}"
++    if sys.platform.startswith("linux"):
++        pid, _, _ = struct.unpack("=3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
++        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
++        return pid, f"linux-start:{fields[19]}"
++    raise ValueError("Known-launch containment supports only macOS and Linux")
++
++
++class RacketGroups:
++    """Own launch reservations, acknowledgments, sampling and group drain."""
++
++    def __init__(self, directory: Path):
++        directory.mkdir(parents=True, exist_ok=False)
++        self.directory = directory
++        self.socket_directory = Path(tempfile.mkdtemp(prefix="misaal-groups-", dir="/tmp"))
++        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        self.listener.bind(str(self.socket_directory / "guard.sock"))
++        self.listener.listen(32)
++        self.listener.setblocking(False)
++        self.endpoint = self.socket_directory / "guard.sock"
++        self.connections: dict[socket.socket, dict[str, Any]] = {}
++        self.root: int | None = None
++        self.closed = False
++        self.record: dict[str, Any] = {
++            "contract": CONTRACT,
++            "scope": "root group plus reserved/acknowledged pinned Racket supervisor groups",
++            "implementation_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
++            "control_endpoint": str(self.endpoint),
++            "bootstrap": "pinned Python -I -S; no Racket work before acknowledgment",
++            "launches": {},
++            "groups": [],
++            "status": "awaiting-root",
++        }
++        self._persist()
++
++    def _persist(self) -> None:
++        temporary = self.directory / "groups.json.tmp"
++        temporary.write_text(json.dumps(self.record, indent=2) + "\n")
++        temporary.replace(self.directory / "groups.json")
++
++    def _exchange(self, *, stopping: bool) -> dict[int, dict[str, int | str]]:
++        while True:
++            try:
++                connection, _ = self.listener.accept()
++            except BlockingIOError:
++                break
++            try:
++                pid, identity = peer_identity(connection)
++                connection.setblocking(False)
++                self.connections[connection] = {"pid": pid, "identity": identity, "role": None, "buffer": ""}
++            except BaseException:
++                connection.close()
++                raise
++        # Read messages before taking the one RSS snapshot. A completion message
++        # means Racket has already been reaped, so its stale pre-message row must
++        # not be mistaken for a residual descendant.
++        for connection, peer in self.connections.items():
++            try:
++                content = connection.recv(65536)
++            except BlockingIOError:
++                content = None
++            if content == b"":
++                peer["eof"] = True
++            elif content:
++                peer["buffer"] += content.decode()
++            if len(peer["buffer"]) > 65536:
++                raise ValueError("Oversized supervisor protocol message")
++        rows = process_snapshot()
++        for connection, peer in list(self.connections.items()):
++            pid = peer["pid"]
++            if peer.get("eof") and peer["role"] is None:
++                # This peer received no reservation or launch permission.
++                connection.close()
++                del self.connections[connection]
++                continue
++            while "\n" in peer["buffer"]:
++                line, peer["buffer"] = peer["buffer"].split("\n", 1)
++                message = json.loads(line)
++                kind = message.get("kind")
++                if kind == "reserve" and peer["role"] is None:
++                    if stopping:
++                        connection.sendall(b"stop\n")
++                        continue
++                    if self.root not in rows or pid not in rows or rows[pid]["group"] != self.root:
++                        raise ValueError("Launch reservation is outside the guarded source group")
++                    nonce = secrets.token_hex(24)
++                    self.record["launches"][nonce] = {
++                        "parent": pid,
++                        "parent_identity": peer["identity"],
++                        "status": "reserved",
++                        "reported": False,
++                    }
++                    peer.update(role="parent", reservation=nonce)
++                    connection.sendall((nonce + "\n").encode())
++                elif kind in {"spawned", "spawn-failed"} and peer["role"] == "parent":
++                    launch = self.record["launches"][peer["reservation"]]
++                    if launch["reported"] or launch["status"] not in {"reserved", "registering"}:
++                        raise ValueError("Native launch reservation was reused")
++                    if kind == "spawned":
++                        child = message.get("pid")
++                        if not isinstance(child, int) or isinstance(child, bool) or child <= 0:
++                            raise ValueError("Invalid reserved supervisor PID")
++                        if launch.get("pid", child) != child:
++                            raise ValueError("Supervisor PID differs from its reserved source child")
++                        launch.update(status="spawned", pid=child, reported=True)
++                    else:
++                        if "pid" in launch:
++                            raise ValueError("Source reported a failed fork after supervisor registration")
++                        launch.update(status="spawn-failed", reported=True)
++                    connection.sendall(b"recorded\n")
++                elif kind == "register" and peer["role"] is None:
++                    nonce = message.get("reservation")
++                    launch = self.record["launches"].get(nonce)
++                    if (
++                        launch is None
++                        or launch["status"] not in {"reserved", "spawned"}
++                        or launch.get("pid", pid) != pid
++                        or message.get("pid") != pid
++                        or message.get("contract") != CONTRACT
++                    ):
++                        raise ValueError("Supervisor does not match its source launch reservation")
++                    if pid not in rows or rows[pid]["group"] != pid:
++                        raise ValueError("Supervisor does not lead its reserved group")
++                    if any(group["pid"] == pid and not group.get("retired") for group in self.record["groups"]):
++                        raise ValueError("Supervisor PID already has a live registration")
++                    group = {
++                        "pid": pid,
++                        "identity": peer["identity"],
++                        "status": "pending",
++                        "reservation": nonce,
++                        "command": message["command"],
++                        "script_sha256": message["script_sha256"],
++                    }
++                    self.record["groups"].append(group)
++                    launch.update(pid=pid, status="spawned" if launch["reported"] else "registering")
++                    peer.update(role="group", group=group)
++                elif kind == "done" and peer["role"] == "group":
++                    group = peer["group"]
++                    if group["status"] != "acknowledged":
++                        raise ValueError("Unexpected supervisor completion")
++                    members = {p for p, row in rows.items() if row["group"] == pid and "Z" not in str(row["state"])}
++                    if members != {pid}:
++                        raise ValueError(f"Racket exited with unexpected residual descendants in group {pid}")
++                    group.update(status="releasing", returncode=message["returncode"])
++                    connection.sendall(b"release\n")
++                else:
++                    raise ValueError("Unexpected supervisor lifecycle message")
++            if peer.get("eof"):
++                if peer["role"] == "group":
++                    group = peer["group"]
++                    members = {p for p, row in rows.items() if row["group"] == pid and "Z" not in str(row["state"])}
++                    if members:
++                        # Group-wide signals do not retire every member at the
++                        # same instant. Continue accounting for this group while
++                        # allowing a bounded observed drain, without signaling a
++                        # potentially reused numeric group ID from the guard.
++                        group.update(status="draining", drain_deadline=time.monotonic() + 1)
++                        self.record["launches"][group["reservation"]]["status"] = "draining"
++                    else:
++                        group.update(status="drained", retired=True)
++                        self.record["launches"][group["reservation"]]["status"] = "drained"
++                connection.close()
++                del self.connections[connection]
++        # Registration and the parent's fork receipt can arrive in either
++        # order. Neither is permission to launch native work on its own.
++        for connection, peer in self.connections.items():
++            if peer["role"] != "group" or peer["group"]["status"] != "pending":
++                continue
++            group = peer["group"]
++            launch = self.record["launches"][group["reservation"]]
++            if stopping or launch["reported"]:
++                group["status"] = "refused" if stopping else "acknowledged"
++                launch["status"] = "registered"
++                connection.sendall(b"stop\n" if stopping else b"go\n")
++        for group in self.record["groups"]:
++            if group["status"] != "draining":
++                continue
++            members = {p for p, row in rows.items() if row["group"] == group["pid"] and "Z" not in str(row["state"])}
++            if not members:
++                group.update(status="drained", retired=True)
++                self.record["launches"][group["reservation"]]["status"] = "drained"
++            elif time.monotonic() >= group["drain_deadline"]:
++                raise ValueError(f"Supervisor {group['pid']} lost its lease with residual or ambiguous group members")
++        # A reported child that exits before registering never received native
++        # launch permission. Retire its number once no process still uses that
++        # group, so later PID reuse cannot enter our accounting scope.
++        for launch in self.record["launches"].values():
++            if launch["status"] == "spawned" and not any(row["group"] == launch["pid"] for row in rows.values()):
++                launch["status"] = "drained"
++        self._persist()
++        return rows
++
++    def sample(self, root: int) -> int:
++        try:
++            if self.closed or self.root not in {None, root}:
++                raise ValueError("Known-launch guard root changed or already closed")
++            self.root = root
++            rows = self._exchange(stopping=False)
++            owned = {root} | {
++                item["pid"]
++                for item in self.record["launches"].values()
++                if "pid" in item and item["status"] != "drained"
++            }
++            measured = [int(row["rss"]) for row in rows.values() if row["group"] in owned]
++            rss = sum(measured)
++            self.record.update(
++                status="monitoring", last_sample={"rss_bytes": rss, "max_process_rss_bytes": max(measured, default=0)}
++            )
++            self._persist()
++            return rss
++        except BaseException as error:
++            self.record.update(status="monitoring-failed", reason=f"{type(error).__name__}: {error}")
++            self._persist()
++            raise
++
++    def close(self) -> None:
++        """Refuse new reservations and drain both pending and acknowledged work."""
++        if self.closed:
++            return
++        errors = []
++        deadline = time.monotonic() + 6
++        remaining = set()
++        pending = []
++        try:
++            while True:
++                rows = self._exchange(stopping=True)
++                # Revoke active group leases; retain parent connections until
++                # their already-authorized fork is reported or fails.
++                for connection, peer in list(self.connections.items()):
++                    if peer["role"] == "group":
++                        peer["group"]["status"] = "revoked"
++                        connection.close()
++                        del self.connections[connection]
++                launches = self.record["launches"]
++                pending = [nonce for nonce, entry in launches.items() if "pid" not in entry and not entry["reported"]]
++                owned = {entry["pid"] for entry in launches.values() if "pid" in entry and entry["status"] != "drained"}
++                remaining = {pid for pid, row in rows.items() if row["group"] in owned and "Z" not in str(row["state"])}
++                if not pending and not remaining:
++                    break
++                if time.monotonic() >= deadline:
++                    break
++                time.sleep(0.05)
++        except BaseException as error:
++            errors.append(f"Terminal process monitoring failed: {error}")
++        finally:
++            self.closed = True
++            self.listener.close()
++            for connection in self.connections:
++                connection.close()
++        if remaining or pending:
++            errors.append(
++                f"Residual/ambiguous processes {sorted(remaining)} or unresolved launch reservations {pending}"
++            )
++        self.record["cleanup"] = {"status": "failure" if errors else "success", "errors": errors}
++        self._persist()
++        shutil.rmtree(self.socket_directory)
++        if errors:
++            raise ValueError("; ".join(errors))
++
++
++def launch_registered(command: list[str], endpoint: Path, python: str, **kwargs: Any) -> subprocess.Popen[Any]:
++    """Reserve before fork and report the child PID before returning to source."""
++    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    control.settimeout(5)
++    try:
++        control.connect(str(endpoint))
++        control.sendall(b'{"kind":"reserve"}\n')
++        nonce = control.recv(128).decode().strip()
++        if len(nonce) != 48 or any(char not in "0123456789abcdef" for char in nonce):
++            raise ValueError("Guard refused native launch reservation")
++        try:
++            process = subprocess.Popen(
++                [
++                    python,
++                    "-I",
++                    "-S",
++                    str(Path(__file__).resolve()),
++                    "--endpoint",
++                    str(endpoint),
++                    "--reservation",
++                    nonce,
++                    "--",
++                    *command,
++                ],
++                **kwargs,
++            )
++        except BaseException:
++            control.sendall(b'{"kind":"spawn-failed"}\n')
++            raise
++        control.sendall(json.dumps({"kind": "spawned", "pid": process.pid}).encode() + b"\n")
++        if control.recv(64) != b"recorded\n":
++            raise ValueError("Guard did not record the reserved native child")
++        return process
++    finally:
++        control.close()
++
++
++@contextmanager
++def observe_racket_launch(module: ModuleType, request: dict[str, Any], endpoint: Path) -> Iterator[None]:
++    """Replace only the exact source module's detached Popen call site."""
++    source = (Path(request["checkout"]) / SOURCE).resolve()
++    if (
++        request.get("racket_group_containment") != CONTRACT
++        or Path(module.__file__ or "").resolve() != source
++        or request["source_hashes"].get(SOURCE) != SOURCE_SHA256
++        or hashlib.sha256(source.read_bytes()).hexdigest() != SOURCE_SHA256
++        or module.subprocess is not subprocess
++    ):
++        raise ValueError("Unsupported native Racket launch source or containment contract")
++    expected = compile(source.read_text(), str(source), "exec", dont_inherit=True)
++    candidates = [
++        value
++        for value in expected.co_consts
++        if inspect.iscode(value) and value.co_name == "run_command_child_processes"
++    ]
++    if len(candidates) != 1 or module.run_command_child_processes.__code__ != candidates[0]:
++        raise ValueError("Native Racket launch function was already changed")
++    original = module.subprocess
++    failures: list[str] = []
++
++    class ScopedSubprocess:
++        def Popen(self, command: Any, **kwargs: Any) -> subprocess.Popen[Any]:
++            frame = inspect.currentframe()
++            caller = frame.f_back if frame else None
++            if (
++                caller is None
++                or caller.f_code != candidates[0]
++                or not isinstance(command, list)
++                or len(command) != 2
++                or command[0] != "racket"
++                or shutil.which("racket") != request["racket"]
++                or hashlib.sha256(Path(request["racket"]).read_bytes()).hexdigest() != request["racket_sha256"]
++                or not isinstance(command[1], str)
++                or not Path(command[1]).is_file()
++                or kwargs != {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
++            ):
++                failures.append("Unrecognized detached native launch refused before spawning")
++                raise ValueError(failures[-1])
++            try:
++                return launch_registered(command, endpoint, request["python"], **kwargs)
++            except BaseException as error:
++                failures.append(f"Native launch containment failed: {type(error).__name__}: {error}")
++                raise
++
++        def __getattr__(self, name: str) -> Any:
++            # Other source functions use inherited-group run/call for cleanup.
++            if name not in {"DEVNULL", "TimeoutExpired", "run", "call"}:
++                failures.append(f"Unsupported native subprocess operation: {name}")
++                raise ValueError(failures[-1])
++            return getattr(original, name)
++
++    module.__dict__["subprocess"] = ScopedSubprocess()
++    try:
++        yield
++    finally:
++        module.__dict__["subprocess"] = original
++        if failures:
++            raise ValueError(
++                "Native launcher observation failed, including possibly swallowed errors: " + "; ".join(failures)
++            )
++
++
++def supervise(endpoint: Path, command: list[str], reservation: str) -> int:
++    """Keep the source-created session leader alive through native completion."""
++    if os.getpid() != os.getpgrp() or len(command) != 2 or command[0] != "racket":
++        raise ValueError("Supervisor must lead the original Racket launch group")
++    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    connection.settimeout(5)
++    released = False
++
++    def source_timeout(signum: int, _frame: FrameType | None) -> None:
++        # The source deliberately signals this whole group. Keep its existing
++        # timeout/fallback, but ensure TERM-resistant descendants cannot outlive
++        # the supervisor by entering the same self-group cleanup as lease loss.
++        raise SystemExit(128 + signum)
++
++    previous_term = signal.signal(signal.SIGTERM, source_timeout)
++    try:
++        connection.connect(str(endpoint))
++        registration = {
++            "kind": "register",
++            "reservation": reservation,
++            "contract": CONTRACT,
++            "pid": os.getpid(),
++            "command": command,
++            "script_sha256": hashlib.sha256(Path(command[1]).read_bytes()).hexdigest(),
++        }
++        connection.sendall(json.dumps(registration).encode() + b"\n")
++        if connection.recv(64) != b"go\n":
++            raise ValueError("Guard did not acknowledge Racket launch")
++        connection.setblocking(False)
++        if select.select([connection], [], [], 0)[0]:
++            raise ValueError("Guard lease ended before Racket could start")
++        process = subprocess.Popen(command)  # Inherits this acknowledged group and source streams.
++        done = False
++        while True:
++            readable, _, _ = select.select([connection], [], [], 0.05)
++            if readable:
++                response = connection.recv(64)
++                if response == b"release\n" and done:
++                    released = True
++                    return int(process.returncode)
++                raise ValueError("Guard lease ended before native group release")
++            if not done and process.poll() is not None:
++                connection.sendall(json.dumps({"kind": "done", "returncode": process.returncode}).encode() + b"\n")
++                done = True
++    finally:
++        if not released:
++            os.killpg(os.getpgrp(), signal.SIGKILL)
++        connection.close()
++        signal.signal(signal.SIGTERM, previous_term)
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--endpoint", type=Path, required=True)
++    parser.add_argument("--reservation", required=True)
++    parser.add_argument("command", nargs=argparse.REMAINDER)
++    args = parser.parse_args()
++    result = supervise(
++        args.endpoint, args.command[1:] if args.command[:1] == ["--"] else args.command, args.reservation
++    )
++    if result < 0:
++        signal.signal(-result, signal.SIG_DFL)
++        os.kill(os.getpid(), -result)
++    raise SystemExit(result)
+diff --git a/tests/test_reproduction_misaal_groups.py b/tests/test_reproduction_misaal_groups.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_reproduction_misaal_groups.py
+@@ -0,0 +1,447 @@
++"""Known-launch protocol tests: sockets are local; no native children execute."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import signal
++import socket
++import subprocess
++from collections.abc import Iterator
++from pathlib import Path
++from types import ModuleType, SimpleNamespace
++from typing import Any
++
++import pytest
++
++from scripts import reproduction_misaal_groups as groups
++
++
++@pytest.fixture
++def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple]:
++    identities = iter([(201, "test-birth-201"), (202, "test-birth-202")])
++    monkeypatch.setattr(groups, "peer_identity", lambda _connection: next(identities))
++    state = {
++        100: {"parent": 1, "group": 100, "rss": 10, "state": "S"},
++        201: {"parent": 100, "group": 100, "rss": 20, "state": "S"},
++        202: {"parent": 201, "group": 202, "rss": 30, "state": "S"},
++        203: {"parent": 202, "group": 202, "rss": 40, "state": "S"},
++        204: {"parent": 203, "group": 202, "rss": 50, "state": "S"},
++        900: {"parent": 1, "group": 900, "rss": 999, "state": "S"},
++    }
++    monkeypatch.setattr(groups, "process_snapshot", lambda: state)
++    guard = groups.RacketGroups(tmp_path / "groups")
++    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    control.connect(str(guard.endpoint))
++    control.sendall(b'{"kind":"reserve"}\n')
++    assert guard.sample(100) == 30
++    nonce = control.recv(128).decode().strip()
++    control.sendall(b'{"kind":"spawned","pid":202}\n')
++    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    client.connect(str(guard.endpoint))
++    client.sendall(
++        json.dumps(
++            {
++                "kind": "register",
++                "reservation": nonce,
++                "pid": 202,
++                "contract": groups.CONTRACT,
++                "command": ["racket", "actual.rkt"],
++                "script_sha256": "actual-script",
++            }
++        ).encode()
++        + b"\n"
++    )
++    yield guard, client, state
++    state.clear()
++    client.close()
++    control.close()
++    guard.close()
++
++
++def test_registration_waits_for_guard_and_counts_both_groups_once(registry: tuple) -> None:
++    guard, client, _ = registry
++    client.setblocking(False)
++    with pytest.raises(BlockingIOError):
++        client.recv(64)
++    assert guard.sample(100) == 150
++    assert client.recv(64) == b"go\n"
++    assert guard.record["groups"][0]["identity"] == "test-birth-202"
++
++
++def test_immediate_root_exit_refuses_reservation_before_first_sample(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr(groups, "peer_identity", lambda _: (201, "birth"))
++    monkeypatch.setattr(groups, "process_snapshot", lambda: {})
++    guard = groups.RacketGroups(tmp_path / "groups")
++    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    client.connect(str(guard.endpoint))
++    client.sendall(b'{"kind":"reserve"}\n')
++    guard.close()
++    assert client.recv(64) == b"stop\n"
++    assert guard.record["launches"] == {}
++    assert guard.record["cleanup"]["status"] == "success"
++    client.close()
++
++
++def test_source_local_timeout_with_empty_group_preserves_source_failure(registry: tuple) -> None:
++    guard, client, state = registry
++    guard.sample(100)
++    assert client.recv(64) == b"go\n"
++    client.close()
++    for pid in (202, 203, 204):
++        del state[pid]
++    assert guard.sample(100) == 30
++    assert guard.record["groups"][0]["status"] == "drained"
++
++
++@pytest.mark.parametrize("replacement", [False, True])
++def test_lost_lease_with_residual_or_reused_pid_never_signals_other_groups(
++    registry: tuple, monkeypatch: pytest.MonkeyPatch, replacement: bool
++) -> None:
++    guard, client, state = registry
++    guard.sample(100)
++    client.recv(64)
++    client.close()
++    state.pop(202)
++    if replacement:
++        state[202] = {"parent": 1, "group": 202, "rss": 17, "state": "S"}
++    monkeypatch.setattr(groups.os, "killpg", lambda *_: pytest.fail("must not signal an ambiguous/reused group"))
++    guard.sample(100)
++    assert guard.record["groups"][0]["status"] == "draining"
++    deadline = guard.record["groups"][0]["drain_deadline"]
++    monkeypatch.setattr(groups.time, "monotonic", lambda: deadline + 1)
++    with pytest.raises(ValueError, match="residual or ambiguous"):
++        guard.sample(100)
++    assert guard.record["status"] == "monitoring-failed"
++
++
++def test_unrelated_reservation_is_not_acknowledged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(groups, "peer_identity", lambda _: (900, "unrelated"))
++    monkeypatch.setattr(groups, "process_snapshot", lambda: {900: {"group": 900}, 100: {"group": 100}})
++    guard = groups.RacketGroups(tmp_path / "groups")
++    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    client.connect(str(guard.endpoint))
++    client.sendall(b'{"kind":"reserve"}\n')
++    with pytest.raises(ValueError, match="outside the guarded"):
++        guard.sample(100)
++    client.setblocking(False)
++    with pytest.raises(BlockingIOError):
++        client.recv(64)
++    client.close()
++    guard.close()
++
++
++def test_racket_result_releases_only_a_drained_group(registry: tuple) -> None:
++    guard, client, state = registry
++    guard.sample(100)
++    client.recv(64)
++    state.pop(203)
++    state.pop(204)
++    client.sendall(b'{"kind":"done","returncode":7}\n')
++    guard.sample(100)
++    assert client.recv(64) == b"release\n"
++    assert guard.record["groups"][0]["returncode"] == 7
++
++
++def test_racket_success_with_residual_processes_fails_closed(registry: tuple) -> None:
++    guard, client, _ = registry
++    guard.sample(100)
++    client.recv(64)
++    client.sendall(b'{"kind":"done","returncode":0}\n')
++    with pytest.raises(ValueError, match="unexpected residual"):
++        guard.sample(100)
++
++
++def test_monitoring_failure_is_retained_and_pending_leases_are_closed(
++    registry: tuple, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    guard, client, state = registry
++    monkeypatch.setattr(groups, "process_snapshot", lambda: (_ for _ in ()).throw(OSError("monitor failed")))
++    with pytest.raises(OSError, match="monitor failed"):
++        guard.sample(100)
++    with pytest.raises(ValueError, match="Terminal process monitoring failed"):
++        guard.close()
++    assert client.recv(64) == b""
++    assert guard.record["cleanup"]["status"] == "failure"
++    assert "monitor failed" in guard.record["reason"]
++    state.clear()
++
++
++@pytest.mark.parametrize("failure", ["before-ack", "after-ack", None])
++def test_supervisor_lease_controls_launch_and_preserves_real_result(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
++) -> None:
++    script = tmp_path / "program.rkt"
++    script.write_text("unchanged source")
++    launched = []
++    signals = []
++    sent = []
++    responses = iter([b"" if failure == "before-ack" else b"go\n", b"release\n"])
++    connection = SimpleNamespace(
++        settimeout=lambda _: None,
++        connect=lambda _: None,
++        setblocking=lambda _: None,
++        recv=lambda _: next(responses),
++        sendall=lambda value: sent.append(value),
++        close=lambda: None,
++    )
++    monkeypatch.setattr(groups.socket, "socket", lambda *_: connection)
++    monkeypatch.setattr(groups.os, "getpid", lambda: 202)
++    monkeypatch.setattr(groups.os, "getpgrp", lambda: 202)
++    monkeypatch.setattr(groups.os, "killpg", lambda *args: signals.append(args))
++    selections = iter([failure == "after-ack", False, True])
++    monkeypatch.setattr(groups.select, "select", lambda *args: ([connection] if next(selections) else [], [], []))
++
++    def popen(command: list[str]) -> Any:
++        launched.append(command)
++        return SimpleNamespace(returncode=7, poll=lambda: 7)
++
++    monkeypatch.setattr(groups.subprocess, "Popen", popen)
++    if failure:
++        with pytest.raises(ValueError, match="Guard"):
++            groups.supervise(tmp_path / "socket", ["racket", str(script)], "a" * 48)
++        assert launched == [] and signals == [(202, signal.SIGKILL)]
++    else:
++        assert groups.supervise(tmp_path / "socket", ["racket", str(script)], "a" * 48) == 7
++        assert launched == [["racket", str(script)]] and signals == []
++        assert json.loads(sent[-1]) == {"kind": "done", "returncode": 7}
++
++
++def test_malformed_process_monitoring_is_failure(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(groups.subprocess, "run", lambda *_args, **_kw: subprocess.CompletedProcess([], 0, "bad row"))
++    with pytest.raises(ValueError, match="Malformed"):
++        groups.process_snapshot()
++
++
++def test_only_pinned_source_launch_is_wrapped_with_unchanged_streams_and_session(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    source = tmp_path / groups.SOURCE
++    source.parent.mkdir(parents=True)
++    source.write_text(
++        "import subprocess\n"
++        "def run_command_child_processes(cmd):\n"
++        "    return subprocess.Popen(cmd, start_new_session=True,\n"
++        "                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
++    )
++    module = ModuleType("utils.DSLInstructionUtils")
++    module.__file__ = str(source)
++    exec(compile(source.read_text(), str(source), "exec", dont_inherit=True), module.__dict__)
++    digest = hashlib.sha256(source.read_bytes()).hexdigest()
++    monkeypatch.setattr(groups, "SOURCE_SHA256", digest)
++    script = tmp_path / "source.rkt"
++    script.write_text("unchanged Racket statements")
++    executable = tmp_path / "racket"
++    executable.write_text("pinned fake executable; never run")
++    request = {
++        "checkout": str(tmp_path),
++        "racket_group_containment": groups.CONTRACT,
++        "source_hashes": {groups.SOURCE: digest},
++        "python": "pinned-python",
++        "racket": str(executable),
++        "racket_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
++    }
++    monkeypatch.setattr(groups.shutil, "which", lambda _: str(executable))
++    launches = []
++    sentinel = object()
++
++    def launch(command: list[str], endpoint: Path, python: str, **kw: Any) -> Any:
++        launches.append((command, endpoint, python, kw))
++        return sentinel
++
++    monkeypatch.setattr(groups, "launch_registered", launch)
++    with (
++        pytest.raises(ValueError, match="possibly swallowed errors"),
++        groups.observe_racket_launch(module, request, tmp_path / "socket"),
++    ):
++        assert module.run_command_child_processes(["racket", str(script)]) is sentinel
++        with pytest.raises(ValueError, match="Unrecognized detached"):
++            module.subprocess.Popen(["unexpected"], start_new_session=True)
++    assert len(launches) == 1
++    command, endpoint, python, kwargs = launches[0]
++    assert command == ["racket", str(script)]
++    assert endpoint == tmp_path / "socket" and python == "pinned-python"
++    assert kwargs == {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
++    assert module.subprocess is subprocess
++    source.write_text(source.read_text() + "# changed native source\n")
++    with (
++        pytest.raises(ValueError, match="Unsupported native Racket"),
++        groups.observe_racket_launch(module, request, tmp_path / "socket"),
++    ):
++        pytest.fail("changed source cannot install containment")
++
++
++def test_retired_group_number_is_not_counted_after_pid_reuse(registry: tuple) -> None:
++    guard, client, state = registry
++    guard.sample(100)
++    client.recv(64)
++    client.close()
++    for pid in (202, 203, 204):
++        del state[pid]
++    assert guard.sample(100) == 30
++    state[202] = {"parent": 1, "group": 202, "rss": 9999, "state": "S"}
++    assert guard.sample(100) == 30
++
++
++def test_registration_before_parent_pid_report_stays_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++    identities = iter([(201, "source-birth"), (202, "supervisor-birth")])
++    monkeypatch.setattr(groups, "peer_identity", lambda _: next(identities))
++    state = {
++        100: {"group": 100, "rss": 1, "state": "S"},
++        201: {"group": 100, "rss": 2, "state": "S"},
++        202: {"group": 202, "rss": 3, "state": "S"},
++    }
++    monkeypatch.setattr(groups, "process_snapshot", lambda: state)
++    guard = groups.RacketGroups(tmp_path / "groups")
++    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    control.connect(str(guard.endpoint))
++    control.sendall(b'{"kind":"reserve"}\n')
++    guard.sample(100)
++    nonce = control.recv(128).decode().strip()
++    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    client.connect(str(guard.endpoint))
++    client.sendall(
++        json.dumps(
++            {
++                "kind": "register",
++                "reservation": nonce,
++                "contract": groups.CONTRACT,
++                "pid": 202,
++                "command": ["racket", "actual.rkt"],
++                "script_sha256": "actual",
++            }
++        ).encode()
++        + b"\n"
++    )
++    assert guard.sample(100) == 6
++    client.setblocking(False)
++    with pytest.raises(BlockingIOError):
++        client.recv(64)
++    assert guard.record["groups"][0]["status"] == "pending"
++    control.sendall(b'{"kind":"spawned","pid":202}\n')
++    guard.sample(100)
++    assert control.recv(64) == b"recorded\n"
++    assert client.recv(64) == b"go\n"
++    state.clear()
++    client.close()
++    control.close()
++    guard.close()
++
++
++def test_interrupted_reservation_is_cleanup_failure_not_success(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr(groups, "peer_identity", lambda _: (201, "source-birth"))
++    state = {100: {"group": 100, "rss": 1}, 201: {"group": 100, "rss": 2}}
++    monkeypatch.setattr(groups, "process_snapshot", lambda: state)
++    guard = groups.RacketGroups(tmp_path / "groups")
++    control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    control.connect(str(guard.endpoint))
++    control.sendall(b'{"kind":"reserve"}\n')
++    guard.sample(100)
++    assert len(control.recv(128).strip()) == 48
++    control.close()
++    state.clear()
++    clock = iter([0, 7])
++    monkeypatch.setattr(groups.time, "monotonic", lambda: next(clock))
++    with pytest.raises(ValueError, match="unresolved launch reservations"):
++        guard.close()
++    assert guard.record["cleanup"]["status"] == "failure"
++    assert not guard.endpoint.exists()
++
++
++@pytest.mark.parametrize("failure", [None, "refused", "fork", "record"])
++def test_launch_reserves_before_fork_and_reports_pid_before_return(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
++) -> None:
++    events: list[Any] = []
++    responses = iter(
++        [b"stop\n" if failure == "refused" else b"a" * 48 + b"\n", b"" if failure == "record" else b"recorded\n"]
++    )
++    connection = SimpleNamespace(
++        settimeout=lambda _: None,
++        connect=lambda _: None,
++        recv=lambda _: next(responses),
++        sendall=lambda b: events.append(json.loads(b)),
++        close=lambda: events.append("closed"),
++    )
++    monkeypatch.setattr(groups.socket, "socket", lambda *_: connection)
++    process = SimpleNamespace(pid=202)
++
++    def popen(command: list[str], **kwargs: Any) -> Any:
++        events.append(("fork", command, kwargs))
++        if failure == "fork":
++            raise OSError("fork failed")
++        return process
++
++    monkeypatch.setattr(groups.subprocess, "Popen", popen)
++    kwargs = {"start_new_session": True, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
++    if failure:
++        with pytest.raises((ValueError, OSError)):
++            groups.launch_registered(["racket", "actual.rkt"], tmp_path / "socket", "python", **kwargs)
++    else:
++        assert groups.launch_registered(["racket", "actual.rkt"], tmp_path / "socket", "python", **kwargs) is process
++    assert events[0] == {"kind": "reserve"} and events[-1] == "closed"
++    if failure == "refused":
++        assert events == [{"kind": "reserve"}, "closed"]
++    else:
++        assert events[1][0] == "fork" and events[1][2] == kwargs
++        assert events[1][1][-5:] == ["--reservation", "a" * 48, "--", "racket", "actual.rkt"]
++        assert events[2] == ({"kind": "spawn-failed"} if failure == "fork" else {"kind": "spawned", "pid": 202})
++
++
++def test_source_local_timeout_allows_transient_signal_drain(registry: tuple) -> None:
++    guard, client, state = registry
++    guard.sample(100)
++    client.recv(64)
++    client.close()
++    state.pop(202)
++    assert guard.sample(100) == 120
++    assert guard.record["groups"][0]["status"] == "draining"
++    state.pop(203)
++    state.pop(204)
++    assert guard.sample(100) == 30
++    assert guard.record["groups"][0]["status"] == "drained"
++    assert guard.record["status"] == "monitoring"
++
++
++def test_native_source_sigterm_reaches_self_group_kill_before_socket_close(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    script = tmp_path / "actual.rkt"
++    script.write_text("unchanged Racket statements")
++    events: list[Any] = []
++    handlers: dict[int, Any] = {}
++    connection = SimpleNamespace(
++        settimeout=lambda _: None,
++        connect=lambda _: None,
++        recv=lambda _: b"go\n",
++        setblocking=lambda _: None,
++        sendall=lambda _: None,
++        close=lambda: events.append("closed"),
++    )
++    monkeypatch.setattr(groups.socket, "socket", lambda *_: connection)
++    monkeypatch.setattr(groups.os, "getpid", lambda: 202)
++    monkeypatch.setattr(groups.os, "getpgrp", lambda: 202)
++    monkeypatch.setattr(groups.os, "killpg", lambda *args: events.append(("kill", *args)))
++
++    def signal_handler(signum: int, handler: Any) -> int:
++        handlers[signum] = handler
++        return signal.SIG_DFL
++
++    monkeypatch.setattr(groups.signal, "signal", signal_handler)
++    selections = iter([False, True])
++
++    def select(*_args: Any) -> tuple:
++        if next(selections):
++            handlers[signal.SIGTERM](signal.SIGTERM, None)
++        return [], [], []
++
++    monkeypatch.setattr(groups.select, "select", select)
++    monkeypatch.setattr(groups.subprocess, "Popen", lambda command: events.append(("work", command)))
++    with pytest.raises(SystemExit) as stopped:
++        groups.supervise(tmp_path / "socket", ["racket", str(script)], "a" * 48)
++    assert stopped.value.code == 128 + signal.SIGTERM
++    assert events == [("work", ["racket", str(script)]), ("kill", 202, signal.SIGKILL), "closed"]

@@ -1,0 +1,5 @@
+{
+  "scripts/speq_phi_diagnostic.py": "bf085d95b0b6739ca2b86f7fec273ebd13c6d05de0a38836afd3cd114d26a9d4",
+  "scripts/paper_benchmarks/record_speq.py": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae",
+  "scripts/paper_benchmarks/speq_rev_plugin.cpp": "09e04e5a08d91bd9591c187620975f05464697c8b87d23aeee41e5189350724a"
+}

@@ -1,0 +1,24 @@
+{
+  "scope": "Whitespace/comment-safe identification of exact pinned ten-form unused ExprSet block; no native source/schedule changes",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/EGGCC-FENWICK-HELPER-BLOCK.patch",
+  "patch_sha256": "677d79c5952e34b300143f895b0280935cca9dd5adba1d9d7af74449eca04c70",
+  "baseline": {
+    "scripts/suite_capture_eggcc_churchroad.py": "ea9188ceeeeaaaeb0fbabf9fe9caa8c3fd26230dbf9100cf978367f684e09bf6",
+    "tests/test_suite_capture_eggcc_churchroad.py": "f0f182f6e5ea5aff77062c970181fafd5c664fdf777aac9a696875e8645920cc"
+  },
+  "modified": {
+    "scripts/suite_capture_eggcc_churchroad.py": "7a8593559c8042e16ce4037cacc542b7e78b1aac8effbdf88168dbce3d629a6e",
+    "tests/test_suite_capture_eggcc_churchroad.py": "c8cfc29193d77bfe4e9c3b8d9fa01548968eb796655ad655aac40614e6175685"
+  },
+  "offline_evidence": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/EGGCC-FENWICK-OFFLINE.json",
+  "offline_evidence_sha256": "afd893e849f586ef258a6b902a65faede9e1f984dbffa5c9fb412f8784e91b4d",
+  "validation": {
+    "pytest": "110 passed in 0.44s",
+    "ruff_check": "passed",
+    "ruff_format": "2 files already formatted",
+    "mypy": "Success: no issues found in 2 source files"
+  },
+  "native_runs": false,
+  "live_implementation_edits": false,
+  "remaining_gate": "Fresh full native parents plus all ordinary sessions, owned by root; old blocked receipts unchanged."
+}

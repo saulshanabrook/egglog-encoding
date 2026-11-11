@@ -1,0 +1,882 @@
+diff --git a/scripts/speq_c99_diagnostic.py b/scripts/speq_c99_diagnostic.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/speq_c99_diagnostic.py
+@@ -0,0 +1,261 @@
++"""Materialize a disabled, source-pinned C99 REV candidate and native analysis gates.
++
++No native tools, source capture, settings publication or admission run here. The
++existing PHI materializer owns the original source/header checks and baseline.
++"""
++
++from __future__ import annotations
++
++import argparse
++import difflib
++import hashlib
++import json
++import re
++from pathlib import Path
++
++from scripts import speq_phi_diagnostic as phi
++from scripts.paper_benchmarks.record_speq import PARSE_IR_SHA256
++
++SUPPORT = Path(__file__).with_name("paper_benchmarks")
++ENABLE_ENV = "SPEQ_REV_C99_DIAGNOSTIC"
++
++
++def candidate_rev(original: str, function: str) -> str:
++    """Bind the exact fragment into pinned PHI-repaired REV, without modifying IR."""
++    if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9.]*", function):
++        raise ValueError("diagnostic requires one explicit simple LLVM function name")
++    repaired = phi.patched_rev(original)
++    fragment = (SUPPORT / "speq_c99_fir.inc").read_text()
++    first = repaired.index("class Lambda {")
++    last = repaired.index("Value *findLiveOut(", first)
++    before, body, after = repaired[:first], repaired[first:last], repaired[last:]
++    replacements = {
++        "DenseMap<Value *, Tensor *> &TM, DenseMap<Value *, LevelBounds> &LM)": (
++            "DenseMap<Value *, Tensor *> &TM, DenseMap<Value *, LevelBounds> &LM, Function &F)"
++        ),
++        "TensorMap(TM), LevelMap(LM) {}": "TensorMap(TM), LevelMap(LM), C99(LI, SE, MSSA.getDomTree(), F,\n"
++        f'            std::getenv("{ENABLE_ENV}") && F.getName() == "{function}") {{}}',
++        '    return Out;\n    //    llvm_unreachable("val doesn\'t exist in tensor map.");': (
++            "    std::string C99Type = C99.memoryType(I);\n"
++            "    if (!C99Type.empty()) return C99Type;\n"
++            '    return Out;\n    //    llvm_unreachable("val doesn\'t exist in tensor map.");'
++        ),
++        "    auto *Header = L.getHeader();\n": "    auto *Header = L.getHeader();\n    C99.prelude(L, OUTS);\n",
++        "        LoopBody.push_back(&*I);\n": (
++            "        LoopBody.push_back(&*I);\n        if (C99.emit(*I, OUTS)) continue;\n"
++        ),
++        "  DenseMap<Value *, LevelBounds> &LevelMap;\n": (
++            "  DenseMap<Value *, LevelBounds> &LevelMap;\n  C99AddressFIR C99;\n"
++        ),
++    }
++    for old, new in replacements.items():
++        if body.count(old) != 1:
++            raise ValueError(f"C99 REV substitution boundary changed: {old!r}")
++        body = body.replace(old, new, 1)
++    invocation = "  Lambda Lam(LI, SE, MSSA, TensorMap, LevelMap);"
++    if after.count(invocation) != 1:
++        raise ValueError("C99 Lambda invocation boundary changed")
++    after = after.replace(invocation, "  Lambda Lam(LI, SE, MSSA, TensorMap, LevelMap, F);", 1)
++    entry = "REVInfo REVPass::run(Function &F, FunctionAnalysisManager &AM) {\n"
++    if after.count(entry) != 1:
++        raise ValueError("C99 REV entry boundary changed")
++    after = after.replace(
++        entry,
++        entry + f'  if (const char *Enabled = std::getenv("{ENABLE_ENV}")) {{\n'
++        '    if (StringRef(Enabled) != "1")\n'
++        '      report_fatal_error("REV C99 diagnostic enable value must be 1");\n'
++        f'    Function *Selected = F.getParent()->getFunction("{function}");\n'
++        "    if (!Selected || Selected->isDeclaration())\n"
++        '      report_fatal_error("REV C99 selected definition is missing");\n'
++        "    // LLVM module verification requires unique global/function names.\n"
++        "  }\n",
++        1,
++    )
++    return '#include <cstdlib>\n#include "llvm/IR/Module.h"\n' + before + fragment + "\n" + body + after
++
++
++def fixture_cases() -> dict[str, tuple[str, str | None]]:
++    """Use actual LLVM mutations of one guarded kernel as discriminating controls."""
++    original = (SUPPORT / "speq_c99_fixture.ll").read_text()
++    cases: dict[str, tuple[str, str | None]] = {"guarded_stride": (original, None)}
++    mutations = {
++        "nonzero_offset": (
++            "  %element = getelementptr inbounds double, ptr %row.ptr, i64 %j64",
++            "  %shifted = add nuw nsw i64 %j64, 3\n"
++            "  %element = getelementptr inbounds double, ptr %row.ptr, i64 %shifted",
++            None,
++        ),
++        "different_stride": (
++            "%row.offset = mul nuw nsw i64 %row64, %n64",
++            "%wide.stride = add nuw nsw i64 %n64, 7\n  %row.offset = mul nuw nsw i64 %row64, %wide.stride",
++            None,
++        ),
++        "negative_offset": (
++            "ptr %row.ptr, i64 %j64",
++            "ptr %row.ptr, i64 -1",
++            "negative index",
++        ),
++        "unguarded_zext": (
++            "%row.valid = icmp sge i32 %row, 0",
++            "%row.valid = icmp sge i32 %row, -1",
++            "nonnegativity proof",
++        ),
++        "truncation": (
++            "%j64 = zext i32 %j to i64",
++            "%small = trunc i32 %j to i8\n  %j64 = zext i8 %small to i64",
++            "preserve this cast",
++        ),
++        "wrapping_sum": (
++            "%row.offset = mul nuw nsw i64 %row64, %n64",
++            "%row.offset = add i64 %row64, 9223372036854775807",
++            "may wrap",
++        ),
++        "external_load": (
++            "%n64 = zext i32 %n to i64",
++            "%n64 = load i64, ptr @stride",
++            "external definition",
++        ),
++        "mixed_memory_type": (
++            "%old = load double, ptr %element, align 8",
++            "%wrong = load i32, ptr %element, align 4\n  %old = load double, ptr %element, align 8",
++            "incompatible load",
++        ),
++        "non_inbounds": (
++            "%element = getelementptr inbounds double",
++            "%element = getelementptr double",
++            "incompatible GEP",
++        ),
++        "pointer_escape": (
++            "%old = load double, ptr %element, align 8",
++            "call void @escape(ptr %C)\n  %old = load double, ptr %element, align 8",
++            "escapes",
++        ),
++        "non_i64_index": (
++            "ptr %row.ptr, i64 %j64",
++            "ptr %row.ptr, i32 %j",
++            "index is not i64",
++        ),
++        "narrow_pointer_layout": (
++            'target datalayout = "e-p:64:64-i64:64-n8:16:32:64-S128"',
++            'target datalayout = "e-p:64:64:64:32-i64:64-n8:16:32:64-S128"',
++            "64-bit pointer index layout",
++        ),
++        "opaque_external_phi": (
++            "preheader:\n  br label %body",
++            "preheader:\n  %stride.phi = phi i64 [ %n64, %rowguard ]\n  br label %body",
++            "external definition",
++        ),
++        "reserved_name": (
++            "%row.offset",
++            "%reproduction.c99.offset.0",
++            "reserved diagnostic temporary",
++        ),
++    }
++    for name, (old, new, error) in mutations.items():
++        if old not in original:
++            raise ValueError(f"C99 fixture mutation boundary changed: {name}")
++        source = original.replace(old, new).replace("@guarded_stride(", f"@{name}(", 1)
++        if name == "external_load":
++            source += "\n@stride = external global i64\n"
++        if name == "pointer_escape":
++            source += "\ndeclare void @escape(ptr)\n"
++        if name == "opaque_external_phi":
++            source = source.replace("mul nuw nsw i64 %row64, %n64", "mul nuw nsw i64 %row64, %stride.phi")
++        cases[name] = (source, error)
++    cases["unsupported_i16"] = (
++        original.replace("i32", "i16").replace("@guarded_stride(", "@unsupported_i16("),
++        "preserve this cast",
++    )
++    return cases
++
++
++def materialize(source: Path, output: Path, function: str) -> dict:
++    """Reuse PHI evidence, retain a separate disabled candidate and exact-fragment gates."""
++    source, output = source.resolve(), output.resolve()
++    if output.exists() or output.is_relative_to(source):
++        raise ValueError("diagnostic output must be fresh and outside original source")
++    original = (source / "llvm/lib/Analysis/REVPass.cpp").read_text()
++    candidate = candidate_rev(original, function)
++    phi_record = phi.materialize(source, output / "phi")
++    template = (SUPPORT / "speq_c99_harness.cpp").read_text()
++    if template.count("// INSERT_EXACT_C99_FRAGMENT") != 1:
++        raise ValueError("C99 harness substitution boundary changed")
++    fragment = (SUPPORT / "speq_c99_fir.inc").read_text()
++    files = {
++        "candidate/llvm/lib/Analysis/REVPass.cpp": candidate,
++        "candidate/llvm/include/llvm/Analysis/REVPass.h": (output / "phi/original/REVPass.h").read_text(),
++        "candidate/llvm/include/llvm/Analysis/MemorySSA.h": (output / "phi/original/MemorySSA.h").read_text(),
++        "c99-harness.cpp": template.replace("// INSERT_EXACT_C99_FRAGMENT", fragment),
++        "c99-fragment.inc": fragment,
++        "c99-candidate.patch": "".join(
++            difflib.unified_diff(
++                phi.patched_rev(original).splitlines(True),
++                candidate.splitlines(True),
++                fromfile="phi/llvm/lib/Analysis/REVPass.cpp",
++                tofile="candidate/llvm/lib/Analysis/REVPass.cpp",
++            )
++        ),
++    }
++    cases = fixture_cases()
++    files.update({f"fixtures/{name}.ll": text for name, (text, _) in cases.items()})
++    for relative, text in files.items():
++        destination = output / relative
++        destination.parent.mkdir(parents=True, exist_ok=True)
++        destination.write_text(text)
++    record = {
++        "status": "diagnostic-materialized-unrun",
++        "native_execution": False,
++        "corpus_admission": False,
++        "selected_function": function,
++        "candidate_default": "disabled",
++        "parser_contract_sha256": PARSE_IR_SHA256,
++        "enable_environment": {ENABLE_ENV: "1"},
++        "original_source": str(source),
++        "phi_evidence": phi_record,
++        "domain": "dominating pure closure, nonnegative bounded same-double i64 inbounds address chains, typed memory",
++        "unchanged": [
++            "source C",
++            "LLVM input module",
++            "frontend passes",
++            "other functions",
++            "reference rules",
++            "5/1/3 schedule",
++        ],
++        "gates": {
++            name: {"expected_exit": "zero" if error is None else "nonzero", "stderr_contains": error}
++            for name, (_, error) in cases.items()
++        },
++        "required_native_gates": [
++            "verify original failure and exact-fragment positive/negative fixture results",
++            "verify candidate disabled matches PHI baseline for all four reference FIR hashes",
++            "verify enabling missing selected function fails, unrelated function FIR stays unchanged",
++            "verify enabled retained GEMM has complete scalar closure, flat addresses and typed memory",
++            "original complete parent then standalone ordinary replay (separate admission)",
++        ],
++        "implementation_hashes": {
++            str(path.relative_to(Path(__file__).parent.parent)): hashlib.sha256(path.read_bytes()).hexdigest()
++            for path in (
++                Path(__file__),
++                Path(phi.__file__),
++                SUPPORT / "speq_c99_fir.inc",
++                SUPPORT / "speq_c99_harness.cpp",
++                SUPPORT / "speq_c99_fixture.ll",
++            )
++        },
++        "files": {name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in files},
++    }
++    (output / "diagnostic.json").write_text(json.dumps(record, indent=2) + "\n")
++    return record
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--source", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    parser.add_argument("--function", required=True)
++    args = parser.parse_args()
++    print(json.dumps(materialize(args.source, args.output, args.function), indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/paper_benchmarks/speq_c99_fir.inc b/scripts/paper_benchmarks/speq_c99_fir.inc
+new file mode 100644
+--- /dev/null
++++ b/scripts/paper_benchmarks/speq_c99_fir.inc
+@@ -0,0 +1,212 @@
++// Diagnostic-only serialization repair. Never changes the LLVM module.
++// The exact fragment is shared by the candidate REV and native analysis harness.
++class C99AddressFIR {
++  LoopInfo &LI;
++  ScalarEvolution &SE;
++  DominatorTree &DT;
++  Function &F;
++  bool Active = false;
++  unsigned NextOffset = 0;
++
++  [[noreturn]] void reject(const Twine &Why) const {
++    report_fatal_error(Twine("REV C99 address domain: ") + Why);
++  }
++
++  bool nonnegative(Value *V, Instruction &At) {
++    if (auto *C = dyn_cast<ConstantInt>(V))
++      return !C->isNegative();
++    return SE.isKnownPredicateAt(ICmpInst::ICMP_SGE, SE.getSCEV(V),
++                                SE.getZero(V->getType()), &At);
++  }
++
++  // FIR's Int is a mathematical signed integer; its parser erases casts.
++  // Establish a conservative range before accepting that erasure or a new sum.
++  APInt indexBound(Value *V, Instruction &At) {
++    auto *Ty = dyn_cast<IntegerType>(V->getType());
++    if (!Ty || (!Ty->isIntegerTy(8) && !Ty->isIntegerTy(32) && !Ty->isIntegerTy(64)))
++      reject("FIR supports only scalar i8/i32/i64 integer indices");
++    unsigned Width = Ty->getBitWidth();
++    APInt Limit = APInt::getSignedMaxValue(Width).zext(128);
++    if (auto *C = dyn_cast<ConstantInt>(V)) {
++      if (C->isNegative()) reject("negative index");
++      return C->getValue().zext(128);
++    }
++    if (auto *Cast = dyn_cast<CastInst>(V)) {
++      if ((!isa<SExtInst>(Cast) && !isa<ZExtInst>(Cast)) ||
++          !Cast->getSrcTy()->isIntegerTy() ||
++          Cast->getSrcTy()->getIntegerBitWidth() >= Width)
++        reject("unsupported index cast");
++      // Signed extension preserves the signed value; zero extension does so
++      // only under a use-site nonnegativity proof. This domain needs both >=0.
++      return indexBound(Cast->getOperand(0), At);
++    }
++    if (auto *Op = dyn_cast<BinaryOperator>(V)) {
++      if (Op->getOpcode() != Instruction::Add &&
++          Op->getOpcode() != Instruction::Mul)
++        reject("unsupported index arithmetic");
++      APInt A = indexBound(Op->getOperand(0), At);
++      APInt B = indexBound(Op->getOperand(1), At);
++      APInt Bound = Op->getOpcode() == Instruction::Add ? A + B : A * B;
++      if (Bound.ugt(Limit)) reject("index arithmetic may wrap");
++      return Bound;
++    }
++    if (!isa<Argument>(V) && !isa<PHINode>(V))
++      reject("index depends on memory or an unsupported instruction");
++    if (!nonnegative(V, At))
++      reject("missing use-site signed nonnegativity proof");
++    return Limit;
++  }
++
++  void checkCast(CastInst &Cast, Instruction &At) {
++    if (!Cast.getSrcTy()->isIntegerTy() || !Cast.getDestTy()->isIntegerTy() ||
++        (!isa<SExtInst>(Cast) && !isa<ZExtInst>(Cast)) ||
++        (!Cast.getSrcTy()->isIntegerTy(8) && !Cast.getSrcTy()->isIntegerTy(32)) ||
++        (!Cast.getDestTy()->isIntegerTy(32) && !Cast.getDestTy()->isIntegerTy(64)) ||
++        Cast.getSrcTy()->getIntegerBitWidth() >=
++            Cast.getDestTy()->getIntegerBitWidth())
++      reject("FIR cannot preserve this cast");
++    if (isa<ZExtInst>(Cast) && !nonnegative(Cast.getOperand(0), At))
++      reject("zero extension lacks a use-site nonnegativity proof");
++  }
++
++  void closeOperand(Value *V, Instruction &Use, raw_ostream &OS,
++                    SmallPtrSetImpl<Instruction *> &Emitted) {
++    auto *I = dyn_cast<Instruction>(V);
++    if (!I || LI.getLoopFor(I->getParent())) return;
++    if (!DT.dominates(I, &Use)) reject("external definition does not dominate use");
++    // Validate at each use, even if the same definition was already emitted.
++    if (auto *Cast = dyn_cast<CastInst>(I)) {
++      checkCast(*Cast, Use);
++    } else if (auto *Op = dyn_cast<BinaryOperator>(I)) {
++      if (!Op->getType()->isIntegerTy() ||
++          (Op->getOpcode() != Instruction::Add &&
++           Op->getOpcode() != Instruction::Mul))
++        reject("external definition is not supported pure integer arithmetic");
++      (void)indexBound(Op, Use);
++    } else {
++      reject("external definition is not a supported pure cast/add/mul");
++    }
++    for (Value *Operand : I->operands()) closeOperand(Operand, Use, OS, Emitted);
++    if (Emitted.insert(I).second) OS << *I << "\n";
++  }
++
++public:
++  C99AddressFIR(LoopInfo &LI, ScalarEvolution &SE, DominatorTree &DT,
++                Function &F, bool Selected) : LI(LI), SE(SE), DT(DT), F(F) {
++    if (!Selected) return;
++    for (Argument &A : F.args())
++      if (A.getName().starts_with("reproduction.c99."))
++        reject("reserved diagnostic temporary name already exists");
++    for (BasicBlock &BB : F)
++      for (Instruction &I : BB) {
++        if (I.getName().starts_with("reproduction.c99."))
++          reject("reserved diagnostic temporary name already exists");
++        if (auto *G = dyn_cast<GetElementPtrInst>(&I))
++          Active |= isa<GetElementPtrInst>(G->getPointerOperand());
++      }
++    if (!Active) reject("selected function has no chained GEP");
++  }
++
++  // Only fallback typing for a function needing this repair. Existing tensor
++  // metadata remains the first choice in REV; unchanged flat references bypass it.
++  std::string memoryType(Value *Root) {
++    if (!Active) return "";
++    if (!Root || !isa<Argument>(Root) ||
++        !Root->getType()->isPointerTy() || Root->getType()->getPointerAddressSpace())
++      reject("memory root is not an address-space-zero argument");
++    SmallVector<Value *> Work{Root};
++    SmallPtrSet<Value *, 16> Seen;
++    bool Accessed = false;
++    while (!Work.empty()) {
++      Value *P = Work.pop_back_val();
++      if (!Seen.insert(P).second) continue;
++      for (User *U : P->users()) {
++        if (auto *G = dyn_cast<GetElementPtrInst>(U)) {
++          if (G->getPointerOperand() != P || G->getNumIndices() != 1 ||
++              !G->getSourceElementType()->isDoubleTy() || !G->isInBounds())
++            reject("memory root has an incompatible GEP");
++          Work.push_back(G);
++        } else if (auto *L = dyn_cast<LoadInst>(U)) {
++          if (L->getPointerOperand() != P || !L->getType()->isDoubleTy() ||
++              L->isVolatile() || L->isAtomic())
++            reject("memory root has an incompatible load");
++          Accessed = true;
++        } else if (auto *S = dyn_cast<StoreInst>(U)) {
++          if (S->getPointerOperand() != P ||
++              !S->getValueOperand()->getType()->isDoubleTy() ||
++              S->isVolatile() || S->isAtomic())
++            reject("memory root has an incompatible store");
++          Accessed = true;
++        } else {
++          reject("memory root escapes or has an unsupported use");
++        }
++      }
++    }
++    if (!Accessed) reject("memory root has no typed access");
++    return "ptr 1 double";
++  }
++
++  void prelude(Loop &L, raw_ostream &OS) {
++    if (!Active) return;
++    SmallPtrSet<Instruction *, 16> Emitted;
++    for (BasicBlock *BB : L.blocks()) {
++      if (LI.getLoopFor(BB) != &L) continue;
++      for (Instruction &I : *BB) {
++        if (isa<PHINode>(&I) || I.isTerminator()) continue;
++        for (Value *Operand : I.operands()) closeOperand(Operand, I, OS, Emitted);
++      }
++    }
++  }
++
++  // Return true only when the original serializer should skip this instruction.
++  bool emit(Instruction &I, raw_ostream &OS) {
++    if (!Active) return false;
++    if (auto *Cast = dyn_cast<CastInst>(&I)) {
++      checkCast(*Cast, I);
++      return false; // Preserve the actual cast in FIR/evidence.
++    }
++    auto *G = dyn_cast<GetElementPtrInst>(&I);
++    if (!G) return false;
++    if (F.getParent()->getDataLayout().getIndexSizeInBits(0) != 64)
++      reject("requires a 64-bit pointer index layout");
++    SmallVector<Value *> Indices;
++    Value *Base = G;
++    APInt Bound(128, 0);
++    while (auto *Part = dyn_cast<GetElementPtrInst>(Base)) {
++      if (!Part->isInBounds() || Part->getNumIndices() != 1 ||
++          !Part->getSourceElementType()->isDoubleTy() ||
++          Part->getPointerAddressSpace() != 0)
++        reject("only inbounds same-double scalar GEP chains are supported");
++      Value *Index = Part->getOperand(1);
++      if (!Index->getType()->isIntegerTy(64)) reject("GEP index is not i64");
++      Bound += indexBound(Index, I);
++      if (Bound.ugt(APInt::getSignedMaxValue(64).zext(128)))
++        reject("combined GEP offset may wrap");
++      Indices.push_back(Index);
++      Base = Part->getPointerOperand();
++    }
++    if (!isa<Argument>(Base) || Base->getType()->getPointerAddressSpace())
++      reject("GEP chain has no supported argument root");
++    // Read-only roots matter too: typing only the mutable root could miss an
++    // incompatible load through A/B while flattening its address.
++    (void)memoryType(Base);
++    if (Indices.size() == 1) return false;
++    // No LLVM instruction is inserted. New FIR sums are representable integers,
++    // justified above independently of the original nsw/nuw flags.
++    std::string Offset;
++    raw_string_ostream First(Offset);
++    Indices.back()->printAsOperand(First, false);
++    for (auto It = Indices.rbegin() + 1; It != Indices.rend(); ++It) {
++      std::string Name = "%reproduction.c99.offset." + std::to_string(NextOffset++);
++      OS << "  " << Name << " = add nsw i64 " << Offset << ", ";
++      (*It)->printAsOperand(OS, false);
++      OS << "\n";
++      Offset = Name;
++    }
++    OS << "  "; I.printAsOperand(OS, false);
++    OS << " = getelementptr inbounds double, ptr ";
++    Base->printAsOperand(OS, false);
++    OS << ", i64 " << Offset << "\n";
++    return true;
++  }
++};
+diff --git a/scripts/paper_benchmarks/speq_c99_harness.cpp b/scripts/paper_benchmarks/speq_c99_harness.cpp
+new file mode 100644
+--- /dev/null
++++ b/scripts/paper_benchmarks/speq_c99_harness.cpp
+@@ -0,0 +1,59 @@
++// Analysis-only host harness: verifies LLVM IR, never executes input functions.
++#include "llvm/ADT/APInt.h"
++#include "llvm/ADT/SmallPtrSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/Analysis/AssumptionCache.h"
++#include "llvm/Analysis/LoopInfo.h"
++#include "llvm/Analysis/ScalarEvolution.h"
++#include "llvm/Analysis/TargetLibraryInfo.h"
++#include "llvm/IR/Dominators.h"
++#include "llvm/IR/Instructions.h"
++#include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/Module.h"
++#include "llvm/IR/Verifier.h"
++#include "llvm/IRReader/IRReader.h"
++#include "llvm/Support/ErrorHandling.h"
++#include "llvm/Support/SourceMgr.h"
++#include "llvm/Support/raw_ostream.h"
++using namespace llvm;
++
++// INSERT_EXACT_C99_FRAGMENT
++
++int main(int argc, char **argv) {
++  if (argc != 3) return 2;
++  LLVMContext Context;
++  SMDiagnostic Error;
++  auto M = parseIRFile(argv[1], Error, Context);
++  if (!M) { Error.print(argv[0], errs()); return 2; }
++  if (verifyModule(*M, &errs())) return 2;
++  Function *F = M->getFunction(argv[2]);
++  if (!F || F->isDeclaration()) return 2;
++  std::string Before;
++  raw_string_ostream Saved(Before);
++  M->print(Saved, nullptr);
++  DominatorTree DT(*F);
++  LoopInfo LI(DT);
++  AssumptionCache AC(*F);
++  TargetLibraryInfoImpl TLII;
++  TargetLibraryInfo TLI(TLII);
++  ScalarEvolution SE(*F, TLI, AC, DT, LI);
++  C99AddressFIR Probe(LI, SE, DT, *F, true);
++  outs() << "memory-type: " << Probe.memoryType(F->getArg(0)) << "\n";
++  for (Loop *L : LI.getLoopsInPreorder()) {
++    outs() << "loop: " << L->getName() << "\n";
++    Probe.prelude(*L, outs());
++    for (BasicBlock *BB : L->blocks()) {
++      if (LI.getLoopFor(BB) != L) continue;
++      for (Instruction &I : *BB) {
++        if (isa<PHINode>(&I) || I.isTerminator()) continue;
++        if (!Probe.emit(I, outs())) outs() << I << "\n";
++      }
++    }
++  }
++  std::string After;
++  raw_string_ostream Current(After);
++  M->print(Current, nullptr);
++  if (Before != After) return 3;
++  outs() << "LLVM module unchanged\n";
++  return 0;
++}
+diff --git a/scripts/paper_benchmarks/speq_c99_fixture.ll b/scripts/paper_benchmarks/speq_c99_fixture.ll
+new file mode 100644
+--- /dev/null
++++ b/scripts/paper_benchmarks/speq_c99_fixture.ll
+@@ -0,0 +1,30 @@
++; Analysis input only: guarded row scaling with the actual C99 stride shape.
++; The dimension and row can be negative/zero; those paths must leave C unchanged.
++target datalayout = "e-p:64:64-i64:64-n8:16:32:64-S128"
++
++define void @guarded_stride(ptr %C, i32 %n, i32 %row, double %scale) {
++entry:
++  %n64 = zext i32 %n to i64
++  %row64 = zext i32 %row to i64
++  %positive = icmp sgt i32 %n, 0
++  br i1 %positive, label %rowguard, label %exit
++rowguard:
++  %row.valid = icmp sge i32 %row, 0
++  br i1 %row.valid, label %preheader, label %exit
++preheader:
++  br label %body
++body:
++  %j = phi i32 [ 0, %preheader ], [ %next, %body ]
++  %row.offset = mul nuw nsw i64 %row64, %n64
++  %row.ptr = getelementptr inbounds double, ptr %C, i64 %row.offset
++  %j64 = zext i32 %j to i64
++  %element = getelementptr inbounds double, ptr %row.ptr, i64 %j64
++  %old = load double, ptr %element, align 8
++  %scaled = fmul double %old, %scale
++  store double %scaled, ptr %element, align 8
++  %next = add nuw nsw i32 %j, 1
++  %more = icmp slt i32 %next, %n
++  br i1 %more, label %body, label %exit
++exit:
++  ret void
++}
+diff --git a/tests/test_speq_c99_diagnostic.py b/tests/test_speq_c99_diagnostic.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_speq_c99_diagnostic.py
+@@ -0,0 +1,168 @@
++"""Data-only candidate gates. LLVM compilation/execution belongs to the root gate."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++from pathlib import Path
++
++import pytest
++
++from scripts import speq_c99_diagnostic as diagnostic
++from scripts import speq_phi_diagnostic as phi
++
++
++@pytest.fixture
++def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
++    cpp = tmp_path / "source/llvm/lib/Analysis/REVPass.cpp"
++    header = tmp_path / "source/llvm/include/llvm/Analysis/REVPass.h"
++    cpp.parent.mkdir(parents=True)
++    header.parent.mkdir(parents=True)
++    # Only materializer boundary syntax is modeled; this is never a native fixture.
++    cpp.write_text(
++        '#include "llvm/Support/Debug.h"\n'
++        "class Lambda {\n"
++        "  Lambda(DenseMap<Value *, Tensor *> &TM, DenseMap<Value *, LevelBounds> &LM)\n"
++        "      : TensorMap(TM), LevelMap(LM) {}\n"
++        "  std::string arrayType(Value *I) {\n"
++        "    if (existing_tensor) return original_type;\n"
++        "    return Out;\n"
++        '    //    llvm_unreachable("val doesn\'t exist in tensor map.");\n  }\n'
++        + phi.BEGIN
++        + "PHITy *Phi, BasicBlock **Then, BasicBlock **Else) { return nullptr; }\n"
++        + phi.END
++        + "\n"
++        "    BranchInst *Br = getPhiBr(Phi, &Then, &Else);\n"
++        "    auto *Header = L.getHeader();\n"
++        "        LoopBody.push_back(&*I);\n"
++        "  DenseMap<Value *, LevelBounds> &LevelMap;\n"
++        "};\n"
++        "Value *findLiveOut(Loop *L) { return nullptr; }\n"
++        "REVInfo REVPass::run(Function &F, FunctionAnalysisManager &AM) {\n"
++        "  Lambda Lam(LI, SE, MSSA, TensorMap, LevelMap);\n"
++        "  return unchanged_output;\n}\n"
++    )
++    header.write_text("exact synthetic REV header")
++    memory = header.with_name("MemorySSA.h")
++    memory.write_text("exact synthetic MemorySSA header")
++    for name, path in (("REV_PASS_SHA256", cpp), ("REV_PASS_HEADER_SHA256", header), ("MEMORY_SSA_SHA256", memory)):
++        monkeypatch.setattr(phi, name, hashlib.sha256(path.read_bytes()).hexdigest())
++    return tmp_path / "source"
++
++
++def test_candidate_binds_exact_fragment_and_preserves_originals(source: Path, tmp_path: Path) -> None:
++    original = (source / "llvm/lib/Analysis/REVPass.cpp").read_bytes()
++    out = tmp_path / "candidate"
++    receipt = diagnostic.materialize(source, out, "selected_kernel")
++    assert (source / "llvm/lib/Analysis/REVPass.cpp").read_bytes() == original
++    assert (out / "phi/original/REVPass.cpp").read_bytes() == original
++    fragment = (diagnostic.SUPPORT / "speq_c99_fir.inc").read_text()
++    candidate = (out / "candidate/llvm/lib/Analysis/REVPass.cpp").read_text()
++    harness = (out / "c99-harness.cpp").read_text()
++    assert candidate.count(fragment) == harness.count(fragment) == 1
++    assert phi.EDGE_AWARE_PHI in candidate
++    assert receipt["native_execution"] is receipt["corpus_admission"] is False
++    assert receipt["candidate_default"] == "disabled"
++    assert receipt["selected_function"] == "selected_kernel"
++    assert receipt["enable_environment"] == {diagnostic.ENABLE_ENV: "1"}
++    assert 'F.getName() == "selected_kernel"' in candidate
++    assert "!Selected || Selected->isDeclaration()" in candidate
++    assert 'StringRef(Enabled) != "1"' in candidate
++    for relative, digest in receipt["files"].items():
++        assert hashlib.sha256((out / relative).read_bytes()).hexdigest() == digest
++    assert json.loads((out / "diagnostic.json").read_text()) == receipt
++
++
++@pytest.mark.parametrize("function", ["", "a b", 'x";abort();', "@name", "a\nb", "λ"])
++def test_function_selection_cannot_be_implicit_or_cpp_injection(source: Path, tmp_path: Path, function: str) -> None:
++    with pytest.raises(ValueError, match="explicit simple LLVM function"):
++        diagnostic.materialize(source, tmp_path / "out", function)
++    assert not (tmp_path / "out").exists()
++
++
++@pytest.mark.parametrize("changed", ["source", "header", "memory", "existing-output", "source-output"])
++def test_source_pins_and_fresh_evidence_remain_mandatory(source: Path, tmp_path: Path, changed: str) -> None:
++    out = tmp_path / "out"
++    paths = {
++        "source": "llvm/lib/Analysis/REVPass.cpp",
++        "header": "llvm/include/llvm/Analysis/REVPass.h",
++        "memory": "llvm/include/llvm/Analysis/MemorySSA.h",
++    }
++    if changed in paths:
++        with (source / paths[changed]).open("a") as file:
++            file.write("changed")
++    elif changed == "existing-output":
++        out.mkdir()
++    else:
++        out = source / "new-evidence"
++    with pytest.raises(ValueError):
++        diagnostic.materialize(source, out, "selected_kernel")
++    assert not (out / "diagnostic.json").exists()
++
++
++def test_disabled_and_unrelated_functions_have_no_serialization_changes(source: Path) -> None:
++    candidate = diagnostic.candidate_rev((source / "llvm/lib/Analysis/REVPass.cpp").read_text(), "kernel")
++    fragment = (diagnostic.SUPPORT / "speq_c99_fir.inc").read_text()
++    # The native gate must verify actual FIR bytes. These are source-scope guards,
++    # not a claim that C++ has compiled or that native outputs already match.
++    assert 'std::getenv("SPEQ_REV_C99_DIAGNOSTIC") && F.getName() == "kernel"' in candidate
++    assert fragment.index("if (!Selected) return;") < fragment.index("for (Argument &A")
++    assert 'if (!Active) return "";' in fragment
++    assert "if (!Active) return false;" in fragment
++    assert "if (!Active) return;" in fragment
++    assert "return original_type;" in candidate
++    assert "return unchanged_output;" in candidate
++    assert "setOperand(" not in fragment
++    assert "Create(" not in fragment
++
++
++def test_real_fixture_controls_are_distinct_and_bind_expected_failures() -> None:
++    cases = diagnostic.fixture_cases()
++    assert len(cases) == 16
++    assert [name for name, (_, error) in cases.items() if error is None] == [
++        "guarded_stride",
++        "nonzero_offset",
++        "different_stride",
++    ]
++    assert len({hashlib.sha256(text.encode()).hexdigest() for text, _ in cases.values()}) == len(cases)
++    for name, (text, error) in cases.items():
++        assert text.count(f"define void @{name}(") == 1
++        assert "br i1 %positive, label %rowguard, label %exit" in text
++        integer = "i16" if name == "unsupported_i16" else "i32"
++        assert f"%next = add nuw nsw {integer} %j, 1" in text
++        assert f"%more = icmp slt {integer} %next, %n" in text
++        if error:
++            assert isinstance(error, str)
++    assert "%stride.phi = phi i64 [ %n64, %rowguard ]" in cases["opaque_external_phi"][0]
++    assert "load i64, ptr @stride" in cases["external_load"][0]
++    assert "load i32, ptr %element" in cases["mixed_memory_type"][0]
++
++
++def test_fixture_address_oracle_preserves_zero_negative_dimensions_and_distinct_strides() -> None:
++    # Independent arithmetic for the real fixture, including paths on which no
++    # address is evaluated. This does not substitute for LLVM analysis gates.
++    for n in (-5, 0, 1, 3, 11):
++        for row in (-2, 0, 1, 7):
++            for extra_stride, offset in ((0, 0), (0, 3), (7, 0)):
++                addresses = []
++                if n > 0 and row >= 0:
++                    for j in range(n):
++                        original_byte_address = (row * (n + extra_stride)) * 8 + (j + offset) * 8
++                        combined_byte_address = (row * (n + extra_stride) + j + offset) * 8
++                        assert combined_byte_address == original_byte_address
++                        addresses.append(combined_byte_address)
++                assert len(addresses) == (n if n > 0 and row >= 0 else 0)
++    assert (2**31 - 1) * (2**31 - 1 + 7) + (2**31 - 1) < 2**63
++
++
++def test_fragment_does_not_assume_cast_or_wrapping_index_equivalence() -> None:
++    fragment = (diagnostic.SUPPORT / "speq_c99_fir.inc").read_text()
++    assert "SE.isKnownPredicateAt(ICmpInst::ICMP_SGE" in fragment
++    assert "DT.dominates(I, &Use)" in fragment
++    assert "if (isa<ZExtInst>(Cast) && !nonnegative" in fragment
++    assert "Bound.ugt(Limit)" in fragment
++    assert "APInt::getSignedMaxValue(64).zext(128)" in fragment
++    assert "Part->getPointerAddressSpace() != 0" in fragment
++    assert "G->getSourceElementType()->isDoubleTy()" in fragment
++    assert "OS << *I" in fragment  # Keep original external cast bytes, do not substitute the source variable.
++    assert "return false; // Preserve the actual cast" in fragment
+diff --git a/benchmarks/reproduction/speq-c99-diagnostic.md b/benchmarks/reproduction/speq-c99-diagnostic.md
+new file mode 100644
+--- /dev/null
++++ b/benchmarks/reproduction/speq-c99-diagnostic.md
+@@ -0,0 +1,122 @@
++# Disabled C99 address-serialization candidate
++
++This candidate has **not** compiled or run natively. It is not connected to the
++recorder, preparation settings, or corpus admission. It targets the retained
++`polybench_gemm` C99 frontend output, not the separate SCALAR_LB loop-summary
++problems. Native gates decide whether its deliberately restricted domain covers
++the actual application.
++
++The original parser's `MkFold.castinst` discards `sext` and `zext`, and represents
++both i32 and i64 as mathematical integers. Printing a missing zero extension is
++therefore insufficient. The candidate requires LLVM 17 ScalarEvolution to prove
++its source nonnegative at each serialized use. Original cast instructions remain
++in the FIR evidence. Negative or unknown unsigned-to-signed interpretations,
++truncations, unrepresented integer widths (such as i16), floating casts,
++memory-derived external definitions and unsupported
++arithmetic are rejected. Signed widening retains its signed value; an address
++index additionally needs the nonnegative domain below.
++
++Only one explicitly named function is eligible. The candidate plugin remains
++disabled unless `SPEQ_REV_C99_DIAGNOSTIC=1` is set for the individual frontend
++invocation. Any other value or a missing selected definition fails. LLVM's module
++verification excludes duplicate function/global names. All other functions keep
++their existing REV serialization, including setup regions the original parser
++skips. No region, pass or existing skip boundary is removed.
++
++The three changes are local to serialization:
++
++- Emit a dependency-ordered closure of dominating, pure entry/preheader
++  casts/adds/multiplies before their loop-body uses. Recheck domain conditions at
++  every use, even when a definition was already emitted. Definitions in existing
++  loops retain their original scope and serialization.
++- Flatten only inbounds, address-space-zero, same-`double`, single-i64-index GEP
++  chains rooted at an argument. Nonnegative interval bounds must prove every
++  integer operation and new sum fits its signed width. This retains original
++  inbounds/defined-execution preconditions; it is not a claim that arbitrary C
++  pointer inputs are defined. No LLVM instruction or Egglog equality is inserted.
++- Infer `ptr 1 double` for a memory root only when every reachable pointer use is
++  a compatible GEP or nonvolatile/non-atomic double load/store. Escapes, conflicting
++  element types and unsupported uses fail. No general tensor or product-state
++  language is introduced.
++
++The actual counterexample is retained at
++`stages/speq-polybench_gemm/complete/11c4e63e0a9d5ff9b9cddf33bca39c56d2425f0b1af18f88562ea8787ca389cc/attempt-0001/capture/speq/speq-polybench_gemm/source/frontend/`
++under `benchmarks/local/reproduction/`. Its `analysis.ll` hash is
++`00d29c8af3f9c40ac2720bdd9c4003bb463eb2d9c2ae0c6eced479f59fb7f8bd`;
++`application-002.fir` is
++`88ea197d575dfd8cf55a189ff2e6d067f40b3f1369da4f95129605c716ee334f`.
++The missing `%0/%1` are dimension widenings; `%arrayidx*` chains denote offsets,
++not nested array objects; the single mutable C root currently has bare `ptr`.
++
++## Root-run gate recipe (not executed)
++
++Materialization is data-only and reuses the PHI materializer for original source,
++REV/MemorySSA header pins, and the separately retained PHI baseline:
++
++```sh
++.venv/bin/python -m scripts.speq_c99_diagnostic \
++  --source benchmarks/local/sources/speq/lleq \
++  --function polybench_gemm \
++  --output benchmarks/local/reproduction/diagnostics/speq-c99-native-0001/materialized
++```
++
++Root must hold the shared `benchmarks/local/reproduction/stages/.heavy-job.lock` through
++`exclusive_job`, and run each native command sequentially with
++`run_bounded_command(require_guard=True, memory_limit_bytes=5*1024**3,
++disk_reserve_bytes=10*1024**3, allow_warning_pressure=True)`. Use a fresh receipt
++directory, 120 seconds for compilation, 30 seconds per tiny fixture, and retain
++every command, tool hash, guard result, stdout/stderr hash and generated-file
++hash. Stop on timeout/resource failure; a negative fixture passes only on an
++ordinary nonzero exit **and** its expected diagnostic text. Do not automatically
++retry safety failures.
++
++1. Record LLVM 17.0.6 `clang++`, `opt`, `llvm-config` hashes/version. Under the
++   guard obtain `llvm-config --cxxflags --ldflags --libs core analysis irreader
++   support --system-libs`; split those flags with `shlex.split`. Compile
++   `materialized/c99-harness.cpp` using those exact flags. This harness contains
++   the same fragment as the candidate plugin, verifies IR, creates real DT/LI/SE
++   analyses, and asserts its LLVM module is unchanged after serialization.
++2. Invoke `[harness, materialized/fixtures/<name>.ll, name]` for each ordered gate
++   in `diagnostic.json`. The three positive fixtures cover guarded variable
++   stride, nonzero offsets and a distinct stride. The thirteen rejection fixtures
++   cover unsafe zero extension, negative index, truncation, overflow, external
++   load/PHI, conflicting memory type, non-inbounds access, pointer escape, wrong
++   index width/layout, an unrepresented integer type and reserved-name collision. Require positive output to
++   contain the original `%n64`/`%row64` cast definitions, `memory-type: ptr 1
++   double`, a flattened `%element` rooted at `%C`, and `LLVM module unchanged`.
++   Check the emitted address's actual operand structure, including +3 or stride
++   +7 where applicable; exit zero alone is insufficient. Zero/negative dimensions
++   keep the original no-iteration guard; the harness never executes input IR.
++3. Build the PHI baseline and candidate full plugins separately using the same
++   existing `build_rev_plugin` compile command shape: `clang++ -fPIC -shared
++   <tree>/llvm/lib/Analysis/REVPass.cpp scripts/paper_benchmarks/speq_rev_plugin.cpp
++   -I<tree>/llvm/include <LLVM flags> -o <fresh-plugin>`. Use the existing core,
++   analysis, passes, scalaropts, transformutils, ipo, support library list. Do not
++   pass the candidate tree to `build_rev_plugin`'s original-source hash check or
++   replace an existing plugin.
++4. With the opt-in environment absent, run the four existing `reference_fir`
++   gates against each plugin and require the unchanged pinned hashes. These
++   helpers themselves call subprocesses: invoke their Python driver as a child
++   of the guard, not directly in the controller.
++5. Compare baseline versus enabled candidate on the exact retained GEMM LLVM
++   above, using unchanged `-passes=print<revpass>`. Retain baseline's missing
++   definitions/nested addresses/bare memory type as the original failure. Require
++   selected candidate FIR scalar closure, correctly composed C/A/B addresses,
++   and typed C fold state. Compare every other ordered region's FIR byte-for-byte
++   with baseline; setup skips must not be suppressed. In a separate invocation,
++   enable the candidate on a reference module lacking `polybench_gemm`; require
++   the explicit missing-definition failure. A verifier-invalid module with
++   duplicate definitions must also fail before any serialization is accepted.
++6. Only after these gates may a separately reviewed diagnostic driver scope the
++   opt-in environment to original-C frontend generation, leaving reference
++   generation disabled. Preserve original C, C99 flags and the exact existing
++   `mem2reg,loop-rotate,instcombine,simplifycfg,loop-simplify,gvn,lcssa,print<revpass>`
++   pipeline and `-enable-load-in-loop-pre=false`. Reuse the existing parser and
++   full ordered region driver with original rules and 5/1/3 schedule. Require
++   actual GEMM recognition, complete parent accounting and separate standalone
++   ordinary validation. No claim of recognition or admission follows from the
++   analysis fixtures alone.
++
++No native runtime result is currently claimed. If LLVM cannot prove an actual
++use's required domain, retain that rejection and inspect it; do not silently
++erase casts, substitute a reference or weaken the check.

@@ -1,0 +1,415 @@
+--- a/scripts/eggcc_churchroad_complete.py
++++ b/scripts/eggcc_churchroad_complete.py
+@@ -10,7 +10,9 @@
+ import difflib
+ import hashlib
+ import json
++import math
+ import re
++import struct
+ from collections import Counter, defaultdict
+ from pathlib import Path
+ from typing import Any
+@@ -505,6 +507,9 @@
+         "root_classes": {},
+         "unresolved_source_bindings": {},
+         "observation_tables": [],
++        "f64_literal_matches": [],
++        "derived_observations": [],
++        "unresolved_erased_fields": {},
+         "original_program_sha256": hashlib.sha256(source.encode()).hexdigest(),
+         "replay_program_sha256": hashlib.sha256(source.encode()).hexdigest(),
+         "native_graph_sha256": hashlib.sha256(json.dumps(graph, sort_keys=True).encode()).hexdigest(),
+@@ -642,6 +647,18 @@
+         rows[(node["op"], children)].add(node["eclass"])
+     values: dict[str, str] = {}
+     candidates: dict[str, dict[str, str]] = {}
++    # The graph serializer may print 0.00001 as 1e-5. Compare typed finite
++    # binary64 identities, never decimal tolerances or untyped numeric values.
++    finite_f64: dict[bytes, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
++    for node in nodes.values():
++        if node["children"] or class_data.get(node["eclass"], {}).get("type") != "f64":
++            continue
++        try:
++            value = float(node["op"])
++        except ValueError:
++            continue
++        if math.isfinite(value):
++            finite_f64[struct.pack(">d", value)][node["eclass"]].add(node["op"])
+ 
+     def resolve(expression: Any, expected_sort: str | None = None) -> str:
+         if isinstance(expression, str) and expression in values:
+@@ -663,6 +680,26 @@
+                 choices = rows.get(key, set())
+                 if len(choices) > 1:
+                     raise CaptureError(f"ambiguous native constructor identity for source call {expression[0]}")
++            elif isinstance(expression, str) and expected_sort == "f64":
++                try:
++                    value = float(expression)
++                except ValueError as error:
++                    raise LookupError("source f64 literal is unsupported") from error
++                if not math.isfinite(value):
++                    raise LookupError("nonfinite source f64 literal retains structural matching")
++                bits = struct.pack(">d", value)
++                choices = set(finite_f64.get(bits, {}))
++                if len(choices) != 1:
++                    raise LookupError("source f64 bits have no unique retained native class")
++                match = {
++                    "source": expression,
++                    "native": sorted(finite_f64[bits][next(iter(choices))]),
++                    "bits": bits.hex(),
++                    "sort": "f64",
++                    "class": next(iter(choices)),
++                }
++                if match not in plan["f64_literal_matches"]:
++                    plan["f64_literal_matches"].append(match)
+             elif isinstance(expression, str) and re.fullmatch(
+                 r'"(?:[^"\\]|\\.)*"|true|false|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', expression
+             ):
+@@ -733,6 +770,44 @@
+             node = nodes[node_id]
+             kept = {"Arg": [], "Empty": [], "Const": [0]}.get(node["op"], list(range(len(node["children"]))))
+             pending.extend(child for i, child in enumerate(node["children"]) if i not in kept)
++    # Tiger can erase a Type value created by a native rule after initialization.
++    # Only this one-level TupleT(TypeList) case is supported: its child must
++    # already have a source handle, and the final native row must be unique.
++    # The replay observes that row after the source schedule; it never builds it.
++    for node_id in sorted(set(pending)):
++        node = nodes[node_id]
++        class_id = node["eclass"]
++        if class_id in candidates or node["op"] != "TupleT":
++            continue
++        reason = None
++        if signatures.get("TupleT") != (["TypeList"], "Type") or len(node["children"]) != 1:
++            reason = "erased TupleT has an unsupported constructor signature"
++        elif class_data.get(class_id, {}).get("type") != "Type":
++            reason = "erased TupleT has inconsistent native sort"
++        else:
++            child_class = nodes[node["children"][0]]["eclass"]
++            handle = candidates.get(child_class)
++            if handle is None or handle["sort"] != "TypeList":
++                reason = "erased TupleT child has no grounded TypeList source handle"
++            elif rows.get(("TupleT", (child_class,))) != {class_id}:
++                reason = "erased TupleT has ambiguous native constructor identity"
++            else:
++                table = f"reproduction_derived_type_{len(plan['derived_observations'])}"
++                derived = {
++                    "kind": "existing-row",
++                    "node": node_id,
++                    "native_class": class_id,
++                    "sort": "Type",
++                    "table": table,
++                    "lookup": f"({table})",
++                    "child_class": child_class,
++                    "child_lookup": handle["lookup"],
++                }
++                candidates[class_id] = derived
++                needed.add(child_class)
++                plan["derived_observations"].append(derived)
++        if reason is not None:
++            plan["unresolved_erased_fields"][node_id] = reason
+     visited = set()
+     while pending:
+         node_id = pending.pop()
+@@ -957,6 +1032,43 @@
+     forms = egglog_forms(source)
+     if any(token.startswith(prefix) for _, _, tokens in forms for token in tokens):
+         raise CaptureError("source collides with a reproduction lookup name")
++    derived = anchors.get("derived_observations", [])
++    derived_commands = []
++    if derived:
++        ruleset = "reproduction_derived_types"
++        child_variable, value_variable = "reproduction_derived_child", "reproduction_derived_value"
++        all_tokens = {token for _, _, tokens in forms for token in tokens}
++        reserved = {ruleset, child_variable, value_variable, *(entry["table"] for entry in derived)}
++        if reserved & all_tokens:
++            raise CaptureError("source collides with a derived source-anchor observer")
++        derived_commands.append(f"(ruleset {ruleset})")
++        for entry in derived:
++            node = graph["nodes"][entry["node"]]
++            children = node["children"]
++            handles = anchors["classes"]
++            if (
++                node["op"] != "TupleT"
++                or len(children) != 1
++                or node["eclass"] != entry["native_class"]
++                or graph["nodes"][children[0]]["eclass"] != entry["child_class"]
++                or handles[entry["child_class"]]["lookup"] != entry["child_lookup"]
++                or handles[entry["child_class"]]["sort"] != "TypeList"
++                or handles[entry["native_class"]] != entry
++            ):
++                raise CaptureError("derived TupleT observation differs from its grounded native identity")
++            derived_commands.extend(
++                [
++                    f"(function {entry['table']} () Type :no-merge)",
++                    f"(rule ((= {child_variable} {entry['child_lookup']}) "
++                    f"(= {value_variable} (TupleT {child_variable}))) "
++                    f"((set ({entry['table']}) {value_variable})) :ruleset {ruleset} :internal-include-subsumed)",
++                ]
++            )
++        derived_commands.append(f"(run {ruleset} 1)")
++    derived_program = "\n".join(derived_commands) + "\n" if derived_commands else ""
++    plan["derived_observations"] = derived
++    plan["derived_expected_rows"] = {entry["table"]: 1 for entry in derived}
++    plan["derived_program_sha256"] = hashlib.sha256(derived_program.encode()).hexdigest()
+     selections = tiger_selections(selection_program)
+     check_forms = egglog_forms(checks)
+     if len(selections) != len(roots) or len(check_forms) != len(roots):
+@@ -980,7 +1092,7 @@
+         plan["reason"] = (
+             "native sorts or source input/erased-field grounding is missing; retain every structural constraint"
+         )
+-        return "", checks, plan
++        return derived_program, checks, plan
+     signatures: dict[str, tuple[list[str], str]] = {}
+     for _, _, tokens in forms:
+         tree = _eggcc_tree(tokens)
+@@ -1181,7 +1293,7 @@
+     declarations = [f"(function {name} (i64 i64) {sort} :no-merge)" for sort, name in tables.items()]
+     declarations.extend(f"(ruleset {prefix}depth_{depth})" for depth in sorted(depths))
+     runs = [f"(run {prefix}depth_{depth} 1)" for depth in sorted(depths)]
+-    suffix = "\n" + "\n".join(declarations + rules + runs) + "\n"
++    suffix = derived_program + "\n" + "\n".join(declarations + rules + runs) + "\n"
+     translated = "\n".join(root_checks) + "\n"
+     plan.update(
+         status="existing-row-dag",
+--- a/tests/test_suite_capture_eggcc_churchroad.py
++++ b/tests/test_suite_capture_eggcc_churchroad.py
+@@ -4,6 +4,7 @@
+ import hashlib
+ import json
+ import re
++import struct
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -413,6 +414,202 @@
+     graph["class_data"]["BaseType-other"] = {"type": "BaseType"}
+     with pytest.raises(CaptureError, match="ambiguous native constructor identity"):
+         eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++
++
++@pytest.mark.parametrize(
++    "source_literal,native_literal,grounded",
++    [
++        ("0.00001", "1e-5", True),
++        ("1e0", "1.0", True),
++        ("-0.0", "-0e0", True),
++        ("0.0", "-0.0", False),
++        ("1.0", "1.0000000000000002", False),
++        ("1e309", "inf", False),
++        ("NaN", "NaN", False),
++    ],
++)
++def test_eggcc_source_f64_grounding_uses_finite_bits_not_spelling_or_tolerance(
++    anchorable_eggcc: tuple, source_literal: str, native_literal: str, grounded: bool
++) -> None:
++    graph, trace, _, events = anchorable_eggcc
++    source = (
++        events[0]["payload"]["program"]
++        .replace("(Int i64)", "(Float f64)")
++        .replace("(Int 1)", f"(Float {source_literal})")
++    )
++    for name in ("int1", "int2"):
++        graph["nodes"][name]["op"] = "Float"
++    for name in ("primitive-one", "primitive-two"):
++        graph["class_data"][graph["nodes"][name]["eclass"]]["type"] = "f64"
++    graph["nodes"]["primitive-one"]["op"] = native_literal
++    # An identical untyped/i64 spelling must never be a candidate for f64.
++    graph["nodes"]["integer-alias"] = {"op": source_literal, "children": [], "eclass": "i64-alias"}
++    graph["class_data"]["i64-alias"] = {"type": "i64"}
++    replay, plan = eggcc_source_anchors(graph, trace, source)
++    assert ("fun" not in plan["unresolved_source_bindings"]) == grounded
++    assert source_literal in replay and native_literal not in replay.replace(source_literal, "")
++    if grounded:
++        assert plan["f64_literal_matches"] == [
++            {
++                "source": source_literal,
++                "native": [native_literal],
++                "bits": struct.pack(">d", float(source_literal)).hex(),
++                "sort": "f64",
++                "class": graph["nodes"]["primitive-one"]["eclass"],
++            }
++        ]
++        assert plan["root_classes"] == {"main": "Expr-root"}
++    else:
++        assert plan["f64_literal_matches"] == []
++        assert "f64" in plan["unresolved_source_bindings"]["one"]
++
++
++def test_eggcc_source_f64_ambiguous_native_classes_keep_structural_fallback(anchorable_eggcc: tuple) -> None:
++    graph, trace, _, events = anchorable_eggcc
++    source = events[0]["payload"]["program"].replace("(Int i64)", "(Float f64)").replace("(Int 1)", "(Float 0.00001)")
++    graph["nodes"]["int1"]["op"] = "Float"
++    graph["nodes"]["primitive-one"]["op"] = "1e-5"
++    graph["class_data"]["i64-1"]["type"] = "f64"
++    graph["nodes"]["duplicate-f64"] = {"op": "0.00001", "children": [], "eclass": "f64-other"}
++    graph["class_data"]["f64-other"] = {"type": "f64"}
++    _, plan = eggcc_source_anchors(graph, trace, source)
++    assert plan["f64_literal_matches"] == []
++    assert plan["unresolved_source_bindings"]["one"] == "source f64 bits have no unique retained native class"
++    assert "main" not in plan["root_classes"]
++
++
++@pytest.fixture
++def derived_tuple_eggcc(anchorable_eggcc: tuple) -> tuple:
++    """An erased TupleT created after initialization with a retained TypeList child."""
++    graph, trace, seed, events = anchorable_eggcc
++    graph["nodes"]["type-list"] = {"op": "TNil", "children": [], "eclass": "TypeList-1"}
++    graph["nodes"]["derived-type"] = {"op": "TupleT", "children": ["type-list"], "eclass": "Type-derived"}
++    graph["class_data"].update({"TypeList-1": {"type": "TypeList"}, "Type-derived": {"type": "Type"}})
++    graph["nodes"]["const2"]["children"][1] = "derived-type"
++    new_seed = "(let types (TNil))\n" + seed
++    source = (
++        events[0]["payload"]["program"]
++        .replace(seed, new_seed)
++        .replace(
++            "(datatype Type (Base BaseType))",
++            "(datatype TypeList (TNil))\n(datatype Type (Base BaseType) (TupleT TypeList))",
++        )
++    )
++    source += (
++        "\n(ruleset native-types)\n(rule ((= t (TNil))) ((TupleT t)) :ruleset native-types)\n(run native-types 1)\n"
++    )
++    events[0]["payload"]["program"] = source
++    return graph, trace, new_seed, events
++
++
++def test_eggcc_derived_tuple_observes_only_existing_rows_after_original_schedule(derived_tuple_eggcc: tuple) -> None:
++    graph, trace, seed, events = derived_tuple_eggcc
++    source = events[0]["payload"]["program"]
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, root_checks, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    derived = anchors["derived_observations"]
++    assert len(derived) == 1  # Both actual aliases use the same observed erased field.
++    entry = derived[0]
++    assert entry["native_class"] == "Type-derived" and entry["child_class"] == "TypeList-1"
++    assert anchors["classes"]["TypeList-1"]["kind"] == "initializer"
++    assert plan["status"] == "existing-row-dag" and len(egglog_forms(root_checks)) == 2
++    assert entry["table"] not in replay
++    original = replay
++    for table in anchors["observation_tables"]:
++        original = original.replace(f"(function {table['table']} () {table['sort']} :merge old)\n", "")
++        original = original.replace(f"(set ({table['table']}) {table['binding']})\n", "")
++    assert original == source  # Every original action/rule/schedule is byte-identical.
++    forms = egglog_trees(suffix)
++    rule = next(form for form in forms if form[0] == "rule")
++    assert rule[1] == [
++        ["=", "reproduction_derived_child", [anchors["classes"]["TypeList-1"]["table"]]],
++        ["=", "reproduction_derived_value", ["TupleT", "reproduction_derived_child"]],
++    ]
++    assert rule[2] == [["set", [entry["table"]], "reproduction_derived_value"]]
++    assert ["function", entry["table"], [], "Type", ":no-merge"] in forms
++    assert ":internal-include-subsumed" in rule
++    run = next(i for i, form in enumerate(forms) if form[0] == "run")
++    assert forms[run] == ["run", "reproduction_derived_types", "1"]
++    assert all(form[0] != "run" or i >= run for i, form in enumerate(forms))
++    assert plan["derived_observations"] == derived
++    prefix = "\n".join(complete._eggcc_text(form) for form in forms[: run + 1]) + "\n"
++    assert plan["derived_program_sha256"] == hashlib.sha256(prefix.encode()).hexdigest()
++    session = eggcc_sessions(events)[0]
++    assert session["program"] == source and session["lookup_program"] == suffix
++    assert session["checks"] == root_checks and session["replay_program"] == replay
++
++
++@pytest.mark.parametrize("existing_rows", [[], [("other-list", "other-type")]])
++def test_eggcc_missing_or_wrong_tuple_row_cannot_populate_the_observer(
++    derived_tuple_eggcc: tuple, existing_rows: list[tuple[str, str]]
++) -> None:
++    graph, trace, seed, events = derived_tuple_eggcc
++    replay, anchors = eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, _, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    rule = next(form for form in egglog_trees(suffix) if form[0] == "rule")
++    # Evaluate just the two independently asserted relational body constraints:
++    # there is no constructor action/default able to fill an absent lookup.
++    assert rule[1][-1] == ["=", "reproduction_derived_value", ["TupleT", "reproduction_derived_child"]]
++    child = anchors["derived_observations"][0]["child_class"]
++    matched = [value for key, value in existing_rows if key == child]
++    assert matched == []
++    assert rule[2] == [["set", [anchors["derived_observations"][0]["table"]], "reproduction_derived_value"]]
++    selected = [form for form in egglog_trees(suffix) if form[0] == "rule" and "reproduction_0_s5" in str(form)]
++    assert len(selected) == 2  # Const produces the body; Function subsequently consumes it.
++    assert anchors["derived_observations"][0]["lookup"] in complete._eggcc_text(selected[0][1])
++    assert plan["status"] == "existing-row-dag"  # Runtime check remains required; this is no admission.
++
++
++@pytest.mark.parametrize("change", ["ambiguous", "wrong-sort", "unanchored-child", "other-constructor"])
++def test_eggcc_derived_tuple_limitations_keep_all_structural_constraints(
++    derived_tuple_eggcc: tuple, change: str
++) -> None:
++    graph, trace, seed, events = derived_tuple_eggcc
++    if change == "ambiguous":
++        graph["nodes"]["conflicting-type"] = {"op": "TupleT", "children": ["type-list"], "eclass": "Type-other"}
++        graph["class_data"]["Type-other"] = {"type": "Type"}
++    elif change == "wrong-sort":
++        graph["class_data"]["Type-derived"]["type"] = "Assumption"
++    elif change == "unanchored-child":
++        events[0]["payload"]["program"] = events[0]["payload"]["program"].replace("(let types (TNil))\n", "")
++        seed = seed.replace("(let types (TNil))\n", "")
++    else:
++        graph["nodes"]["derived-type"]["op"] = "OtherType"
++    replay, anchors = eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, unchanged, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    assert not anchors["derived_observations"] and suffix == "" and unchanged == checks
++    assert plan["status"] == "structural-fallback"
++    if change != "other-constructor":
++        assert anchors["unresolved_erased_fields"]["derived-type"]
++
++
++def test_eggcc_derived_tuple_still_runs_when_another_constraint_is_structural(derived_tuple_eggcc: tuple) -> None:
++    graph, trace, seed, events = derived_tuple_eggcc
++    graph["nodes"]["derived-ctx"] = {"op": "Derived", "children": ["derived-ctx"], "eclass": "Assumption-derived"}
++    graph["class_data"]["Assumption-derived"] = {"type": "Assumption"}
++    graph["nodes"]["const2"]["children"][2] = "derived-ctx"
++    replay, anchors = eggcc_source_anchors(graph, trace, events[0]["payload"]["program"])
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    suffix, unchanged, plan = eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
++    assert plan["status"] == "structural-fallback" and unchanged == checks
++    assert "Derived" in checks and "(reproduction_derived_type_0)" in checks
++    assert suffix.endswith("(run reproduction_derived_types 1)\n")
++    assert "reproduction_lookup_value_" not in suffix
++
++
++@pytest.mark.parametrize(
++    "name", ["reproduction_derived_child", "reproduction_derived_value", "reproduction_derived_type_0"]
++)
++def test_eggcc_derived_observer_rejects_source_name_collisions(derived_tuple_eggcc: tuple, name: str) -> None:
++    graph, trace, seed, events = derived_tuple_eggcc
++    source = events[0]["payload"]["program"] + f"\n(let {name} (TNil))\n"
++    replay, anchors = eggcc_source_anchors(graph, trace, source)
++    checks, roots = eggcc_output_checks(graph, trace, ["main"], seed, source_anchors=anchors)
++    with pytest.raises(CaptureError, match="collides with a derived"):
++        eggcc_dag_lookups(replay, graph, trace, checks, roots, anchors)
+ 
+ 
+ def test_eggcc_anchor_retains_ungrounded_derived_cycle(anchorable_eggcc: tuple) -> None:
+--- a/benchmarks/reproduction/eggcc-bitwise-replay.md
++++ b/benchmarks/reproduction/eggcc-bitwise-replay.md
+@@ -96,3 +96,24 @@
+ These gates validate ordinary replay fidelity only. The observational `:no-merge`
+ functions are not yet supported by proof encoding, so this does not establish
+ proof-mode benchmark admission. Full-family reproduction remains in progress.
++
++## Finite literal and derived type grounding
++
++The Max-subarray and Cholesky logging-only diagnostics in
++`benchmarks/local/reproduction/diagnostics/eggcc-failure-phase-0001/` preserve
++the original replay and engine hashes. All schedules finished; Max-subarray
++stalled on its first appended check, and Cholesky after six successful checks.
++The adapter fell back to structural queries because it could not ground a
++derived `TupleT`, and in Cholesky because source `0.00001` was printed as
++`1e-5` in the native graph.
++
++Typed `f64` source literals now match native literals by exact finite binary64
++bits, recording both spellings, the bits and native class. Signed zero stays
++distinct; nonfinite or ambiguous values retain explicit structural fallback.
++For an erased `TupleT` with a grounded source `TypeList`, a separate rule queries
++the existing constructor row after all original schedules and copies only its
++result into a strict observer table. It never constructs a missing type. Missing
++rows leave the observer empty, so dependent checks fail. Other ungrounded shapes
++retain their structural constraints. The emitted rule, handles and hashes are
++included in capture metadata. This extension has transformation tests; actual
++positive/negative engine gates and complete-parent validation remain required.

@@ -1,0 +1,17 @@
+{
+  "scripts/speq_c99_diagnostic.py": "ea570c23d37f74bbe28a17e58809cb97c2121248de301f950a98fe43d37f53c2",
+  "scripts/paper_benchmarks/record_speq.py": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae",
+  "scripts/reproduction_prepare_speq.py": "4d502d6ef3d316730c1339aa369d86bb5ca9ab462aacd7caf1dc24d1603b82d5",
+  "scripts/reproduction_dispatch.py": "1ed8c655068e4ebc02ff1158b3db3fa615404c61353fe46b7addd68078fa02e5",
+  "scripts/dialegg_speq_complete.py": "26af2c897b4b1ab60fea856d6051c9ef313638888ce0684a6f5628f219f67f8e",
+  "scripts/suite_capture_dialegg_speq.py": "726f69e4496c3f312a66f87e56c3bbd930cb41e899224886f2ac4f188c5613d0",
+  "scripts/suite_reproduction.py": "538425d9636acfe07aba0332cd5e905d6351fb2ed350ddd6282fc9a987406190",
+  "scripts/reproduction_preparation.py": "a5eee813a5a38977d69a0c90ffaf524e643969e957e7234c8d1b2804f6af2cc3",
+  "tests/test_speq_c99_diagnostic.py": "61f4312028308451b0f5ede2ce53eee0e3d2284ef56f031e31b0e4b5b6128de4",
+  "tests/test_reproduction_prepare_speq.py": "06a524f6b2f00844a569ea5e0fcc3a8cfcb7dd1b1264192b3cedec07c2515758",
+  "tests/test_dialegg_speq_complete.py": "a30e138f540a6cbd927432f0afbbe33ad32163673aa4d01cf76049d6482c4b2c",
+  "tests/test_suite_capture_dialegg_speq.py": "8676175593540508cc31835fec3285ec62bd29b7ddc5e4f3e592ca7eac8bc817",
+  "tests/test_suite_reproduction.py": "3fd74b44f8b23d53bd6ae4fda0fc8c598f8e549ed381247e5c6ae9fda496c3a0",
+  "tests/test_reproduction_preparation.py": "172666afdb943e564f39c5d1fb7c320899801405e4fe4903431cd3ccfd2a3a82",
+  "benchmarks/reproduction/speq-preparation.md": "c97fbb4dc3436761f5bc393f68b4074780414d9769f7b205f71f390e15f16068"
+}

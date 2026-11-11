@@ -1,0 +1,1964 @@
+--- a/scripts/speq_c99_diagnostic.py
++++ b/scripts/speq_c99_diagnostic.py
+@@ -1,7 +1,8 @@
+-"""Materialize a disabled, source-pinned C99 REV candidate and native analysis gates.
+-
+-No native tools, source capture, settings publication or admission run here. The
+-existing PHI materializer owns the original source/header checks and baseline.
++"""Source-pinned C99 materialization, paired compilation and exact FIR comparison.
++
++The CLI only materializes source. Native callers must run build_plugins below
++an outer process guard. The PHI materializer owns original source/header pins;
++source capture and ordinary admission remain separate operations.
+ """
+ 
+ from __future__ import annotations
+@@ -10,14 +11,19 @@
+ import difflib
+ import hashlib
+ import json
++import os
+ import re
+ from pathlib import Path
++from typing import Any
+ 
+ from scripts import speq_phi_diagnostic as phi
+ from scripts.paper_benchmarks.record_speq import PARSE_IR_SHA256
+ 
+ SUPPORT = Path(__file__).with_name("paper_benchmarks")
+ ENABLE_ENV = "SPEQ_REV_C99_DIAGNOSTIC"
++CONTRACT = "polybench-gemm-address-v1"
++FUNCTION = "polybench_gemm"
++FRONTEND_FLAGS = ("-D_FORTIFY_SOURCE=0", "-DPOLYBENCH_USE_C99_PROTO")
+ 
+ 
+ def candidate_rev(original: str, function: str) -> str:
+@@ -248,6 +254,184 @@
+     return record
+ 
+ 
++def build_plugins(source: Path, llvm_config: Path, output: Path) -> dict[str, Any]:
++    """Build one fresh, pinned PHI/candidate pair; callers own the native guard.
++
++    Both builds consume only this materialization. Its source bytes and the
++    tracked plugin wrapper are checked again after compilation. No arbitrary
++    prebuilt library can stand in for either half of the comparison.
++    """
++    from scripts.paper_benchmarks.record_speq import compile_rev_plugin
++
++    if ENABLE_ENV in os.environ:
++        raise ValueError("C99 must be disabled at plugin preparation entry")
++    output = output.resolve()
++    if output.exists():
++        raise ValueError("paired plugin preparation requires fresh output")
++    materialized = output / "source"
++    materialize(source, materialized, FUNCTION)
++    source_hashes = {
++        str(path.relative_to(materialized)): hashlib.sha256(path.read_bytes()).hexdigest()
++        for path in sorted(materialized.rglob("*"))
++        if path.is_file()
++    }
++    wrapper = SUPPORT / "speq_rev_plugin.cpp"
++    wrapper_hash = hashlib.sha256(wrapper.read_bytes()).hexdigest()
++    opt, baseline, version = compile_rev_plugin(materialized / "phi/patched", llvm_config, output / "phi.so")
++    candidate_opt, candidate, candidate_version = compile_rev_plugin(
++        materialized / "candidate", llvm_config, output / "candidate.so"
++    )
++    if (opt, version) != (candidate_opt, candidate_version) or version != "17.0.6":
++        raise ValueError("paired plugins require the same LLVM 17.0.6 tools")
++    observed = {
++        str(path.relative_to(materialized)): hashlib.sha256(path.read_bytes()).hexdigest()
++        for path in sorted(materialized.rglob("*"))
++        if path.is_file()
++    }
++    if observed != source_hashes or hashlib.sha256(wrapper.read_bytes()).hexdigest() != wrapper_hash:
++        raise ValueError("paired plugin source changed during compilation")
++    receipt = materialized / "diagnostic.json"
++    result = {
++        "contract": CONTRACT,
++        "selected_function": FUNCTION,
++        "opt": str(opt),
++        "baseline_plugin": str(baseline),
++        "candidate_plugin": str(candidate),
++        "llvm_version": version,
++        "materialization": {"path": str(receipt), "sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()},
++        "source_files": source_hashes,
++        "wrapper_sha256": wrapper_hash,
++        "artifacts": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (baseline, candidate)},
++    }
++    (output / "plugins.json").write_text(json.dumps(result, indent=2) + "\n")
++    return result
++
++
++def compare_selected_region(baseline: str, candidate: str) -> dict[str, Any]:
++    """Derive state names from the PHI-only run and allow only the C99 edits."""
++    folds = re.findall(r"^.* = fold .*?$", baseline, re.MULTILINE)
++    shapes = [
++        r"\((%C\.\d+)\) = fold \(ptr (%C)\) %for.body8 Range\(i32 0, i32 %nj\)",
++        r"\((%C\.\d+)\) = fold \(ptr (%C)\) %for.body16 Range\(i32 0, i32 %nj\)",
++        r"\((%C\.\d+)\) = fold \(ptr (%C\.\d+)\) %for.body13 Range\(i32 0, i32 %nk\)",
++        r"\((%C\.\d+)\) = fold \(ptr (%C)\) %for.body Range\(i32 0, i32 %ni\)",
++    ]
++    if len(folds) != len(shapes):
++        raise ValueError("fresh PHI baseline does not retain the four GEMM folds")
++    matches = [re.fullmatch(shape, fold) for shape, fold in zip(shapes, folds, strict=True)]
++    if any(match is None for match in matches):
++        raise ValueError("fresh PHI baseline GEMM order, bounds, or state shape differs")
++    matched = [match for match in matches if match is not None]
++    first, second, inner, outer = [match[1] for match in matched]
++    alias = matched[2][2]
++    if len({first, second, inner, outer, alias}) != 5:
++        raise ValueError("fresh PHI baseline aliases distinct memory definitions")
++    expected_edges = [
++        f"  {inner} = if ptr %cmp71 then {second} else %C",
++        f"  {alias} = if ptr %cmp71 then {first} else %C",
++        f"  {outer} = if ptr %cmp125 then {inner} else {alias}",
++    ]
++    if re.findall(r"^.* = if ptr .*?$", baseline, re.MULTILINE) != expected_edges:
++        raise ValueError("fresh PHI baseline memory-state edges differ")
++    for store in (
++        f"  {first} =  store double %mul, ptr %arrayidx10, align 8\n",
++        f"  {second} =  store double %10, ptr %arrayidx30, align 8\n",
++    ):
++        if baseline.count(store) != 1:
++            raise ValueError("fresh PHI baseline fold output is not its original store")
++    if baseline.count("%for.body13 = λ ptr %C, i32 %k.06 .\n" + expected_edges[0] + "\n") != 1:
++        raise ValueError("inner memory edge moved outside its loop")
++    outer_prefix = (
++        "%for.body = λ ptr %C, i32 %i.09 .\n  %cmp71 = icmp sgt i32 %nj, 0\n"
++        + expected_edges[1]
++        + "\n  %cmp125 = icmp sgt i32 %nk, 0\n"
++        + expected_edges[2]
++        + "\n"
++    )
++    if baseline.count(outer_prefix) != 1:
++        raise ValueError("outer memory edges or guards changed")
++    expected = baseline
++    for old, new, count in [
++        ("λ ptr %C", "λ ptr 1 double %C", 4),
++        ("fold (ptr ", "fold (ptr 1 double ", 4),
++        ("if ptr ", "if ptr 1 double ", 3),
++    ]:
++        if expected.count(old) != count:
++            raise ValueError("typed-memory boundary changed: " + old)
++        expected = expected.replace(old, new)
++    for header, closure in [
++        ("%for.body8 = λ ptr 1 double %C, i32 %j.02 .\n", "  %0 = zext i32 %nj to i64\n"),
++        ("%for.body16 = λ ptr 1 double %C, i32 %j.14 .\n", "  %1 = zext i32 %nk to i64\n  %0 = zext i32 %nj to i64\n"),
++    ]:
++        if expected.count(header) != 1:
++            raise ValueError("dominating-closure boundary changed")
++        expected = expected.replace(header, header + closure)
++    for index, (destination, intermediate, root, left, right) in enumerate(
++        [
++            ("arrayidx10", "arrayidx", "C", "2", "idxprom9"),
++            ("arrayidx20", "arrayidx18", "A", "4", "idxprom19"),
++            ("arrayidx25", "arrayidx23", "B", "6", "idxprom24"),
++            ("arrayidx30", "arrayidx28", "C", "8", "idxprom24"),
++        ]
++    ):
++        old = f"  %{destination} = getelementptr inbounds double, ptr %{intermediate}, i64 %{right}\n"
++        offset = f"%reproduction.c99.offset.{index}"
++        new = (
++            f"  {offset} = add nsw i64 %{left}, %{right}\n"
++            f"  %{destination} = getelementptr inbounds double, ptr %{root}, i64 {offset}\n"
++        )
++        if expected.count(old) != 1:
++            raise ValueError("chained-GEP boundary changed: " + destination)
++        expected = expected.replace(old, new)
++    if candidate != expected:
++        raise ValueError("candidate FIR differs from the exact edits to its fresh PHI-only baseline")
++    return {
++        "folds": folds,
++        "memory_state_edges": expected_edges,
++        "memory_alias": alias,
++        "baseline_sha256": hashlib.sha256(baseline.encode()).hexdigest(),
++        "candidate_sha256": hashlib.sha256(candidate.encode()).hexdigest(),
++        "variable_renaming": False,
++    }
++
++
++def compare_frontends(
++    baseline: list[str], candidate: list[str], baseline_directory: Path, candidate_directory: Path
++) -> dict[str, Any]:
++    """Preserve all unselected regions and compare identical LLVM input/output IR."""
++    if len(baseline) != 3 or len(candidate) != 3:
++        raise ValueError("fresh frontends must retain all three ordered application regions")
++    if baseline[:2] != candidate[:2]:
++        raise ValueError("an unselected region changed; no temporary-name normalization is allowed")
++    directories = [Path(baseline_directory), Path(candidate_directory)]
++    inputs = [(directory / "input.ll").read_bytes() for directory in directories]
++    if inputs[0] != inputs[1]:
++        raise ValueError("paired original-C clang inputs differ")
++    analyses = []
++    bodies = []
++    for directory in directories:
++        data = (directory / "analysis.ll").read_bytes()
++        prefix = f"; ModuleID = '{directory / 'input.ll'}'\n".encode()
++        if not data.startswith(prefix):
++            raise ValueError("analysis module comment has an unexpected origin")
++        analyses.append(hashlib.sha256(data).hexdigest())
++        bodies.append(data[len(prefix) :])
++    if bodies[0] != bodies[1]:
++        raise ValueError("paired pipelines changed LLVM IR beyond their exact ModuleID path comment")
++    selected = compare_selected_region(baseline[2], candidate[2])
++    return {
++        "status": "exact-scoped-repair",
++        "ordered_regions": 3,
++        "unselected_regions_byte_identical": [0, 1],
++        "selected": selected,
++        "clang_input_sha256": hashlib.sha256(inputs[0]).hexdigest(),
++        "analysis_sha256": analyses,
++        "analysis_body_sha256": hashlib.sha256(bodies[0]).hexdigest(),
++        "only_ignored_llvm_bytes": "exact first ModuleID comment naming each retained input.ll; no FIR normalization",
++        "no_output_substitution": True,
++    }
++
++
+ def main() -> None:
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--source", type=Path, required=True)
+--- a/scripts/paper_benchmarks/record_speq.py
++++ b/scripts/paper_benchmarks/record_speq.py
+@@ -9,6 +9,7 @@
+ import importlib
+ import importlib.metadata
+ import json
++import os
+ import re
+ import shlex
+ import subprocess
+@@ -18,6 +19,10 @@
+ from pathlib import Path
+ from types import ModuleType
+ from typing import Any, cast
++
++# Direct recorder execution must resolve the tracked source-repair modules.
++if __package__ in (None, ""):
++    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+ 
+ SPEQ_RECORD = "10963236"
+ SPEQ_ARCHIVE_MD5 = "813c94e4c12a3466909849f38b6ac1fe"
+@@ -129,11 +134,23 @@
+         action="store_true",
+         help="Opt in to the recorded edge-aware REV PHI repair; requires a fresh complete-mode plugin build",
+     )
++    parser.add_argument(
++        "--c99-frontend-repair",
++        choices=("polybench-gemm-address-v1",),
++        help="Scoped original-C PolyBench GEMM address repair; requires PHI and fresh paired plugins",
++    )
+     args = parser.parse_args(argv)
+     if args.frontend_flag and not args.complete:
+         parser.error("--frontend-flag requires --complete")
+     if args.repair_phi_polarity and (not args.complete or args.rev_plugin is not None):
+         parser.error("--repair-phi-polarity requires --complete and cannot use --rev-plugin")
++    if args.c99_frontend_repair and (
++        not args.complete
++        or not args.repair_phi_polarity
++        or args.rev_plugin is not None
++        or args.benchmark != ["polybench_gemm"]
++    ):
++        parser.error("C99 repair requires complete polybench_gemm, PHI repair, and no --rev-plugin")
+     return args
+ 
+ 
+@@ -226,7 +243,16 @@
+         repair = output.parent / "phi-repair"
+         materialize(lleq, repair)
+         lleq = repair / "patched"
+-        rev_pass = lleq / "llvm/lib/Analysis/REVPass.cpp"
++    return compile_rev_plugin(lleq, llvm_config, output)
++
++
++def compile_rev_plugin(lleq: Path, llvm_config: Path, output: Path) -> tuple[Path, Path, str]:
++    """Compile an already verified/materialized REV source with the original wrapper.
++
++    Native callers run this entire operation below the outer process guard.
++    Source pinning belongs to build_rev_plugin or the paired C99 materializer.
++    """
++    rev_pass = lleq / "llvm/lib/Analysis/REVPass.cpp"
+     llvm_bindir = Path(command_output((str(llvm_config), "--bindir")))
+     clangxx = llvm_bindir / "clang++"
+     opt = llvm_bindir / "opt"
+@@ -268,6 +294,8 @@
+ 
+ def reference_fir(opt: Path, plugin: Path, analysis: Path, name: str) -> str:
+     """Run the paper's REV analysis and verify one reference-kernel FIR snapshot."""
++    if "SPEQ_REV_C99_DIAGNOSTIC" in os.environ:
++        raise ValueError("C99 must be disabled for every reference analysis")
+     read_verified(analysis, REFERENCE_ANALYSIS_SHA256[name])
+     completed = subprocess.run(
+         (
+@@ -302,10 +330,18 @@
+     *,
+     complete: bool = False,
+     frontend_flags: Sequence[str] = (),
++    c99_frontend_repair: bool = False,
+ ) -> str | list[str]:
+     """Regenerate original C; complete mode returns all ordered regions, including setup."""
+     if frontend_flags and not complete:
+         raise ValueError("frontend flags require complete original-C recording")
++    if "SPEQ_REV_C99_DIAGNOSTIC" in os.environ:
++        raise ValueError("C99 must be disabled in the inherited frontend environment")
++    if c99_frontend_repair:
++        from scripts.speq_c99_diagnostic import FRONTEND_FLAGS, FUNCTION
++
++        if not complete or name != FUNCTION or tuple(frontend_flags) != FRONTEND_FLAGS:
++            raise ValueError("C99 repair requires the pinned complete GEMM frontend configuration")
+     source = artifact / f"benchmarks/{name}.c"
+     expected = (COMPLETE_APPLICATION_C_SHA256 if complete else APPLICATION_C_SHA256)[name]
+     read_verified(source, expected)
+@@ -350,11 +386,15 @@
+     for index, command in enumerate(commands):
+         stdout_path = evidence / f"frontend-{index}.stdout.log"
+         stderr_path = evidence / f"frontend-{index}.stderr.log"
++        environment = None
++        if c99_frontend_repair and index == 1:
++            environment = {**os.environ, "SPEQ_REV_C99_DIAGNOSTIC": "1"}
+         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+-            result = subprocess.run(command, stdout=stdout, stderr=stderr, check=False)
++            result = subprocess.run(command, stdout=stdout, stderr=stderr, check=False, env=environment)
+         manifest["commands"].append(
+             {
+                 "command": command,
++                "c99_enabled": environment is not None,
+                 "returncode": result.returncode,
+                 "stdout": str(stdout_path),
+                 "stderr": str(stderr_path),
+@@ -642,6 +682,20 @@
+     name = benchmarks[0]
+     frontend_flags = getattr(args, "frontend_flag", [])
+     repair_phi = bool(getattr(args, "repair_phi_polarity", False))
++    c99_mode = getattr(args, "c99_frontend_repair", None)
++    if "SPEQ_REV_C99_DIAGNOSTIC" in os.environ:
++        raise ValueError("C99 must be disabled at recorder entry and for every reference")
++    if c99_mode is not None:
++        from scripts import speq_c99_diagnostic as c99
++
++        if (
++            c99_mode != c99.CONTRACT
++            or name != c99.FUNCTION
++            or not repair_phi
++            or args.rev_plugin is not None
++            or tuple(frontend_flags) != c99.FRONTEND_FLAGS
++        ):
++            raise ValueError("C99 repair requires the pinned complete GEMM configuration, PHI, and fresh plugins")
+     if repair_phi and args.rev_plugin is not None:
+         raise ValueError("PHI polarity repair cannot use a supplied prebuilt REV plugin")
+     if name not in COMPLETE_APPLICATION_C_SHA256:
+@@ -658,6 +712,7 @@
+         "frontend_revision": LLEQ_COMMIT,
+         "frontend_flags": list(frontend_flags),
+         "phi_polarity_repair": repair_phi,
++        "c99_frontend_repair": c99_mode,
+         "parse_ir_sha256": PARSE_IR_SHA256,
+         "driver_sha256": RUN_BENCHMARK_SHA256,
+         "egglog_python": EGGLOG_PYTHON_VERSION,
+@@ -668,7 +723,11 @@
+     egraph = None
+     try:
+         lleq = args.lleq.resolve()
+-        if args.rev_plugin is None:
++        if c99_mode:
++            pair = c99.build_plugins(lleq, args.llvm_config.resolve(), evidence / "c99-pair")
++            opt, plugin, llvm_version = Path(pair["opt"]), Path(pair["candidate_plugin"]), pair["llvm_version"]
++            manifest["c99_pair"] = pair
++        elif args.rev_plugin is None:
+             opt, plugin, llvm_version = build_rev_plugin(
+                 lleq, args.llvm_config.resolve(), evidence / "rev-plugin.so", repair_phi_polarity=repair_phi
+             )
+@@ -686,10 +745,32 @@
+             plugin = args.rev_plugin.resolve()
+             llvm_version = command_output((str(args.llvm_config.resolve()), "--version"))
+         manifest.update(llvm_version=llvm_version, rev_plugin_sha256=hashlib.sha256(plugin.read_bytes()).hexdigest())
++        if c99_mode:
++            baseline = application_fir(
++                artifact,
++                opt,
++                Path(pair["baseline_plugin"]),
++                name,
++                evidence / "baseline-frontend",
++                complete=True,
++                frontend_flags=frontend_flags,
++            )
+         firs = application_fir(
+-            artifact, opt, plugin, name, evidence / "frontend", complete=True, frontend_flags=frontend_flags
++            artifact,
++            opt,
++            plugin,
++            name,
++            evidence / "frontend",
++            complete=True,
++            frontend_flags=frontend_flags,
++            **({"c99_frontend_repair": True} if c99_mode else {}),
+         )
+         assert isinstance(firs, list)
++        if c99_mode:
++            assert isinstance(baseline, list)
++            manifest["fresh_frontend_comparison"] = c99.compare_frontends(
++                baseline, firs, evidence / "baseline-frontend", evidence / "frontend"
++            )
+         references = {
+             key: reference_fir(opt, plugin, artifact / f"analysis/{key}.ll", key) for key in REFERENCE_ANALYSIS_SHA256
+         }
+@@ -700,6 +781,8 @@
+         egraph = parse_ir.egraph
+         add_reference_rules(parse_ir, egraph, references)
+         contexts = record_complete_regions(parse_ir, egraph, firs, name, evidence, manifest)
++        if [row["index"] for row in manifest["regions"]] != list(range(len(firs))):
++            raise ValueError("an ordered native region was omitted")
+         source = normalize_recording(egraph.as_egglog_string, contexts) if contexts else egraph.as_egglog_string
+         write_or_check(args.output, source, False)
+         manifest["standalone_sha256"] = hashlib.sha256(args.output.read_bytes()).hexdigest()
+--- a/scripts/reproduction_prepare_speq.py
++++ b/scripts/reproduction_prepare_speq.py
+@@ -2,7 +2,8 @@
+ 
+ Run as ``python -m scripts.reproduction_prepare_speq``. Acquisition and native
+ commands run only when explicitly invoked, under the ordinary guard and CLI lock.
+-This never runs original-C benchmarks, repairs REV semantics, or executes a device.
++An explicit scoped C99 mode additionally gates fresh paired source repairs;
++complete optimization and device execution remain outside preparation.
+ """
+ 
+ from __future__ import annotations
+@@ -18,9 +19,11 @@
+ import tarfile
+ import urllib.request
+ from dataclasses import asdict
++from functools import partial
+ from pathlib import Path, PurePosixPath
+ from typing import Any
+ 
++from benchmarking.memory_guard import GROUP_LIMIT_BYTES
+ from benchmarking.pilot import PilotProcessResult, run_bounded_command
+ from benchmarking.targets import sha256_file
+ from scripts.paper_benchmarks import record_speq
+@@ -151,8 +154,11 @@
+     lleq_source: Path | None = None,
+     acquire_archive: bool = False,
+     timeout_sec: float = 1800,
++    c99_frontend_repair: str | None = None,
+ ) -> dict[str, Any]:
+     """Prepare immutable dependencies and publish settings after source/tool/reference gates."""
++    if c99_frontend_repair not in (None, "polybench-gemm-address-v1"):
++        raise ValueError("unknown C99 frontend repair scope")
+     output, engine, llvm_config = output.resolve(), engine.resolve(), llvm_config.resolve()
+     durable = (ROOT / "benchmarks/local/reproduction").resolve()
+     if not output.is_relative_to(durable) or output.exists():
+@@ -191,7 +197,7 @@
+         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+     }
+ 
+-    def step(name: str, command: list[str]) -> PilotProcessResult:
++    def step(name: str, command: list[str], *, memory_limit_bytes: int = GROUP_LIMIT_BYTES) -> PilotProcessResult:
+         """Retain intent and guarded outcome; no dependent step runs after any failure."""
+         argv = ["env", *(f"{key}={value}" for key, value in environment.items()), *command]
+         row: dict[str, Any] = {"name": name, "command": argv, "cwd": str(ROOT), "status": "running"}
+@@ -203,6 +209,7 @@
+                 ROOT,
+                 evidence / f"{len(record['steps']):03}-{name}",
+                 timeout_sec=timeout_sec,
++                memory_limit_bytes=memory_limit_bytes,
+                 require_guard=True,
+                 disk_reserve_bytes=10 * 1024**3,
+                 allow_warning_pressure=True,
+@@ -464,6 +471,16 @@
+             )
+         for name, digest in record_speq.REFERENCE_FIR_SHA256.items():
+             record_speq.read_verified(references / f"{name}.fir", digest)
++        c99_paths: list[str] = []
++        if c99_frontend_repair:
++            from scripts.speq_c99_gates import run_gates
++
++            c99_directory = output / "c99-gates"
++            gates = run_gates(lleq, artifact, llvm_config, c99_directory, partial(step, memory_limit_bytes=5 * 1024**3))
++            if gates.get("status") != "success" or gates.get("contract") != c99_frontend_repair:
++                raise ValueError("fresh C99 gates did not complete successfully")
++            record["c99_gates"] = gates
++            c99_paths = [str(c99_directory), *gates["artifacts"]]
+         linked: dict[str, str] = {}
+         inspector = "otool" if platform.system() == "Darwin" else "ldd"
+         for name, binary in [("plugin", plugin), ("clang", bindir / "clang"), ("opt", bindir / "opt")]:
+@@ -488,6 +505,7 @@
+                 "timeout_sec": 300,
+                 "frontend_flags": ["-D_FORTIFY_SOURCE=0", "-DPOLYBENCH_USE_C99_PROTO"],
+                 "phi_polarity_repair": True,
++                **({"c99_frontend_repair": c99_frontend_repair} if c99_frontend_repair else {}),
+                 "identity_paths": [
+                     str(sources),
+                     str(evidence),
+@@ -498,6 +516,7 @@
+                     str(Path(__file__).resolve()),
+                     str(ROOT / "scripts/paper_benchmarks/record_speq.py"),
+                     str(ROOT / "scripts/paper_benchmarks/speq_rev_plugin.cpp"),
++                    *c99_paths,
+                     *record["native_tools"],
+                     *linked,
+                 ],
+@@ -529,6 +548,7 @@
+     parser.add_argument("--lleq-source", type=Path)
+     parser.add_argument("--acquire-archive", action="store_true", help="Stream and verify the full 6.26-GB artifact")
+     parser.add_argument("--timeout-sec", type=float, default=1800)
++    parser.add_argument("--c99-frontend-repair", choices=("polybench-gemm-address-v1",))
+     args = parser.parse_args()
+     with exclusive_job(ROOT / "benchmarks/local/reproduction/stages/.heavy-job.lock"):
+         result = prepare_speq(
+@@ -540,6 +560,7 @@
+             lleq_source=args.lleq_source,
+             acquire_archive=args.acquire_archive,
+             timeout_sec=args.timeout_sec,
++            c99_frontend_repair=args.c99_frontend_repair,
+         )
+     print(json.dumps({key: result.get(key) for key in ("status", "reason", "settings")}, indent=2))
+     return 0 if result["status"] == "success" else 1
+--- a/scripts/reproduction_dispatch.py
++++ b/scripts/reproduction_dispatch.py
+@@ -47,6 +47,7 @@
+             timeout_sec=timeout,
+             speq_frontend_flag=settings.get("frontend_flags", []),
+             speq_phi_polarity_repair=settings.get("phi_polarity_repair", False),
++            speq_c99_frontend_repair=settings.get("c99_frontend_repair"),
+         )
+         code = complete_capture(args)
+         manifest = json.loads((output / "manifest.json").read_text())
+--- a/scripts/dialegg_speq_complete.py
++++ b/scripts/dialegg_speq_complete.py
+@@ -504,6 +504,12 @@
+     report: dict[str, Any] = {"cases": {}}
+     frontend_flags = list(getattr(args, "speq_frontend_flag", []))
+     repair_phi = bool(getattr(args, "speq_phi_polarity_repair", False))
++    c99_mode = getattr(args, "speq_c99_frontend_repair", None)
++    if c99_mode is not None:
++        from scripts.speq_c99_diagnostic import CONTRACT, FRONTEND_FLAGS
++
++        if c99_mode != CONTRACT or not repair_phi or tuple(frontend_flags) != FRONTEND_FLAGS:
++            raise ValueError("C99 mode requires the named GEMM repair, PHI, and pinned frontend flags")
+     for case_id in cases:
+         row: dict[str, Any] = {
+             "status": "blocked",
+@@ -514,6 +520,7 @@
+             "proof_validation": "not-run",
+             "frontend_flags": frontend_flags,
+             "phi_polarity_repair": repair_phi,
++            "c99_frontend_repair": c99_mode if case_id == "speq-polybench_gemm" else None,
+         }
+         report["cases"][case_id] = row
+         if case_id in SPEQ_MISSING:
+@@ -542,12 +549,14 @@
+             "--output",
+             str(replay),
+         ]
++        if c99_mode and case_id == "speq-polybench_gemm":
++            command.extend(["--c99-frontend-repair", c99_mode])
+         if repair_phi:
+             command.append("--repair-phi-polarity")
+             if args.speq_rev_plugin:
+                 row["omitted_prebuilt_rev_plugin"] = {
+                     "path": str(args.speq_rev_plugin.resolve()),
+-                    "reason": "PHI repair requires a fresh plugin from the recorded patched source",
++                    "reason": "Source repair requires fresh plugins from the recorded patched source",
+                 }
+         elif args.speq_rev_plugin:
+             command.extend(["--rev-plugin", str(args.speq_rev_plugin.resolve())])
+--- a/scripts/suite_capture_dialegg_speq.py
++++ b/scripts/suite_capture_dialegg_speq.py
+@@ -755,6 +755,11 @@
+         action="store_true",
+         help="Opt in to the recorded REV PHI repair and rebuild its plugin in complete mode",
+     )
++    parser.add_argument(
++        "--speq-c99-frontend-repair",
++        choices=("polybench-gemm-address-v1",),
++        help="Opt in to scoped original-C GEMM repair; requires PHI and pinned frontend flags",
++    )
+     parser.add_argument("--speq-lleq", type=Path, default=STORAGE / "sources/speq/lleq")
+     parser.add_argument("--speq-rev-plugin", type=Path, help="Optional already-built pinned REV analysis plugin")
+     parser.add_argument(
+@@ -784,7 +789,14 @@
+         if args.family in ("all", "speq") and args.speq_artifact is None:
+             parser.error("complete SpEQ requires --speq-artifact; preparation/downloads are a separate stage")
+         return complete_capture(args)
+-    if args.case or args.output or args.native_egglog or args.speq_frontend_flag or args.speq_phi_polarity_repair:
++    if (
++        args.case
++        or args.output
++        or args.native_egglog
++        or args.speq_frontend_flag
++        or args.speq_phi_polarity_repair
++        or args.speq_c99_frontend_repair
++    ):
+         parser.error("case/output/backend/frontend flags and PHI repair require --complete")
+     if args.artifact_byte_limit is not None and args.artifact_byte_limit <= 0:
+         parser.error("--artifact-byte-limit must be positive")
+--- a/scripts/suite_reproduction.py
++++ b/scripts/suite_reproduction.py
+@@ -173,6 +173,18 @@
+                 "scripts/speq_phi_diagnostic.py",
+                 "scripts/paper_benchmarks/speq_phi_harness.cpp",
+                 "scripts/paper_benchmarks/speq_phi_fixtures.ll",
++            )
++        )
++    if case["family"] == "speq" and settings.get("c99_frontend_repair"):
++        paths.extend(
++            ROOT / name
++            for name in (
++                "scripts/speq_c99_diagnostic.py",
++                "scripts/speq_c99_gates.py",
++                "scripts/paper_benchmarks/speq_c99_fir.inc",
++                "scripts/paper_benchmarks/speq_c99_harness.cpp",
++                "scripts/paper_benchmarks/speq_c99_fixture.ll",
++                "scripts/paper_benchmarks/speq_rev_plugin.cpp",
+             )
+         )
+     if hashes is None:
+@@ -382,6 +394,20 @@
+                         for path in sorted((ROOT / "benchmarks/reproduction/fixtures/misaal-parameter").iterdir())
+                         if path.is_file()
+                     )
++                if family == "speq":
++                    sources.extend(
++                        [
++                            "scripts/speq_phi_diagnostic.py",
++                            "scripts/speq_c99_diagnostic.py",
++                            "scripts/speq_c99_gates.py",
++                            "scripts/paper_benchmarks/speq_phi_harness.cpp",
++                            "scripts/paper_benchmarks/speq_phi_fixtures.ll",
++                            "scripts/paper_benchmarks/speq_c99_fir.inc",
++                            "scripts/paper_benchmarks/speq_c99_harness.cpp",
++                            "scripts/paper_benchmarks/speq_c99_fixture.ll",
++                            "scripts/paper_benchmarks/speq_rev_plugin.cpp",
++                        ]
++                    )
+                 if family == "eggcc":
+                     sources.append("benchmarks/reproduction/fixtures/eggcc-core-row-order.patch")
+                 preparation_identity = {
+--- a/scripts/reproduction_preparation.py
++++ b/scripts/reproduction_preparation.py
+@@ -257,6 +257,7 @@
+                 engine,
+                 llvm_config=Path("/opt/homebrew/opt/llvm@17/bin/llvm-config"),
+                 acquire_archive=True,
++                c99_frontend_repair="polybench-gemm-address-v1",
+             )
+         elif family == "hardboiled":
+             from scripts.reproduction_prepare_hardboiled import LLVM, prepare
+--- a/tests/test_speq_c99_diagnostic.py
++++ b/tests/test_speq_c99_diagnostic.py
+@@ -166,3 +166,89 @@
+     assert "G->getSourceElementType()->isDoubleTy()" in fragment
+     assert "OS << *I" in fragment  # Keep original external cast bytes, do not substitute the source variable.
+     assert "return false; // Preserve the actual cast" in fragment
++
++
++@pytest.mark.parametrize("fault", [None, "source-change", "llvm-version", "ambient-enable"])
++def test_fresh_plugin_pair_binds_source_bytes_and_tools(
++    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None
++) -> None:
++    from scripts.paper_benchmarks import record_speq
++
++    calls = []
++
++    def compile_pair(checkout: Path, llvm: Path, output: Path) -> tuple[Path, Path, str]:
++        calls.append(checkout)
++        output.write_text("mock native plugin from " + str(checkout))
++        if fault == "source-change":
++            (checkout / "llvm/include/llvm/Analysis/REVPass.h").write_text("changed during build")
++        return llvm.parent / "opt", output, "18.0" if fault == "llvm-version" else "17.0.6"
++
++    monkeypatch.setattr(record_speq, "compile_rev_plugin", compile_pair)
++    if fault == "ambient-enable":
++        monkeypatch.setenv(diagnostic.ENABLE_ENV, "1")
++    output = tmp_path / "pair"
++    if fault:
++        with pytest.raises(ValueError):
++            diagnostic.build_plugins(source, tmp_path / "llvm-config", output)
++        assert not (output / "plugins.json").exists()
++        if fault == "ambient-enable":
++            assert not calls and not output.exists()
++        return
++    result = diagnostic.build_plugins(source, tmp_path / "llvm-config", output)
++    assert calls == [output / "source/phi/patched", output / "source/candidate"]
++    assert result["contract"] == diagnostic.CONTRACT
++    assert result["selected_function"] == "polybench_gemm"
++    assert len(result["artifacts"]) == 2
++    for path, digest in result["artifacts"].items():
++        assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
++    assert json.loads((output / "plugins.json").read_text()) == result
++
++
++def test_fresh_comparator_derives_state_names_but_never_renames_candidate() -> None:
++    import re
++
++    fixture = Path(__file__).parent / "fixtures/speq-c99-comparison"
++    baseline, candidate = [(fixture / name).read_text() for name in ("baseline.fir", "candidate.fir")]
++    assert diagnostic.compare_selected_region(baseline, candidate)["memory_alias"] == "%C.8"
++    renumbered = [re.sub(r"%C\.(\d+)\b", lambda m: "%C." + str(int(m[1]) + 20), text) for text in (baseline, candidate)]
++    assert diagnostic.compare_selected_region(*renumbered)["memory_alias"] == "%C.28"
++    faults = [
++        (baseline, candidate.replace("%C.8", "%C.28")),
++        (baseline.replace("then %C.2 else %C", "then %C else %C.2"), candidate),
++        (baseline.replace("Range(i32 0, i32 %nk)", "Range(i32 0, i32 %nj)"), candidate),
++        (baseline.replace("store double %mul", "store double %10"), candidate),
++        (baseline, candidate.replace("%0 = zext i32 %nj", "%0 = zext i32 %nk")),
++        (baseline, candidate.replace("i64 %reproduction.c99.offset.0", "i64 %reproduction.c99.offset.1")),
++        (baseline, candidate + "\n"),
++    ]
++    for before, after in faults:
++        with pytest.raises(ValueError):
++            diagnostic.compare_selected_region(before, after)
++
++
++@pytest.mark.parametrize("fault", [None, "unselected", "count", "input", "analysis", "moduleid"])
++def test_pair_comparison_keeps_every_region_and_actual_llvm(tmp_path: Path, fault: str | None) -> None:
++    fixture = Path(__file__).parent / "fixtures/speq-c99-comparison"
++    baseline = ["\n", (fixture / "unselected.fir").read_text(), (fixture / "baseline.fir").read_text()]
++    candidate = [*baseline[:2], (fixture / "candidate.fir").read_text()]
++    directories = [tmp_path / "baseline", tmp_path / "candidate"]
++    for directory in directories:
++        directory.mkdir()
++        (directory / "input.ll").write_text("exact original clang output")
++        (directory / "analysis.ll").write_text(f"; ModuleID = '{directory / 'input.ll'}'\nexact unchanged LLVM\n")
++    if fault == "unselected":
++        candidate[1] += "changed unsupported init_array"
++    elif fault == "count":
++        candidate.pop(0)
++    elif fault == "moduleid":
++        (directories[1] / "analysis.ll").write_text("; ModuleID = 'other'\nexact unchanged LLVM\n")
++    elif fault in ("input", "analysis"):
++        with (directories[1] / (fault + ".ll")).open("a") as handle:
++            handle.write("changed IR")
++    if fault:
++        with pytest.raises(ValueError):
++            diagnostic.compare_frontends(baseline, candidate, *directories)
++    else:
++        result = diagnostic.compare_frontends(baseline, candidate, *directories)
++        assert result["ordered_regions"] == 3 and result["unselected_regions_byte_identical"] == [0, 1]
++        assert result["no_output_substitution"] and result["selected"]["variable_renaming"] is False
+--- a/tests/test_reproduction_prepare_speq.py
++++ b/tests/test_reproduction_prepare_speq.py
+@@ -10,7 +10,7 @@
+ import tarfile
+ from pathlib import Path
+ from types import ModuleType
+-from typing import Any
++from typing import Any, Literal
+ 
+ import pytest
+ 
+@@ -504,3 +504,87 @@
+     assert result["status"] == "blocked" and "MemorySSA.h" in result["reason"]
+     assert not any(row["name"] == "rev-build" for row in launches)
+     assert not (arguments["output"] / "settings.json").exists()
++
++
++@pytest.mark.parametrize("fault", [None, "failure", "memory-limit", "resource-stopped", "timed-out"])
++def test_c99_preparation_publishes_only_after_guarded_fresh_gates(
++    pipeline: tuple,
++    monkeypatch: pytest.MonkeyPatch,
++    fault: Literal["failure", "memory-limit", "resource-stopped", "timed-out"] | None,
++) -> None:
++    arguments, state, launches = pipeline
++    gate_module = ModuleType("scripts.speq_c99_gates")
++
++    def gates(source: Path, artifact: Path, llvm: Path, output: Path, step: Any) -> dict:
++        assert source == arguments["output"] / "sources/lleq"
++        assert artifact == arguments["output"] / "sources/artifact"
++        step("c99-probe", ["mock-native-only"])
++        if fault == "failure":
++            raise ValueError("mock invalid fixture/comparison")
++        output.mkdir()
++        evidence = output / "result.json"
++        evidence.write_text("mock fresh source/tool gates")
++        return {
++            "status": "success",
++            "contract": "polybench-gemm-address-v1",
++            "artifacts": {str(evidence): preparation.sha256_file(evidence)},
++        }
++
++    gate_module.run_gates = gates  # type: ignore[attr-defined]
++    monkeypatch.setitem(sys.modules, "scripts.speq_c99_gates", gate_module)
++    if fault in {"memory-limit", "resource-stopped", "timed-out"}:
++        original = preparation.run_bounded_command
++
++        def stopped(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> PilotProcessResult:
++            result = original(command, cwd, prefix, **kwargs)
++            if prefix.name.endswith("c99-probe"):
++                assert fault is not None
++                return PilotProcessResult(fault, None, 0, 0, result.stdout_path, result.stderr_path, "mock stop")
++            return result
++
++        monkeypatch.setattr(preparation, "run_bounded_command", stopped)
++    result = preparation.prepare_speq(**arguments, c99_frontend_repair="polybench-gemm-address-v1")
++    launch = next(row for row in launches if row["name"] == "c99-probe")
++    assert launch["options"]["memory_limit_bytes"] == 5 * 1024**3
++    assert launch["options"]["require_guard"] and launch["options"]["disk_reserve_bytes"] == 10 * 1024**3
++    if fault:
++        assert result["status"] == ("blocked" if fault == "failure" else fault)
++        assert not (arguments["output"] / "settings.json").exists()
++        assert launches[-1]["name"] == "c99-probe"
++    else:
++        settings = json.loads(Path(result["settings"]).read_text())["speq"]
++        assert settings["c99_frontend_repair"] == "polybench-gemm-address-v1"
++        assert settings["phi_polarity_repair"] is True
++        assert str(arguments["output"] / "c99-gates") in settings["identity_paths"]
++
++
++def test_public_family_preparation_requests_the_reviewed_c99_gates(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts.reproduction_preparation import prepare_family
++
++    engine = tmp_path / "ordinary"
++    engine.write_text("mock ordinary engine")
++    calls = []
++
++    def prepare(output: Path, selected_engine: Path, **kwargs: Any) -> dict[str, Any]:
++        calls.append((output, selected_engine, kwargs))
++        output.mkdir()
++        settings = output / "settings.json"
++        settings.write_text(json.dumps({"speq": {"paths": {"egglog": str(selected_engine)}}}))
++        return {"status": "success", "settings": str(settings)}
++
++    monkeypatch.setattr(preparation, "prepare_speq", prepare)
++    result = prepare_family("speq", tmp_path, engine)
++    assert result["status"] == "success"
++    assert calls == [
++        (
++            tmp_path / "environment",
++            engine,
++            {
++                "llvm_config": Path("/opt/homebrew/opt/llvm@17/bin/llvm-config"),
++                "acquire_archive": True,
++                "c99_frontend_repair": "polybench-gemm-address-v1",
++            },
++        )
++    ]
+--- a/tests/test_dialegg_speq_complete.py
++++ b/tests/test_dialegg_speq_complete.py
+@@ -554,3 +554,201 @@
+         assert row["omitted_prebuilt_rev_plugin"]["path"] == str(tmp_path / "historical.so")
+     assert json.loads(Path(row["receipt"]).read_text())["phi_polarity_repair"] is repair
+     assert not row["source_complete"] and not row["ordinary_compatible"]
++
++
++@pytest.mark.parametrize("case", ["polybench_gemm", "parboil_hist"])
++def test_c99_adapter_scopes_only_gemm_and_never_uses_prebuilt(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
++) -> None:
++    from scripts import speq_c99_diagnostic as c99
++
++    commands = []
++
++    def run(command: list[str], cwd: Path, prefix: Path, timeout: float) -> PilotProcessResult:
++        commands.append(command)
++        out, err = prefix.with_suffix(".out"), prefix.with_suffix(".err")
++        out.write_text("")
++        err.write_text("mock resource stop")
++        return PilotProcessResult("memory-limit", None, 0, 0, out, err, "mock resource stop")
++
++    monkeypatch.setattr(complete, "run_complete_command", run)
++    args = argparse.Namespace(
++        speq_python=tmp_path / "python",
++        speq_artifact=tmp_path / "artifact",
++        speq_lleq=tmp_path / "lleq",
++        llvm17_config=tmp_path / "llvm-config",
++        speq_rev_plugin=tmp_path / "old.so",
++        speq_phi_polarity_repair=True,
++        speq_c99_frontend_repair=c99.CONTRACT,
++        speq_frontend_flag=list(c99.FRONTEND_FLAGS),
++        timeout_sec=30,
++    )
++    result = complete.capture_complete_speq(args, ["speq-" + case], tmp_path)
++    assert result["operational_stop"]["status"] == "memory-limit"
++    assert len(commands) == 1 and "--rev-plugin" not in commands[0]
++    assert ("--c99-frontend-repair" in commands[0]) is (case == "polybench_gemm")
++    assert result["cases"]["speq-" + case]["workloads"] == []
++    assert result["cases"]["speq-" + case]["omitted_prebuilt_rev_plugin"]["path"] == str(tmp_path / "old.so")
++
++
++@pytest.mark.parametrize("kind", ["success", "baseline", "candidate", "comparison", "recognition", "omitted"])
++def test_c99_recorder_compares_fresh_pair_before_unchanged_all_region_path(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
++) -> None:
++    from scripts import speq_c99_diagnostic as c99
++
++    calls = []
++    plugin = tmp_path / "candidate.so"
++    baseline_plugin = tmp_path / "phi.so"
++    for path in (plugin, baseline_plugin):
++        path.write_text("mock built plugin")
++    pair = {
++        "opt": str(tmp_path / "opt"),
++        "candidate_plugin": str(plugin),
++        "baseline_plugin": str(baseline_plugin),
++        "llvm_version": "17.0.6",
++    }
++    monkeypatch.setattr(c99, "build_plugins", lambda *_: pair)
++
++    def application(*args: Any, **kwargs: Any) -> list[str]:
++        baseline = args[2] == baseline_plugin
++        phase = "baseline" if baseline else "candidate"
++        assert kwargs.get("c99_frontend_repair", False) is (not baseline)
++        assert c99.ENABLE_ENV not in record_speq.os.environ
++        calls.append(phase)
++        if kind == phase:
++            raise ValueError("mock " + phase + " failure")
++        return ["empty", "unsupported original setup", "actual candidate" if not baseline else "actual baseline"]
++
++    def compare(before: list[str], after: list[str], *args: Any) -> dict:
++        calls.append("comparison")
++        assert before[-1] == "actual baseline" and after[-1] == "actual candidate"
++        if kind == "comparison":
++            raise ValueError("mock comparison mismatch")
++        return {"status": "exact-scoped-repair"}
++
++    def references(*args: Any) -> str:
++        assert c99.ENABLE_ENV not in record_speq.os.environ
++        calls.append(args[-1])
++        return "original reference " + str(args[-1])
++
++    def regions(_parse: Any, _graph: Any, firs: list[str], name: str, evidence: Path, manifest: dict) -> list[str]:
++        calls.append("regions")
++        assert firs == ["empty", "unsupported original setup", "actual candidate"]
++        manifest["regions"] = [
++            {"index": 0, "status": "skipped-parse"},
++            {"index": 1, "status": "skipped-parse"},
++            {"index": 2, "status": "matched", "kernel": "gemm"},
++        ]
++        if kind == "recognition":
++            del manifest["regions"][-1]["kernel"]
++        if kind == "omitted":
++            manifest["regions"].pop(0)
++        return ["polybench_gemm-region-002"]
++
++    graph = SimpleNamespace(as_egglog_string="(extract real-root)\n")
++    monkeypatch.setattr(record_speq, "application_fir", application)
++    monkeypatch.setattr(c99, "compare_frontends", compare)
++    monkeypatch.setattr(record_speq, "reference_fir", references)
++    monkeypatch.setattr(record_speq, "adapt_parse_ir", lambda source: source)
++    monkeypatch.setattr(record_speq, "import_parse_ir", lambda _: SimpleNamespace(egraph=graph))
++    monkeypatch.setattr(record_speq, "add_reference_rules", lambda *_: None)
++    monkeypatch.setattr(record_speq, "record_complete_regions", regions)
++    monkeypatch.setattr(record_speq, "normalize_recording", lambda source, _: source)
++    args = argparse.Namespace(
++        source_evidence=tmp_path / "source",
++        check=False,
++        rev_plugin=None,
++        lleq=tmp_path / "lleq",
++        llvm_config=tmp_path / "llvm-config",
++        output=tmp_path / "out.egg",
++        frontend_flag=list(c99.FRONTEND_FLAGS),
++        repair_phi_polarity=True,
++        c99_frontend_repair=c99.CONTRACT,
++    )
++    if kind == "success":
++        assert record_speq.record_complete(args, tmp_path, "original parser", ["polybench_gemm"]) == 0
++    else:
++        with pytest.raises(ValueError):
++            record_speq.record_complete(args, tmp_path, "original parser", ["polybench_gemm"])
++    receipt = json.loads(args.output.with_suffix(".manifest.json").read_text())
++    assert receipt["source_complete"] is (kind == "success")
++    assert receipt["schedule"] == [5, 1, 3]
++    assert c99.ENABLE_ENV not in record_speq.os.environ
++    if kind in {"success", "recognition", "omitted"}:
++        assert calls == ["baseline", "candidate", "comparison", *record_speq.REFERENCE_ANALYSIS_SHA256, "regions"]
++    elif kind == "comparison":
++        assert calls == ["baseline", "candidate", "comparison"]
++    else:
++        assert calls == (["baseline"] if kind == "baseline" else ["baseline", "candidate"])
++
++
++@pytest.mark.parametrize("fault", [None, "no-phi", "prebuilt", "wrong-benchmark", "not-complete", "unknown-mode"])
++def test_c99_mode_rejects_unproven_recorder_combinations(fault: str | None) -> None:
++    from scripts.speq_c99_diagnostic import CONTRACT
++
++    argv = [
++        "--artifact=artifact",
++        "--rev-tests=REVTest.cpp",
++        "--lleq=lleq",
++        "--llvm-config=llvm-config",
++        "--benchmark=polybench_gemm",
++        "--output=out.egg",
++        "--complete",
++        "--repair-phi-polarity",
++        "--c99-frontend-repair=" + CONTRACT,
++    ]
++    if fault == "no-phi":
++        argv.remove("--repair-phi-polarity")
++    elif fault == "prebuilt":
++        argv.append("--rev-plugin=arbitrary.so")
++    elif fault == "wrong-benchmark":
++        argv[4] = "--benchmark=parboil_hist"
++    elif fault == "not-complete":
++        argv.remove("--complete")
++    elif fault == "unknown-mode":
++        argv[-1] = "--c99-frontend-repair=broader"
++    if fault:
++        with pytest.raises(SystemExit):
++            record_speq.parse_args(argv)
++    else:
++        assert record_speq.parse_args(argv).c99_frontend_repair == CONTRACT
++
++
++def test_c99_environment_is_local_to_selected_analysis_not_clang_or_references(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts import speq_c99_diagnostic as c99
++
++    source = tmp_path / "benchmarks/polybench_gemm.c"
++    source.parent.mkdir()
++    source.write_text("unchanged original C")
++    monkeypatch.setattr(
++        record_speq, "COMPLETE_APPLICATION_C_SHA256", {"polybench_gemm": record_speq.sha256_text(source.read_text())}
++    )
++    monkeypatch.setattr(record_speq, "APPLICATION_HEADER_SHA256", {})
++    calls = []
++
++    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
++        calls.append(kwargs.get("env"))
++        Path(command[-1]).write_text("unchanged IR")
++        kwargs["stderr"].write(b"REV Start\nreal fir\nREV End\n" if "print<revpass>" in " ".join(command) else b"")
++        return subprocess.CompletedProcess(command, 0)
++
++    monkeypatch.setattr(record_speq.subprocess, "run", run)
++    assert record_speq.application_fir(
++        tmp_path,
++        tmp_path / "opt",
++        tmp_path / "fresh.so",
++        "polybench_gemm",
++        tmp_path / "enabled",
++        complete=True,
++        frontend_flags=c99.FRONTEND_FLAGS,
++        c99_frontend_repair=True,
++    ) == ["real fir\n"]
++    assert calls[0] is None and calls[1] is not None and calls[1][c99.ENABLE_ENV] == "1"
++    assert c99.ENABLE_ENV not in record_speq.os.environ
++    monkeypatch.setenv(c99.ENABLE_ENV, "1")
++    with pytest.raises(ValueError, match="disabled"):
++        record_speq.reference_fir(tmp_path / "opt", tmp_path / "fresh.so", tmp_path / "reference.ll", "gemm_ref")
++    assert len(calls) == 2
+--- a/tests/test_suite_reproduction.py
++++ b/tests/test_suite_reproduction.py
+@@ -860,3 +860,28 @@
+     settings = {"paths": {name: str(tmp_path / name) for name in ("checkout", "binary", "egglog")}}
+     assert dispatch.capture_case(case, settings, tmp_path / "capture")["status"] == "ordinary-validation-pending"
+     assert len(called) == 1 and called[0][1]["validate_ordinary"] is False
++
++
++@pytest.mark.parametrize(
++    "relative",
++    [
++        "scripts/speq_c99_diagnostic.py",
++        "scripts/speq_c99_gates.py",
++        "scripts/paper_benchmarks/speq_c99_fir.inc",
++        "scripts/paper_benchmarks/speq_c99_harness.cpp",
++        "scripts/paper_benchmarks/speq_c99_fixture.ll",
++        "scripts/paper_benchmarks/speq_rev_plugin.cpp",
++    ],
++)
++def test_c99_implementation_closure_participates_in_selected_identity(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str
++) -> None:
++    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
++    path = tmp_path / relative
++    path.parent.mkdir(parents=True)
++    path.write_text("reviewed C99 source")
++    case = {"id": "speq-polybench_gemm", "family": "speq", "source": "input", "configuration": {}}
++    settings = {"paths": {}, "phi_polarity_repair": True, "c99_frontend_repair": "polybench-gemm-address-v1"}
++    before = reproduction.case_identity(case, settings)
++    path.write_text("changed C99 source")
++    assert reproduction.case_identity(case, settings) != before
+--- a/benchmarks/reproduction/speq-preparation.md
++++ b/benchmarks/reproduction/speq-preparation.md
+@@ -192,3 +192,37 @@
+ Dockerfile. Native commands are mocked; these tests establish no native runtime
+ compatibility or full-parent result. Ruff and mypy pass for the two changed Python
+ files. Native compatibility of the fresh preparation remains untested.
++
++## Scoped original-C GEMM frontend repair
++
++The public family recipe now requests `c99_frontend_repair: polybench-gemm-address-v1`.
++It is published only after fresh, tracked source gates pass. Existing family
++settings are not silently upgraded: `--stage all` reuses them; explicit
++`--stage prepare` builds and gates the new preparation identity. Direct preparer
++users can select `--c99-frontend-repair polybench-gemm-address-v1`; omitting it
++preserves the original preparation behavior.
++
++This mode applies only to the original `polybench_gemm` application, requires the
++PHI repair and the recorded `-D_FORTIFY_SOURCE=0 -DPOLYBENCH_USE_C99_PROTO` flags,
++and refuses arbitrary prebuilt plugins at the recorder boundary. Preparation
++uses the tracked `speq_c99_diagnostic` materializer, exact C++ fragment and LLVM
++fixtures. Every gate runs under the existing process guard with a 5-GiB cap and
++10-GiB disk reserve. There is no dependency on ignored diagnostic output files.
++The gate evidence, materialized source and built plugins enter the settings'
++identity paths. Failed or resource-stopped gates do not publish enabled settings.
++
++Each selected capture builds a fresh PHI-only/candidate pair, regenerates all
++three application FIR regions from the unchanged C, and compares the selected
++region to exact, narrowly permitted edits of that fresh baseline. The comparison
++derives memory-state names from the baseline; it never renames the candidate or
++substitutes historical FIR. Other regions must remain byte-identical, and LLVM
++must remain identical except for its verified input-path comment. Only the GEMM
++analysis subprocess receives the enable variable. All four reference analyses
++run with the candidate disabled and still require their original FIR hashes.
++
++The original parser, original parse-skip decisions, reference rules, 5/1/3
++schedule, actual GEMM recognition, ordered extraction results and ordinary replay
++admission remain in the existing recorder/validator. Preparation gates alone do
++not admit any benchmark. The successful original-C diagnostic is recorded in
++[speq-c99-diagnostic.md](speq-c99-diagnostic.md); fresh public preparation and
++complete capture at the integrated identity remain separate execution gates.
+--- /dev/null
++++ b/scripts/speq_c99_gates.py
+@@ -0,0 +1,345 @@
++"""Guarded prerequisite gates for the scoped PolyBench C99 frontend repair.
++
++The caller owns the shared lock and supplies a fail-stop, 5 GiB guarded step.
++Only child CLI modes execute native tools; passing these gates is not admission.
++"""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import re
++import shlex
++import subprocess
++import sys
++from collections.abc import Callable
++from dataclasses import asdict
++from pathlib import Path
++from typing import Any
++
++from benchmarking.pilot import PilotProcessResult
++from scripts import speq_c99_diagnostic as c99
++from scripts.paper_benchmarks import record_speq as recorder
++
++
++def fixture_output(name: str, output: str) -> None:
++    """Require exact closure/address evidence and the harness's unchanged-IR check."""
++    lines = [line.strip() for line in output.splitlines()]
++    for value in (
++        "memory-type: ptr 1 double",
++        "LLVM module unchanged",
++        "%n64 = zext i32 %n to i64",
++        "%row64 = zext i32 %row to i64",
++    ):
++        if lines.count(value) != 1:
++            raise ValueError(f"{name}: missing or duplicated fixture evidence: {value}")
++    right = "%shifted" if name == "nonzero_offset" else "%j64"
++    offset = f"%reproduction.c99.offset.0 = add nsw i64 %row.offset, {right}"
++    element = "%element = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.0"
++    if [line for line in lines if line.startswith("%reproduction.c99.offset.")] != [offset]:
++        raise ValueError(f"{name}: unexpected flattened address")
++    if lines.count(element) != 1 or lines.index(offset) >= lines.index(element):
++        raise ValueError(f"{name}: flattened address order differs")
++    for operand in ("%row.offset", right):
++        definitions = [i for i, line in enumerate(lines) if line.startswith(operand + " = ")]
++        if len(definitions) != 1 or definitions[0] >= lines.index(offset):
++            raise ValueError(f"{name}: incomplete dominating address closure")
++    expected = {
++        "nonzero_offset": ["%shifted = add nuw nsw i64 %j64, 3"],
++        "different_stride": [
++            "%wide.stride = add nuw nsw i64 %n64, 7",
++            "%row.offset = mul nuw nsw i64 %row64, %wide.stride",
++        ],
++    }
++    if any(lines.count(line) != 1 for line in expected.get(name, [])):
++        raise ValueError(f"{name}: offset/stride evidence changed")
++
++
++def _process(
++    command: list[str], directory: Path, *, error: str | None = None, enabled: str | None = None
++) -> dict[str, Any]:
++    """Retain one real native outcome; expected rejections never hide outer guard stops."""
++    directory.mkdir()
++    environment = {key: value for key, value in os.environ.items() if key != c99.ENABLE_ENV}
++    if enabled is not None:
++        environment[c99.ENABLE_ENV] = enabled
++    stdout, stderr = directory / "stdout.log", directory / "stderr.log"
++    with stdout.open("wb") as out, stderr.open("wb") as err:
++        result = subprocess.run(command, stdout=out, stderr=err, check=False, env=environment)
++    row = {
++        "command": command,
++        "returncode": result.returncode,
++        "environment_override": {c99.ENABLE_ENV: enabled},
++        "expected_error": error,
++        "stdout": str(stdout),
++        "stderr": str(stderr),
++    }
++    (directory / "process.json").write_text(json.dumps(row, indent=2) + "\n")
++    if error is None:
++        if result.returncode != 0:
++            raise ValueError(f"native positive gate failed: {directory.name}")
++    elif result.returncode == 0 or result.returncode in (-9, -15) or error not in stderr.read_text():
++        raise ValueError(f"native rejection did not match its reviewed diagnostic: {directory.name}")
++    return row
++
++
++def _child(request: dict[str, Any], output: Path) -> dict[str, Any]:
++    """Execute one gate inside the caller's monitored process group."""
++    kind = request["kind"]
++    if kind == "build":
++        built = c99.build_plugins(Path(request["source"]), Path(request["llvm_config"]), output / "plugins")
++        if built["llvm_version"] != "17.0.6" or built["selected_function"] != c99.FUNCTION:
++            raise ValueError("C99 gates require LLVM17.0.6 and the exact selected function")
++        materialized = Path(built["materialization"]["path"]).parent
++        llvm_config = Path(request["llvm_config"])
++        flags = recorder.command_output(
++            [
++                str(llvm_config),
++                "--cxxflags",
++                "--ldflags",
++                "--libs",
++                "core",
++                "analysis",
++                "irreader",
++                "support",
++                "--system-libs",
++            ]
++        )
++        harness = output / "c99-harness"
++        _process(
++            [
++                str(Path(built["opt"]).parent / "clang++"),
++                str(materialized / "c99-harness.cpp"),
++                *shlex.split(flags),
++                "-o",
++                str(harness),
++            ],
++            output / "compile-harness",
++        )
++        tools = [Path(built["opt"]), Path(built["opt"]).parent / "clang++", harness]
++        built["artifacts"].update({str(p.resolve()): hashlib.sha256(p.read_bytes()).hexdigest() for p in tools})
++        return {**built, "harness": str(harness), "materialized": str(materialized)}
++    built = request["build"]
++    if kind == "fixture":
++        name = request["name"]
++        expected = c99.fixture_cases()[name][1]
++        row = _process(
++            [built["harness"], str(Path(built["materialized"]) / "fixtures" / f"{name}.ll"), name],
++            output / "native",
++            error=expected,
++        )
++        if expected is None:
++            fixture_output(name, Path(row["stdout"]).read_text())
++        return {
++            "classification": "positive-unchanged-module" if expected is None else "reviewed-domain-rejection",
++            "process": row,
++        }
++    artifact = Path(request["artifact"])
++    if kind == "reference":
++        name = request["name"]
++        source = artifact / "analysis" / f"{name}.ll"
++        recorder.read_verified(source, recorder.REFERENCE_ANALYSIS_SHA256[name])
++        row = _process(
++            [
++                built["opt"],
++                f"-load-pass-plugin={built[request['variant'] + '_plugin']}",
++                "-S",
++                "-passes=print<revpass>",
++                str(source),
++                "-disable-output",
++            ],
++            output / "native",
++        )
++        match = re.fullmatch(r"REV Start\n(.*)REV End\n", Path(row["stderr"]).read_text(), re.DOTALL)
++        if match is None or recorder.sha256_text(match[1]) != recorder.REFERENCE_FIR_SHA256[name]:
++            raise ValueError("disabled C99 reference FIR differs from the original snapshot")
++        (output / "reference.fir").write_text(match[1])
++        return {"process": row, "fir_sha256": recorder.sha256_text(match[1])}
++    if kind == "frontend":
++        baseline_dir, disabled_dir, candidate_dir = (output / name for name in ("baseline", "disabled", "candidate"))
++        firs = []
++        for directory, plugin, enabled in (
++            (baseline_dir, built["baseline_plugin"], False),
++            (disabled_dir, built["candidate_plugin"], False),
++            (candidate_dir, built["candidate_plugin"], True),
++        ):
++            fir = recorder.application_fir(
++                artifact,
++                Path(built["opt"]),
++                Path(plugin),
++                "polybench_gemm",
++                directory,
++                complete=True,
++                frontend_flags=c99.FRONTEND_FLAGS,
++                c99_frontend_repair=enabled,
++            )
++            if not isinstance(fir, list):
++                raise ValueError("complete C99 frontend did not return ordered regions")
++            firs.append(fir)
++        if firs[0] != firs[1]:
++            raise ValueError("disabled candidate changed an original FIR region")
++        return {
++            "comparison": c99.compare_frontends(firs[0], firs[2], baseline_dir, candidate_dir),
++            "disabled_regions_byte_identical": True,
++            "source_complete": False,
++        }
++    if kind != "selection":
++        raise ValueError(f"unknown C99 gate: {kind}")
++    name = request["name"]
++    reference = artifact / "analysis/gemv.ll"
++    source_text = recorder.read_verified(reference, recorder.REFERENCE_ANALYSIS_SHA256["gemv"])
++    selected = f"define void @{c99.FUNCTION}() {{ ret void }}\n"
++    fixture = output / "input.ll"
++    fixture.write_text(selected * 2 if name == "duplicate" else source_text + (selected if name == "unrelated" else ""))
++    command = [
++        built["opt"],
++        f"-load-pass-plugin={built['candidate_plugin']}",
++        "-S",
++        "-passes=print<revpass>",
++        str(fixture),
++        "-disable-output",
++    ]
++    errors = {
++        "missing": "REV C99 selected definition is missing",
++        "duplicate": "redefinition of function",
++        "invalid-enable": "REV C99 diagnostic enable value must be 1",
++        "unrelated": None,
++    }
++    row = _process(command, output / "enabled", enabled="0" if name == "invalid-enable" else "1", error=errors[name])
++    if name == "unrelated":
++        baseline = _process(command, output / "disabled")
++        if Path(row["stderr"]).read_bytes() != Path(baseline["stderr"]).read_bytes():
++            raise ValueError("enabling selected function changed unrelated reference FIR")
++    return {"process": row, "classification": "unrelated-unchanged" if name == "unrelated" else "selection-rejection"}
++
++
++def run_gates(
++    source: Path, artifact: Path, llvm_config: Path, output: Path, step: Callable[[str, list[str]], PilotProcessResult]
++) -> dict[str, Any]:
++    """Build and check fresh source only; caller failures propagate without relabeling."""
++    output = output.resolve()
++    output.mkdir(parents=True, exist_ok=False)
++    result: dict[str, Any] = {
++        "status": "running",
++        "contract": c99.CONTRACT,
++        "selected_function": c99.FUNCTION,
++        "corpus_admission": False,
++        "gates": {},
++        "artifacts": {},
++    }
++    try:
++        inputs = [
++            source / name
++            for name in (
++                "llvm/lib/Analysis/REVPass.cpp",
++                "llvm/include/llvm/Analysis/REVPass.h",
++                "llvm/include/llvm/Analysis/MemorySSA.h",
++            )
++        ]
++        inputs.extend(artifact / "analysis" / f"{name}.ll" for name in recorder.REFERENCE_ANALYSIS_SHA256)
++        inputs.extend(
++            artifact / "benchmarks" / name for name in ("polybench_gemm.c", *recorder.APPLICATION_HEADER_SHA256)
++        )
++        inputs.extend(
++            [Path(__file__), Path(c99.__file__), Path(recorder.__file__), Path(c99.phi.__file__), llvm_config]
++        )
++        inputs.extend(
++            c99.SUPPORT / name
++            for name in ("speq_c99_fir.inc", "speq_c99_fixture.ll", "speq_c99_harness.cpp", "speq_rev_plugin.cpp")
++        )
++        identities = {str(p.resolve()): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
++        result["inputs"] = identities
++        requests: list[tuple[str, dict[str, Any]]] = [
++            ("build", {"kind": "build", "source": str(source.resolve()), "llvm_config": str(llvm_config.resolve())})
++        ]
++        requests.extend(("fixture-" + name, {"kind": "fixture", "name": name}) for name in c99.fixture_cases())
++        requests.extend(
++            (f"{variant}-reference-{name}", {"kind": "reference", "variant": variant, "name": name})
++            for variant in ("baseline", "candidate")
++            for name in recorder.REFERENCE_ANALYSIS_SHA256
++        )
++        requests.extend(
++            ("selection-" + name, {"kind": "selection", "name": name})
++            for name in ("missing", "duplicate", "invalid-enable", "unrelated")
++        )
++        requests.append(("fresh-original-c", {"kind": "frontend"}))
++        if len(c99.fixture_cases()) != 16 or len(recorder.REFERENCE_ANALYSIS_SHA256) != 4:
++            raise ValueError("C99 gates require the reviewed 16 fixtures and four references")
++        for name, request in requests:
++            result["active_gate"] = name
++            for path, expected in {**identities, **result["artifacts"]}.items():
++                if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
++                    raise ValueError(f"C99 gate input/evidence changed: {path}")
++            directory = output / name
++            directory.mkdir()
++            request.update(artifact=str(artifact.resolve()), build=result.get("build"))
++            request_path = directory / "request.json"
++            request_path.write_text(json.dumps(request, indent=2) + "\n")
++            process = step(
++                "c99-" + name,
++                [
++                    "/usr/bin/env",
++                    "-u",
++                    c99.ENABLE_ENV,
++                    sys.executable,
++                    "-m",
++                    "scripts.speq_c99_gates",
++                    str(request_path),
++                ],
++            )
++            result["process"] = asdict(process)
++            if process.status != "success" or process.returncode != 0:
++                result["status"] = process.status
++                raise ValueError(f"C99 guarded gate failed: {name}")
++            receipt = json.loads((directory / "result.json").read_text())
++            if (
++                receipt.get("status") != "success"
++                or receipt.get("request_sha256") != hashlib.sha256(request_path.read_bytes()).hexdigest()
++            ):
++                raise ValueError(f"C99 child did not retain successful exact-request evidence: {name}")
++            result["gates"][name] = receipt
++            if name == "build":
++                result["build"] = receipt["evidence"]
++                for path, expected in receipt["evidence"]["artifacts"].items():
++                    if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
++                        raise ValueError(f"C99 plugin/tool changed after guarded build: {path}")
++                materialization = receipt["evidence"]["materialization"]
++                if hashlib.sha256(Path(materialization["path"]).read_bytes()).hexdigest() != materialization["sha256"]:
++                    raise ValueError("C99 materialization receipt changed after guarded build")
++                result["artifacts"].update(receipt["evidence"]["artifacts"])
++            result["artifacts"].update(
++                {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.rglob("*") if p.is_file()}
++            )
++        for path, expected in {**identities, **result["artifacts"]}.items():
++            if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
++                raise ValueError(f"C99 gate input/evidence changed: {path}")
++        result.update(status="success", inputs_unchanged=True)
++        return result
++    except BaseException as error:
++        if result["status"] == "running":
++            result["status"] = "blocked"
++        result["reason"] = f"{type(error).__name__}: {error}"
++        raise
++    finally:
++        (output / "result.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("request", type=Path)
++    args = parser.parse_args()
++    data = args.request.read_bytes()
++    result: dict[str, Any] = {"status": "blocked", "request_sha256": hashlib.sha256(data).hexdigest()}
++    try:
++        result.update(evidence=_child(json.loads(data), args.request.parent), status="success")
++    except BaseException as error:
++        result["reason"] = f"{type(error).__name__}: {error}"
++        raise
++    finally:
++        (args.request.parent / "result.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
++
++
++if __name__ == "__main__":
++    main()
+--- /dev/null
++++ b/tests/test_speq_c99_gates.py
+@@ -0,0 +1,260 @@
++"""Mocked orchestration and exact-output checks; these tests never invoke LLVM."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import subprocess
++from pathlib import Path
++from typing import Any, Literal
++
++import pytest
++
++from benchmarking.pilot import PilotProcessResult
++from scripts import speq_c99_gates as gates
++
++
++def digest(path: Path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++@pytest.fixture(autouse=True)
++def forbid_native(monkeypatch: pytest.MonkeyPatch) -> None:
++    def forbidden(*args: Any, **kwargs: Any) -> None:
++        pytest.fail("unexpected native launch in mocked gate tests")
++
++    monkeypatch.setattr(subprocess, "run", forbidden)
++    monkeypatch.setattr(subprocess, "Popen", forbidden)
++
++
++@pytest.fixture
++def inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
++    source, artifact, llvm = tmp_path / "source", tmp_path / "artifact", tmp_path / "llvm-config"
++    paths = [
++        source / name
++        for name in (
++            "llvm/lib/Analysis/REVPass.cpp",
++            "llvm/include/llvm/Analysis/REVPass.h",
++            "llvm/include/llvm/Analysis/MemorySSA.h",
++        )
++    ]
++    paths += [artifact / "analysis" / f"{name}.ll" for name in gates.recorder.REFERENCE_ANALYSIS_SHA256]
++    paths += [
++        artifact / "benchmarks" / name for name in ("polybench_gemm.c", *gates.recorder.APPLICATION_HEADER_SHA256)
++    ]
++    for path in [*paths, llvm]:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(path.name)
++    return source, artifact, llvm
++
++
++def successful_child(command: list[str]) -> PilotProcessResult:
++    """Model only the child receipt boundary; never claim real compilation."""
++    request_path = Path(command[-1])
++    request = json.loads(request_path.read_text())
++    directory = request_path.parent
++    evidence: dict[str, Any] = {"mock": True}
++    if request["kind"] == "build":
++        plugin = directory / "plugin.so"
++        plugin.write_text("mock plugin")
++        metadata = directory / "diagnostic.json"
++        metadata.write_text("mock source metadata")
++        evidence = {
++            "artifacts": {str(plugin): digest(plugin)},
++            "materialization": {"path": str(metadata), "sha256": digest(metadata)},
++        }
++    (directory / "result.json").write_text(
++        json.dumps({"status": "success", "request_sha256": digest(request_path), "evidence": evidence})
++    )
++    stdout, stderr = directory / "guard.stdout", directory / "guard.stderr"
++    stdout.write_text("")
++    stderr.write_text("")
++    return PilotProcessResult("success", 0, 0.1, 100, stdout, stderr, None)
++
++
++def test_full_gate_sequence_is_guarded_fresh_and_non_admitting(inputs: tuple[Path, Path, Path], tmp_path: Path) -> None:
++    calls = []
++    before = {p: p.read_bytes() for root in inputs[:2] for p in root.rglob("*") if p.is_file()}
++
++    def step(name: str, command: list[str]) -> PilotProcessResult:
++        calls.append((name, json.loads(Path(command[-1]).read_text())))
++        assert command[:3] == ["/usr/bin/env", "-u", gates.c99.ENABLE_ENV]
++        assert command[-3:-1] == ["-m", "scripts.speq_c99_gates"]
++        return successful_child(command)
++
++    output = tmp_path / "gates"
++    result = gates.run_gates(*inputs, output, step)
++    assert result["status"] == "success" and result["inputs_unchanged"] is True
++    assert result["corpus_admission"] is False
++    assert result["contract"] == gates.c99.CONTRACT and result["selected_function"] == gates.c99.FUNCTION
++    assert len(calls) == len(result["gates"]) == 30
++    assert calls[0][0] == "c99-build" and calls[-1][0] == "c99-fresh-original-c"
++    assert [request["name"] for _, request in calls if request["kind"] == "fixture"] == list(gates.c99.fixture_cases())
++    references = [(request["variant"], request["name"]) for _, request in calls if request["kind"] == "reference"]
++    assert references == [
++        (variant, name) for variant in ("baseline", "candidate") for name in gates.recorder.REFERENCE_ANALYSIS_SHA256
++    ]
++    assert all(path.read_bytes() == data for path, data in before.items())
++    assert json.loads((output / "result.json").read_text()) == json.loads(json.dumps(result, default=str))
++    for path, expected in result["artifacts"].items():
++        assert digest(Path(path)) == expected
++    with pytest.raises(FileExistsError):
++        gates.run_gates(*inputs, output, step)
++
++
++@pytest.mark.parametrize("status", ["timed-out", "memory-limit", "resource-stopped"])
++def test_guard_stop_is_terminal_and_retained(
++    inputs: tuple[Path, Path, Path], tmp_path: Path, status: Literal["timed-out", "memory-limit", "resource-stopped"]
++) -> None:
++    calls = []
++
++    def step(name: str, command: list[str]) -> PilotProcessResult:
++        calls.append(name)
++        result = successful_child(command)
++        return PilotProcessResult(
++            status, None, result.wall_sec, 100, result.stdout_path, result.stderr_path, "guard stop"
++        )
++
++    with pytest.raises(ValueError, match="guarded gate failed"):
++        gates.run_gates(*inputs, tmp_path / "gates", step)
++    receipt = json.loads((tmp_path / "gates/result.json").read_text())
++    assert receipt["status"] == receipt["process"]["status"] == status
++    assert receipt["corpus_admission"] is False and calls == ["c99-build"]
++
++
++@pytest.mark.parametrize(
++    "mode", ["raised-stop", "interrupted", "request-hash", "child-failure", "plugin-hash", "input-drift"]
++)
++def test_failure_evidence_is_preserved_and_no_later_gate_runs(
++    inputs: tuple[Path, Path, Path], tmp_path: Path, mode: str
++) -> None:
++    calls = []
++
++    def step(name: str, command: list[str]) -> PilotProcessResult:
++        calls.append(name)
++        if mode == "raised-stop":
++            raise RuntimeError("caller retained resource-stopped process")
++        if mode == "interrupted":
++            raise KeyboardInterrupt()
++        process = successful_child(command)
++        directory = Path(command[-1]).parent
++        path = directory / "result.json"
++        receipt = json.loads(path.read_text())
++        if mode == "request-hash":
++            receipt["request_sha256"] = "wrong"
++        elif mode == "child-failure":
++            receipt["status"] = "blocked"
++        elif mode == "plugin-hash":
++            (directory / "plugin.so").write_text("mutated")
++        elif mode == "input-drift":
++            inputs[2].write_text("changed tool")
++        path.write_text(json.dumps(receipt))
++        return process
++
++    with pytest.raises((ValueError, RuntimeError, KeyboardInterrupt)):
++        gates.run_gates(*inputs, tmp_path / "gates", step)
++    receipt = json.loads((tmp_path / "gates/result.json").read_text())
++    assert receipt["status"] == "blocked" and receipt["corpus_admission"] is False
++    assert "reason" in receipt and calls == ["c99-build"]
++
++
++def test_missing_input_retains_terminal_receipt(inputs: tuple[Path, Path, Path], tmp_path: Path) -> None:
++    inputs[2].unlink()
++    with pytest.raises(FileNotFoundError):
++        gates.run_gates(*inputs, tmp_path / "gates", lambda *_: pytest.fail("must not launch"))
++    assert json.loads((tmp_path / "gates/result.json").read_text())["status"] == "blocked"
++
++
++BASE_OUTPUT = """memory-type: ptr 1 double
++%n64 = zext i32 %n to i64
++%row64 = zext i32 %row to i64
++%j64 = zext i32 %j to i64
++%row.offset = mul nuw nsw i64 %row64, %n64
++%reproduction.c99.offset.0 = add nsw i64 %row.offset, %j64
++%element = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.0
++LLVM module unchanged
++"""
++
++
++@pytest.mark.parametrize("mode", ["valid", "missing-closure", "wrong-address", "duplicate-offset", "changed-module"])
++def test_positive_fixture_exact_address_closure(mode: str) -> None:
++    output = BASE_OUTPUT
++    if mode == "missing-closure":
++        output = output.replace("%j64 = zext i32 %j to i64\n", "")
++    elif mode == "wrong-address":
++        output = output.replace("ptr %C, i64 %reproduction", "ptr %B, i64 %reproduction")
++    elif mode == "duplicate-offset":
++        output += "%reproduction.c99.offset.1 = add nsw i64 %row.offset, %j64\n"
++    elif mode == "changed-module":
++        output = output.replace("LLVM module unchanged", "LLVM module mutated")
++    if mode == "valid":
++        gates.fixture_output("positive", output)
++    else:
++        with pytest.raises(ValueError):
++            gates.fixture_output("positive", output)
++
++
++@pytest.mark.parametrize(
++    "returncode,error,stderr,accept",
++    [
++        (0, None, "", True),
++        (1, None, "bad", False),
++        (1, "reviewed", "reviewed rejection", True),
++        (0, "reviewed", "reviewed", False),
++        (-9, "reviewed", "reviewed", False),
++        (-15, "reviewed", "reviewed", False),
++        (1, "reviewed", "other", False),
++    ],
++)
++def test_rejections_cannot_hide_failure_or_stop(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int, error: str | None, stderr: str, accept: bool
++) -> None:
++    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
++        assert command == ["mock-native"] and kwargs["check"] is False
++        assert "start_new_session" not in kwargs and "preexec_fn" not in kwargs
++        assert gates.c99.ENABLE_ENV not in kwargs["env"]
++        kwargs["stderr"].write(stderr.encode())
++        return subprocess.CompletedProcess(command, returncode)
++
++    monkeypatch.setenv(gates.c99.ENABLE_ENV, "ambient-must-be-removed")
++    monkeypatch.setattr(subprocess, "run", run)
++    if accept:
++        assert gates._process(["mock-native"], tmp_path / "native", error=error)["returncode"] == returncode
++    else:
++        with pytest.raises(ValueError):
++            gates._process(["mock-native"], tmp_path / "native", error=error)
++    assert json.loads((tmp_path / "native/process.json").read_text())["returncode"] == returncode
++
++
++def test_fresh_frontends_use_exact_scoped_flags_and_full_comparison(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    calls = []
++
++    def application(*args: Any, **kwargs: Any) -> list[str]:
++        calls.append((args, kwargs))
++        return ["same0", "same1", "repaired" if kwargs["c99_frontend_repair"] else "original"]
++
++    def compare(baseline: list[str], candidate: list[str], left: Path, right: Path) -> dict[str, bool]:
++        assert baseline == ["same0", "same1", "original"] and candidate == ["same0", "same1", "repaired"]
++        assert left.name == "baseline" and right.name == "candidate"
++        return {"all_regions_compared": True}
++
++    monkeypatch.setattr(gates.recorder, "application_fir", application)
++    monkeypatch.setattr(gates.c99, "compare_frontends", compare)
++    row = gates._child(
++        {
++            "kind": "frontend",
++            "artifact": str(tmp_path),
++            "build": {"opt": "opt", "baseline_plugin": "phi.so", "candidate_plugin": "candidate.so"},
++        },
++        tmp_path,
++    )
++    assert row["disabled_regions_byte_identical"] is True and row["source_complete"] is False
++    assert [call[1]["c99_frontend_repair"] for call in calls] == [False, False, True]
++    assert all(
++        call[0][3] == "polybench_gemm"
++        and call[1]["complete"] is True
++        and call[1]["frontend_flags"] == gates.c99.FRONTEND_FLAGS
++        for call in calls
++    )
+--- /dev/null
++++ b/tests/fixtures/speq-c99-comparison/baseline.fir
+@@ -0,0 +1,60 @@
++
++%for.body8 = λ ptr %C, i32 %j.02 .
++  %idxprom = zext i32 %i.09 to i64
++  %2 = mul nuw nsw i64 %idxprom, %0
++  %arrayidx = getelementptr inbounds double, ptr %C, i64 %2
++  %idxprom9 = zext i32 %j.02 to i64
++  %arrayidx10 = getelementptr inbounds double, ptr %arrayidx, i64 %idxprom9
++  %3 = load double, ptr %arrayidx10, align 8
++  %mul = fmul double %3, %beta
++  %C.1 =  store double %mul, ptr %arrayidx10, align 8
++  %inc = add nuw nsw i32 %j.02, 1
++  %cmp7 = icmp slt i32 %inc, %nj
++(%C.1) = fold (ptr %C) %for.body8 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body16 = λ ptr %C, i32 %j.14 .
++  %idxprom17 = zext i32 %i.09 to i64
++  %4 = mul nuw nsw i64 %idxprom17, %1
++  %arrayidx18 = getelementptr inbounds double, ptr %A, i64 %4
++  %idxprom19 = zext i32 %k.06 to i64
++  %arrayidx20 = getelementptr inbounds double, ptr %arrayidx18, i64 %idxprom19
++  %5 = load double, ptr %arrayidx20, align 8
++  %mul21 = fmul double %5, %alpha
++  %6 = mul nuw nsw i64 %idxprom19, %0
++  %arrayidx23 = getelementptr inbounds double, ptr %B, i64 %6
++  %idxprom24 = zext i32 %j.14 to i64
++  %arrayidx25 = getelementptr inbounds double, ptr %arrayidx23, i64 %idxprom24
++  %7 = load double, ptr %arrayidx25, align 8
++  %8 = mul nuw nsw i64 %idxprom17, %0
++  %arrayidx28 = getelementptr inbounds double, ptr %C, i64 %8
++  %arrayidx30 = getelementptr inbounds double, ptr %arrayidx28, i64 %idxprom24
++  %9 = load double, ptr %arrayidx30, align 8
++  %10 = call double @llvm.fmuladd.f64(double %mul21, double %7, double %9)
++  %C.2 =  store double %10, ptr %arrayidx30, align 8
++  %inc32 = add nuw nsw i32 %j.14, 1
++  %cmp15 = icmp slt i32 %inc32, %nj
++(%C.2) = fold (ptr %C) %for.body16 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body13 = λ ptr %C, i32 %k.06 .
++  %C.4 = if ptr %cmp71 then %C.2 else %C
++  %inc35 = add nuw nsw i32 %k.06, 1
++  %cmp12 = icmp slt i32 %inc35, %nk
++(%C.4) = fold (ptr %C.8) %for.body13 Range(i32 0, i32 %nk)
++pos: ()
++crd: ()
++val: ()
++%for.body = λ ptr %C, i32 %i.09 .
++  %cmp71 = icmp sgt i32 %nj, 0
++  %C.8 = if ptr %cmp71 then %C.1 else %C
++  %cmp125 = icmp sgt i32 %nk, 0
++  %C.6 = if ptr %cmp125 then %C.4 else %C.8
++  %inc38 = add nuw nsw i32 %i.09, 1
++  %cmp = icmp slt i32 %inc38, %ni
++(%C.6) = fold (ptr %C) %for.body Range(i32 0, i32 %ni)
++pos: ()
++crd: ()
++val: ()
+--- /dev/null
++++ b/tests/fixtures/speq-c99-comparison/candidate.fir
+@@ -0,0 +1,67 @@
++
++%for.body8 = λ ptr 1 double %C, i32 %j.02 .
++  %0 = zext i32 %nj to i64
++  %idxprom = zext i32 %i.09 to i64
++  %2 = mul nuw nsw i64 %idxprom, %0
++  %arrayidx = getelementptr inbounds double, ptr %C, i64 %2
++  %idxprom9 = zext i32 %j.02 to i64
++  %reproduction.c99.offset.0 = add nsw i64 %2, %idxprom9
++  %arrayidx10 = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.0
++  %3 = load double, ptr %arrayidx10, align 8
++  %mul = fmul double %3, %beta
++  %C.1 =  store double %mul, ptr %arrayidx10, align 8
++  %inc = add nuw nsw i32 %j.02, 1
++  %cmp7 = icmp slt i32 %inc, %nj
++(%C.1) = fold (ptr 1 double %C) %for.body8 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body16 = λ ptr 1 double %C, i32 %j.14 .
++  %1 = zext i32 %nk to i64
++  %0 = zext i32 %nj to i64
++  %idxprom17 = zext i32 %i.09 to i64
++  %4 = mul nuw nsw i64 %idxprom17, %1
++  %arrayidx18 = getelementptr inbounds double, ptr %A, i64 %4
++  %idxprom19 = zext i32 %k.06 to i64
++  %reproduction.c99.offset.1 = add nsw i64 %4, %idxprom19
++  %arrayidx20 = getelementptr inbounds double, ptr %A, i64 %reproduction.c99.offset.1
++  %5 = load double, ptr %arrayidx20, align 8
++  %mul21 = fmul double %5, %alpha
++  %6 = mul nuw nsw i64 %idxprom19, %0
++  %arrayidx23 = getelementptr inbounds double, ptr %B, i64 %6
++  %idxprom24 = zext i32 %j.14 to i64
++  %reproduction.c99.offset.2 = add nsw i64 %6, %idxprom24
++  %arrayidx25 = getelementptr inbounds double, ptr %B, i64 %reproduction.c99.offset.2
++  %7 = load double, ptr %arrayidx25, align 8
++  %8 = mul nuw nsw i64 %idxprom17, %0
++  %arrayidx28 = getelementptr inbounds double, ptr %C, i64 %8
++  %reproduction.c99.offset.3 = add nsw i64 %8, %idxprom24
++  %arrayidx30 = getelementptr inbounds double, ptr %C, i64 %reproduction.c99.offset.3
++  %9 = load double, ptr %arrayidx30, align 8
++  %10 = call double @llvm.fmuladd.f64(double %mul21, double %7, double %9)
++  %C.2 =  store double %10, ptr %arrayidx30, align 8
++  %inc32 = add nuw nsw i32 %j.14, 1
++  %cmp15 = icmp slt i32 %inc32, %nj
++(%C.2) = fold (ptr 1 double %C) %for.body16 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body13 = λ ptr 1 double %C, i32 %k.06 .
++  %C.4 = if ptr 1 double %cmp71 then %C.2 else %C
++  %inc35 = add nuw nsw i32 %k.06, 1
++  %cmp12 = icmp slt i32 %inc35, %nk
++(%C.4) = fold (ptr 1 double %C.8) %for.body13 Range(i32 0, i32 %nk)
++pos: ()
++crd: ()
++val: ()
++%for.body = λ ptr 1 double %C, i32 %i.09 .
++  %cmp71 = icmp sgt i32 %nj, 0
++  %C.8 = if ptr 1 double %cmp71 then %C.1 else %C
++  %cmp125 = icmp sgt i32 %nk, 0
++  %C.6 = if ptr 1 double %cmp125 then %C.4 else %C.8
++  %inc38 = add nuw nsw i32 %i.09, 1
++  %cmp = icmp slt i32 %inc38, %ni
++(%C.6) = fold (ptr 1 double %C) %for.body Range(i32 0, i32 %ni)
++pos: ()
++crd: ()
++val: ()
+--- /dev/null
++++ b/tests/fixtures/speq-c99-comparison/provenance.json
+@@ -0,0 +1,18 @@
++{
++  "scope": "Unit-test data only. Production always compares fresh PHI and candidate FIRs; these snapshots are never loaded by capture or preparation.",
++  "source_C_sha256": "e0fc07f40f59e83fc57f1d4e1e99f1718ffce106dcdc44c3e30ed88848228aea",
++  "files": {
++    "baseline.fir": {
++      "sha256": "88ea197d575dfd8cf55a189ff2e6d067f40b3f1369da4f95129605c716ee334f",
++      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/baseline-frontend/application-002.fir"
++    },
++    "candidate.fir": {
++      "sha256": "464f8b10dda91b8f8d1ff87b23093846bb52f22811b4d71cea24b62b5324ef6f",
++      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/frontend/application-002.fir"
++    },
++    "unselected.fir": {
++      "sha256": "6cd4730a381002bd17f00243b087ca3effc17a23447c31b6b489d417a3aba70c",
++      "source": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/diagnostics/speq-c99-original-c-0002/attempt-0001/source/baseline-frontend/application-001.fir"
++    }
++  }
++}
+--- /dev/null
++++ b/tests/fixtures/speq-c99-comparison/unselected.fir
+@@ -0,0 +1,84 @@
++
++%for.body47 = λ ptr %B, i32 %j.210 .
++  %add48 = add nuw nsw i32 %j.210, 2
++  %mul49 = mul nsw i32 %i.212, %add48
++  %rem50 = srem i32 %mul49, %nj
++  %conv51 = sitofp i32 %rem50 to double
++  %conv52 = sitofp i32 %nj to double
++  %div53 = fdiv double %conv51, %conv52
++  %idxprom54 = zext i32 %i.212 to i64
++  %4 = mul nuw nsw i64 %idxprom54, %0
++  %arrayidx55 = getelementptr inbounds double, ptr %B, i64 %4
++  %idxprom56 = zext i32 %j.210 to i64
++  %arrayidx57 = getelementptr inbounds double, ptr %arrayidx55, i64 %idxprom56
++  %B.5 =  store double %div53, ptr %arrayidx57, align 8
++  %inc59 = add nuw nsw i32 %j.210, 1
++  %cmp45 = icmp slt i32 %inc59, %nj
++(%B.5) = fold (ptr %B) %for.body47 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body43 = λ ptr %B, i32 %i.212 .
++  %cmp459 = icmp sgt i32 %nj, 0
++  %B.7 = if ptr %cmp459 then %B.5 else %B
++  %inc62 = add nuw nsw i32 %i.212, 1
++  %cmp41 = icmp slt i32 %inc62, %nk
++(%B.7) = fold (ptr %B.15) %for.body43 Range(i32 0, i32 %nk)
++pos: ()
++crd: ()
++val: ()
++%for.body23 = λ ptr %B, i32 %j.16 .
++  %add24 = add nuw nsw i32 %j.16, 1
++  %mul25 = mul nsw i32 %i.18, %add24
++  %rem26 = srem i32 %mul25, %nk
++  %conv27 = sitofp i32 %rem26 to double
++  %conv28 = sitofp i32 %nk to double
++  %div29 = fdiv double %conv27, %conv28
++  %idxprom30 = zext i32 %i.18 to i64
++  %3 = mul nuw nsw i64 %idxprom30, %1
++  %arrayidx31 = getelementptr inbounds double, ptr %A, i64 %3
++  %idxprom32 = zext i32 %j.16 to i64
++  %arrayidx33 = getelementptr inbounds double, ptr %arrayidx31, i64 %idxprom32
++  %B.4 =  store double %div29, ptr %arrayidx33, align 8
++  %cmp21 = icmp slt i32 %add24, %nk
++(%B.4) = fold (ptr %B) %for.body23 Range(i32 0, i32 %nk)
++pos: ()
++crd: ()
++val: ()
++%for.body19 = λ ptr %B, i32 %i.18 .
++  %cmp215 = icmp sgt i32 %nk, 0
++  %B.9 = if ptr %cmp215 then %B.4 else %B
++  %inc38 = add nuw nsw i32 %i.18, 1
++  %cmp17 = icmp slt i32 %inc38, %ni
++(%B.9) = fold (ptr %B.17) %for.body19 Range(i32 0, i32 %ni)
++pos: ()
++crd: ()
++val: ()
++%for.body8 = λ ptr %B, i32 %j.02 .
++  %mul = mul nsw i32 %i.04, %j.02
++  %add9 = add nuw nsw i32 %mul, 1
++  %rem = srem i32 %add9, %ni
++  %conv = sitofp i32 %rem to double
++  %conv10 = sitofp i32 %ni to double
++  %div = fdiv double %conv, %conv10
++  %idxprom = zext i32 %i.04 to i64
++  %2 = mul nuw nsw i64 %idxprom, %0
++  %arrayidx = getelementptr inbounds double, ptr %C, i64 %2
++  %idxprom11 = zext i32 %j.02 to i64
++  %arrayidx12 = getelementptr inbounds double, ptr %arrayidx, i64 %idxprom11
++  %B.3 =  store double %div, ptr %arrayidx12, align 8
++  %inc = add nuw nsw i32 %j.02, 1
++  %cmp7 = icmp slt i32 %inc, %nj
++(%B.3) = fold (ptr %B) %for.body8 Range(i32 0, i32 %nj)
++pos: ()
++crd: ()
++val: ()
++%for.body = λ ptr %B, i32 %i.04 .
++  %cmp71 = icmp sgt i32 %nj, 0
++  %B.13 = if ptr %cmp71 then %B.3 else %B
++  %inc14 = add nuw nsw i32 %i.04, 1
++  %cmp = icmp slt i32 %inc14, %ni
++(%B.13) = fold (ptr %B.2) %for.body Range(i32 0, i32 %ni)
++pos: ()
++crd: ()
++val: ()

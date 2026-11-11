@@ -1,0 +1,51 @@
+{
+  "status": "reviewed-candidate-native-unrun",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/MISAAL-X86-LITERALS.patch",
+  "patch_sha256": "5bcf400b347f6123fb884bc158984397c015625c2945c137cefa3e22b600d62d",
+  "files": {
+    "scripts/reproduction_misaal_x86_literals.py": {
+      "before_sha256": null,
+      "after_sha256": "ae4c13ce117b380a2f7c25e528e641361b62a40690d8f32574be5545cf828e8b"
+    },
+    "scripts/reproduction_prepare_misaal.py": {
+      "before_sha256": "a21f47d829ac1c20ac0d7148e1e684fc779ea06a377c6519abc1985bfccb5b03",
+      "after_sha256": "7992e7379b1d0a08f51e14afbafcadadccf50b7fda378e3d3af6fc2223747462"
+    },
+    "tests/test_reproduction_misaal_x86_literals.py": {
+      "before_sha256": null,
+      "after_sha256": "04d22dbc82eea78d3cb98ec0b8a476bcbb9e190ed47d741f848517d1686c490f"
+    },
+    "tests/test_reproduction_prepare_misaal.py": {
+      "before_sha256": "97bbd88beb3f55f365439b423b4477c1cd17bc6479742c9623b2d3f14b97c056",
+      "after_sha256": "017e46de8a2d42a1d96eeafd22f9418cfe4de34a0f2077a2edf2b0e94f550d12"
+    },
+    "benchmarks/reproduction/misaal-x86-selector-literals.md": {
+      "before_sha256": null,
+      "after_sha256": "b891d086b9083e2e7ecb02858280d7e568e592108487bcf3baf0049996ba8c11"
+    },
+    "tests/fixtures/misaal-x86-literals/RoseX86LegalizerGen.py.txt": {
+      "before_sha256": null,
+      "after_sha256": "6c6433a488f876f3014579a70af070aec898fa1ff7f1d17cd4f96f02adedaec0"
+    },
+    "tests/fixtures/misaal-x86-literals/original-cases.cpp.txt": {
+      "before_sha256": null,
+      "after_sha256": "98d6f944021b54bbdb65cdf77303f390924817548ef148112f5872ba369715d8"
+    },
+    "tests/fixtures/misaal-x86-literals/provenance.json": {
+      "before_sha256": null,
+      "after_sha256": "2328e01561f128280cdc4b92b1cbd0577323acb62807d1a37969de942daa08a4"
+    },
+    "tests/fixtures/misaal-x86-literals/semantics.json": {
+      "before_sha256": null,
+      "after_sha256": "b0df89a8e592443bf9f630535346641d20e0f447217d0955a212967e74ca7b88"
+    }
+  },
+  "tests": "55 focused helper/preparer tests; 2 ignored driver tests; Ruff and mypy pass. No native processes.",
+  "materialization": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/misaal-x86-literals-0002/patches/legalizer-literal-derivation.json",
+  "diagnostic_package": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/misaal-x86-selector-gate-0001",
+  "diagnostic_manifest_sha256": "103268c7ce384c36f95f284fbb9baecbe42c3fa60f98c36689a5178e2ee4c331",
+  "diagnostic_driver_sha256": "92869084e274947375f6620944a33772dfe0a13e6549487d911b4852e123bd92",
+  "copied_native_source_bytes": 4881003,
+  "integration": "Root must add scripts/reproduction_misaal_x86_literals.py to MISAAL preparation identity; no coordinator edit in this patch.",
+  "native_readiness": "Native reduced/captured-module gates and fresh full parent/replay are required; no settings published."
+}

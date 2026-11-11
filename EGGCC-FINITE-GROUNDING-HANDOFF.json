@@ -1,0 +1,66 @@
+{
+  "scope": "Eggcc finite f64 spelling and erased TupleT existing-row grounding; no native runs or corpus admission",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/EGGCC-FINITE-GROUNDING.patch",
+  "patch_sha256": "7f745a3505ee6a8654edbc306be52ada5eb122ffbbda40b4ca03995502a4af04",
+  "baseline": {
+    "scripts/eggcc_churchroad_complete.py": "766a22bd0f448dbd948fb47f7bc6247da9aeceb58c05519437cc3ca9f7bd3d24",
+    "tests/test_suite_capture_eggcc_churchroad.py": "7d8543d22a387b6a8b59c375c5736c00ff751c08ee9517838c7dc3ea6f159798",
+    "benchmarks/reproduction/eggcc-bitwise-replay.md": "8f2baa98f50d1f4f07f54be7f00d4147db59166c9dc9844d4128fa15bbb06dcb"
+  },
+  "modified": {
+    "scripts/eggcc_churchroad_complete.py": "e8269a5ee2ff37a6cac46fb54e038a655bd8892240cba8f18a21333ba53d93ba",
+    "tests/test_suite_capture_eggcc_churchroad.py": "f0f182f6e5ea5aff77062c970181fafd5c664fdf777aac9a696875e8645920cc",
+    "benchmarks/reproduction/eggcc-bitwise-replay.md": "4ed31f62204f79dddd0a0a80811b888cc50133bee833322a0dc41d8e59f978b9"
+  },
+  "validation": {
+    "pytest": "94 passed in 0.36s",
+    "ruff_check": "passed",
+    "ruff_format": "2 files already formatted",
+    "mypy": "Success: no issues found in 2 source files"
+  },
+  "offline_actual_events": {
+    "max-subarray": {
+      "all_three_optimization_sessions": "existing-row-dag",
+      "root_requests_each_session": 3,
+      "derived_types_each_session": [
+        1,
+        0,
+        0
+      ]
+    },
+    "cholesky_decomp": {
+      "all_three_optimization_sessions": "existing-row-dag",
+      "root_requests_each_session": 8,
+      "derived_types_each_session": [
+        2,
+        0,
+        0
+      ],
+      "literal_match": {
+        "source": "0.00001",
+        "native": "1e-5",
+        "bits": "3ee4f8b588e368f1",
+        "sort": "f64",
+        "class": "f64-14"
+      }
+    }
+  },
+  "remaining_gates": [
+    "Actual existing-row positive checks for both families of inputs",
+    "Absent TupleT/wrong child and wrong source input negative controls",
+    "Primary constructor/table counts unchanged",
+    "Fresh complete native parent and all ordinary replay sessions"
+  ],
+  "unmodified_test_dependency": "scripts/suite_capture_eggcc_churchroad.py was refreshed from live solely for testing; not part of patch",
+  "independent_review": {
+    "agent": "/root/eggcc_anchor_native_diagnostic/cordic_cargo_review",
+    "status": "no remaining blocker",
+    "scope": "Read-only three-file diff, current exact modified hashes; no test executions or native jobs",
+    "reviewed_sha256": {
+      "scripts/eggcc_churchroad_complete.py": "e8269a5ee2ff37a6cac46fb54e038a655bd8892240cba8f18a21333ba53d93ba",
+      "tests/test_suite_capture_eggcc_churchroad.py": "f0f182f6e5ea5aff77062c970181fafd5c664fdf777aac9a696875e8645920cc",
+      "benchmarks/reproduction/eggcc-bitwise-replay.md": "4ed31f62204f79dddd0a0a80811b888cc50133bee833322a0dc41d8e59f978b9"
+    }
+  },
+  "name_collision_gate": "Reserved reproduction_derived_child/value/ruleset/table names reject existing source bindings."
+}

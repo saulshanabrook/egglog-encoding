@@ -1,0 +1,17 @@
+{
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/MISAAL-SOURCE-TIMEOUT.patch",
+  "patch_sha256": "ab40bcde4344b05a7f3993d4d019926512b4bced724830065146baa26d462ac6",
+  "baseline_sha256": {
+    "scripts/misaal_reproduction.py": "9fe5e6a0c05e2975d02f7c12700d4bb5a2223e87c22d7c2d9e8ca0ab0a46e819",
+    "tests/test_misaal_reproduction.py": "1047385d77a24328aca33250693088f2fb0f9dddb7b225d61666b7a2e82ce759",
+    "benchmarks/reproduction/misaal-hardboiled.md": "bc4639dc2d51f04e6f8310877e5dac4b0cd818db8cf02fc8d9a3942441cca77a"
+  },
+  "updated_sha256": {
+    "scripts/misaal_reproduction.py": "f9de69ca294c488b4341bb5467a358f5ca87df9ae3209d6810ded666b249aa07",
+    "tests/test_misaal_reproduction.py": "1525bb7c9353199d19451004307c90c12cdd0a092ca3ebe79905c63c529a8b04",
+    "benchmarks/reproduction/misaal-hardboiled.md": "4c03a5ccbbaca78b515375f9c94e7213ca47895670ae1cb2568d23734fd372b3"
+  },
+  "tests": "67 focused fake-tool protocol tests pass; Ruff format/check and two-file mypy pass",
+  "scope": "No native jobs, pattern changes, cache substitutions, immutable-request changes or live edits",
+  "runtime_blocker": "Detached Racket/solver group accounting and cleanup require separate guard repair and real fixture before 3600-second source canary."
+}

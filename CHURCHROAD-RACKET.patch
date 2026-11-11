@@ -1,0 +1,73 @@
+--- a/scripts/reproduction_prepare_churchroad.py
++++ b/scripts/reproduction_prepare_churchroad.py
+@@ -256,6 +256,32 @@
+         model = lakeroad / "racket/generated/xilinx-ultrascale-plus-dsp48e2.rkt"
+         if not model.is_file() or not model.stat().st_size:
+             raise ValueError("Pinned Lakeroad's public generated DSP48E2 model is missing")
++        # Racket 9.1 rejects this test's unused name at two distinct ellipsis depths.
++        # Rename only the outer test binding; every synthesis definition is unchanged.
++        architecture = lakeroad / "racket/architecture-description.rkt"
++        architecture_source = architecture.read_text()
++        test_start = '(module+ test\n  (test-case "Construct smaller DSP from larger DSP"'
++        test_end = '  (test-case "Construct a LUT5 on Lattice from LUT4s and a MUX2."'
++        old_pattern = "                  others ...)))\n          #t]"
++        if (
++            architecture_source.count(test_start) != 1
++            or architecture_source.count(test_end) != 1
++            or architecture_source.count(old_pattern) != 1
++            or not architecture_source.index(test_start)
++            < architecture_source.index(old_pattern)
++            < architecture_source.index(test_end)
++        ):
++            raise ValueError("Pinned Lakeroad Racket test compatibility patch no longer matches its source")
++        patched_architecture = architecture_source.replace(old_pattern, old_pattern.replace("others", "other-outputs"))
++        compatibility_patch = evidence / "lakeroad-racket-match.patch"
++        write_native_patch(lakeroad, {"racket/architecture-description.rkt": patched_architecture}, compatibility_patch)
++        record["lakeroad_compatibility"] = {
++            "patch": str(compatibility_patch),
++            "patch_sha256": sha256_file(compatibility_patch),
++            "original_sha256": sha256_file(architecture),
++        }
++        architecture.write_text(patched_architecture)
++        record["lakeroad_compatibility"]["patched_sha256"] = sha256_file(architecture)
+         step(
+             "bitwuzla-configure",
+             [
+--- a/tests/test_reproduction_prepare_churchroad.py
++++ b/tests/test_reproduction_prepare_churchroad.py
+@@ -57,6 +57,14 @@
+                 model = cwd / "racket/generated/xilinx-ultrascale-plus-dsp48e2.rkt"
+                 model.parent.mkdir(parents=True)
+                 model.write_text("public generated primitive model")
++                (cwd / "racket/architecture-description.rkt").write_text(
++                    "runtime synthesis definition\n"
++                    '(module+ test\n  (test-case "Construct smaller DSP from larger DSP"\n'
++                    "                  others ...)))\n          #t]\n"
++                    '  (test-case "Construct a LUT5 on Lattice from LUT4s and a MUX2."\n'
++                    "remaining runtime definition\n"
++                    + ("                  others ...)))\n          #t]" if state.get("changed_lakeroad_test") else "")
++                )
+             if cwd.name == "churchroad":
+                 (cwd / "yosys-plugin").mkdir()
+                 (cwd / "Cargo.toml").write_text("original pinned manifest\n")
+@@ -141,6 +149,12 @@
+     assert str(output / "sources/lakeroad") in settings["identity_paths"]
+     assert result["racket_runtime_paths"][0] in settings["identity_paths"]
+     assert (output / "evidence/churchroad-Cargo.lock").is_file()
++    compatibility = result["lakeroad_compatibility"]
++    assert compatibility["original_sha256"] != compatibility["patched_sha256"]
++    patch_lines = Path(compatibility["patch"]).read_text().splitlines()
++    assert [line for line in patch_lines if line.startswith("+") and not line.startswith("+++")] == [
++        "+                  other-outputs ...)))"
++    ]
+     assert json.loads((output / "preparation.json").read_text())["status"] == "success"
+ 
+ 
+@@ -148,6 +162,7 @@
+     "fault,reason,last",
+     [
+         ({"missing_model": True}, "public generated DSP48E2", "yaml-revision"),
++        ({"changed_lakeroad_test": True}, "compatibility patch no longer matches", "yaml-revision"),
+         ({"bad_revision": "lakeroad"}, "checkout resolved", "lakeroad-revision"),
+         ({"racket_version": "8.0"}, "Racket >=8.1", "racket-version"),
+         ({"missing_meson_build": True}, "without a Meson build", "bitwuzla-configure"),

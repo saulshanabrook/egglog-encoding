@@ -1,0 +1,161 @@
+--- a/scripts/misaal_reproduction.py
++++ b/scripts/misaal_reproduction.py
+@@ -14,6 +14,7 @@
+ import importlib
+ import inspect
+ import json
++import math
+ import os
+ import re
+ import runpy
+@@ -44,6 +45,14 @@
+ def verified_request(path: Path) -> dict[str, Any]:
+     """Bind the actual generator, source, backend, verifier and Python inputs."""
+     request: dict[str, Any] = json.loads(path.read_text())
++    source_timeout = request.get("source_timeout_sec", 900)
++    valid_timeout = isinstance(source_timeout, (int, float)) and not isinstance(source_timeout, bool)
++    try:
++        valid_timeout = valid_timeout and math.isfinite(source_timeout) and source_timeout > 0
++    except OverflowError:
++        valid_timeout = False
++    if not valid_timeout:
++        raise ValueError("MISAAL source_timeout_sec must be a finite positive number")
+     if re.fullmatch(r"[0-9a-f]{40}", request["revision"]) is None:
+         raise ValueError("MISAAL request must record a full source revision")
+     checkout = Path(request["checkout"]).resolve()
+@@ -743,7 +752,7 @@
+         command,
+         ROOT,
+         output / "process",
+-        timeout_sec=900,
++        timeout_sec=request.get("source_timeout_sec", 900),
+         memory_limit_bytes=5 * 1024**3,
+         require_guard=True,
+         disk_reserve_bytes=10 * 1024**3,
+@@ -763,6 +772,7 @@
+         }
+     )
+     record["process"] = asdict(process)
++    record["source_timeout_sec"] = request.get("source_timeout_sec", 900)
+     if process.status != "success":
+         record.update(status=process.status, reason=process.message or "Source attempt did not finish", workloads=[])
+         if not record["source_capture_complete"]:
+--- a/tests/test_misaal_reproduction.py
++++ b/tests/test_misaal_reproduction.py
+@@ -292,11 +292,17 @@
+         assert Path(call["replay"]).read_text().count("(check (= $srcexpr (Seed)))") == 2
+ 
+ 
++@pytest.mark.parametrize("source_timeout", [None, 3600, 3600.5])
+ def test_public_capture_requires_guard_and_preserves_resource_stop(
+-    protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++    protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_timeout: int | float | None
+ ) -> None:
+     from benchmarking.pilot import PilotProcessResult
+ 
++    request = json.loads(protocol_request.read_text())
++    if source_timeout is not None:
++        request["source_timeout_sec"] = source_timeout
++        protocol_request.write_text(json.dumps(request))
++    original_request = protocol_request.read_bytes()
+     calls: list[dict[str, Any]] = []
+ 
+     def stopped(command: list[str], cwd: Path, output: Path, **kwargs: Any) -> PilotProcessResult:
+@@ -307,16 +313,61 @@
+     result = misaal.capture_misaal(protocol_request, tmp_path / "capture")
+     assert calls == [
+         {
+-            "timeout_sec": 900,
++            "timeout_sec": source_timeout if source_timeout is not None else 900,
+             "memory_limit_bytes": 5 * 1024**3,
+             "require_guard": True,
+             "disk_reserve_bytes": 10 * 1024**3,
+             "allow_warning_pressure": True,
+         }
+     ]
++    assert result["source_timeout_sec"] == (source_timeout if source_timeout is not None else 900)
++    assert protocol_request.read_bytes() == original_request
+     assert result["status"] == "resource-stopped"
+     assert result["source_capture_complete"] is False
+     assert result["workloads"] == []
++
++
++@pytest.mark.parametrize(
++    "value", [True, False, None, "3600", 0, -1, float("nan"), float("inf"), -float("inf"), 10**400]
++)
++def test_request_rejects_invalid_source_timeout(protocol_request: Path, value: Any) -> None:
++    request = json.loads(protocol_request.read_text())
++    request["source_timeout_sec"] = value
++    protocol_request.write_text(json.dumps(request))
++    with pytest.raises(ValueError, match="source_timeout_sec must be a finite positive number"):
++        misaal.verified_request(protocol_request)
++
++
++def test_source_timeout_changes_only_selected_request_identity(
++    protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from scripts import suite_reproduction as reproduction
++
++    request = json.loads(protocol_request.read_text())
++    request.update(source="generator.cpp", configuration={})
++    source = Path(request["checkout"]) / request["source"]
++    source.write_text("pinned source generator")
++    request["source_hashes"][request["source"]] = hashlib.sha256(source.read_bytes()).hexdigest()
++    requests = tmp_path / "requests"
++    requests.mkdir()
++    selected = requests / f"{request['case_id']}.json"
++    selected.write_text(json.dumps(request))
++    other = requests / "other.json"
++    other.write_text("unrelated request")
++    performance_cache = tmp_path / ".reports.jsonl"
++    performance_cache.write_text("unchanged timed observations\n")
++    monkeypatch.setattr(reproduction, "ROOT", tmp_path)
++    case = {"id": request["case_id"], "family": "misaal", "source": request["source"], "configuration": {}}
++    settings = {"paths": {"requests": str(requests)}}
++    original = reproduction.case_identity(case, settings)
++    request["source_timeout_sec"] = 3600
++    selected.write_text(json.dumps(request))
++    extended = reproduction.case_identity(case, settings)
++    assert original != extended
++    assert [key for key in extended["inputs"] if original["inputs"][key] != extended["inputs"][key]] == [str(selected)]
++    other.write_text("changed unrelated request")
++    assert reproduction.case_identity(case, settings) == extended
++    assert performance_cache.read_text() == "unchanged timed observations\n"
+ 
+ 
+ @pytest.fixture
+--- a/benchmarks/reproduction/misaal-hardboiled.md
++++ b/benchmarks/reproduction/misaal-hardboiled.md
+@@ -29,12 +29,13 @@
+ ```
+ 
+ Both complete paths use the shared native guard with a required host-memory
+-check and 10 GiB disk reserve. MISAAL has a 900-second, 5 GiB parent allowance;
++check and 10 GiB disk reserve. MISAAL defaults to a 900-second, 5 GiB parent allowance;
+ individual backend and LLVM tools have 120-second limits. HardBoiled complete-mode compilation
+ and generation each have the configured family timeout (300 seconds by default
+ in the coordinator) and a 5 GiB allowance. The historical partial-capture CLI
+-keeps its 120-second, 2 GiB defaults. All descendants inherit
+-the guarded process group. Linux executables must use the coordinator's Linux
++keeps its 120-second, 2 GiB defaults. The current native guard accounts for the launch process group;
++detached descendants require verified accounting and cleanup before increasing
++a source allowance. Linux executables must use the coordinator's Linux
+ container runner rather than the native API on macOS. The coordinator owns
+ platform matching, source acquisition/builds, immutable attempt identity, and
+ resume policy. An interrupted/resource-stopped attempt is not a success.
+@@ -123,6 +124,15 @@
+ | `generator_command` | Argument list, beginning with `generator`, using `{output}` for its fresh output directory |
+ | `expected_generator_outputs` | Nonempty relative output list, including final `.ll` |
+ | `environment` | Exact source flags plus Hydride/Python/LLVM paths |
++
++Optional `source_timeout_sec` sets the complete source-parent time budget in
++seconds, independently of ordinary replay's timeout. It defaults to 900 and must
++be a finite positive JSON number (booleans are rejected). The effective value is
++recorded in the capture receipt; the request bytes participate in acquisition
++identity. A changed budget needs a new derived request and fresh attempt. It does
++not change the 5 GiB limit, disk/host guards, cache transitions or completion
++requirements, and does not authorize a longer run before detached-descendant
++accounting and cleanup have passed their safety gate.
+ 
+ Additional provenance fields, such as dependency revisions, patch hashes and the
+ generator build receipt, are preserved in the request receipt. The coordinator

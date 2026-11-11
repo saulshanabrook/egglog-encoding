@@ -1,0 +1,28 @@
+{
+  "status": "review-ready-no-native-runs",
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/speq-c99-selection-correction-0001/implementation.patch",
+  "patch_sha256": "9dbcd0355a1d805956eb8e665f44904817290c43742a949e08ba861e8054bae1",
+  "baseline": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/.baseline/speq-c99-selection-correction",
+  "files": {
+    "scripts/speq_c99_gates.py": {
+      "baseline_sha256": "0961f62c558833c716e46c697fc9956407606a8b302de8cf70fc8d9d8a0f5cc5",
+      "after_sha256": "56fa30a8af3d1a3168fa84b46895e894403a336c4d3771c8c919a5b147086923",
+      "root_baseline_matches": true
+    },
+    "tests/test_speq_c99_gates.py": {
+      "baseline_sha256": "a7d09f29dd716fd88920d4dc842422b32114c732fd38b0a7499c98d5b5577e61",
+      "after_sha256": "8debcf8c7259b6a412c74948181e456cbe30a64c316c7783ae089a0de378a8b1",
+      "root_baseline_matches": true
+    }
+  },
+  "scope": "Replace invalid unrelated-function positive gate with tracked guarded-stride function; explicit empty-selected rejection remains negative. Candidate C++/domain/rules/source/admission unchanged.",
+  "checks": [
+    "115 focused tests passed in 1.28s",
+    "Ruff check and format passed",
+    "mypy: no issues in 2 files"
+  ],
+  "native_gate_count": 31,
+  "independent_review": "misaal_backend_failures_audit read-only review clear at exact after hashes; canonical guarded loop/chained-double-GEP domain and separate ordered REV outputs checked from source. Actual composed-module execution remains root native gate.",
+  "preserved_failure": "benchmarks/local/reproduction/preparation/speq-c99-public-attempt-0001",
+  "remaining_gate": "Root-only fresh native gate and full preparation; no existing settings were published or modified"
+}

@@ -1,0 +1,66 @@
+{
+  "status": "prepared-not-executed",
+  "corpus_admission": false,
+  "external_sources": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/CMakeLists.txt": "64cd9233164b28925230c263955152cb11dc229c6e08c09acf122990b60ebbbc",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/common/Legalizer.cpp": "cf595e9c1ff60c46234ba327a8ea10738b82e934b0a42f46c18fc5ab1ce79860",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/common/Legalizer.h": "f0bae9653154fe2d7c4eb6a0e2eab835f05763ce80cb9bc925bad8ebe3b891da",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/common/libpimeval.h": "01394a793542a17129ac832708b2b71c20ded2a2d181b80f4a758a9226715b0c",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.ll": "f9fe9df02ea0471d6b9a385ab9bbab059730ec5c885c847011bad81e89bbf09d",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/Hydride/codegen-generator/tools/low-level-codegen/wrappers/x86_wrappers.c.ll": "1a7faebe62f12edab90e49ca2c42092bc84f415cc710470d98ab1a4cc4554b78",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.linked.ll": "85e3adebdb8f83ec9b9147aa6b57e7c689ad572ea92788742fd049a3b20bbb4f",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/verify.json": "342deccaac227d23a5a909d7c32f3d7bd64d55d67f523e72cd993f954d13e389",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-conv_nn/complete/db3d430e22dcb3759fedef181a1650992552c6cf46fe5e61dbccf46faa94ee10/attempt-0001/capture/generation/children/child-0000/legalize-0000/conv_nn_x86_depth2_misaal__capture_b7fabfdcf9b4fad0.linked.ll": "76e4d70dd1f7c469bcbd594957bb0924f2df1af0f65db91a876fe585e64cc0d0",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-conv_nn/complete/db3d430e22dcb3759fedef181a1650992552c6cf46fe5e61dbccf46faa94ee10/attempt-0001/capture/generation/children/child-0000/legalize-0000/verify.json": "caaeee2d35e0ca268f0d5e4bfc2fe3f3bad9434f61c3086758c298a4ed07cfd4"
+  },
+  "fixtures": {
+    "srav512": {
+      "expected": "success",
+      "function": "hydride.node.tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.0",
+      "wrapper": "_mm512_srav_epi32_wrapper"
+    },
+    "srav256": {
+      "expected": "success",
+      "function": "hydride.node.tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.0",
+      "wrapper": "_mm256_srav_epi32_wrapper"
+    },
+    "srav128": {
+      "expected": "success",
+      "function": "hydride.node.tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.0",
+      "wrapper": "_mm_srav_epi32_wrapper"
+    },
+    "wrong-boolean": {
+      "expected": "rejected",
+      "function": "hydride.node.tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.0"
+    },
+    "wrong-width-selector": {
+      "expected": "rejected",
+      "function": "hydride.node.tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.0"
+    }
+  },
+  "extraction": {
+    "raw": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.ll",
+    "raw_sha256": "f9fe9df02ea0471d6b9a385ab9bbab059730ec5c885c847011bad81e89bbf09d",
+    "wrappers": {
+      "_mm512_srav_epi32_wrapper": "3da094d3dbb5d54dbdd901efa01aed362df8858ddc33f28862bc03b60c82f830",
+      "_mm256_srav_epi32_wrapper": "decfed51c2b39d73022a467aa17bad416900dd1a48cab2101e1e82d41065a80e",
+      "_mm_srav_epi32_wrapper": "eba072c770b73a4032e406574742e43e293ea6620710532dba8080127c9220f2"
+    },
+    "fixture_derivation": "512 fixture exact captured raw module + exact three wrapper definitions/declarations/attribute groups; 256/128 scale vector and width parameters only; two negative fixtures change only Boolean or width selector."
+  },
+  "old_plugin": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/legalizers-build/libx86LegalizerAllArgs.so",
+  "old_plugin_sha256": "2982c8190df2036617d769ac58ed966bff56a1e7b5d1d224f294629b2f83f49d",
+  "boost": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/boost_1_81_0",
+  "llvm": "/opt/homebrew/Cellar/llvm@12/12.0.1_1",
+  "cmake": "/Users/saul/.cache/uv/archive-v0/WdkpDVz4tYcf_Bsl/lib/python3.14t/site-packages/cmake/data/bin/cmake",
+  "captures": {
+    "tensor_shr": {
+      "linked": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/tensor_shr_x86_depth2_misaal__capture_50ae30bb64b4debd.linked.ll",
+      "verify": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-tensor_shr/complete/8907125365bace7fd3486921c61fa78b09e3deadd46ec6c313fa41f059e33179/attempt-0001/capture/generation/children/child-0000/legalize-0000/verify.json"
+    },
+    "conv_nn": {
+      "linked": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-conv_nn/complete/db3d430e22dcb3759fedef181a1650992552c6cf46fe5e61dbccf46faa94ee10/attempt-0001/capture/generation/children/child-0000/legalize-0000/conv_nn_x86_depth2_misaal__capture_b7fabfdcf9b4fad0.linked.ll",
+      "verify": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-x86-conv_nn/complete/db3d430e22dcb3759fedef181a1650992552c6cf46fe5e61dbccf46faa94ee10/attempt-0001/capture/generation/children/child-0000/legalize-0000/verify.json"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "status": "reviewed implementation; native gates unrun",
+  "files": {
+    "benchmarking/pilot.py": {
+      "baseline_sha256": "c13b824a6aab2bfd4c60913cf55187125fc00fc99343f27fca4ca6b3d903949b",
+      "modified_sha256": "7e730b29aceeaa5fb02afa940f0fcc2d3ac5244a2dfcae956b091b07ea7a856c"
+    },
+    "scripts/misaal_reproduction.py": {
+      "baseline_sha256": "f9de69ca294c488b4341bb5467a358f5ca87df9ae3209d6810ded666b249aa07",
+      "modified_sha256": "02177afc9008154c36c1b1c0bb069b61b68e3e6129e6672dbab0c2c12e7b7f71"
+    },
+    "scripts/suite_reproduction.py": {
+      "baseline_sha256": "9b22e9f4b52b434eeb7ef9b875a6a67e33f279a0a28aa33c975a19cabbcd4b89",
+      "modified_sha256": "ddf8e1baf099677fffde1a6b101db66dae5241ba4c40b836a2e6beeebc2fe835"
+    },
+    "tests/test_pilot_outputs.py": {
+      "baseline_sha256": "f361329a119828cec82e99baaa4620317af4882cacdcbeb8319ae48b5f3191b5",
+      "modified_sha256": "17123b32e3c4f2e7987894b84bc0faa233aba06d954412d012a6d60c2b1caa6e"
+    },
+    "tests/test_misaal_reproduction.py": {
+      "baseline_sha256": "1525bb7c9353199d19451004307c90c12cdd0a092ca3ebe79905c63c529a8b04",
+      "modified_sha256": "2441bfb082fddd1427964cc930d0a05729d1805351bef487950b7a9e45df04e7"
+    },
+    "benchmarks/reproduction/misaal-hardboiled.md": {
+      "baseline_sha256": "4c03a5ccbbaca78b515375f9c94e7213ca47895670ae1cb2568d23734fd372b3",
+      "modified_sha256": "3db8333e28c959a2f44f88abf5d8aaebf2f9bed44aee3563a5603c21c8cb9d5d"
+    },
+    "scripts/reproduction_misaal_groups.py": {
+      "baseline_sha256": null,
+      "modified_sha256": "9c566f67a5b0a526b1ce70d12f74e630d0eaa060c0d109d658e634dc8e975292"
+    },
+    "tests/test_reproduction_misaal_groups.py": {
+      "baseline_sha256": null,
+      "modified_sha256": "7ae193e41fdda0d239339795922426cf225f42b604997b47b72b39b0776c0c16"
+    }
+  },
+  "patch_sha256": "221bcab75066a7b194a3453f3ae218bf3752863fda65e11fdff89cdc15325711",
+  "ignored_diagnostic_files": {
+    "diagnostics/misaal-known-launch-0001/.gitignore": "cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b",
+    "diagnostics/misaal-known-launch-0001/README.md": "8b5e0c1bbc23a9f25f4a88de090309dc4a6a9d5ae5868acb9a54b539aabee652",
+    "diagnostics/misaal-known-launch-0001/run.py": "f63fa8ee42786929484109ab3b0db84f8a01f7d4bcf8ed10b7f1e3a20e59ca12",
+    "diagnostics/misaal-known-launch-0001/test_run.py": "dcceb9ffd4407643964ec0f016811555ca42a968ab73e0be69d90e4181fae74e"
+  },
+  "native_execution": false,
+  "validation": {
+    "focused_tests": "114 passed in 35.21s",
+    "ruff": "passed on nine modified/test/fixture Python files",
+    "mypy": "passed --follow-imports silent on the same nine files",
+    "native_safety_fixtures": "unrun",
+    "independent_core_review": "no remaining core blocker after root-lifetime, prompt root stop, and EOF-drain corrections"
+  }
+}

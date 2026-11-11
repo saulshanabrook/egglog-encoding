@@ -1,0 +1,89 @@
+{
+  "status": "reviewable-disabled-candidate",
+  "native_execution": false,
+  "corpus_admission": false,
+  "patch": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/SPEQ-C99-CANDIDATE.patch",
+  "patch_sha256": "4191d197b3f2d2642f530bdce9498213a861c65ec0e7a8e8c5d7f267db48dad6",
+  "files": {
+    "scripts/speq_c99_diagnostic.py": {
+      "before_sha256": null,
+      "after_sha256": "ea570c23d37f74bbe28a17e58809cb97c2121248de301f950a98fe43d37f53c2",
+      "lines": 261
+    },
+    "scripts/paper_benchmarks/speq_c99_fir.inc": {
+      "before_sha256": null,
+      "after_sha256": "6abc1e3b1f94e99359d47d5de9f545c7422996c838432007e6fe28f6d932ceb4",
+      "lines": 212
+    },
+    "scripts/paper_benchmarks/speq_c99_harness.cpp": {
+      "before_sha256": null,
+      "after_sha256": "724f1847aa5c857b0b6775cfc767bcc47cb71f31ef6fba411669fa20ee026952",
+      "lines": 59
+    },
+    "scripts/paper_benchmarks/speq_c99_fixture.ll": {
+      "before_sha256": null,
+      "after_sha256": "50c170fd8056a7539ef2b623b5dc7d8c618cdab6e04cfa2774ca34b546449faa",
+      "lines": 30
+    },
+    "tests/test_speq_c99_diagnostic.py": {
+      "before_sha256": null,
+      "after_sha256": "61f4312028308451b0f5ede2ce53eee0e3d2284ef56f031e31b0e4b5b6128de4",
+      "lines": 168
+    },
+    "benchmarks/reproduction/speq-c99-diagnostic.md": {
+      "before_sha256": null,
+      "after_sha256": "4c6d3e5284614801c2edb95b3932e59713188e0529166aa996a263f0307eb333",
+      "lines": 122
+    }
+  },
+  "reused_live_baselines": {
+    "scripts/speq_phi_diagnostic.py": "bf085d95b0b6739ca2b86f7fec273ebd13c6d05de0a38836afd3cd114d26a9d4",
+    "scripts/paper_benchmarks/record_speq.py": "da018ad7e66991e7dee4e26439fb7ba901f2f69c9bc67490857658a0d00786ae",
+    "scripts/paper_benchmarks/speq_rev_plugin.cpp": "09e04e5a08d91bd9591c187620975f05464697c8b87d23aeee41e5189350724a"
+  },
+  "materialization": {
+    "path": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/review/speq-c99-candidate-0002/materialized",
+    "receipt_sha256": "d92bae5ffe4c824daa1090c1e23b3677e0b8c0ac53228315daa732338288d262",
+    "candidate_sha256": "61a78e7cce4908cdfc29c1af951e6bc740810d25503e6e7ca9b1e0803657d41e"
+  },
+  "validation": {
+    "pytest": "25 passed in 0.08s (candidate + existing PHI tests)",
+    "ruff": "pass",
+    "mypy": "pass --follow-imports=silent",
+    "offline_pinned_materialization": "pass; no compiler or engine executed"
+  },
+  "independent_review": "misaal_backend_failures_audit: no remaining concrete blocker after fallback-only memory typing and all GEP-root validation; final restriction to parser-supported integer widths narrows domain",
+  "required_native_gates": [
+    "verify original failure and exact-fragment positive/negative fixture results",
+    "verify candidate disabled matches PHI baseline for all four reference FIR hashes",
+    "verify enabling missing selected function fails, unrelated function FIR stays unchanged",
+    "verify enabled retained GEMM has complete scalar closure, flat addresses and typed memory",
+    "original complete parent then standalone ordinary replay (separate admission)"
+  ],
+  "recipe": "/Users/saul/p/wt/egglog-encoding/reproduction-eggcc-churchroad/benchmarks/reproduction/speq-c99-diagnostic.md",
+  "first_native_metadata_command": [
+    "/opt/homebrew/Cellar/llvm@17/17.0.6/bin/llvm-config",
+    "--cxxflags",
+    "--ldflags",
+    "--libs",
+    "core",
+    "analysis",
+    "irreader",
+    "support",
+    "--system-libs"
+  ],
+  "guard": {
+    "exclusive_lock": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/.heavy-job.lock",
+    "require_guard": true,
+    "memory_limit_bytes": 5368709120,
+    "disk_reserve_bytes": 10737418240,
+    "allow_warning_pressure": true,
+    "timeout_sec": 30
+  },
+  "notes": [
+    "No existing recorder/settings/capture module edited.",
+    "Default off; enable only individual selected-function frontend invocation, never reference generation.",
+    "All original setup regions remain present; candidate rejections cannot be disguised as parser skips.",
+    "Source parent and standalone replay remain separate unrun admission gates."
+  ]
+}
