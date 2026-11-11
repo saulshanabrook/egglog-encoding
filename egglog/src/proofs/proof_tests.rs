@@ -22,6 +22,164 @@ mod tests {
     }
 
     #[test]
+    fn recorded_ground_proofs_keep_their_original_global_bindings_after_pop() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (B) (F E)) (push)
+             (let value (A)) (let root (F value))",
+            )
+            .unwrap();
+        let mut terms = TermDag::default();
+        let root = terms.app("root".into(), vec![]);
+        let sort = graph.get_sort_by_name("E").unwrap().clone();
+        let recorded = graph
+            .record_existing_terms(&terms, &[(root, sort)])
+            .unwrap();
+        graph
+            .parse_and_run_program(None, "(pop) (let value (B)) (let root (F value))")
+            .unwrap();
+        let mut visited = 0;
+        let (mut store, roots) = recorded.lift_with_visitor(&graph, &mut |store, id, _| {
+            store.get(id);
+            visited += 1;
+        });
+        assert!(visited > 0);
+        assert_eq!(
+            store.term_dag().to_string(store.get(roots[0]).lhs()),
+            "(F (A))"
+        );
+        assert_eq!(store.get(roots[0]).lhs(), store.get(roots[0]).rhs());
+        store
+            .check_proof(roots[0], &graph.proof_check_program[..recorded.program_len])
+            .unwrap();
+    }
+
+    #[test]
+    fn global_proof_origins_follow_action_order_for_reversed_roots() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (Num i64) (Pair E E))
+             (let first (Num 1))
+             (push) (let discarded (Num 0)) (pop)
+             (let second (Pair (Num 2) (Num 2)))
+             (let third (Num 3))",
+            )
+            .unwrap();
+        let mut terms = TermDag::default();
+        let sort = graph.get_sort_by_name("E").unwrap().clone();
+        let inputs = ["third", "second", "first", "second"]
+            .map(|name| (terms.app(name.into(), vec![]), sort.clone()));
+        let recorded = graph.record_existing_terms(&terms, &inputs).unwrap();
+        let mut origins = Vec::new();
+        let (mut store, roots) = recorded.lift_with_visitor(&graph, &mut |store, id, origin| {
+            if let crate::proof::ProofOrigin::GlobalTerm { action, path, .. } = origin {
+                origins.push((
+                    action,
+                    path.to_vec(),
+                    store.term_dag().to_string(store.get(id).lhs()),
+                ));
+            }
+        });
+        assert!(origins.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert_eq!(
+            origins
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<HashSet<_>>()
+                .len(),
+            3
+        );
+        assert!(
+            origins
+                .iter()
+                .any(|(_, path, term)| path == &[0] && term == "(Pair (Num 2) (Num 2))")
+        );
+        assert!(origins.iter().all(|(_, _, term)| term != "(Num 0)"));
+        assert_eq!(
+            store.get(roots[1]).proposition(),
+            store.get(roots[3]).proposition()
+        );
+        for root in roots {
+            store
+                .check_proof(root, recorded.checking_program(&graph))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn proof_origins_name_original_head_operands_after_union_normalization() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (F E) (G E))
+             (let input (A))
+             (rule ((= x (A))) ((let child (F x)) (union x (G child))) :name \"build\")
+             (run 1)",
+            )
+            .unwrap();
+        let mut terms = TermDag::default();
+        let a = terms.app("A".into(), vec![]);
+        let f = terms.app("F".into(), vec![a]);
+        let g = terms.app("G".into(), vec![f]);
+        let sort = graph.get_sort_by_name("E").unwrap().clone();
+        let recorded = graph.record_existing_terms(&terms, &[(g, sort)]).unwrap();
+        let mut positions = HashMap::default();
+        let (mut store, roots) = recorded.lift_with_visitor(&graph, &mut |store, id, origin| {
+            let crate::proof::ProofOrigin::Rule {
+                rule, action, path, ..
+            } = origin
+            else {
+                return;
+            };
+            if rule.name != "build" || store.get(id).lhs() != store.get(id).rhs() {
+                return;
+            }
+            let crate::Term::App(head, _) = store.term_dag().get(store.get(id).lhs()) else {
+                return;
+            };
+            positions.insert(head.clone(), (action, path.to_vec()));
+        });
+        assert_eq!(positions.get("F"), Some(&(0, vec![0])));
+        assert_eq!(positions.get("G"), Some(&(1, vec![1])));
+        store
+            .check_proof(roots[0], &graph.proof_check_program)
+            .unwrap();
+    }
+
+    #[test]
+    fn positional_fiats_share_large_actions_without_changing_endpoints() {
+        let mut level: Vec<String> = (0..32).map(|i| format!("(Num {i})")).collect();
+        let mut terms = level.clone();
+        while level.len() > 1 {
+            level = level
+                .chunks_exact(2)
+                .map(|children| format!("(Pair {} {})", children[0], children[1]))
+                .collect();
+            terms.extend(level.clone());
+        }
+        let mut source = format!(
+            "(datatype E (Num i64) (Pair E E))\n(function saved (i64) E :merge old)\n\
+             (let root {})\n(set (saved 0) root)\n",
+            level[0]
+        );
+        // Distinct positions in one action must keep their distinct terms, and
+        // successive extraction requests must not reuse another store's term IDs.
+        for term in terms.iter().chain(terms.iter().rev()) {
+            source.push_str(&format!("(check {term})\n"));
+        }
+        source.push_str("(check (= (saved 0) value))\n(fail (check (= (Num 0) (Num 31))))");
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(None, &source)
+            .unwrap();
+    }
+
+    #[test]
     fn constructor_merge_reads_a_dirty_view() {
         let source = r#"
             (datatype Bound (IntB i64) (Join Bound Bound) (Other i64))

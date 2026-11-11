@@ -1,9 +1,41 @@
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
-use crate::proofs::proof_format::{Justification, ProofId, ProofStore, lift_proof};
+use crate::proofs::proof_format::{Justification, ProofId, ProofStore};
+use crate::proofs::proof_lifting::{ProofVisitor, lift_proof};
 use crate::util::HashSet;
 use crate::{ResolvedCall, TermDag, Value};
 use thiserror::Error;
+
+impl crate::EGraph {
+    /// The original resolved commands used to check proofs in this graph.
+    pub fn proof_checking_program(&self) -> &[crate::ast::ResolvedNCommand] {
+        &self.proof_check_program
+    }
+    /// Prove a query while visiting its recorded source positions during lifting.
+    /// The visitor borrows temporary lifting state; returned proof IDs are stable.
+    pub fn prove_facts_with_visitor(
+        &mut self,
+        facts: Vec<crate::ast::Fact>,
+        visit: &mut ProofVisitor<'_>,
+    ) -> Result<(ProofStore, ProofId), crate::Error> {
+        let span = crate::span!();
+        let mut commands =
+            crate::ast::desugar::desugar_prove(&mut self.parser, span.clone(), facts);
+        let Some(crate::ast::NCommand::ProveExists(_, name)) = commands.pop() else {
+            unreachable!("query desugaring ends with prove-exists")
+        };
+        self.run_program(
+            commands
+                .iter()
+                .map(crate::ast::NCommand::to_command)
+                .collect(),
+        )?;
+        let call = ResolvedCall::Func(self.functions[&name].func_type.clone());
+        ProofInstrumentor::new(self)
+            .prove_exists_with(&call, Some(visit))
+            .map_err(|error| crate::Error::ProofError { span, error })
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ProveExistsError {
@@ -49,6 +81,14 @@ impl ProofInstrumentor<'_> {
     pub(crate) fn prove_exists(
         &mut self,
         call: &ResolvedCall,
+    ) -> Result<(ProofStore, ProofId), ProveExistsError> {
+        self.prove_exists_with(call, None)
+    }
+
+    pub(crate) fn prove_exists_with(
+        &mut self,
+        call: &ResolvedCall,
+        visit: Option<&mut ProofVisitor<'_>>,
     ) -> Result<(ProofStore, ProofId), ProveExistsError> {
         let func = match call {
             ResolvedCall::Func(func) => func,
@@ -125,6 +165,7 @@ impl ProofInstrumentor<'_> {
             &self.egraph.proof_check_program,
             container_normalizers,
             prim_value_constructors,
+            visit,
         );
 
         // If the existence proof is a single-premise rule, strip that wrapping rule

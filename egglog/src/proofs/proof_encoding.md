@@ -414,7 +414,7 @@ with the [`Proposition`](crate::proofs::proof_format::Proposition) `t1 = t2` it
 proves (see [`crate::proofs::proof_format`]). The checker reads propositions;
 the e-graph never stores one.
 
-[`lift_proof`](crate::proofs::proof_format::lift_proof) runs after extraction and
+[`lift_proof`](crate::proofs::proof_lifting::lift_proof) runs after extraction and
 before checking and simplification. It reconstructs propositions and rule
 substitutions against the source program, evaluating global references from
 their bindings as it goes.

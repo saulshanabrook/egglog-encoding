@@ -2,7 +2,10 @@
 
 use super::ground::{Node, Row, fail};
 use super::proof_extractor::RootExtractor;
-use super::proof_format::{ProofId, ProofStore, RawProof, RawProofId, RawProofStore};
+use super::proof_format::{
+    ProofId, ProofStore, RawProof, RawProofId, RawProofStore, RecordedProofs,
+};
+use super::proof_lifting::ProofVisitor;
 use crate::*;
 use std::iter::once;
 
@@ -414,10 +417,21 @@ impl Proofs {
     /// Lift completed roots with the ordinary lifter, preserving their order.
     pub(super) fn lift(
         self,
-        program: &Vec<ResolvedNCommand>,
+        program: &[ResolvedNCommand],
         roots: &[RawProofId],
+        visit: Option<&mut ProofVisitor<'_>>,
     ) -> (ProofStore, Vec<ProofId>) {
         self.raw
-            .lift(program, roots, self.normalizers, self.value_heads)
+            .lift_with(program, roots, self.normalizers, self.value_heads, visit)
+    }
+
+    pub(super) fn record(self, roots: Vec<RawProofId>, program_len: usize) -> RecordedProofs {
+        RecordedProofs {
+            program_len,
+            raw: self.raw,
+            roots,
+            normalizers: self.normalizers,
+            value_heads: self.value_heads,
+        }
     }
 }

@@ -77,6 +77,65 @@ fn certification_preserves_requested_order_and_duplicate_outputs() {
 }
 
 #[test]
+fn existence_batch_shares_evidence_across_distinct_values_and_sorts() {
+    let mut graph = graph(
+        "(datatype E (A) (B) (F E)) (datatype Box (Wrap E)) (A)
+        (rule ((= a (A))) ((F a) (B) (Wrap a)) :name \"derive-batch\") (run 1)",
+    );
+    let mut terms = TermDag::default();
+    let a = terms.app("A".into(), vec![]);
+    let b = terms.app("B".into(), vec![]);
+    let f = terms.app("F".into(), vec![a]);
+    let wrap = terms.app("Wrap".into(), vec![a]);
+    let e = graph.type_info().get_sort_by_name("E").unwrap().clone();
+    let boxed = graph.type_info().get_sort_by_name("Box").unwrap().clone();
+    let roots = [(f, e.clone()), (wrap, boxed), (b, e.clone()), (f, e)];
+    let before = graph.num_nodes();
+    let (store, proofs) = graph.prove_existing_terms(&terms, &roots).unwrap();
+    assert_eq!(proofs.len(), roots.len());
+    assert_eq!(
+        proofs[0], proofs[3],
+        "duplicate roots share their certificate"
+    );
+    for ((term, _), proof) in roots.iter().zip(&proofs) {
+        let prop = store.get(*proof);
+        assert_eq!(
+            store.term_dag().to_string(prop.lhs()),
+            terms.to_string(*term)
+        );
+        assert_eq!(prop.lhs(), prop.rhs());
+        assert!(store.proof_to_string(*proof).contains("derive-batch"));
+    }
+    assert_eq!(graph.num_nodes(), before);
+    assert!(
+        graph
+            .prove_existing_terms(&terms, &[])
+            .unwrap()
+            .1
+            .is_empty()
+    );
+}
+
+#[test]
+fn existence_batch_rejects_missing_evidence_and_container_roots() {
+    let mut graph = graph("(datatype E (A) (Missing)) (sort V (Vec E)) (A)");
+    let mut terms = TermDag::default();
+    let a = terms.app("A".into(), vec![]);
+    let missing = terms.app("Missing".into(), vec![]);
+    let vector = terms.app("vec-of".into(), vec![a]);
+    let e = graph.type_info().get_sort_by_name("E").unwrap().clone();
+    let v = graph.type_info().get_sort_by_name("V").unwrap().clone();
+    let before = graph.num_nodes();
+    assert!(
+        graph
+            .prove_existing_terms(&terms, &[(a, e.clone()), (missing, e)])
+            .is_err()
+    );
+    assert!(graph.prove_existing_terms(&terms, &[(vector, v)]).is_err());
+    assert_eq!(graph.num_nodes(), before);
+}
+
+#[test]
 fn congruence_certifies_syntax_that_was_never_inserted() {
     let mut graph = graph(
         "(datatype E (A) (B) (F E)) (F (A))

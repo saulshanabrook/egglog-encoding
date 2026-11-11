@@ -1843,38 +1843,52 @@ pub(crate) enum ActionNode<'a> {
 /// what keeps the two sides agreeing. Global reads remain one source node;
 /// their storage keys introduced by global lowering are not source expressions.
 pub(crate) fn action_nodes(action: &ResolvedAction) -> Vec<ActionNode<'_>> {
-    fn walk<'a>(expr: &'a ResolvedExpr, out: &mut Vec<ActionNode<'a>>) {
-        out.push(ActionNode::Expr(expr));
+    let mut out = vec![];
+    visit_action_nodes(action, &mut |node, _| out.push(node));
+    out
+}
+
+pub(crate) fn visit_action_nodes<'a>(
+    action: &'a ResolvedAction,
+    visit: &mut impl FnMut(ActionNode<'a>, &[usize]),
+) {
+    fn walk<'a>(
+        expr: &'a ResolvedExpr,
+        path: &mut Vec<usize>,
+        visit: &mut impl FnMut(ActionNode<'a>, &[usize]),
+    ) {
+        visit(ActionNode::Expr(expr), path);
         if let ResolvedExpr::Call(_, head, args) = expr
             && !matches!(head, ResolvedCall::Func(func) if func.role.is_global())
         {
-            for arg in args {
-                walk(arg, out);
+            for (i, arg) in args.iter().enumerate() {
+                path.push(i);
+                walk(arg, path, visit);
+                path.pop();
             }
         }
     }
-    let mut out = vec![];
+    let mut operand = |i, expr| walk(expr, &mut vec![i], visit);
     match action {
-        ResolvedAction::Let(_, _, expr) | ResolvedAction::Expr(_, expr) => walk(expr, &mut out),
+        ResolvedAction::Let(_, _, expr) | ResolvedAction::Expr(_, expr) => operand(0, expr),
         ResolvedAction::Set(_, head, args, value) => {
             if !matches!(head, ResolvedCall::Func(func) if func.role.is_global()) {
-                for arg in args {
-                    walk(arg, &mut out);
+                for (i, arg) in args.iter().enumerate() {
+                    operand(i, arg);
                 }
             }
-            walk(value, &mut out);
-            out.push(ActionNode::Row(action));
+            operand(args.len(), value);
+            visit(ActionNode::Row(action), &[]);
         }
         ResolvedAction::Change(_, _, _, args) => {
-            for arg in args {
-                walk(arg, &mut out);
+            for (i, arg) in args.iter().enumerate() {
+                operand(i, arg);
             }
         }
         ResolvedAction::Union(_, lhs, rhs) => {
-            walk(lhs, &mut out);
-            walk(rhs, &mut out);
+            operand(0, lhs);
+            operand(1, rhs);
         }
         ResolvedAction::Panic(..) => {}
     }
-    out
 }
