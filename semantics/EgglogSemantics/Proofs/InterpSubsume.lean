@@ -148,12 +148,12 @@ theorem Congruence.exec_encode_programStep {p : Program} {e : FDatabase}
 theorem exec_programStep_check_noUnions {p : Program} {e : FDatabase}
     (hu : p.UnionFree) (hs : exec p = some e) :
     ∃ out, Reach Database.empty p.schedule out ∧ e.toDatabase.SameMeaning out ∧
-      (e.holds p.check = true ↔ QueryHolds out.forgetSubsumed p.check) := by
+      (e.holds p.check = true ↔ QueryHolds out p.check) := by
   obtain ⟨out, hout, hm⟩ := exec_programStep_noUnions hu hs
   have he := UnionFreeInterpReady.empty.schedule hu hs
   exact ⟨out, hout, hm, (FDatabase.holds_iff_queryHolds he.closed he.indexOk
-    he.indexCurrent p.check).trans (hm.forgetSubsumed.queryHolds_iff_of_diag he.noUnions.toDatabase.diag.forgetSubsumed
-      (hout.noUnions Database.NoUnions.empty hu).diag.forgetSubsumed p.check)⟩
+    he.indexCurrent p.check).trans (hm.queryHolds_iff_of_diag he.noUnions.toDatabase.diag
+      (hout.noUnions Database.NoUnions.empty hu).diag p.check)⟩
 
 /-- The observer refines both finite outcomes for arbitrary union-free programs. -/
 theorem observe_eval_noUnions {p : Program} {r : ExecutionResult}

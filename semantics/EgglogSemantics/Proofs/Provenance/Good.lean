@@ -117,10 +117,6 @@ theorem empty : Good Database.empty where
   diag := fun _ hp => hp.elim
   marks := fun _ ht => ht.elim
 
-theorem forgetSubsumed (h : Good d) : Good d.forgetSubsumed where
-  diag := h.diag
-  marks := fun _ ht => ht.elim
-
 end Good
 
 /-! ### Rounds -/

@@ -77,10 +77,13 @@ namespace Parse
 
 open Sexp
 
+/-- An expression. `ordering-min` is egglog's spelling of `min` on an eq-sort; the emitter
+writes `min`, and the difftest scripts write `ordering-min` for egglog. -/
 def expr : Sexp → Except String Expr
   | .atom s => .ok (match s.toInt? with | some n => .lit (.int n) | none => .var s)
   | .str s => .ok (.lit (.str s))
-  | .list [.atom "min", a, b] => do pure (.min (← expr a) (← expr b))
+  | .list [.atom "min", a, b] | .list [.atom "ordering-min", a, b] => do
+      pure (.min (← expr a) (← expr b))
   | .list (.atom f :: args) => do pure (.app f (← args.mapM expr))
   | .list _ => .error "an application starts with a name"
 

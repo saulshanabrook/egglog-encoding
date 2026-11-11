@@ -63,10 +63,6 @@ def addEqs (ps : Set (Term × Term)) (db : Database) : Database :=
 def addSubsumed (X : Set Term) (db : Database) : Database :=
   { db with subsumed := db.subsumed ∪ X }
 
-/-- The e-graph with subsumption forgotten, `(E, ∅)`: what a check sees. -/
-def forgetSubsumed (db : Database) : Database :=
-  { db with subsumed := ∅ }
-
 /-- Union in a whole family of databases at once. -/
 def sUnion (db : Database) (S : Set Database) : Database :=
   { eqs := db.eqs ∪ ⋃ d ∈ S, d.eqs, subsumed := db.subsumed ∪ ⋃ d ∈ S, d.subsumed }

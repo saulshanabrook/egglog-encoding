@@ -10,6 +10,8 @@ representative of the source class. -/
 
 namespace Egglog.Congruence
 
+variable {sub : Bool}
+
 /-! ### Source representatives -/
 
 /-- The representative of a term's source class. -/
@@ -39,15 +41,7 @@ theorem srep_eq_of_cong {src : Database} (hr : src.HasReps) {a b : Term} (hab : 
 theorem srep_mem_terms {src : Database} (hr : src.HasReps) {t : Term} (ht : Cong src t t) :
     srep src t ∈ src.terms := (srep_spec hr ht).1.1
 
-/-- A literal the source holds is its own representative. -/
-theorem lit_mem_reps {src : Database} (hw : src.WF) {l : Lit} (ht : Term.lit l ∈ src.terms) :
-    Term.lit l ∈ src.reps := by
-  refine ⟨ht, fun s _ hs hlt => ?_⟩
-  rw [InferredFacts.infers_eq_of_isLit hw (InferredFacts.congr_iff_infers.mp hs) (Or.inr rfl)]
-    at hlt
-  simp at hlt
-
-theorem Rel.root_eq_srep {src d : Database} (h : Rel src d) (hc : Canon d) (hw : src.WF)
+theorem Rel.root_eq_srep {src d : Database} (h : Rel sub src d) (hc : Canon d) (hw : src.WF)
     {k : Term} (hk : k ∈ Keys d) : root d k = srep src k := by
   obtain ⟨h₁, h₂⟩ := (h.edge_iff_rep hc hw hk).mp (h.edge_root hk)
   obtain ⟨h₃, h₄⟩ := srep_spec h.src_hasReps (h.cong_self_of_key hk)
@@ -288,8 +282,8 @@ def ArgsComplete (src d : Database) (es : List Expr) (n : Nat) (σ : Env) : Prop
 
 mutual
 
-theorem complete_expr (h : Rel src d) (hc : Canon d) (hw : src.WF) :
-    ∀ (e : Expr) (n : Nat) {σ : Env}, e.OrderingFree → SrcNames e →
+theorem complete_expr (h : Rel sub src d) (hc : Canon d) (hw : src.WF) :
+    ∀ (e : Expr) (n : Nat) {σ : Env}, e.MinOverVars → SrcNames e →
     (∀ v ∈ e.vars, NotFresh v) → NoFreshDom σ → (∀ b ∈ σ, b.2 ∈ src.reps) →
     Expr.Matches src σ e → ExprComplete src d e n σ
   | .lit l, n, σ, _, _, _, _, _, hm => by
@@ -316,13 +310,34 @@ theorem complete_expr (h : Rel src d) (hc : Canon d) (hw : src.WF) :
         · rw [flat_var, List.append_nil]
           exact .var hv
         · rw [flat_var, List.append_nil, Expr.eval_var, hv, srep_eq_of_mem_reps h.src_hasReps ht]
-  | .min _ _, _, _, ho, _, _, _, _, _ => (Expr.not_orderingFree_min ho).elim
+  | .min a b, n, σ, ho, _, _, _, hreps, hm => by
+      -- A minimum over variables is passed through: both operands are bound to
+      -- representatives, so the smaller is a representative and its own id.
+      obtain ⟨ha, hb⟩ := Expr.minOverVars_min ho
+      cases hm with
+      | min hma hmb =>
+        obtain ⟨x, hx⟩ := hma.eval_exists
+        obtain ⟨y, hy⟩ := hmb.eval_exists
+        obtain ⟨v, _, hv⟩ := ha.eval_binding hx
+        obtain ⟨w, _, hw⟩ := hb.eval_binding hy
+        have hxr : x ∈ src.reps := hreps _ (Env.mem_of_lookup hv)
+        have hyr : y ∈ src.reps := hreps _ (Env.mem_of_lookup hw)
+        have hlr : Term.least x y ∈ src.reps := by
+          rcases Term.least_eq_or x y with hl | hl <;> rw [hl]
+          exacts [hxr, hyr]
+        have hev : (Expr.min a b).eval σ = some (Term.least x y) := by
+          rw [Expr.eval_min, hx, Option.bind_some, hy, Option.map_some]
+        refine ⟨[], Fresh.nil n, by simp, by rw [flat_min]; simp, ?_, Term.least x y, hev,
+          Database.toCong hlr.1, ?_⟩
+        · rw [flat_min, List.append_nil]
+          exact .min (ha.matches hx) (hb.matches hy)
+        · rw [flat_min, List.append_nil, hev, srep_eq_of_mem_reps h.src_hasReps hlr]
   | .app f args, n, σ, ho, hnames, hsrc, hσ, hreps, hm => by
       cases hm with
       | @app _ _ ts hargs hev hlive =>
         obtain ⟨hf, hfns⟩ := srcNames_app hnames
         obtain ⟨ρ₁, hfr₁, hval₁, hatoms₁, ts', hev', hcong, hids⟩ :=
-          complete_args h hc hw args n (Expr.orderingFree_app ho) hfns (by simpa using hsrc) hσ
+          complete_args h hc hw args n (Expr.minOverVars_app ho) hfns (by simpa using hsrc) hσ
             hreps hargs
         obtain rfl : ts = ts' := Option.some.inj (hev.symm.trans hev')
         rcases hflat : encodeQueryArgsWith {} args n with ⟨xs, ps, next⟩
@@ -371,7 +386,8 @@ theorem complete_expr (h : Rel src d) (hc : Canon d) (hw : src.WF) :
           exact evalList_freshArgs fun i hi => by rw [hbsLen] at hi; exact hchild i hi
         have hmatchArgs : Expr.MatchesList d (σ ++ (ρ₁ ++ ρ₂)) (freshArgs next args.length) :=
           matchesList_freshArgs fun i hi => by rw [hchild i hi]; rfl
-        have hliveB : Term.app f bs ∈ d.live := (h.app_live_iff hf).mpr hbs
+        have hliveB : Term.app f bs ∈ d.live :=
+          h.live_of_src_live hbs (Database.live_app_congr hlive hcl)
         -- The earlier atoms and ids read the same through the extended substitution.
         have hagree₁ : ∀ v, NotFresh v ∨ FreshIn n next v →
             Env.lookup v (σ ++ (ρ₁ ++ ρ₂)) = Env.lookup v (σ ++ ρ₁) :=
@@ -439,9 +455,9 @@ theorem complete_expr (h : Rel src d) (hc : Canon d) (hw : src.WF) :
           rw [hrootl, hr, h.root_eq_srep hc hw hkey,
             srep_eq_of_cong h.src_hasReps (Cong.congr hself hcl)]
 
-theorem complete_args (h : Rel src d) (hc : Canon d) (hw : src.WF) :
-    ∀ (es : List Expr) (n : Nat) {σ : Env}, Expr.OrderingFreeList es →
-    (∀ g ∈ Expr.fnsList es, g ≠ ufName) → (∀ v ∈ Expr.varsList es, NotFresh v) → NoFreshDom σ →
+theorem complete_args (h : Rel sub src d) (hc : Canon d) (hw : src.WF) :
+    ∀ (es : List Expr) (n : Nat) {σ : Env}, Expr.MinOverVarsList es →
+    (∀ g ∈ Expr.fnsList es, SourceName g) → (∀ v ∈ Expr.varsList es, NotFresh v) → NoFreshDom σ →
     (∀ b ∈ σ, b.2 ∈ src.reps) → Expr.MatchesList src σ es → ArgsComplete src d es n σ
   | [], n, σ, _, _, _, _, _, _ => by
       refine ⟨[], Fresh.nil n, by simp, by rw [flatArgs_nil]; simp, [], rfl, by simp, ?_⟩
@@ -450,7 +466,7 @@ theorem complete_args (h : Rel src d) (hc : Canon d) (hw : src.WF) :
   | e :: es, n, σ, ho, hnames, hsrc, hσ, hreps, hm => by
       cases hm with
       | cons hme hmes =>
-        obtain ⟨hoe, hoes⟩ := Expr.orderingFreeList_cons ho
+        obtain ⟨hoe, hoes⟩ := Expr.minOverVarsList_cons ho
         obtain ⟨hne, hnes⟩ := srcNames_cons hnames
         have hsrce : ∀ v ∈ e.vars, NotFresh v := fun v hv => hsrc v (by simp [hv])
         have hsrces : ∀ v ∈ Expr.varsList es, NotFresh v := fun v hv => hsrc v (by simp [hv])

@@ -1,0 +1,16 @@
+; A minimum and a disequality in the final check: with no saturation, the check may compare
+; the smaller of two query variables, as a rule may; here each pair's smaller endpoint was
+; recorded, before and after a union moved a representative.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor C () Math)
+(constructor Pair (Math Math) Math)
+(constructor Least (Math) Math)
+(Pair (A) (B))
+(Pair (B) (C))
+(rule ((Pair x y)) ((Least (ordering-min x y))))
+(run 1)
+(union (A) (C))
+(run 1)
+(check (Pair x y) (!= x y) (Least (ordering-min x y)))
