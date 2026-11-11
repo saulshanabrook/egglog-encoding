@@ -1,7 +1,9 @@
 ---
 source: egglog-experimental/tests/files.rs
+assertion_line: 66
 expression: snapshot
 ---
+(extraction-costs 1860822)
 ((ArrayAttr 0)
  (Blk 0)
  (Complex 0)
