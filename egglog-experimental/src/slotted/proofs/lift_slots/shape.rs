@@ -10,7 +10,51 @@ pub(super) struct ShapeKey {
     payloads: Vec<TermId>,
 }
 
-impl SlotLifter<'_> {
+struct ShapeEntry {
+    proof: ViewId,
+    node: TermId,
+    row: TermId,
+}
+
+impl SlotLifter<'_, NativeProofs<'_>> {
+    fn shape_key(&self, head: &str, args: &[TermId]) -> LiftResult<ShapeKey> {
+        let mut key = ShapeKey {
+            constructor: head.to_owned(),
+            edges: Vec::new(),
+            classes: Vec::new(),
+            payloads: Vec::new(),
+        };
+        let mut i = 0;
+        for column in &self.program.constructors[head].columns {
+            match column {
+                ColumnKind::Child => {
+                    key.edges.push(self.slot_map(args[i])?);
+                    key.classes.push(Some(args[i + 1]));
+                    i += 2;
+                }
+                ColumnKind::Var | ColumnKind::Binder => {
+                    key.edges.push(self.slot_map(args[i])?);
+                    key.classes.push(None);
+                    i += 1;
+                }
+                ColumnKind::Payload(_) => {
+                    key.payloads.push(args[i]);
+                    i += 1;
+                }
+            }
+        }
+        Ok(key)
+    }
+
+    fn shape_node(&mut self, key: ShapeKey, args: &[TermId]) -> LiftResult<TermId> {
+        if let Some(&node) = self.shape_terms.get(&key) {
+            return Ok(node);
+        }
+        let node = self.build_node(&key.constructor, args, Some(&key.edges), None)?;
+        self.shape_terms.insert(key, node);
+        Ok(node)
+    }
+
     /// `dec(row) = back·N` where `N` is the row's node spelled with its canonical
     /// edges: the readings `g_i` of the children that make the edges canonical,
     /// applied by congruence, then the renaming back.
@@ -28,29 +72,7 @@ impl SlotLifter<'_> {
             .get(&head)
             .ok_or("unknown constructor")?
             .clone();
-        // the edges and classes of the slotted columns, and the payloads
-        let mut edges: Vec<SlotMap> = vec![];
-        let mut classes: Vec<Option<TermId>> = vec![];
-        let mut payloads: Vec<TermId> = vec![];
-        let mut i = 0;
-        for col in &ctor.columns {
-            match col {
-                ColumnKind::Child => {
-                    edges.push(self.slot_map(args[i])?);
-                    classes.push(Some(args[i + 1]));
-                    i += 2;
-                }
-                ColumnKind::Var | ColumnKind::Binder => {
-                    edges.push(self.slot_map(args[i])?);
-                    classes.push(None);
-                    i += 1;
-                }
-                ColumnKind::Payload(_) => {
-                    payloads.push(args[i]);
-                    i += 1;
-                }
-            }
-        }
+        let mut key = self.shape_key(&head, args)?;
         let group_values: Vec<Vec<SlotMap>> = groups
             .iter()
             .map(|group| match group {
@@ -58,17 +80,13 @@ impl SlotLifter<'_> {
                 None => Ok(vec![[(0, 0)].into_iter().collect()]),
             })
             .collect::<LiftResult<_>>()?;
-        let own = shape(&edges);
-        // the least reading over the children's groups, as node-shape computes it
-        let mut best: Option<(Vec<SlotMap>, Vec<SlotMap>)> = None;
-        for variant in readings(&edges, &group_values) {
-            let spelled = shape(&variant.0);
-            if best.as_ref().is_none_or(|b| spelled.edges < b.0) {
-                best = Some((spelled.edges, variant.1));
-            }
-        }
-        let (canonical_edges, gs) = best.unwrap_or((own.edges.clone(), vec![]));
-        let _ = own;
+        let mut gs = Vec::new();
+        let canonical = node_shape_with(
+            &key.edges,
+            &group_values,
+            |_, chosen| gs = chosen.to_vec(),
+            |_, _| {},
+        );
         // apply each child's reading by congruence: child j: m̂_j·dec(c_j) = (m̂_j∘ĝ_j)·dec(c_j)
         let mut p = row_eq;
         let mut slotted_j = 0;
@@ -84,26 +102,14 @@ impl SlotLifter<'_> {
             };
             let (gterm, gproof) = groups[k].ok_or("a rigid port has a nonidentity reading")?;
             let _ = gterm;
-            let s = self.symmetry(classes[k].ok_or("rigid port has no class")?, &g, gproof)?;
+            let s = self.symmetry(key.classes[k].ok_or("rigid port has no class")?, &g, gproof)?;
             let completion = self.edge_memo[&(row, j)].clone();
             let renamed = self.rename_both(s, &completion);
             p = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
             p = self.note(p);
         }
-        // the shape node: canonical edges over the same children
-        let key = ShapeKey {
-            constructor: head.clone(),
-            edges: canonical_edges.clone(),
-            classes: classes.clone(),
-            payloads,
-        };
-        let node = if let Some(&n) = self.shape_terms.get(&key) {
-            n
-        } else {
-            let n = self.build_node(&head, args, Some(&canonical_edges), None)?;
-            self.shape_terms.insert(key, n);
-            n
-        };
+        key.edges = canonical.edges;
+        let node = self.shape_node(key, args)?;
         // `p` now ends in the row spelled through the readings; align its coordinates with the shape node
         let aligned = self.align(p, node)?;
         Ok((aligned, node))
@@ -142,16 +148,16 @@ impl SlotLifter<'_> {
                     .is_some_and(|(h, _)| h.starts_with("_shape_class_"))
             })
             .ok_or("shape-collision without its class row")?;
-        let (c0_eq, c0_row, c0_groups) = self.shape_entry(class_row_proof)?;
-        if c0_row == row && self.sub(subst, "_c")? == self.sub(subst, "_c0")? {
+        let entry = self.shape_entry(class_row_proof)?;
+        if entry.row == row && self.sub(subst, "_c")? == self.sub(subst, "_c0")? {
             // the row met its own entry under another reading: a symmetry of its class
             let c = self.sub(subst, "_c")?;
             let back = self.slot_map(self.sub(subst, "_back")?)?;
             let back0 = self.slot_map(self.sub(subst, "_back0")?)?;
             let g = compose(&back, &inverse(&back0));
-            return self.node_symmetry(row_eq, row, &groups, c, &g);
+            return self.node_symmetry(row_eq, row, &groups, c, &g, None);
         }
-        let (to_shape0, node0) = self.shape_form(c0_eq, c0_row, &c0_groups)?;
+        let (to_shape0, node0) = (entry.proof, entry.node);
         if node0 != node {
             return Err(format!(
                 "shape collision on different nodes {} and {}",
@@ -166,6 +172,7 @@ impl SlotLifter<'_> {
     /// Two rows of one class with one shape: the symmetry between them.
     pub(super) fn shape_dedup(
         &mut self,
+        name: &str,
         prems: &[ProofId],
         subst: &IndexMap<String, TermId>,
     ) -> LiftResult<ViewId> {
@@ -186,24 +193,24 @@ impl SlotLifter<'_> {
                     .transpose()
             })
             .collect::<LiftResult<_>>()?;
-        // Normalizing literal rigid groups can insert primitive premises before
-        // the second row, so its index is not fixed. Only the two constructor
-        // rows have this class as their left endpoint.
-        let head = self.app(row1).ok_or("not a constructor row")?.0;
-        let class = self.egg.get(prems[0]).lhs();
-        let row2_prem = prems
+        use egglog::ast::{ResolvedExpr, ResolvedFact};
+        let second = self
+            .native_rule_named(name)?
+            .body
             .iter()
-            .copied()
-            .skip(1)
-            .find(|&id| {
-                let proof = self.egg.get(id);
-                proof.lhs() == class
-                    && proof.rhs() != row1
-                    && self
-                        .app(proof.rhs())
-                        .is_some_and(|(other, _)| other == head)
+            .enumerate()
+            .filter_map(|(index, fact)| {
+                let ResolvedFact::Eq(_, _, ResolvedExpr::Call(_, call, _)) = fact else {
+                    return None;
+                };
+                self.program
+                    .constructors
+                    .contains_key(call.name())
+                    .then_some(index)
             })
-            .ok_or("shape dedup has no second constructor row")?;
+            .nth(1)
+            .ok_or("shape dedup rule has no second constructor fact")?;
+        let row2_prem = prems[second];
         let row2_eq = self.eq(row2_prem)?;
         let row2 = self.egg.get(row2_prem).rhs();
         let (a, node) = self.shape_form(row1_eq, row1, &groups)?;
@@ -215,9 +222,9 @@ impl SlotLifter<'_> {
         self.trans(a, s)
     }
 
-    /// Through the proof of a `_shape_class_F` row: the stored class's row
-    /// equality, the row, and the group rows its index firing read.
-    fn shape_entry(&mut self, proof: ProofId) -> LiftResult<(ViewId, TermId, SymmetryPremises)> {
+    /// The stored class equals its indexed canonical node. Rebuilding can change
+    /// either the stored class or a child in the key; both changes carry proofs.
+    fn shape_entry(&mut self, proof: ProofId) -> LiftResult<ShapeEntry> {
         let p = self.egg.get(proof).clone();
         match p.justification() {
             Justification::Rule {
@@ -228,7 +235,7 @@ impl SlotLifter<'_> {
                 let row_eq = self.eq(premise_proofs[0])?;
                 let row = self.egg.get(premise_proofs[0]).rhs();
                 let classes = self.slotted_classes(row)?;
-                let groups = classes
+                let groups: SymmetryPremises = classes
                     .iter()
                     .enumerate()
                     .map(|(k, &class)| {
@@ -242,7 +249,8 @@ impl SlotLifter<'_> {
                             .transpose()
                     })
                     .collect::<LiftResult<_>>()?;
-                Ok((row_eq, row, groups))
+                let (proof, node) = self.shape_form(row_eq, row, &groups)?;
+                Ok(ShapeEntry { proof, node, row })
             }
             Justification::MergeFn { old_proof, .. } => self.shape_entry(*old_proof),
             Justification::Congr {
@@ -250,20 +258,33 @@ impl SlotLifter<'_> {
                 child_index,
                 child_proof,
             } => {
-                // the stored class moved: c0 = c0', so the entry's row equality is
-                // restated from the new class
-                let (row_eq, row, groups) = self.shape_entry(*proof)?;
-                let (head, args) = self.app(p.lhs()).ok_or("not a row")?;
-                let _ = head;
+                let mut entry = self.shape_entry(*proof)?;
+                let (head, args) = self.app(p.lhs()).ok_or("not a shape entry")?;
                 if *child_index == args.len() - 1 {
-                    let c = self.eq(*child_proof)?;
-                    let s = self.out.sym(c);
-                    let r = self.trans(s, row_eq)?;
-                    Ok((r, row, groups))
-                } else {
-                    // a child class column of the key moved; the row itself is unchanged
-                    Ok((row_eq, row, groups))
+                    let child = self.eq(*child_proof)?;
+                    let reverse = self.out.sym(child);
+                    entry.proof = self.trans(reverse, entry.proof)?;
+                } else if self.egg.get(*child_proof).lhs() != self.egg.get(*child_proof).rhs() {
+                    let head = head
+                        .strip_prefix("_shape_class_")
+                        .ok_or("not a shape class")?;
+                    let column = self.surface_column(head, *child_index)?;
+                    let old = self.dec(args[*child_index])?;
+                    let at = self.subterm_at(entry.node, &[column])?;
+                    let mapping = term_renaming(&self.out.term_dag, &[(old, at)])
+                        .ok_or("shape key child does not match its recorded node")?;
+                    let child = self.eq(*child_proof)?;
+                    let child = self.rename_both(child, &mapping);
+                    let updated = self
+                        .out
+                        .congr(entry.proof, column, child)
+                        .map_err(|e| e.to_string())?;
+                    let (_, args) = self.app(p.rhs()).ok_or("not a rebuilt shape entry")?;
+                    let key = self.shape_key(head, args)?;
+                    entry.node = self.shape_node(key, args)?;
+                    entry.proof = self.fit(updated, entry.node, &HashMap::default())?;
                 }
+                Ok(entry)
             }
             Justification::Trans(a, b) => {
                 let _ = b;
@@ -273,46 +294,4 @@ impl SlotLifter<'_> {
             other => Err(format!("unexpected shape entry provenance {other:?}")),
         }
     }
-}
-
-/// Each column's edge through every element of its child's group that permutes
-/// the column's slots, as `node-shape` reads a row; with the elements chosen.
-pub(super) fn readings(
-    edges: &[SlotMap],
-    groups: &[Vec<SlotMap>],
-) -> Vec<(Vec<SlotMap>, Vec<SlotMap>)> {
-    let columns: Vec<Vec<(SlotMap, SlotMap)>> = edges
-        .iter()
-        .enumerate()
-        .map(|(i, edge)| {
-            let domain: BTreeSet<i64> = edge.keys().copied().collect();
-            let identity: SlotMap = domain.iter().map(|s| (*s, *s)).collect();
-            let mut out: Vec<(SlotMap, SlotMap)> = vec![(edge.clone(), identity)];
-            for g in groups.get(i).map(Vec::as_slice).unwrap_or_default() {
-                if g.keys().copied().collect::<BTreeSet<_>>() == domain
-                    && g.values().copied().collect::<BTreeSet<_>>() == domain
-                {
-                    let read: SlotMap = g.iter().map(|(&s, &t)| (s, edge[&t])).collect();
-                    if !out.iter().any(|(r, _)| *r == read) {
-                        out.push((read, g.clone()));
-                    }
-                }
-            }
-            out
-        })
-        .collect();
-    let total: usize = columns.iter().map(Vec::len).product();
-    (0..total)
-        .map(|mut n| {
-            let mut variant = Vec::with_capacity(columns.len());
-            let mut chosen = Vec::with_capacity(columns.len());
-            for column in &columns {
-                let (read, g) = &column[n % column.len()];
-                variant.push(read.clone());
-                chosen.push(g.clone());
-                n /= column.len();
-            }
-            (variant, chosen)
-        })
-        .collect()
 }

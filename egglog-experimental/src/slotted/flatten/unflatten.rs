@@ -1,176 +1,334 @@
-//! Lift proofs of flattened rewrites back to the original source rules.
-use crate::slotted::proofs::context::{ProofContext, pattern_term};
-use crate::slotted::proofs::coordinates::Coordinates;
+//! Undo pattern flattening by replaying the original rule's constructor traversal.
+use crate::slotted::proofs::context::{ProofContext, SourceFact, SourceRule, pattern_term};
 use crate::slotted::proofs::format::{ProofId, RulePremise, SlottedProof, SlottedProofStore};
-use crate::slotted::proofs::terms::{Renaming, term_renaming};
+use crate::slotted::proofs::terms::slot_of;
 use crate::slotted::proofs::{HashMap, HashSet};
-use egglog::ast::{Literal, ResolvedExpr, ResolvedFact};
+use egglog::ast::{Literal, ResolvedExpr, ResolvedExprExt, ResolvedFact};
 use egglog::proof::{Justification as Step, Proposition};
-use egglog::{Term, TermId};
+use egglog::{ResolvedCall, Term, TermId};
 use std::collections::VecDeque;
 
 type Result<T> = std::result::Result<T, String>;
 
 pub(in crate::slotted) fn lift(
-    old: SlottedProofStore,
+    mut store: SlottedProofStore,
     program: &ProofContext,
+    flattened: &ProofContext,
     root: ProofId,
 ) -> Result<(SlottedProofStore, ProofId)> {
-    let steps: Vec<_> = old
-        .dependencies(root)
-        .into_iter()
-        .map(|id| (id, old.get(id).clone()))
-        .collect();
-    let mut out = Coordinates::new(old);
+    let steps = store.dependencies(root);
+    let axioms = source_axioms(&mut store, program, flattened);
     let mut lifted = HashMap::default();
-    for (id, proof) in steps {
-        let proposition = proof.proposition().clone();
-        let result = match &proof {
-            SlottedProof::Alpha { proof, .. } => {
-                let premise = out.proof(lifted[proof]);
-                let proof = out.alpha(premise, proposition.rhs);
-                out.plain(proof)
-            }
+    for id in steps {
+        let proof = store.get(id).clone();
+        let claimed = proof.proposition().clone();
+        let result = match proof {
+            SlottedProof::Alpha { proof, .. } => alpha_rhs(&mut store, lifted[&proof], claimed.rhs),
             SlottedProof::Equivariance {
                 proof, renaming, ..
-            } => {
-                let p = out.equivariance(lifted[proof], renaming);
-                out.reframe(p, renaming.clone())
-            }
+            } => store.equivariance(lifted[&proof], renaming),
             SlottedProof::Rule(proof) => {
                 let premises = proof
                     .premises
                     .iter()
                     .map(|p| match p {
-                        RulePremise::Equality(p) => Ok(out.proof(lifted[p])),
+                        RulePremise::Equality(p) => Ok(lifted[p]),
                         RulePremise::RenamingEq { .. } => {
-                            Err("renaming equality occurs before source rule reconstruction".into())
+                            Err("renaming premise before unflattening".into())
                         }
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let result = lift_rule(
-                    &mut out,
+                replay_rule(
+                    &mut store,
                     program,
+                    flattened,
                     &proof.name,
-                    proof
-                        .substitution
-                        .iter()
-                        .map(|(v, t)| (v.clone(), *t))
-                        .collect(),
+                    proof.substitution.into_iter().collect(),
                     premises,
-                    proposition.clone(),
+                    claimed.clone(),
                 )
-                .map_err(|e| format!("lifting source rule {}: {e}", proof.name))?;
-                let rhs = out.proposition(result).rhs;
-                let refreshed = program.refresh_binders(&mut out.term_dag, rhs);
-                let result = if refreshed == rhs {
-                    result
-                } else {
-                    out.alpha(result, refreshed)
-                };
-                let actual = out.proposition(result).clone();
-                let renaming = term_renaming(&out.term_dag, &[(proposition.rhs, actual.rhs)])
-                    .ok_or("lifted rule changes the right-hand term's shape")?;
-                out.view(result, proposition.rhs, renaming)
+                .map_err(|e| format!("lifting source rule {}: {e}", proof.name))?
             }
             SlottedProof::Ordinary(proof) => match proof.justification() {
                 Step::Fiat => {
-                    let proof = source_fiat(&mut out, program, proposition.clone())?;
-                    out.plain(proof)
+                    if let Some(&p) = axioms.get(&(claimed.lhs, claimed.rhs)) {
+                        p
+                    } else if claimed.lhs == claimed.rhs
+                        && (matches!(store.term_dag.get(claimed.lhs), Term::Lit(_))
+                            || slot_of(&store.term_dag, claimed.lhs).is_some())
+                    {
+                        store.fiat(claimed.lhs, claimed.rhs)
+                    } else {
+                        return Err("fiat is not a flattened source axiom".into());
+                    }
                 }
-                Step::Sym(p) => out.sym(lifted[p]),
-                Step::Trans(a, b) => out.trans(lifted[a], lifted[b]).map_err(|e| e.to_string())?,
+                Step::Sym(p) => store.sym(lifted[p]),
+                Step::Trans(a, b) => store
+                    .trans(lifted[a], lifted[b])
+                    .map_err(|e| e.to_string())?,
                 Step::Congr {
-                    proof: parent,
+                    proof,
                     child_index,
                     child_proof,
-                } => {
-                    // Restore RHS names without changing the child matched by the parent.
-                    let mut child = lifted[child_proof];
-                    let actual = out.proposition(out.proof(child));
-                    let wanted = out.edge(child);
-                    if let Some(renaming) = term_renaming(
-                        &out.term_dag,
-                        &[(actual.lhs, wanted.lhs), (actual.rhs, wanted.rhs)],
-                    ) {
-                        child = out.equivariance(child, &renaming);
-                    }
-                    let p = out
-                        .congr(lifted[parent], *child_index, child)
-                        .map_err(|e| e.to_string())?;
-                    let rhs = out.edge(p).rhs;
-                    let renaming = term_renaming(&out.term_dag, &[(rhs, proposition.rhs)])
-                        .ok_or("lifting congruence changes the right-hand term's shape")?;
-                    out.reframe(p, renaming)
-                }
-                Step::Proj {
-                    proof: parent,
-                    child_index,
-                } => out
-                    .project(lifted[parent], *child_index)
+                } => store
+                    .congr(lifted[proof], *child_index, lifted[child_proof])
                     .map_err(|e| e.to_string())?,
-                _ => {
-                    return Err(
-                        "unsupported ordinary step while unflattening a slotted proof".into(),
-                    );
-                }
+                Step::Proj { proof, child_index } => store
+                    .project(lifted[proof], *child_index)
+                    .map_err(|e| e.to_string())?,
+                _ => return Err("unsupported ordinary step while unflattening".into()),
             },
         };
+        debug_assert_eq!(store.proposition(result), &claimed);
         lifted.insert(id, result);
     }
-    Ok(out.finish(lifted[&root]))
+    Ok((store, lifted[&root]))
 }
 
-fn source_fiat(
+fn alpha_rhs(store: &mut SlottedProofStore, proof: ProofId, rhs: TermId) -> ProofId {
+    if store.proposition(proof).rhs == rhs {
+        proof
+    } else {
+        store.alpha(proof, rhs)
+    }
+}
+
+fn reflexive(store: &mut SlottedProofStore, proof: ProofId) -> ProofId {
+    let p = store.proposition(proof);
+    if p.lhs == p.rhs {
+        return proof;
+    }
+    let back = store.sym(proof);
+    store.trans(back, proof).expect("inverse endpoints agree")
+}
+
+fn alpha_endpoints(
+    store: &mut SlottedProofStore,
+    mut proof: ProofId,
+    lhs: TermId,
+    rhs: TermId,
+) -> ProofId {
+    if store.proposition(proof).rhs != rhs {
+        proof = alpha_rhs(store, proof, rhs);
+    }
+    if store.proposition(proof).lhs != lhs {
+        proof = store.sym(proof);
+        proof = alpha_rhs(store, proof, lhs);
+        proof = store.sym(proof);
+    }
+    proof
+}
+
+/// Source axioms in flattened coordinates. The contexts must share declaration order.
+fn source_axioms(
     store: &mut SlottedProofStore,
     program: &ProofContext,
-    claimed: Proposition,
-) -> Result<ProofId> {
-    if claimed.lhs == claimed.rhs && program.is_built(&store.term_dag, claimed.lhs)
-        || program.is_union(claimed.lhs, claimed.rhs)
-    {
-        return Ok(store.fiat(claimed.lhs, claimed.rhs));
+    flat: &ProofContext,
+) -> HashMap<(TermId, TermId), ProofId> {
+    let mut axioms = HashMap::default();
+    let mut roots = Vec::new();
+    for (name, &source) in &program.lets {
+        let target = flat.lets[name];
+        let proof = store.fiat(source, source);
+        let proof = alpha_rhs(store, proof, target);
+        roots.push(reflexive(store, proof));
     }
-    for union in &program.unions {
-        for (lhs, rhs) in [(union.lhs, union.rhs), (union.rhs, union.lhs)] {
-            if program.alpha_eq(&mut store.term_dag, lhs, claimed.lhs)
-                && program.alpha_eq(&mut store.term_dag, rhs, claimed.rhs)
-            {
-                let proof = store.fiat(lhs, rhs);
-                return Ok(Witnesses::new(store, program, vec![]).alpha_endpoints(
-                    proof,
-                    claimed.lhs,
-                    claimed.rhs,
-                ));
+    for (source, target) in program.unions.iter().zip(&flat.unions) {
+        let proof = store.fiat(source.lhs, source.rhs);
+        let proof = alpha_endpoints(store, proof, target.lhs, target.rhs);
+        axioms.insert((target.lhs, target.rhs), proof);
+        let back = store.sym(proof);
+        axioms.insert((target.rhs, target.lhs), back);
+        roots.extend([proof, back]);
+    }
+    while let Some(proof) = roots.pop() {
+        let term = store.proposition(proof).rhs;
+        if axioms.contains_key(&(term, term)) {
+            continue;
+        }
+        let proof = reflexive(store, proof);
+        axioms.insert((term, term), proof);
+        if let Term::App(_, children) = store.term_dag.get(term) {
+            for i in (0..children.len()).rev() {
+                roots.push(store.project(proof, i).expect("source child"));
             }
         }
     }
-    let mut known = vec![];
-    for root in program
-        .lets
-        .values()
-        .copied()
-        .chain(program.unions.iter().flat_map(|u| [u.lhs, u.rhs]))
-    {
-        let refreshed = program.refresh_binders(&mut store.term_dag, root);
-        let proof = store.fiat(root, root);
-        known.push(if refreshed == root {
-            proof
-        } else {
-            store.alpha(proof, refreshed)
-        });
+    axioms
+}
+
+/// Premises and bindings for replaying one source rule application.
+struct Replay<'a> {
+    store: &'a mut SlottedProofStore,
+    rule: &'a SourceRule,
+    flat: &'a SourceRule,
+    sigma: HashMap<String, TermId>,
+    atoms: VecDeque<(ResolvedExpr, ProofId)>,
+    values: VecDeque<(ResolvedExpr, ProofId)>,
+    comparisons: VecDeque<ProofId>,
+    known: HashMap<TermId, ProofId>,
+}
+
+impl Replay<'_> {
+    fn instance(&mut self, expr: &ResolvedExpr) -> Result<TermId> {
+        let term = pattern_term(&mut self.store.term_dag, expr);
+        self.rule
+            .instantiate(&mut self.store.term_dag, term, &self.sigma)
     }
-    let mut witnesses = Witnesses::new(store, program, known);
-    if claimed.lhs == claimed.rhs {
-        witnesses.reflexive(claimed.lhs)
-    } else {
-        Err("fiat is not an original source union".into())
+
+    fn flat_instance(&mut self, expr: &ResolvedExpr) -> Result<TermId> {
+        let term = pattern_term(&mut self.store.term_dag, expr);
+        self.flat
+            .instantiate(&mut self.store.term_dag, term, &self.sigma)
+    }
+
+    fn remember(&mut self, expr: &ResolvedExpr, proof: ProofId) -> Result<()> {
+        self.known.insert(self.store.proposition(proof).rhs, proof);
+        // Only follow the pattern, never expand substituted terms into trees.
+        if let ResolvedExpr::Call(_, ResolvedCall::Func(_), args) = expr {
+            for (i, arg) in args.iter().enumerate() {
+                let child = self.store.project(proof, i).map_err(|e| e.to_string())?;
+                self.remember(arg, child)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn exists(&mut self, term: TermId) -> Result<ProofId> {
+        if let Some(&p) = self.known.get(&term) {
+            return Ok(reflexive(self.store, p));
+        }
+        if matches!(self.store.term_dag.get(term), Term::Lit(_))
+            || slot_of(&self.store.term_dag, term).is_some()
+        {
+            return Ok(self.store.fiat(term, term));
+        }
+        Err(format!(
+            "no occurrence for {} in the matched patterns",
+            self.store.term_dag.to_string(term)
+        ))
+    }
+
+    fn is_local(&self, expr: &ResolvedExpr) -> bool {
+        matches!(expr, ResolvedExpr::Var(_, var) if !self.rule.globals.contains_key(&var.name))
+    }
+
+    fn is_global_proxy(&self, source: &ResolvedExpr, flat: &ResolvedExpr) -> bool {
+        matches!(source, ResolvedExpr::Var(_,v) if self.rule.globals.contains_key(&v.name))
+            && matches!(flat, ResolvedExpr::Var(_,v) if !self.flat.globals.contains_key(&v.name))
+    }
+
+    /// A matched root is either a source variable, a constructor atom, or a
+    /// captured global. Their premise order was fixed by the forward traversal.
+    fn pattern(&mut self, expr: &ResolvedExpr) -> Result<ProofId> {
+        if self.is_local(expr) {
+            let term = self.instance(expr)?;
+            return self.exists(term);
+        }
+        let (flat, proof) = if matches!(expr, ResolvedExpr::Call(..)) {
+            self.atoms.pop_front().ok_or("missing constructor atom")?
+        } else {
+            self.values.pop_front().ok_or("missing global binding")?
+        };
+        self.expand(expr, &flat, proof)
+    }
+
+    /// Expand a constructor's flattened children in the same preorder used by
+    /// `flatten`. Restoring the flat atom's bound names first keeps its child
+    /// occurrences in the substitution's coordinates.
+    fn expand(
+        &mut self,
+        source: &ResolvedExpr,
+        flat: &ResolvedExpr,
+        mut proof: ProofId,
+    ) -> Result<ProofId> {
+        let target = self.flat_instance(flat)?;
+        proof = alpha_rhs(self.store, proof, target);
+        if let (ResolvedExpr::Call(_, _, args), ResolvedExpr::Call(_, _, flat_args)) =
+            (source, flat)
+        {
+            for (i, (arg, flat_arg)) in args.iter().zip(flat_args).enumerate() {
+                let child = if matches!(arg, ResolvedExpr::Call(..))
+                    && matches!(flat_arg, ResolvedExpr::Var(..))
+                    || self.is_global_proxy(arg, flat_arg)
+                {
+                    Some(self.pattern(arg)?)
+                } else if matches!(arg, ResolvedExpr::Call(..)) {
+                    let child = self.store.project(proof, i).map_err(|e| e.to_string())?;
+                    Some(self.expand(arg, flat_arg, child)?)
+                } else {
+                    None
+                };
+                if let Some(child) = child {
+                    proof = self
+                        .store
+                        .congr(proof, i, child)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        let target = self.instance(source)?;
+        proof = alpha_rhs(self.store, proof, target);
+        self.remember(source, proof)?;
+        Ok(proof)
+    }
+
+    fn equality(&mut self, a: &ResolvedExpr, b: &ResolvedExpr) -> Result<ProofId> {
+        if self.is_local(a) && !self.is_local(b) {
+            return self.pattern(b);
+        }
+        if self.is_local(b) && !self.is_local(a) {
+            let p = self.pattern(a)?;
+            return Ok(self.store.sym(p));
+        }
+        let a = self.pattern(a)?;
+        let b = self.pattern(b)?;
+        let comparison = self
+            .comparisons
+            .pop_front()
+            .ok_or("missing equality comparison")?;
+        let back = self.store.sym(a);
+        let proof = self
+            .store
+            .trans(back, comparison)
+            .map_err(|e| e.to_string())?;
+        self.store.trans(proof, b).map_err(|e| e.to_string())
+    }
+
+    /// Right-hand constructors were not flattened. Only captured global proxies
+    /// need their matching equalities, in reverse, at the original occurrences.
+    fn rhs(
+        &mut self,
+        source: &ResolvedExpr,
+        flat: &ResolvedExpr,
+        mut proof: ProofId,
+    ) -> Result<ProofId> {
+        if self.is_global_proxy(source, flat) {
+            let global = self.pattern(source)?;
+            let back = self.store.sym(global);
+            proof = self.store.trans(proof, back).map_err(|e| e.to_string())?;
+        } else if let (
+            ResolvedExpr::Call(_, ResolvedCall::Func(_), args),
+            ResolvedExpr::Call(_, _, flat_args),
+        ) = (source, flat)
+        {
+            for (i, (arg, flat_arg)) in args.iter().zip(flat_args).enumerate() {
+                let child = self.store.project(proof, i).map_err(|e| e.to_string())?;
+                let child = self.rhs(arg, flat_arg, child)?;
+                proof = self
+                    .store
+                    .congr(proof, i, child)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(proof)
     }
 }
 
-fn lift_rule(
+fn replay_rule(
     store: &mut SlottedProofStore,
     program: &ProofContext,
+    flattened: &ProofContext,
     name: &str,
     substitution: Vec<(String, TermId)>,
     premises: Vec<ProofId>,
@@ -179,409 +337,158 @@ fn lift_rule(
     let rule = program
         .rewrites
         .get(name)
-        .ok_or_else(|| format!("missing original rewrite {name}"))?;
-    let mut sigma: HashMap<_, _> = substitution
-        .iter()
-        .cloned()
-        .chain(rule.globals.iter().map(|(v, &t)| (v.clone(), t)))
-        .collect();
-    let body = &rule.normal.body;
-    let auxiliary = rule.normal.bindings(&mut store.term_dag, &sigma)?;
-    sigma.extend(auxiliary);
-    let instance = |store: &mut SlottedProofStore, expr| -> Result<TermId> {
-        let term = pattern_term(&mut store.term_dag, expr);
-        rule.instantiate(&mut store.term_dag, term, &sigma)
+        .ok_or("missing original rewrite")?;
+    let flat = flattened
+        .rewrites
+        .get(name)
+        .ok_or("missing flattened rewrite")?;
+    let mut replay = Replay {
+        store,
+        rule,
+        flat,
+        sigma: substitution.iter().cloned().collect(),
+        atoms: VecDeque::new(),
+        values: VecDeque::new(),
+        comparisons: VecDeque::new(),
+        known: HashMap::default(),
     };
-    let (lhs, rhs) = rule.endpoints();
-    let lhs = instance(store, lhs)?;
-    let rhs = instance(store, rhs)?;
-    let variables: HashSet<_> = rule
-        .patterns()
-        .flat_map(|expr| expr.vars())
-        .map(|var| var.name)
-        .filter(|name| !rule.globals.contains_key(name))
+    let (flat_lhs, flat_rhs) = flat.endpoints();
+    let root_target = replay.flat_instance(flat_lhs)?;
+    let root = alpha_rhs(replay.store, premises[0], root_target);
+    let root = reflexive(replay.store, root);
+    replay.remember(flat_lhs, root)?;
+    let bindings: Vec<_> = flat
+        .conditions()
+        .iter()
+        .filter_map(SourceFact::binding)
         .collect();
-    let substitution = substitution
-        .into_iter()
-        .filter(|(var, _)| variables.contains(var))
-        .collect();
-    let mut witnesses = Witnesses::new(store, program, premises);
-    let root = witnesses.exists(lhs)?;
-    let mut source_premises = vec![RulePremise::Equality(root)];
-    for fact in &body[1..] {
-        let proof = match fact {
-            ResolvedFact::Eq(_, a, b) => {
-                let a = instance(witnesses.store, a)?;
-                let b = instance(witnesses.store, b)?;
-                RulePremise::Equality(witnesses.condition_equality(program, a, b)?)
+    if bindings.len() + 1 != premises.len() {
+        return Err("flattened premise count differs from its bindings".into());
+    }
+    for ((var, expr), proof) in bindings.into_iter().zip(premises[1..].iter().copied()) {
+        let rhs = replay.flat_instance(expr)?;
+        let lhs = *replay.sigma.get(var).ok_or("unbound flattened atom")?;
+        let proof = alpha_endpoints(replay.store, proof, lhs, rhs);
+        replay.remember(expr, proof)?;
+        let back = replay.store.sym(proof);
+        replay.known.insert(lhs, back);
+        match expr {
+            ResolvedExpr::Call(..) => replay.atoms.push_back((expr.clone(), proof)),
+            ResolvedExpr::Var(_, v) if flat.globals.contains_key(&v.name) => {
+                replay.values.push_back((expr.clone(), proof))
             }
-            ResolvedFact::Fact(ResolvedExpr::Call(
-                _,
-                egglog::ResolvedCall::Primitive(head),
-                args,
-            )) => {
+            _ => replay.comparisons.push_back(proof),
+        }
+    }
+    let (lhs_expr, rhs_expr) = rule.endpoints();
+    let before = if matches!(lhs_expr, ResolvedExpr::Call(..)) {
+        replay.expand(lhs_expr, flat_lhs, root)?
+    } else if replay.is_local(lhs_expr) {
+        root
+    } else {
+        replay.pattern(lhs_expr)?
+    };
+    let mut equalities = HashMap::default();
+    let mut renamings = HashMap::default();
+    for fact in rule.conditions() {
+        match fact {
+            ResolvedFact::Eq(_, a, b) => {
+                let proof = replay.equality(a, b)?;
+                equalities.insert((replay.instance(a)?, replay.instance(b)?), proof);
+            }
+            ResolvedFact::Fact(ResolvedExpr::Call(_, ResolvedCall::Primitive(head), args)) => {
                 if head.name() == "renaming-=" {
-                    let a = instance(witnesses.store, &args[0])?;
-                    let b = instance(witnesses.store, &args[1])?;
-                    let left = witnesses.renaming_equality(a, b)?;
-                    let right = witnesses.reflexive(b)?;
-                    RulePremise::RenamingEq { left, right }
+                    let left = replay.pattern(&args[0])?;
+                    let right = replay.pattern(&args[1])?;
+                    let left = replay.store.sym(left);
+                    let right = replay.store.sym(right);
+                    renamings.insert(
+                        (replay.instance(&args[0])?, replay.instance(&args[1])?),
+                        (left, right),
+                    );
                 } else {
-                    let unit = witnesses.store.term_dag.lit(Literal::Unit);
-                    RulePremise::Equality(witnesses.store.fiat(unit, unit))
+                    for arg in args {
+                        if program.sorts.contains(arg.output_type().name()) {
+                            replay.pattern(arg)?;
+                        }
+                    }
                 }
             }
             ResolvedFact::Fact(expr) => {
-                let term = instance(witnesses.store, expr)?;
-                RulePremise::Equality(witnesses.exists(term)?)
+                replay.pattern(expr)?;
+            }
+        }
+    }
+    let mut sigma = replay.sigma.clone();
+    sigma.extend(rule.globals.iter().map(|(v, &t)| (v.clone(), t)));
+    let auxiliary = rule.normal.bindings(&mut replay.store.term_dag, &sigma)?;
+    replay.sigma.extend(auxiliary);
+    let mut source_premises = vec![RulePremise::Equality(before)];
+    for fact in &rule.normal.body[1..] {
+        let proof = match fact {
+            ResolvedFact::Eq(_, a, b) => {
+                let a = replay.instance(a)?;
+                let b = replay.instance(b)?;
+                RulePremise::Equality(if a == b {
+                    replay.exists(a)?
+                } else {
+                    *equalities
+                        .get(&(a, b))
+                        .ok_or("missing source equality premise")?
+                })
+            }
+            ResolvedFact::Fact(ResolvedExpr::Call(_, ResolvedCall::Primitive(head), args))
+                if head.name() == "renaming-=" =>
+            {
+                let key = (replay.instance(&args[0])?, replay.instance(&args[1])?);
+                let &(left, right) = renamings.get(&key).ok_or("missing renaming premise")?;
+                RulePremise::RenamingEq { left, right }
+            }
+            ResolvedFact::Fact(ResolvedExpr::Call(_, ResolvedCall::Primitive(_), _)) => {
+                let unit = replay.store.term_dag.lit(Literal::Unit);
+                RulePremise::Equality(replay.store.fiat(unit, unit))
+            }
+            ResolvedFact::Fact(expr) => {
+                let term = replay.instance(expr)?;
+                RulePremise::Equality(replay.exists(term)?)
             }
         };
         source_premises.push(proof);
     }
-    let source = witnesses.store.rule(
+    let lhs = replay.instance(lhs_expr)?;
+    let rhs = replay.instance(rhs_expr)?;
+    let variables: HashSet<_> = rule
+        .patterns()
+        .flat_map(|expr| expr.vars())
+        .map(|v| v.name)
+        .filter(|v| !rule.globals.contains_key(v))
+        .collect();
+    let substitution = substitution
+        .into_iter()
+        .filter(|(v, _)| variables.contains(v))
+        .collect();
+    let source = replay.store.rule(
         Proposition::new(lhs, rhs),
         name.into(),
         substitution,
         source_premises,
     );
-    witnesses.add(source);
-    if claimed.lhs != claimed.rhs
-        && let Some(renaming) = witnesses.renaming(&[(lhs, claimed.lhs)])
-    {
-        return Ok(witnesses.store.equivariance(source, renaming));
-    }
-    if claimed.lhs == claimed.rhs {
-        return witnesses.reflexive(claimed.lhs);
-    }
-    witnesses.exists(claimed.lhs)?;
-    let before = witnesses.reconstruct(claimed.lhs, lhs, true)?;
-    let start = witnesses.store.proposition(before).lhs;
-    let renaming = witnesses
-        .renaming(&[(start, claimed.lhs)])
-        .ok_or("reconstruction changes the left-hand term's shape")?;
-    let middle = witnesses
+    let proof = replay
         .store
         .trans(before, source)
         .map_err(|e| e.to_string())?;
-    let result = if witnesses.renaming(&[(rhs, claimed.rhs)]).is_some() {
-        middle
-    } else {
-        let after = witnesses.equality(rhs, claimed.rhs)?;
-        witnesses
-            .store
-            .trans(middle, after)
-            .map_err(|e| e.to_string())?
-    };
-    Ok(witnesses.store.equivariance(result, renaming))
-}
-
-/// Ordinary equalities for the atoms of one match. Reconstruction depends only
-/// on these proofs, not on encoded classes, frames, or compiler variable names.
-struct Witnesses<'a> {
-    store: &'a mut SlottedProofStore,
-    program: &'a ProofContext,
-    edges: Vec<ProofId>,
-    known: HashMap<TermId, ProofId>,
-    memo: HashMap<(TermId, TermId, bool), ProofId>,
-    active: HashSet<(TermId, TermId, bool)>,
-}
-
-impl<'a> Witnesses<'a> {
-    fn new(
-        store: &'a mut SlottedProofStore,
-        program: &'a ProofContext,
-        proofs: Vec<ProofId>,
-    ) -> Self {
-        let mut out = Self {
-            store,
-            program,
-            edges: vec![],
-            known: HashMap::default(),
-            memo: HashMap::default(),
-            active: HashSet::default(),
-        };
-        for proof in proofs {
-            out.add(proof);
-        }
-        out
+    let proof = replay.rhs(rhs_expr, flat_rhs, proof)?;
+    if !replay.atoms.is_empty() || !replay.values.is_empty() || !replay.comparisons.is_empty() {
+        return Err("source traversal did not consume the flattened premises".into());
     }
-
-    fn add(&mut self, proof: ProofId) {
-        self.edges.push(proof);
-        let inverse = self.store.sym(proof);
-        let mut work = vec![inverse, proof];
-        while let Some(p) = work.pop() {
-            let term = self.store.proposition(p).rhs;
-            if self.known.contains_key(&term) {
-                continue;
-            }
-            self.known.insert(term, p);
-            if let Term::App(_, children) = self.store.term_dag.get(term) {
-                let count = children.len();
-                for i in (0..count).rev() {
-                    work.push(self.store.project(p, i).expect("valid child index"));
-                }
-            }
-        }
-    }
-
-    fn reflexive(&mut self, term: TermId) -> Result<ProofId> {
-        if self.program.is_built(&self.store.term_dag, term) {
-            return Ok(self.store.fiat(term, term));
-        }
-        let proof = self.exists(term)?;
-        if self.store.proposition(proof).lhs == term {
-            return Ok(proof);
-        }
-        let inverse = self.store.sym(proof);
-        self.store.trans(inverse, proof).map_err(|e| e.to_string())
-    }
-
-    fn exists(&mut self, term: TermId) -> Result<ProofId> {
-        if let Some(&p) = self.known.get(&term) {
-            return Ok(p);
-        }
-        let mut candidates: Vec<_> = self.known.keys().copied().collect();
-        candidates.sort_unstable();
-        let refreshed = self.program.refresh_binders(&mut self.store.term_dag, term);
-        for target in [term, refreshed] {
-            for &candidate in &candidates {
-                if let Ok(proof) = self.reconstruct(candidate, target, true) {
-                    let proof = if target == term {
-                        proof
-                    } else {
-                        self.store.alpha(proof, term)
-                    };
-                    self.add(proof);
-                    return Ok(proof);
-                }
-            }
-        }
-        Err(format!(
-            "no matched evidence for {}",
-            self.store.term_dag.to_string(term)
-        ))
-    }
-
-    fn renaming(&self, pairs: &[(TermId, TermId)]) -> Option<Renaming> {
-        term_renaming(&self.store.term_dag, pairs)
-    }
-
-    fn condition_equality(
-        &mut self,
-        program: &ProofContext,
-        a: TermId,
-        b: TermId,
-    ) -> Result<ProofId> {
-        for proof in self.edges.clone() {
-            let p = self.store.proposition(proof).clone();
-            if program.alpha_eq(&mut self.store.term_dag, p.lhs, a)
-                && program.alpha_eq(&mut self.store.term_dag, p.rhs, b)
-            {
-                return Ok(self.alpha_endpoints(proof, a, b));
-            }
-            if program.alpha_eq(&mut self.store.term_dag, p.rhs, a)
-                && program.alpha_eq(&mut self.store.term_dag, p.lhs, b)
-            {
-                let proof = self.store.sym(proof);
-                return Ok(self.alpha_endpoints(proof, a, b));
-            }
-        }
-        if program.alpha_eq(&mut self.store.term_dag, a, b) {
-            let proof = self.reflexive(a)?;
-            return Ok(self.alpha_endpoints(proof, a, b));
-        }
-        self.equality(a, b)
-    }
-
-    fn alpha_endpoints(&mut self, mut proof: ProofId, lhs: TermId, rhs: TermId) -> ProofId {
-        if self.store.proposition(proof).rhs != rhs {
-            proof = self.store.alpha(proof, rhs);
-        }
-        if self.store.proposition(proof).lhs != lhs {
-            proof = self.store.sym(proof);
-            proof = self.store.alpha(proof, lhs);
-            proof = self.store.sym(proof);
-        }
-        proof
-    }
-
-    fn renaming_equality(&mut self, a: TermId, b: TermId) -> Result<ProofId> {
-        for term in [a, b] {
-            let proof = self.exists(term)?;
-            self.add(proof);
-        }
-        if let Ok(proof) = self.equality(a, b) {
-            return Ok(proof);
-        }
-        let initial = self.reflexive(a)?;
-        let mut work = VecDeque::from([initial]);
-        let mut seen = Vec::new();
-        while let Some(proof) = work.pop_front() {
-            let current = self.store.proposition(proof).rhs;
-            if self
-                .program
-                .eq_modulo_renaming(&mut self.store.term_dag, current, b)
-            {
-                return Ok(proof);
-            }
-            if seen.iter().any(|&term| {
-                self.program
-                    .eq_modulo_renaming(&mut self.store.term_dag, current, term)
-            }) {
-                continue;
-            }
-            seen.push(current);
-            for edge in self.edges.clone() {
-                let p = self.store.proposition(edge).clone();
-                for (left, reversed) in [(p.lhs, false), (p.rhs, true)] {
-                    if let Some(renaming) = self.renaming(&[(left, current)]) {
-                        let edge = if reversed { self.store.sym(edge) } else { edge };
-                        let edge = self.store.equivariance(edge, renaming);
-                        work.push_back(self.store.trans(proof, edge).map_err(|e| e.to_string())?);
-                    }
-                }
-            }
-        }
-        Err("no equality up to renaming between the guard's terms".into())
-    }
-
-    fn equality(&mut self, from: TermId, to: TermId) -> Result<ProofId> {
-        self.reconstruct(from, to, false)
-    }
-
-    // Existence allows a permutation of the whole derivation. An equality must
-    // preserve its starting term as well as end at the requested target.
-    fn reconstruct(&mut self, from: TermId, to: TermId, rename_source: bool) -> Result<ProofId> {
-        let key = (from, to, rename_source);
-        if let Some(&p) = self.memo.get(&key) {
-            return Ok(p);
-        }
-        if !self.active.insert(key) {
-            return Err("cyclic atom expansion".into());
-        }
-        let result = self.search(from, to, rename_source);
-        self.active.remove(&key);
-        if let Ok(p) = result {
-            self.memo.insert(key, p);
-        }
-        result
-    }
-
-    fn search(&mut self, from: TermId, to: TermId, rename_source: bool) -> Result<ProofId> {
-        for edge in self.edges.clone() {
-            let p = self.store.proposition(edge).clone();
-            if let Some(renaming) = self.renaming(&[(p.lhs, from), (p.rhs, to)]) {
-                return Ok(self.store.equivariance(edge, renaming));
-            }
-            if let Some(renaming) = self.renaming(&[(p.rhs, from), (p.lhs, to)]) {
-                let inverse = self.store.sym(edge);
-                return Ok(self.store.equivariance(inverse, renaming));
-            }
-        }
-        let initial = self
-            .known
-            .get(&from)
-            .copied()
-            .ok_or("unknown starting term")?;
-        let back = self.store.sym(initial);
-        let initial = self.store.trans(back, initial).map_err(|e| e.to_string())?;
-        let mut work = VecDeque::from([initial]);
-        let mut seen = Vec::new();
-        while let Some(proof) = work.pop_front() {
-            let current = self.store.proposition(proof).rhs;
-            if current == to {
-                return Ok(proof);
-            }
-            if self.program.alpha_eq(&mut self.store.term_dag, current, to) {
-                return Ok(self.store.alpha(proof, to));
-            }
-            if rename_source && let Some(renaming) = self.renaming(&[(current, to)]) {
-                return Ok(self.store.equivariance(proof, renaming));
-            }
-            if seen.iter().any(|&term| {
-                current == term || rename_source && self.renaming(&[(current, term)]).is_some()
-            }) {
-                continue;
-            }
-            seen.push(current);
-            if let (Term::App(head, children), Term::App(want, targets)) = (
-                self.store.term_dag.get(current).clone(),
-                self.store.term_dag.get(to).clone(),
-            ) && head == want
-                && children.len() == targets.len()
-            {
-                let mut expanded = Ok(proof);
-                for (index, &target) in targets.iter().enumerate() {
-                    expanded = expanded.and_then(|mut parent| {
-                        let Term::App(_, children) = self
-                            .store
-                            .term_dag
-                            .get(self.store.proposition(parent).rhs)
-                            .clone()
-                        else {
-                            unreachable!()
-                        };
-                        let child = children[index];
-                        if child == target {
-                            return Ok(parent);
-                        }
-                        let projection = self
-                            .store
-                            .project(parent, index)
-                            .map_err(|e| e.to_string())?;
-                        self.known.entry(child).or_insert(projection);
-                        let proof = self.equality(child, target).or_else(|error| {
-                            if rename_source {
-                                self.reconstruct(child, target, true)
-                            } else {
-                                Err(error)
-                            }
-                        })?;
-                        if rename_source {
-                            let left = self.store.proposition(proof).lhs;
-                            let mut pairs = vec![(child, left)];
-                            pairs.extend(targets[..index].iter().map(|&t| (t, t)));
-                            let renaming =
-                                self.renaming(&pairs).ok_or("inconsistent sibling names")?;
-                            parent = self.store.equivariance(parent, renaming);
-                        }
-                        self.store
-                            .congr(parent, index, proof)
-                            .map_err(|e| e.to_string())
-                    });
-                    if expanded.is_err() {
-                        break;
-                    }
-                }
-                if let Ok(proof) = expanded {
-                    return Ok(proof);
-                }
-            }
-            for edge in self.edges.clone() {
-                let p = self.store.proposition(edge).clone();
-                for (left, reversed) in [(p.lhs, false), (p.rhs, true)] {
-                    let renaming = if left == current {
-                        Renaming::identity()
-                    } else if rename_source
-                        && let Some(renaming) = self.renaming(&[(left, current)])
-                    {
-                        renaming
-                    } else {
-                        continue;
-                    };
-                    let edge = if reversed { self.store.sym(edge) } else { edge };
-                    let edge = self.store.equivariance(edge, renaming);
-                    work.push_back(self.store.trans(proof, edge).map_err(|e| e.to_string())?);
-                }
-            }
-        }
-        Err(format!(
-            "cannot reconstruct {} = {} from matched atoms",
-            self.store.term_dag.to_string(from),
-            self.store.term_dag.to_string(to)
-        ))
-    }
+    let flat_rhs_term = replay.flat_instance(flat_rhs)?;
+    let proof = alpha_rhs(replay.store, proof, flat_rhs_term);
+    Ok(alpha_endpoints(
+        replay.store,
+        proof,
+        claimed.lhs,
+        claimed.rhs,
+    ))
 }
 
 #[cfg(test)]

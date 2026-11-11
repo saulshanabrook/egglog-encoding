@@ -28,6 +28,25 @@ fn prove(compiler: &mut Compiler, graph: &mut EGraph, source: &str) -> Vec<Strin
 }
 
 #[test]
+fn global_replay_skips_popped_actions_and_preserves_repeated_children() {
+    let proofs = prove(
+        &mut compiler(ProofMode::Prove),
+        &mut new_egraph_with_proofs(),
+        "(datatype U (Num i64) (Pair U U))
+         (let first (Pair (Num 1) (Num 1)))
+         (push) (push)
+         (let discarded (Pair (Num 9) (Num 9)))
+         (union first discarded)
+         (pop) (pop)
+         (let second (Pair (Num 2) (Num 2)))
+         (union first second)
+         (check (= first second))
+         (check (= second (Pair (Num 1) (Num 1))))",
+    );
+    assert_eq!(proofs.len(), 2);
+}
+
+#[test]
 fn payload_is_a_valid_carrier_name() {
     let proofs = prove(
         &mut compiler(ProofMode::Prove),
@@ -683,4 +702,25 @@ fn guard_operands_determine_their_carrier_despite_a_constructor_namesake() {
     "#,
     );
     assert_eq!(proofs.len(), 1);
+}
+
+#[test]
+fn reconstruction_replays_source_order_before_join_reordering() {
+    let source = r#"
+(datatype U (A) (B) (C) (Pair U U) (F U) (G U) (Hit))
+(let a (A))
+(let b (B))
+(let input (Pair (F a) b))
+(let disconnected (G (C)))
+(rewrite (Pair x b) (Pair a (Hit))
+    :when ((G z) (= x (F a)) (= b (B)) (= (G z) disconnected))
+    :name ordered)
+(run 1)
+(check (= input (Pair a (Hit))))
+"#;
+    prove(
+        &mut compiler(ProofMode::Prove),
+        &mut new_egraph_with_proofs(),
+        source,
+    );
 }

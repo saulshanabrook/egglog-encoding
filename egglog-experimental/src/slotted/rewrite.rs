@@ -19,7 +19,70 @@ fn build(
     sort: &str,
     q: &mut Query,
     actions: &mut Vec<String>,
+) -> Result<Built, String> {
+    fold_rhs(
+        &|head| &lang.constructors[head],
+        t,
+        sort,
+        &mut Vec::new(),
+        &mut |term, sort, path, children, bind| {
+            build_node(
+                lang,
+                term,
+                sort,
+                q,
+                actions,
+                path.is_empty(),
+                children,
+                bind,
+            )
+        },
+    )
+}
+
+/// The head's construction order, shared by emission and source proof replay.
+/// Paths use source argument positions; payload arguments are never traversed.
+pub(super) fn fold_rhs<'a, T>(
+    constructor: &impl Fn(&str) -> &'a Constructor,
+    term: &Term,
+    sort: &str,
+    path: &mut Vec<usize>,
+    visit: &mut impl FnMut(&Term, &str, &[usize], Vec<T>, bool) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut children = Vec::new();
+    let mut bind = false;
+    if let Term::Node(head, args) = term {
+        for (index, column) in constructor(head).columns.iter().enumerate() {
+            let child_sort = match column {
+                Column::Child => sort,
+                Column::Var | Column::Binder => "Var",
+                Column::Payload(_) => continue,
+            };
+            path.push(index);
+            children.push(fold_rhs(
+                constructor,
+                &args[index],
+                child_sort,
+                path,
+                visit,
+            )?);
+            path.pop();
+        }
+        bind = !children.is_empty() || term.has_payload_variable();
+    }
+    visit(term, sort, path, children, bind)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_node(
+    lang: &Language,
+    t: &Term,
+    sort: &str,
+    q: &mut Query,
+    actions: &mut Vec<String>,
     root: bool,
+    built: Vec<Built>,
+    bind: bool,
 ) -> Result<Built, String> {
     match t {
         Term::Variable(pv) => {
@@ -55,7 +118,7 @@ fn build(
                 .collect::<Result<Vec<_>, _>>()?;
             if children.is_empty() {
                 let node = op.node(n, &[], &[], &pays);
-                let value = if t.has_payload_variable() {
+                let value = if bind {
                     let v = q.fresh(&format!("built_{}", n.to_lowercase()));
                     actions.push(format!("(let {v} {node})"));
                     v
@@ -67,15 +130,6 @@ fn build(
                     value,
                     slots: Slots::Set("(map-empty)".into()),
                 });
-            }
-            let mut built = Vec::new();
-            for (c, column) in children.iter().zip(op.children()) {
-                let input_sort = if *column == Column::Child {
-                    sort
-                } else {
-                    "Var"
-                };
-                built.push(build(lang, c, input_sort, q, actions, false)?);
             }
             let value = q.fresh(&format!("built_{}", n.to_lowercase()));
             let mut edges = built.iter().map(|b| b.edge.clone()).collect::<Vec<_>>();
@@ -288,7 +342,7 @@ pub(super) fn compile(
         Term::Subst(args) => substitute(lang, r.root, args, &mut q)?,
         _ => {
             let mut acts = Vec::new();
-            let node = build(lang, &rhs, &root_sort, &mut q, &mut acts, true)?;
+            let node = build(lang, &rhs, &root_sort, &mut q, &mut acts)?;
             acts.push(format!("(union {} {root_class})", node.value));
             acts
         }
@@ -300,6 +354,7 @@ pub(super) fn compile(
         .map(|(v, c)| (v.to_owned(), c.clone()))
         .collect();
     names.readings = q.readings.clone();
+    names.atoms = q.atoms.clone();
     names.frame = q.frame.clone();
     let Some(split) = q.split else {
         return Ok((rule(&q.body, &actions, naive, None, r.name), names));

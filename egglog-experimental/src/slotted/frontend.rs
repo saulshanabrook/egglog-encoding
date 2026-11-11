@@ -855,13 +855,16 @@ impl Compiler {
             return Err(format!("rewrite root {root:?} is not bound by a pattern"));
         }
         self.global_terms(&mut p, &mut rhs, None);
+        // Proof reconstruction follows the source traversal. Matching may reorder
+        // these atoms for joins, but the flattened source rule keeps their order.
+        let source_atoms = p.atoms.clone();
         self.finish_pattern(&mut p)?;
         let mut flattened = flatten::rewrite(
             &self.state.lang,
             &root,
             &lhs,
             &rhs,
-            &p.atoms,
+            &source_atoms,
             &p.conditions,
             p.proof_names,
         );
@@ -884,55 +887,87 @@ impl Compiler {
         Ok((encoded, flattened))
     }
 
-    fn proof_claim(&mut self, fact: &Form) -> Result<Option<String>, String> {
-        fn ground(term: &Term) -> bool {
-            match term {
-                Term::Node(_, args) => args.iter().all(ground),
-                Term::Slot(_) | Term::Global(_) | Term::Payload(_) => true,
-                _ => false,
-            }
-        }
-        let (kind, terms) = fact.call()?;
-        if !matches!(kind, "=" | "renaming-=") || terms.len() != 2 {
+    fn proof_claim(&mut self, facts: &[Form]) -> Result<Option<String>, String> {
+        if facts.is_empty()
+            || facts.iter().any(|fact| {
+                !matches!(fact.call(), Ok(("=" | "renaming-=", terms)) if terms.len() == 2)
+                    && !fact
+                        .call()
+                        .is_ok_and(|(head, _)| self.state.lang.constructors.contains_key(head))
+            })
+        {
             return Ok(None);
         }
-        let ts = terms
-            .iter()
-            .map(|t| self.term(t, false, None))
-            .collect::<Result<Vec<_>, _>>()?;
-        if !ts.iter().all(ground) {
-            return Ok(None);
-        }
-        let mut slots = BTreeSet::new();
-        for term in &ts {
-            term.slot_literals(&mut slots);
-        }
-        for slot in slots {
-            self.state.lang.slot_names.intern(&slot)?;
-        }
-        let mut p = Pattern::new(std::slice::from_ref(fact));
-        let mut roots = Vec::new();
-        let mut patterns = Vec::new();
-        for term in ts {
-            let is_node = matches!(term, Term::Node(_, _));
-            roots.push(self.pattern_value(&mut p, term)?);
-            patterns.push(if is_node {
-                p.proof_names.patterns.last().unwrap().clone()
+        let mut p = Pattern::new(facts);
+        let mut claims = Vec::new();
+        for fact in facts {
+            let (head, arguments) = fact.call()?;
+            let existence;
+            let (kind, terms) = if self.state.lang.constructors.contains_key(head) {
+                existence = [fact.clone(), fact.clone()];
+                ("=", existence.as_slice())
             } else {
-                vec![]
+                (head, arguments)
+            };
+            let mut roots = Vec::new();
+            let mut patterns = Vec::new();
+            for term in terms {
+                let term = self.term(term, false, None)?;
+                let mut slots = BTreeSet::new();
+                term.slot_literals(&mut slots);
+                for slot in slots {
+                    self.state.lang.slot_names.intern(&slot)?;
+                }
+                let is_node = matches!(term, Term::Node(_, _));
+                roots.push(self.pattern_value(&mut p, term)?);
+                patterns.push(if is_node {
+                    p.proof_names.patterns.last().unwrap().clone()
+                } else {
+                    vec![]
+                });
+            }
+            p.conditions.comparisons.push((
+                query::Comparison::parse(kind).unwrap(),
+                roots[0].clone(),
+                roots[1].clone(),
+            ));
+            claims.push(SlottedClaim {
+                kind: kind.into(),
+                lhs: terms[0].expr()?,
+                rhs: terms[1].expr()?,
+                lhs_root: roots[0].clone(),
+                rhs_root: roots[1].clone(),
+                slot_names: BTreeMap::new(),
+                names: query::ProofNames {
+                    patterns,
+                    ..Default::default()
+                },
             });
         }
-        p.conditions.comparisons.push((
-            query::Comparison::parse(kind).unwrap(),
-            roots[0].clone(),
-            roots[1].clone(),
-        ));
         self.finish_pattern(&mut p)?;
         let q = self.compile_check(&p)?;
-        p.proof_names.patterns = patterns;
-        p.proof_names.classes = q.classes.iter().cloned().collect();
-        p.proof_names.readings = q.readings.clone();
-        p.proof_names.frame = q.frame.clone();
+        for claim in &mut claims {
+            claim.names.classes = q.classes.iter().cloned().collect();
+            claim.names.readings = q.readings.clone();
+            claim.names.atoms = q.atoms.clone();
+            claim.names.frame = q.frame.clone();
+            claim.slot_names = self
+                .state
+                .lang
+                .slot_names
+                .entries()
+                .map(|(name, id)| (name.to_owned(), id))
+                .collect();
+        }
+        let id = self.next_proof;
+        self.next_proof += 1;
+        self.proof_requests
+            .insert(id, Arc::new(self.proof_environment(claims)?));
+        let proof = format!("(slotted-prove {id} {})", q.body.join(" "));
+        Ok(Some(self.refine_check(&q, &proof)?))
+    }
+
+    fn proof_environment(&self, claims: Vec<SlottedClaim>) -> Result<ProofRequest, String> {
         let proofs = self.state.proofs.as_ref().expect("proof compilation state");
         let source = proofs.source.snapshot().map_err(|e| e.to_string())?;
         let mut flattened = source.clone();
@@ -941,34 +976,12 @@ impl Compiler {
                 *rule = proofs.flattened[&rule.name].clone();
             }
         }
-        let claim = SlottedClaim {
-            kind: kind.into(),
-            lhs: terms[0].expr()?,
-            rhs: terms[1].expr()?,
-            lhs_root: roots[0].clone(),
-            rhs_root: roots[1].clone(),
-            slot_names: self
-                .state
-                .lang
-                .slot_names
-                .entries()
-                .map(|(name, id)| (name.to_owned(), id))
-                .collect(),
-            names: p.proof_names,
-        };
-        let id = self.next_proof;
-        self.next_proof += 1;
-        self.proof_requests.insert(
-            id,
-            Arc::new(ProofRequest {
-                source,
-                flattened,
-                names: proofs.names.clone(),
-                claim,
-            }),
-        );
-        let proof = format!("(slotted-prove {id} {})", q.body.join(" "));
-        Ok(Some(self.refine_check(&q, &proof)?))
+        Ok(ProofRequest {
+            source,
+            flattened,
+            names: proofs.names.clone(),
+            claims,
+        })
     }
 
     fn compile_check(&self, p: &Pattern) -> Result<query::Query, String> {
@@ -1010,8 +1023,7 @@ impl Compiler {
         }
         if !negated
             && self.options.proof_mode == ProofMode::Prove
-            && let [fact] = args
-            && let Some(proof) = self.proof_claim(fact)?
+            && let Some(proof) = self.proof_claim(args)?
         {
             return Ok(proof);
         }

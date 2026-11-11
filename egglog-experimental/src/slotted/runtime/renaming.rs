@@ -48,24 +48,54 @@ pub(crate) fn shape(edges: &[Renaming]) -> NodeShape {
 /// children's symmetries have equal canonical edges. Group elements that do not
 /// permute the corresponding child's slots are ignored.
 pub(crate) fn node_shape(edges: &[Renaming], groups: &[Vec<Renaming>]) -> NodeShape {
+    node_shape_impl(edges, groups, |_, _| (), |_, _| {}, |_, _| {})
+}
+
+/// Report the child readings selected for each new minimum and self-symmetry.
+pub(crate) fn node_shape_with(
+    edges: &[Renaming],
+    groups: &[Vec<Renaming>],
+    minimum: impl FnMut(&NodeShape, &[Renaming]),
+    symmetry: impl FnMut(&Renaming, &[Renaming]),
+) -> NodeShape {
+    node_shape_impl(edges, groups, selected_reading, minimum, symmetry)
+}
+
+fn selected_reading(edge: &Renaming, group: Option<&Renaming>) -> Renaming {
+    group
+        .cloned()
+        .unwrap_or_else(|| edge.keys().map(|s| (*s, *s)).collect())
+}
+
+// Ordinary execution uses zero-sized readings, so only proof replay allocates
+// and clones the selected group elements. Both follow the same enumeration.
+fn node_shape_impl<T: Clone + Ord>(
+    edges: &[Renaming],
+    groups: &[Vec<Renaming>],
+    selected: impl Fn(&Renaming, Option<&Renaming>) -> T,
+    mut minimum: impl FnMut(&NodeShape, &[T]),
+    mut symmetry: impl FnMut(&Renaming, &[T]),
+) -> NodeShape {
     let own = shape(edges);
     let mut best: Option<NodeShape> = None;
     let mut symmetries: Vec<Renaming> = Vec::new();
-    for variant in readings(edges, groups) {
+    for (variant, chosen) in readings(edges, groups, selected) {
         let spelled = shape(&variant);
         if spelled.edges == own.edges {
             // variant = b . canonical and the node = own_back . canonical, so
             // b . own_back^-1 renames the node's slots onto themselves
-            let symmetry: Renaming = own
+            let element: Renaming = own
                 .back
                 .iter()
                 .filter_map(|(n, &slot)| spelled.back.get(n).map(|&image| (slot, image)))
                 .collect();
-            if symmetry.iter().any(|(from, to)| from != to) {
-                symmetries.push(symmetry);
+            if element.iter().any(|(from, to)| from != to) {
+                symmetry(&element, &chosen);
+                symmetries.push(element);
             }
         }
         if best.as_ref().is_none_or(|b| spelled.edges < b.edges) {
+            minimum(&spelled, &chosen);
             best = Some(spelled);
         }
     }
@@ -76,36 +106,47 @@ pub(crate) fn node_shape(edges: &[Renaming], groups: &[Vec<Renaming>]) -> NodeSh
     out
 }
 
-/// Each column's edge, and the edge through every symmetry of its child's class: the
-/// readings of a node that spell the same invocation. A renaming that does not permute
-/// the column's own slots is not one of them, so a stale symmetry is ignored.
-fn readings(edges: &[Renaming], groups: &[Vec<Renaming>]) -> impl Iterator<Item = Vec<Renaming>> {
-    let columns: Vec<Vec<Renaming>> = edges
+/// Each column's edge under its child's symmetries, with the chosen group elements.
+/// Only symmetries that permute the column's slots participate. Readings are sorted
+/// within each column; the first column varies fastest. This order breaks ties in
+/// [`node_shape`] when several readings have the same canonical shape.
+fn readings<T: Clone + Ord>(
+    edges: &[Renaming],
+    groups: &[Vec<Renaming>],
+    selected: impl Fn(&Renaming, Option<&Renaming>) -> T,
+) -> impl Iterator<Item = (Vec<Renaming>, Vec<T>)> {
+    let columns: Vec<Vec<(Renaming, T)>> = edges
         .iter()
         .enumerate()
         .map(|(i, edge)| {
             let domain: BTreeSet<i64> = edge.keys().copied().collect();
-            let mut out = vec![edge.clone()];
+            let mut out = vec![(edge.clone(), selected(edge, None))];
             for g in groups.get(i).map(Vec::as_slice).unwrap_or_default() {
                 if g.keys().copied().collect::<BTreeSet<_>>() == domain
                     && g.values().copied().collect::<BTreeSet<_>>() == domain
                 {
-                    out.push(g.iter().map(|(&s, &t)| (s, edge[&t])).collect());
+                    out.push((
+                        g.iter().map(|(&s, &t)| (s, edge[&t])).collect(),
+                        selected(edge, Some(g)),
+                    ));
                 }
             }
             out.sort();
-            out.dedup();
+            out.dedup_by(|a, b| a.0 == b.0);
             out
         })
         .collect();
     let total: usize = columns.iter().map(Vec::len).product();
     (0..total).map(move |mut n| {
         let mut variant = Vec::with_capacity(columns.len());
+        let mut chosen = Vec::with_capacity(columns.len());
         for column in &columns {
-            variant.push(column[n % column.len()].clone());
+            let (read, g) = &column[n % column.len()];
+            variant.push(read.clone());
+            chosen.push(g.clone());
             n /= column.len();
         }
-        variant
+        (variant, chosen)
     })
 }
 
@@ -183,5 +224,45 @@ mod shape_tests {
         let shared_xy = shape(&[m(&[(0, 0)]), m(&[(0, 0), (1, 1)])]);
         let shared_yx = shape(&[m(&[(0, 0)]), m(&[(0, 1), (1, 0)])]);
         assert_ne!(shared_xy.edges, shared_yx.edges);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tied_shapes_retain_the_selected_reading_and_back_map() {
+        // Both readings give the same canonical unary node. The chosen back
+        // map matters when a parent binds only one of this child's two slots.
+        let swapped = Renaming::from([(0, 1), (1, 0)]);
+        let identity = Renaming::from([(0, 0), (1, 1)]);
+        let edges = [swapped.clone()];
+        let groups = [vec![identity.clone(), swapped.clone()]];
+        let variants: Vec<_> = readings(&edges, &groups, selected_reading).collect();
+        assert_eq!(variants[0], (vec![identity.clone()], vec![swapped]));
+        assert_eq!(shape(&variants[0].0).edges, shape(&variants[1].0).edges);
+        assert_eq!(node_shape(&edges, &groups).back, identity);
+    }
+
+    #[test]
+    fn proof_tracing_preserves_canonical_shapes_and_symmetries() {
+        let identity = Renaming::from([(0, 0), (1, 1)]);
+        let swapped = Renaming::from([(0, 1), (1, 0)]);
+        let shifted = Renaming::from([(0, 4), (1, 7)]);
+        let restricted = Renaming::from([(0, 0)]);
+        let groups = vec![identity.clone(), swapped.clone(), restricted.clone()];
+        for left in [&identity, &swapped, &shifted, &restricted] {
+            for right in [&identity, &swapped, &shifted, &restricted] {
+                let edges = [left.clone(), right.clone()];
+                for groups in [vec![], vec![groups.clone()], vec![groups.clone(); 2]] {
+                    let ordinary: Vec<_> = node_shape(&edges, &groups).into_maps().collect();
+                    let traced: Vec<_> = node_shape_with(&edges, &groups, |_, _| {}, |_, _| {})
+                        .into_maps()
+                        .collect();
+                    assert_eq!(ordinary, traced);
+                }
+            }
+        }
     }
 }
