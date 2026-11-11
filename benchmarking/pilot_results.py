@@ -26,10 +26,12 @@ BUNDLE_NAMES = (
     "extensions-speedup",
     "applications-proof-runtime",
     "applications-proof-speedup",
+    "extensions-memory",
+    "applications-proof-memory",
 )
 
 
-def condition_estimates(condition: dict[str, Any], rounds: int) -> dict[str, Any]:
+def condition_estimates(condition: dict[str, Any], rounds: int, metric_kind: str = "runtime") -> dict[str, Any]:
     """Qualify one endpoint using actual execution and separate proof evidence."""
     rows = condition["observations"]
     failures = Counter(row["status"] for row in rows if row["status"] != "success")
@@ -39,27 +41,17 @@ def condition_estimates(condition: dict[str, Any], rounds: int) -> dict[str, Any
         issue = ", ".join(f"{count} {status}" for status, count in sorted(failures.items()))
     if issue is None and len(rows) != rounds:
         issue = f"{len(rows)}/{rounds} observations"
-    if issue is None and any(row["wall_sec"] is None or not math.isfinite(row["wall_sec"]) for row in rows):
-        issue = "runtime measurement unavailable"
     if issue is None and validation is not None and validation["status"] != "passed":
         issue = validation["issue"] or "proof validation pending"
-    if condition["exclusion"]:
-        state = "excluded"
-    elif failures or (validation is not None and validation["status"] == "failed"):
-        state = "failed"
-    elif issue is not None:
-        state = "pending"
-    else:
-        state = "complete"
     critical = None if rounds < 2 else float(stats.t.ppf(0.975, rounds - 1))
     estimates = {}
     for field, metric, divisor in (("wall_sec", "runtime", 1), ("max_rss_bytes", "memory", 1048576)):
         values = [
             float(row[field]) / divisor
             for row in rows
-            if row["status"] == "success" and row[field] is not None and math.isfinite(row[field])
+            if row["status"] == "success" and row[field] is not None and math.isfinite(row[field]) and row[field] > 0
         ]
-        metric_issue = issue or ("measurement unavailable" if len(values) != rounds else None)
+        metric_issue = issue or (f"{metric} measurement unavailable" if len(values) != rounds else None)
         estimate = _sample_estimate(values, metric_issue, critical)
         estimates[metric] = {
             "mean": estimate.estimate.point,
@@ -68,6 +60,15 @@ def condition_estimates(condition: dict[str, Any], rounds: int) -> dict[str, Any
             "values": values,
             "issue": metric_issue,
         }
+    issue = estimates[metric_kind]["issue"]
+    if condition["exclusion"]:
+        state = "excluded"
+    elif failures or (validation is not None and validation["status"] == "failed"):
+        state = "failed"
+    elif issue is not None:
+        state = "pending"
+    else:
+        state = "complete"
     return {
         **condition,
         "state": state,
@@ -85,7 +86,8 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         raise ValueError("unsupported pilot figure bundle")
     rounds = snapshot["rounds"]
     critical = None if rounds < 2 else float(stats.t.ppf(0.975, rounds - 1))
-    conditions = {row["id"]: condition_estimates(row, rounds) for row in snapshot["conditions"]}
+    metric_kind = "memory" if name.endswith("-memory") else "runtime"
+    conditions = {row["id"]: condition_estimates(row, rounds, metric_kind) for row in snapshot["conditions"]}
     comparisons = []
     scope = (
         "composition" if name == "composition" else "applications" if name.startswith("applications-") else "extensions"
@@ -146,8 +148,8 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         if row["state"] != "complete":
             continue
         b, c = row["reference"], row["ours"]
-        x = b["metrics"]["runtime"]
-        y = row["speedup"]["runtime"] if name.endswith("-speedup") else c["metrics"]["runtime"]
+        x = b["metrics"][metric_kind]
+        y = row["speedup"][metric_kind] if name.endswith("-speedup") else c["metrics"][metric_kind]
         if x["mean"] is None or y["mean"] is None or min(x["mean"], y["mean"]) <= 0:
             continue
         points.append(
@@ -201,7 +203,7 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     selected = [conditions[key] for key in sorted(selected_ids)]
     identity = hashlib.sha256(
         json.dumps(
-            [{key: value for key, value in row.items() if key != "metrics"} for row in selected],
+            [row for row in snapshot["conditions"] if row["id"] in selected_ids],
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -209,6 +211,8 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     return {
         "pilot_data_version": PILOT_DATA_VERSION,
         "figure": name,
+        "metric": metric_kind,
+        "units": "MiB" if metric_kind == "memory" else "s",
         "stage": "pilot",
         "rounds": rounds,
         "confidence": 0.95,
@@ -226,6 +230,7 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
 def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
     """Export full-precision per-workload numbers and a readable comparison table."""
     name = results["figure"]
+    metric_kind = results["metric"]
     numbers: dict[str, Any] = {
         f"{name}/rounds": results["rounds"],
         f"{name}/planned": len(results["comparisons"]),
@@ -234,7 +239,11 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
     for row in results["coverage"]:
         for field in ("planned", "complete", "pending", "excluded", "failed"):
             numbers[f"{name}/coverage/{row['id']}/{field}"] = row[field]
-    table = [r"\begin{tabular}{llrr}", r"Experiment / workload & Status & Reference (s) & extlog (s) \\", r"\hline"]
+    table = [
+        r"\begin{tabular}{llrr}",
+        f"Experiment / workload & Status & Reference ({results['units']}) & extlog ({results['units']}) " + r"\\",
+        r"\hline",
+    ]
     for row in results["comparisons"]:
         logical = row["logical_id"].removeprefix("sha256:")
         prefix = f"{name}/{row['experiment']}/{logical}"
@@ -242,12 +251,15 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
             condition = row[role]
             numbers[f"{prefix}/{role}/n"] = condition["sample_n"]
             for field in ("mean", "ci_low", "ci_high"):
-                numbers[f"{prefix}/{role}/runtime/{field.replace('_', '-')}"] = condition["metrics"]["runtime"][field]
-        for field in ("mean", "ci_low", "ci_high"):
-            numbers[f"{prefix}/speedup/{field.replace('_', '-')}"] = row["speedup"]["runtime"][field]
+                numbers[f"{prefix}/{role}/{metric_kind}/{field.replace('_', '-')}"] = condition["metrics"][metric_kind][
+                    field
+                ]
+        if metric_kind == "runtime":
+            for field in ("mean", "ci_low", "ci_high"):
+                numbers[f"{prefix}/speedup/{field.replace('_', '-')}"] = row["speedup"][metric_kind][field]
         values = []
         for role in ("reference", "ours"):
-            metric = row[role]["metrics"]["runtime"]
+            metric = row[role]["metrics"][metric_kind]
             values.append(
                 "unavailable"
                 if metric["mean"] is None

@@ -10,10 +10,13 @@ Time is wall-clock seconds, with no minimum-runtime cutoff. The defaults are
 500 seconds per timed process and a 16 GiB allocation cap where supported.
 
 From a frozen source checkout, collect the application scope first or collect all
-scopes together. Each command writes all four coordinated views from the current
+scopes together. Each command writes all six coordinated views from the current
 snapshot, so pending native endpoints remain visible while application data arrives.
 
 ```sh
+./bench.py figures --pilot program-size --target claims-eval-pilot=. \
+  --report benchmarks/local/claims-eval-pilot/reports.jsonl \
+  --output-dir benchmarks/local/claims-eval-pilot/eval
 ./bench.py figures --pilot applications-proof-runtime applications-proof-speedup \
   --target claims-eval-pilot=. --rounds 3 --threads 4 \
   --report benchmarks/local/claims-eval-pilot/reports.jsonl \
@@ -48,12 +51,15 @@ Before collection, built executables are copied into a content-addressed
 `executables/` folder beside the report and their SHA-256 hashes are verified.
 Timed production and checked validation use those same frozen executable paths.
 
-The four bundle stems are `extensions-runtime`, `extensions-speedup`,
-`applications-proof-runtime` and `applications-proof-speedup`. Each has PDF, SVG,
+The six bundle stems are `extensions-runtime`, `extensions-speedup`,
+`applications-proof-runtime`, `applications-proof-speedup`, `extensions-memory`
+and `applications-proof-memory`. Each has PDF, SVG,
 PNG, bound Vega-Lite specification, results JSON, numbers TeX and table TeX files.
-Runtime views show arithmetic means with marginal 95% t intervals in both
-directions; speedup views use reference/candidate ratios and Fieller intervals.
-The selected observations are identical in the paired views. Shared exports are
+Runtime and peak-RSS views show arithmetic means with marginal 95% t intervals in
+both directions; RSS uses MiB. Speedup views use reference/candidate runtime ratios
+and Fieller intervals. All views use identical selected observations; a missing
+or zero RSS measurement remains pending in memory coverage. Memory views require
+no additional launches. Shared exports are
 `experiment-coverage.table.tex`, `corpus-sources.table.tex` and
 `composition-coverage.table.tex`. The compact capability table reports execution
 and separate proof validation for reference and candidate with fixed planned-input
@@ -71,6 +77,18 @@ There is no overall aggregate speedup. Source statistics include source links,
 acquisition method, original input LOC, per-workload runtime distributions and
 validation counts. Ordinary-output parity and table correspondence remain
 separate metadata; they are not inferred from proof validation or timing success.
+
+The `program-size` scope compiles all ten restricted-matching SDQL inputs with the
+current compiler before any timed collection. It reuses the existing compile-only
+collector for input → Slotted → congruence/proofs and exports
+`slotted-program-size.table.tex`, `.results.json`, `.csv`, `.md` and `.files.txt`.
+The JSON retains compiler, source revision, pipeline, input and emitted-program
+hashes. This scope does not collect runtime rows. Its dedicated default cache is
+`slotted-program-size.jsonl` beside the pilot report; `--ast-cache` overrides it.
+A collection with no explicit scopes includes program sizes. Other named scopes
+reuse that cached cohort, or leave a pending table until it is collected. Portable
+replay embeds the recorded AST outcomes and never compiles them again. Historical
+`slotted-runtime.ast.*` exports are preserved separately.
 
 To redraw a saved snapshot without the original inputs, working cache or builds:
 

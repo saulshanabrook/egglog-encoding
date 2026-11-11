@@ -270,6 +270,38 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
     )
 
 
+@pytest.mark.parametrize("scope", ["extensions", "applications-proof"])
+def test_memory_views_reuse_runtime_observations_with_mib_axes_tables_and_numbers(scope: str) -> None:
+    snapshot = snapshot_fixture()
+    runtime = pilot_results.pilot_results(snapshot, f"{scope}-runtime")
+    memory = pilot_results.pilot_results(snapshot, f"{scope}-memory")
+    assert memory["selection_sha256"] == runtime["selection_sha256"]
+    assert memory["coverage"] == runtime["coverage"]
+    assert memory["metric"] == "memory" and memory["units"] == "MiB"
+    assert memory["points"] and all(point["x"] == point["y"] == 1 for point in memory["points"])
+    assert all(point["x_low"] == point["x_high"] == 1 for point in memory["points"])
+    spec = pilot_figures.bound_spec(memory)
+    assert spec["layer"][-1]["encoding"]["x"]["title"].endswith("peak RSS (MiB)")
+    assert spec["layer"][-1]["encoding"]["y"]["title"] == "extlog peak RSS (MiB)"
+    assert spec["layer"][-1]["encoding"]["color"] == pilot_figures.bound_spec(runtime)["layer"][-1]["encoding"]["color"]
+    numbers, table = pilot_results.pilot_tex(memory)
+    assert "/reference/memory/mean" in numbers and "/reference/runtime/mean" not in numbers
+    assert "Reference (MiB) & extlog (MiB)" in table and "Reference (s)" not in table
+
+
+@pytest.mark.parametrize("rss", [None, 0])
+def test_missing_rss_changes_memory_coverage_without_changing_observation_identity(rss: int | None) -> None:
+    snapshot = snapshot_fixture()
+    snapshot["conditions"][0]["observations"][0]["max_rss_bytes"] = rss
+    runtime = pilot_results.pilot_results(snapshot, "extensions-runtime")
+    memory = pilot_results.pilot_results(snapshot, "extensions-memory")
+    assert memory["selection_sha256"] == runtime["selection_sha256"]
+    assert len(runtime["points"]) == 8 and not memory["points"]
+    assert all(row["complete"] == 1 for row in runtime["coverage"])
+    assert all(row["pending"] == 1 and row["complete"] == 0 for row in memory["coverage"])
+    assert all(row["reference"]["metrics"]["memory"]["mean"] is None for row in memory["comparisons"])
+
+
 @pytest.mark.parametrize("state", ["missing", "failed", "excluded", "unknown-proof"])
 def test_incomplete_conditions_remain_in_coverage_without_estimates(state: str) -> None:
     snapshot = snapshot_fixture()
@@ -310,6 +342,43 @@ def test_pilot_replay_never_opens_inputs_cache_or_collectors(tmp_path: Path, mon
     assert pilot_figures.main(["--reuse-from", str(source), "--no-runs", "--output-dir", str(tmp_path / "out")]) == 0
     assert received == [snapshot_fixture()]
     assert before == {path.name: path.read_bytes() for path in source.iterdir()}
+
+
+def test_program_size_scope_never_collects_or_builds_runtime_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = models.FileSpec("case.egg", tmp_path / "case.egg", "sha256:case")
+    monkeypatch.setattr(
+        pilot_figures,
+        "load_experiments",
+        lambda _path: ({"experiments": [{"id": "slotted", "files": ["case.egg"]}]}, {"case.egg": file}),
+    )
+    calls = []
+
+    def sizes(files: tuple[models.FileSpec, ...], cache: Path, *, collect: bool) -> dict[str, Any]:
+        calls.append((files, cache, collect))
+        return {"status": "complete", "inputs": [], "records": []}
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("program-size scope touched timed endpoints")
+
+    monkeypatch.setattr(pilot_figures, "program_size_snapshot", sizes)
+    monkeypatch.setattr(pilot_figures, "resolve_requests", forbidden)
+    monkeypatch.setattr(pilot_figures, "collect", forbidden)
+    monkeypatch.setattr(pilot_figures, "validate_proof_requests", forbidden)
+    monkeypatch.setattr(pilot_figures, "target_row_for_request", lambda *_args: make_target().row)
+    snapshots = []
+
+    def snapshot(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        snapshots.append(kwargs["ast_snapshot"])
+        return snapshot_fixture()
+
+    monkeypatch.setattr(pilot_figures, "make_snapshot", snapshot)
+    monkeypatch.setattr(pilot_figures, "export_pilot", lambda *_args: ())
+    report = tmp_path / "report.jsonl"
+    assert pilot_figures.main(["program-size", "--report", str(report)]) == 0
+    assert calls == [((file,), tmp_path / "slotted-program-size.jsonl", True)]
+    assert snapshots == [{"status": "complete", "inputs": [], "records": []}]
 
 
 def test_late_export_failure_preserves_all_existing_pilot_files(

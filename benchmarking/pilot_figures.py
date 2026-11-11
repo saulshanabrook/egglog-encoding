@@ -1,7 +1,7 @@
 """Collect and export the coverage-preserving, three-observation evaluation pilot.
 
 Legacy figure publication remains strict. This entrypoint is selected explicitly
-with ``bench.py figures --pilot`` and exports all four coordinated views from one
+with ``bench.py figures --pilot`` and exports all six coordinated views from one
 snapshot, even when the selected collection scope is still incomplete.
 """
 
@@ -38,6 +38,7 @@ from .engines import PROOF_ORACLES, TREATMENT_SPECS, TREATMENTS, Treatment
 from .figures import ROOT, VEGA_PACKAGES, _figure_inventory, renderer_metadata
 from .models import BenchmarkEndpoint, BuiltBinary, EndpointRequest, FileSpec, ResolvedTarget
 from .native_memory import add_memory_limit_options
+from .pilot_ast import export_program_size, program_size_snapshot
 from .pilot_results import BUNDLE_NAMES, PILOT_DATA_VERSION, coverage_tables, pilot_results, pilot_tex
 from .reports.catalog import report_id
 from .reports.store import ReportStore, select_observations
@@ -173,6 +174,7 @@ def make_snapshot(
     threads: int,
     timeout_sec: int,
     memory_limit_bytes: int | None,
+    ast_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Freeze selected timed rows, checked evidence, corpus provenance, and scope."""
     inventory = _figure_inventory(ROOT, tuple(files.values()))
@@ -298,6 +300,7 @@ def make_snapshot(
         "files": list(file_metadata.values()),
         "conditions": list(conditions.values()),
         "comparisons": comparisons,
+        "program_size": ast_snapshot or {"status": "pending", "inputs": [], "records": [], "issue": None},
         "provenance": {
             "target": asdict(target.row),
             "binaries": binaries,
@@ -322,6 +325,8 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
     snapshot = results["pilot_snapshot"]
     applications = results["figure"].startswith("applications-")
     speedup = results["figure"].endswith("-speedup")
+    memory = results["metric"] == "memory"
+    measurement = "peak RSS (MiB)" if memory else "runtime (s)"
     points = results["points"]
     xs = [
         point[field]
@@ -360,13 +365,13 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "field": "x",
             "type": "quantitative",
             "scale": {"type": "log", "domain": x_domain},
-            "title": "egglog runtime (s)" if applications else "Reference runtime (s)",
+            "title": f"egglog {measurement}" if applications else f"Reference {measurement}",
         },
         "y": {
             "field": "y",
             "type": "quantitative",
             "scale": {"type": "log", "domain": y_domain},
-            "title": "Speedup (reference / extlog)" if speedup else "extlog runtime (s)",
+            "title": "Speedup (reference / extlog)" if speedup else f"extlog {measurement}",
         },
     }
     layers: list[dict[str, Any]] = []
@@ -499,7 +504,8 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                 f"{results['rounds']} observations per configuration; {complete}/{total} comparisons available",
                 "95% mean-runtime and Fieller ratio intervals; pending and failed cases remain in coverage."
                 if speedup
-                else "Marginal 95% mean-runtime intervals; pending and failed cases remain in coverage.",
+                else f"Marginal 95% mean {'peak-RSS' if memory else 'runtime'} intervals; "
+                "pending and failed cases remain in coverage.",
             ]
             + (
                 ["CI limits at or below zero are clipped to the log-axis boundary."]
@@ -562,6 +568,13 @@ def export_pilot(
         for name, value in coverage_tables(snapshot).items():
             (folder / name).write_text(value)
             outputs.append(name)
+        outputs.extend(
+            path.name
+            for path in export_program_size(
+                snapshot.get("program_size", {"status": "pending", "inputs": [], "records": [], "issue": None}),
+                folder,
+            )
+        )
         for name in outputs:
             os.replace(folder / name, destination / name)
     console.print(f"Exported pilot ({snapshot['rounds']} observations requested) to {destination}", markup=False)
@@ -571,7 +584,7 @@ def export_pilot(
 def main(argv: Sequence[str] | None = None) -> int:
     """Collect the selected pilot scope or replay its portable snapshot offline."""
     parser = argparse.ArgumentParser(prog="./bench.py figures --pilot")
-    parser.add_argument("names", nargs="*", help="collection scopes; all four coordinated views are exported")
+    parser.add_argument("names", nargs="*", help="collection scopes; all six coordinated views are exported")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--threads", type=int, default=4)
@@ -579,14 +592,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--target", default=f"claims-eval-pilot={ROOT}")
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--ast-cache", type=Path, help="compile-only size cache; default beside the report")
     parser.add_argument("--reuse-from", type=Path)
     parser.add_argument("--no-runs", action="store_true")
     parser.add_argument("--validation-only", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
-    if set(args.names) - {*BUNDLE_NAMES, "composition"}:
-        parser.error("unknown pilot scope; choose " + ", ".join((*BUNDLE_NAMES, "composition")))
+    if set(args.names) - {*BUNDLE_NAMES, "composition", "program-size"}:
+        parser.error("unknown pilot scope; choose " + ", ".join((*BUNDLE_NAMES, "composition", "program-size")))
     if min(args.rounds, args.threads, args.timeout_sec) < 1 or str(args.report) == "-":
         parser.error("rounds, threads and timeout must be positive; --report requires a filesystem path")
     console = Console(stderr=True)
@@ -606,11 +620,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             export_pilot(snapshot, args.output_dir.resolve(), console)
             return 0
         config, files = load_experiments(args.config.resolve())
-        requested = args.names or (*BUNDLE_NAMES, "composition")
+        requested = args.names or (*BUNDLE_NAMES, "composition", "program-size")
         extensions = any(name.startswith("extensions-") for name in requested)
         applications = any(name.startswith("applications-") for name in requested)
         composition = "composition" in requested
         target_request = parse_target(args.target)
+        collect_sizes = "program-size" in requested and not args.no_runs
+        if collect_sizes and Path(target_request.source).expanduser().resolve() != ROOT:
+            raise ValueError("program-size collection uses this checkout; supply --target LABEL=.")
+        ast_files = next(experiment["files"] for experiment in config["experiments"] if experiment["id"] == "slotted")
+        ast_snapshot = program_size_snapshot(
+            tuple(files[path] for path in ast_files),
+            (args.ast_cache or args.report.expanduser().resolve().parent / "slotted-program-size.jsonl").resolve(),
+            collect=collect_sizes,
+        )
         requests = []
         for experiment in config["experiments"]:
             treatments: set[Treatment] = set()
@@ -632,7 +655,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 )
         store = ReportStore(args.report.expanduser().resolve())
-        if args.no_runs:
+        collection_failed = False
+        if args.no_runs or not requests:
             pointers = [
                 (binary, store.find_label_pointer(target_request.label or "claims-eval-pilot", binary))
                 for binary in dict.fromkeys(spec.binary_name for spec in TREATMENT_SPECS.values())
@@ -660,7 +684,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             target = targets[target_request]
             target = freeze_target(target, store.path.parent / "executables")
             targets[target_request] = target
-            collection_failed = False
             try:
                 if not args.validation_only:
                     plans = plan_collection(store, tuple(requests), targets, args.rounds, args.timeout_sec, False)
@@ -678,6 +701,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             threads=args.threads,
             timeout_sec=args.timeout_sec,
             memory_limit_bytes=args.memory_limit_bytes,
+            ast_snapshot=ast_snapshot,
         )
         export_pilot(snapshot, args.output_dir.expanduser().resolve(), console)
         if not args.no_runs and collection_failed:
