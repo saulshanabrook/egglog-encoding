@@ -200,6 +200,45 @@ pub(super) fn query_witness(
     Ok(sigma)
 }
 
+/// Instantiate a substitution rewrite using the certified representatives of
+/// the request's columns. The request proof's congruences carry those choices
+/// back to the original match, so the rule sees the selected input trees.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn substitution_instances(
+    program: &ProofContext,
+    dag: TermDag,
+    names: &EncodingNames,
+    egg: NativeProofs<'_>,
+    requests: &[(ProofId, &str)],
+    evidence: &source::Certificates,
+) -> LiftResult<(SlottedProofStore, Vec<ProofId>)> {
+    let mut tr = SlotLifter::with_evidence(program, dag, names, egg, evidence)?;
+    let mut results = Vec::new();
+    let mut last = None;
+    for &(root, name) in requests {
+        let (firing, selected) = tr.unwrap_match(root)?;
+        let Justification::Rule {
+            name: applied,
+            premise_proofs,
+            substitution,
+        } = egg.get(firing).justification()
+        else {
+            return Err("substitution request lacks its rule firing".into());
+        };
+        if applied != &format!("{name}/apply") {
+            return Err(format!(
+                "substitution request for {name} was justified by {applied}"
+            ));
+        }
+        let selected = selected.into_iter().collect();
+        let proof = tr.derive_rule(name, premise_proofs, substitution, &selected, None, None)?;
+        results.push(tr.out.proof(proof));
+        last = Some(proof);
+    }
+    let (store, _) = tr.out.finish(last.ok_or("no substitution requests")?);
+    Ok((store, results))
+}
+
 fn query_firing(egg: &ProofStore, root: ProofId, frame: &str) -> LiftResult<ProofId> {
     fn side(egg: &ProofStore, root: ProofId, rhs: bool, frame: &str) -> LiftResult<ProofId> {
         match egg.get(root).justification() {

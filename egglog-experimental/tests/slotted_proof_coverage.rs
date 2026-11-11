@@ -1,9 +1,7 @@
 #[path = "support/proof_coverage.rs"]
 mod coverage;
 
-use egglog_experimental::slotted::{
-    CompileError, Compiler, Options, ProofMode, UnsupportedProofFeature,
-};
+use egglog_experimental::slotted::{CompileError, Compiler, Options, ProofMode};
 
 #[test]
 fn source_expectations_count_existential_and_multiple_fact_checks() {
@@ -30,7 +28,7 @@ fn source_expectations_count_existential_and_multiple_fact_checks() {
 }
 
 #[test]
-fn unsupported_substitution_is_typed_and_does_not_commit_compiler_state() {
+fn malformed_substitution_does_not_commit_compiler_state() {
     let mut compiler = Compiler::new(Options {
         proof_mode: ProofMode::Prove,
         ..Default::default()
@@ -41,13 +39,7 @@ fn unsupported_substitution_is_typed_and_does_not_commit_compiler_state() {
             "(datatype E (V Var)) (rewrite (V $a) (subst (V $a) $a (V $b)))",
         )
         .unwrap_err();
-    assert!(matches!(
-        error,
-        CompileError::UnsupportedProofFeature {
-            feature: UnsupportedProofFeature::Substitution,
-            ..
-        }
-    ));
+    assert!(matches!(error, CompileError::Parse(_)));
     compiler.compile(None, "(datatype E (V Var))").unwrap();
     assert!(matches!(
         compiler.compile(None, "(let a (Missing))"),

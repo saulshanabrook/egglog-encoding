@@ -36,6 +36,12 @@ pub(crate) fn register(graph: &mut EGraph) {
     graph
         .add_command("slotted-prove".into(), Arc::new(ProveSlotted))
         .unwrap();
+    graph
+        .add_command("slotted-prove-extract".into(), Arc::new(ProveSlotted))
+        .unwrap();
+    graph
+        .add_command("slotted-substitute".into(), Arc::new(ProveSlotted))
+        .unwrap();
 }
 
 pub(in crate::slotted) fn error(message: impl Display) -> Error {
@@ -73,7 +79,11 @@ impl ProofRequest {
         graph: &mut EGraph,
         facts: Vec<Fact>,
     ) -> Result<Vec<CommandOutput>, Error> {
-        let text = self.prove(graph, facts).map_err(error)?;
+        let evidence = graph
+            .extension_state::<super::runtime_substitution::Evidence>()
+            .cloned()
+            .unwrap_or_default();
+        let text = self.prove(graph, facts, &evidence).map_err(error)?;
         log::debug!("query extracted");
         Ok(vec![CommandOutput::UserDefined(Arc::new(text))])
     }
@@ -101,17 +111,19 @@ impl ProofRequest {
     }
 
     /// Lift and check an encoded proof, returning the source proof's text.
-    fn prove(&self, graph: &mut EGraph, facts: Vec<Fact>) -> Result<String, String> {
+    fn prove(
+        &self,
+        graph: &mut EGraph,
+        facts: Vec<Fact>,
+        evidence: &super::runtime_substitution::Evidence,
+    ) -> Result<String, String> {
         let claim = &self.claims[0];
         let resolved = &self.source;
         let mut dag = TermDag::default();
         let (program, flattened) = self
             .contexts_in(&mut dag, &claim.slot_names)
             .map_err(|e| e.to_string())?;
-        let mut evidence = lift_slots::source::Certificates {
-            store: super::format::SlottedProofStore::new(dag),
-            ..Default::default()
-        };
+        let mut evidence = evidence.lift(graph, &flattened, &self.flattened, dag, &self.names)?;
         let mut source = lift_slots::source::SourceLifter::new(
             &flattened,
             &self.flattened,

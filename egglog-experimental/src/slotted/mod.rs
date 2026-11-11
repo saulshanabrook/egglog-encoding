@@ -20,7 +20,7 @@ mod slots;
 mod syntax;
 pub(crate) mod var_sort;
 pub use compiled::CompiledProgram;
-pub use errors::{CompileError, UnsupportedProofFeature};
+pub use errors::CompileError;
 pub use frontend::{Compiler, Options, ProofMode};
 
 mod runtime;

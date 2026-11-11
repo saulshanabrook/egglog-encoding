@@ -14,6 +14,8 @@ mod normalize;
 pub(crate) mod pipeline;
 mod program;
 pub(super) mod resolve;
+pub(in crate::slotted) mod runtime_substitution;
+pub(super) mod substitution;
 pub mod terms;
 
 pub use checker::{SlottedCheckError, check_claim, check_proof};

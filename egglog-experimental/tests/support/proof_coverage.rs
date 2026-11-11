@@ -89,6 +89,7 @@ pub fn expected_proofs(source: &str) -> Result<usize> {
                 scope = scopes.pop().ok_or("pop without push")?;
                 region_start = i + 1;
             }
+            Some(("extract", [_])) => count += 1,
             Some(("check", facts)) if !facts.is_empty() => {
                 if facts.iter().all(|fact| match call(fact) {
                     Some(("=" | "renaming-=", [_, _])) => true,
