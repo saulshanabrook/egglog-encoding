@@ -7,6 +7,7 @@
 export CARGO_PROFILE_DEV_DEBUG ?= 0
 export CARGO_PROFILE_TEST_DEBUG ?= 0
 export CARGO_INCREMENTAL ?= 0
+export RUST_TEST_THREADS ?= 1
 export RUST_TEST_ARGS
 
 UV_VERSION ?= 0.11.30
@@ -25,7 +26,7 @@ test-rust:
 	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --bins
 	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
 	cargo test --locked --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
-	cargo test --locked --workspace --exclude paper-tests -- $(RUST_TEST_ARGS)
+	cargo test --locked --workspace --exclude paper-tests -- $(if $(filter --test-threads%,$(RUST_TEST_ARGS)),,--test-threads=$(RUST_TEST_THREADS)) $(RUST_TEST_ARGS)
 	cargo build --locked -p slotted-reference-proofs --no-default-features
 	RUST_TEST_THREADS=$${RUST_TEST_THREADS:-2} cargo test --locked -p paper-tests -- $(RUST_TEST_ARGS)
 

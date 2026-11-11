@@ -41,9 +41,11 @@ all paper oracles and the ordinary Rust debug assertions remain active.
 CI sets the explicitly partial `RUST_TEST_ARGS="--skip paper/"` filter for
 `make test-rust`. Local `make check` runs all enabled paper cases. The paper target honors
 the normal `--test-threads` option and `RUST_TEST_THREADS` environment variable.
-The local Make invocation defaults to two paper workers; ordinary Rust tests
-keep their usual parallelism. Its allocator limit is per child; set
-`RUST_TEST_THREADS=1` for a serial paper run.
+The Make invocation defaults to one worker per Rust test binary, including
+custom test harnesses. Set `RUST_TEST_THREADS=N` to change the default; an explicit
+`--test-threads` in `RUST_TEST_ARGS` takes precedence. This controls concurrent
+test cases, not each e-graph's worker settings, and is not an individual memory
+cap. The paper allocator limit remains per child.
 The paper target
 uses the allocator/address-space cap from `benchmarking/config.py` by default;
 `PAPER_TEST_MEMORY_LIMIT_BYTES=none` runs it uncapped. Apply the shared ignore
