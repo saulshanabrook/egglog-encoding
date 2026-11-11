@@ -43,9 +43,9 @@ After inspecting the outputs, copy the `eval` folder into the manuscript's
 `figures/` directory with the command above. This preserves existing
 `figures/eval/` PDF and TeX include paths. Generation does not require the paper
 repository. PDF and TeX files are manuscript inputs with no JSON runtime
-dependency; bound specifications retain the original grouped-cache URL and need
-that cache for rerendering. Results JSON includes the selected observations and
-their provenance. `--output-dir PATH` overrides the common output folder;
+dependency. Bound specifications and results JSON retain the selected observations
+and their provenance for portable `--reuse-from DIR --no-runs` replay, without
+the original working cache. `--output-dir PATH` overrides the common output folder;
 relative overrides resolve from the invocation directory.
 
 A subset invocation updates only its selected figure filenames. Outputs from
@@ -59,7 +59,7 @@ before copying it, and remove obsolete artifacts explicitly when needed.
 | `corpus-congruence-cdf` | Congruence-only time and peak-RSS overhead across the application replays |
 | `corpus-proof-recording-cdf` | Recording-only proof time and peak-RSS overhead across the same replays; strict correctness coverage retained |
 | `corpus-proofs-cdf` | Full proof recording, extraction and checking time and peak-RSS overhead across the same replays |
-| `slotted-runtime` | Full 44-rule SDQL kernels/phases; aligned runtime/RSS encoding-to-native ratio panels and a table of both metrics |
+| `slotted-runtime` | Full 44-rule SDQL kernels/phases; runtime ratios of extlog to Reference sorted in increasing order, with absolute runtime tables |
 | `lmfao` (table) | Favorita covariance queries: LMFAO, slotted and ordinary egglog; preparation time, memory use and query-time ratios |
 | `slotted-multipattern-runtime` | Complete multipattern matching on the original SDQL kernels/phases, omitting pairs with a resource-failing endpoint |
 
@@ -233,8 +233,9 @@ Disequality ratios and their 95% intervals are exported for prose against the
 fixed native DE baseline, with no ratio panels. Math within-engine ratios and
 Slotted encoding/native ratios use uniform small black squares with capped,
 asymmetric Fieller 95% whiskers and a 1x reference. No lines connect workloads.
-Slotted runtime/RSS panels share the workload order and ratio scale; the
-companion table contains both metrics and their intervals for every kernel/phase.
+Each Slotted figure has one runtime-ratio panel sorted in increasing ratio order.
+Its companion table reports Reference and extlog mean runtimes in seconds with
+95% intervals in the same order; the numeric exports retain peak-RSS statistics.
 
 Whole-process time includes launch, input reading, parsing, lowering, execution
 and requested proof work. Compilation and input conversion occur beforehand.

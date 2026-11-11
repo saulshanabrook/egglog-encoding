@@ -1,6 +1,6 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-  "description": "Per-kernel/phase arithmetic-mean runtime and peak RSS ratios of Egglog encoding to native Slotted. Aligned metric panels use the same workload order and scale, with uniform black squares, capped independent Fieller 95% intervals and a 1x guide. No lines connect workloads. Explicit unavailable and unbounded statuses remain visible; the companion table and raw selected rows are unchanged.",
+  "description": "Per-kernel/phase arithmetic-mean runtime ratios of extlog to the Slotted reference implementation, sorted in increasing ratio order. Uniform black squares show estimates with capped independent Fieller 95% intervals and a 1x guide. No lines connect workloads. Unavailable and unbounded statuses remain visible; companion exports retain all runtime and peak RSS observations and statistics.",
   "data": {
     "url": "../../data-cache/reports-grouped.json",
     "format": {"type": "json"}
@@ -43,7 +43,7 @@
     {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
     {"flatten": [ "runs" ], "as": [ "row_index" ]},
     {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},
-    {"calculate": "['Runtime','Peak RSS']", "as": "metrics"},
+    {"calculate": "['Runtime']", "as": "metrics"},
     {"flatten": [ "metrics" ], "as": [ "metric" ]},
     {"calculate": "isValid(datum.run) && datum.run.status === 'success' ? (datum.metric === 'Runtime' ? (isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null) : (isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes / 1048576 : null)) : null", "as": "value"},
     {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
@@ -74,23 +74,23 @@
       "calculate": "(datum.suite === 'SDQL' ? '' : datum.suite + ' · ') + (datum.suite === 'Array' ? replace(datum.basename,'goal-2d-4f-N','N=') : datum.suite === 'SDQL' ? ({'batax':'BATAX','mmm':'MMM','mmm_sum':'ΣMMM','mttkrp':'MTTKRP','ttm':'TTM'}[datum.kernel] || datum.kernel) + (indexof(datum.basename,'_1st-') >= 0 ? ' · 1st' : ' · 2nd') : datum.basename)",
       "as": "workload"
     },
-    {"calculate": "datum.suite === 'Array' ? toNumber(replace(datum.basename,'goal-2d-4f-N','')) : (datum.suite === 'SDQL' ? 100 : datum.suite === 'Logic' ? 200 : 300) + indexof(pluck(selected_inputs,'logical_id'),datum.logical_id)", "as": "order"},
-    {"calculate": "indexof(datum.input.treatment,'ref-') >= 0 ? 'Native Slotted' : 'Egglog encoding'", "as": "series"},
+    {"calculate": "indexof(datum.input.treatment,'ref-') >= 0 ? 'Reference' : 'extlog'", "as": "series"},
     {"filter": "datum.run_number === 1"},
     {
       "aggregate": [{"op": "values", "as": "conditions"}],
-      "groupby": ["logical_id", "suite", "workload", "order", "metric"]
+      "groupby": ["logical_id", "suite", "workload", "metric"]
     },
-    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'Native Slotted')]", "as": "baseline"},
-    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'Egglog encoding')]", "as": "candidate"},
+    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'Reference')]", "as": "baseline"},
+    {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'series'),'extlog')]", "as": "candidate"},
     {"calculate": "isValid(datum.baseline) && isValid(datum.candidate) && datum.baseline.complete && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null", "as": "ratio"},
+    {"calculate": "isValid(datum.ratio) && isFinite(datum.ratio) ? datum.ratio : 1e308", "as": "order"},
     {"calculate": "isValid(datum.baseline) ? datum.baseline.mean * datum.baseline.mean - t_critical * t_critical * datum.baseline.var_mean : null", "as": "a"},
     {"calculate": "isValid(datum.candidate) ? datum.candidate.mean * datum.candidate.mean - t_critical * t_critical * datum.candidate.var_mean : null", "as": "d"},
     {"calculate": "isValid(datum.baseline) && isValid(datum.candidate) ? pow(datum.baseline.mean * datum.candidate.mean,2) - datum.a * datum.d : null", "as": "radicand"},
     {"calculate": "isValid(datum.ratio) && isFinite(datum.ratio) && rounds > 1 && datum.a > 0 && datum.radicand >= 0", "as": "bounded"},
     {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean - sqrt(datum.radicand)) / datum.a : null", "as": "ratio_low"},
     {"calculate": "datum.bounded ? (datum.baseline.mean * datum.candidate.mean + sqrt(datum.radicand)) / datum.a : null", "as": "ratio_high"},
-    {"calculate": "!isValid(datum.ratio) ? (!isValid(datum.baseline) ? 'Native missing' : !datum.baseline.complete ? 'Native: ' + datum.baseline.issue : datum.baseline.mean <= 0 ? 'Native mean ≤0' : '') + (!isValid(datum.candidate) || !datum.candidate.complete ? (!isValid(datum.baseline) || !datum.baseline.complete || datum.baseline.mean <= 0 ? '\\n' : '') + 'Encoding: ' + (isValid(datum.candidate) ? datum.candidate.issue : 'missing') : '') : rounds === 1 ? 'n=1; CI unavailable' : !datum.bounded ? 'CI unbounded or unavailable' : ''", "as": "summary"},
+    {"calculate": "!isValid(datum.ratio) ? (!isValid(datum.baseline) ? 'Reference missing' : !datum.baseline.complete ? 'Reference: ' + datum.baseline.issue : datum.baseline.mean <= 0 ? 'Reference mean ≤0' : '') + (!isValid(datum.candidate) || !datum.candidate.complete ? (!isValid(datum.baseline) || !datum.baseline.complete || datum.baseline.mean <= 0 ? '\\n' : '') + 'extlog: ' + (isValid(datum.candidate) ? datum.candidate.issue : 'missing') : '') : rounds === 1 ? 'n=1; CI unavailable' : !datum.bounded ? 'CI unbounded or unavailable' : ''", "as": "summary"},
     {"calculate": "max(1, isValid(datum.ratio) ? datum.ratio : 0, isValid(datum.ratio_high) ? datum.ratio_high : 0)", "as": "ratio_upper"},
     {"calculate": "min(0, isValid(datum.ratio_low) ? datum.ratio_low : 0)", "as": "ratio_lower"},
     {"extent": "ratio_lower", "param": "ratio_low_extent"},
@@ -104,12 +104,12 @@
     "column": {
       "field": "metric",
       "type": "nominal",
-      "sort": ["Runtime", "Peak RSS"],
+      "sort": ["Runtime"],
       "header": {"title": null, "labelFontSize": 14, "labelFontWeight": "bold"}
     }
   },
   "spec": {
-    "width": 250,
+    "width": 500,
     "height": {"step": 30},
     "encoding": {
       "x": {
@@ -121,12 +121,12 @@
           "padding": 6,
           "nice": false
         },
-        "axis": {"title": "Pass / reference (symlog)", "labelExpr": "format(datum.value,',~f') + '×'", "values": [ -1024, -256, -64, -16, -4, -1, -0.25, 0, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 ], "labelOverlap": "greedy", "labelFlush": 20}
+        "axis": {"title": "extlog / Reference (symlog)", "labelExpr": "format(datum.value,',~f') + '×'", "values": [ -1024, -256, -64, -16, -4, -1, -0.25, 0, 0.1, 0.25, 0.5, 0.75, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 ], "labelOverlap": "greedy", "labelFlush": 20, "labelOffset": {"expr": "datum.value === 0.75 ? -2 : datum.value === 1 ? 2 : 0"}, "grid": true, "gridWidth": 0.7}
       },
       "y": {
         "field": "workload",
         "type": "nominal",
-        "sort": {"field": "order", "op": "min"},
+        "sort": {"field": "order", "op": "min", "order": "ascending"},
         "title": null,
         "axis": {"labelLimit": 160, "labelPadding": 5, "minExtent": 104},
         "bandPosition": 0.5

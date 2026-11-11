@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -65,9 +66,107 @@ def test_export_statistics_match_shared_executed_vega_fixture(name: str) -> None
     assert name + r"/workload-count\endcsname{1}" in macros
     workload = "batax-1st-44rules"
     assert f"{name}/{workload}/{treatments[1]}-over-{treatments[0]}/runtime/ratio" in macros
-    assert "Kernel/phase" in table and "BATAX / 1st & 3 [" in table
-    assert " & 5 [" in table and "Peak RSS" in table
+    assert "Kernel/phase" in table and "BATAX / 1st & 21 [" in table
+    assert " & 63 [" in table
+    assert "Reference time (s)" in table and "extlog time (s)" in table
+    assert "Peak RSS" not in table
+    assert f"{name}/{workload}/{treatments[1]}-over-{treatments[0]}/memory/ratio" in macros
     assert f"{treatments[1]} / {treatments[0]}" not in table
+    if name == "slotted-multipattern-runtime":
+        assert f"{name}/runtime/speedup-max\\endcsname{{\\textnormal{{unavailable}}}}" in macros
+
+
+@pytest.mark.parametrize(
+    "name,treatments",
+    [
+        ("disequality-runtime", ("egg-de", "off")),
+        ("math-runtime", ("egg-proof-testing", "proof-testing")),
+    ],
+)
+def test_intro_speedups_use_full_precision_absolute_means(name: str, treatments: tuple[str, str]) -> None:
+    fixture = json.loads(Path(__file__).with_name("figure_statistics.json").read_text())
+    for item, group, treatment, mean in zip(
+        fixture["inputs"], fixture["groups"], treatments, (1.234, 1.225), strict=True
+    ):
+        item["treatment"] = group["key"]["treatment"] = treatment
+        for row in group["samples"]:
+            row["treatment"] = treatment
+        for index, delta in zip(item["selected_row_indices"], (-0.0001, 0, 0.0001), strict=True):
+            next(row for row in group["samples"] if row["row_index"] == index)["wall_sec"] = mean + delta
+    grouped = GroupedReport(
+        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        "fixture",
+    )
+    result = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
+    macros, _ = latex_results(result)
+    prefix = f"{name}/batax-1st-44rules"
+    for treatment in treatments:
+        assert f"{prefix}/{treatment}/runtime/mean\\endcsname{{1.23}}" in macros
+    key = f"{prefix}/{treatments[0]}-over-{treatments[1]}/runtime/speedup"
+    assert f"{key}\\endcsname{{1.01}}" in macros  # Rounded input means would incorrectly give 1.
+    fixture["inputs"][0]["validation_issue"] = "strict failure"
+    invalid = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
+    assert f"{key}\\endcsname{{\\textnormal{{unavailable}}}}" in latex_results(invalid)[0]
+
+
+@pytest.mark.parametrize("name", ["slotted-runtime", "slotted-multipattern-runtime"])
+def test_slotted_absolute_tables_sort_by_ratio_and_retain_mean_intervals(name: str) -> None:
+    fixture = json.loads(Path(__file__).with_name("figure_statistics.json").read_text())
+    treatments = next(f.treatments for f in figures.load_config(figures.DEFAULT_CONFIG).figures if f.name == name)
+    for item, group, treatment in zip(fixture["inputs"], fixture["groups"], treatments, strict=True):
+        item["treatment"] = group["key"]["treatment"] = treatment
+        for row in group["samples"]:
+            row["treatment"] = treatment
+    extra = deepcopy(fixture)
+    for item, group, scale in zip(extra["inputs"], extra["groups"], (10, 5 / 3), strict=True):
+        item.update(logical_id="mmm", label="mmm_1st-44rules.egg", file_sha256="mmm-" + item["file_sha256"])
+        item["selected_row_indices"] = [index + 100 for index in item["selected_row_indices"]]
+        group["key"]["file_sha256"] = item["file_sha256"]
+        for row in group["samples"]:
+            row.update(
+                file_sha256=item["file_sha256"],
+                row_index=row["row_index"] + 100,
+                wall_sec=row["wall_sec"] * scale,
+                max_rss_bytes=row["max_rss_bytes"] * (10 if scale == 10 else 1),
+            )
+    grouped = GroupedReport(
+        {
+            "groups": fixture["groups"] + extra["groups"],
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": 9,
+        },
+        "fixture",
+    )
+    result = figure_results(name, fixture["inputs"] + extra["inputs"], grouped, 3, 4.302652729749462)
+    macros, table = latex_results(result)
+    assert table.index("MMM / 1st") < table.index("BATAX / 1st")
+    assert "MMM / 1st & 210 [185, 235] & 105 [92.6, 117]" in table
+    assert "BATAX / 1st & 21 [18.5, 23.5] & 63 [55.5, 70.5]" in table
+    assert result["comparisons"][1]["metrics"]["runtime"]["ratio"] == 0.5
+    for key, expected in (("ratio-min", "0.5"), ("ratio-max", "5")):
+        assert f"{name}/memory/{key}\\endcsname{{{expected}}}" in macros
+    extra["groups"][0]["samples"][0]["max_rss_bytes"] = None
+    unavailable = figure_results(name, fixture["inputs"] + extra["inputs"], grouped, 3, 4.302652729749462)
+    unavailable_macros, _ = latex_results(unavailable)
+    for key in ("ratio-min", "ratio-max"):
+        assert f"{name}/memory/{key}\\endcsname{{5}}" in unavailable_macros
+    speedup_key = f"{name}/runtime/speedup-max"
+    if name == "slotted-multipattern-runtime":
+        assert f"{speedup_key}\\endcsname{{2}}" in macros
+        for row in fixture["groups"][1]["samples"]:
+            row["wall_sec"] /= 9
+        fastest = figure_results(name, fixture["inputs"] + extra["inputs"], grouped, 3, 4.302652729749462)
+        assert f"{speedup_key}\\endcsname{{3}}" in latex_results(fastest)[0]
+        fixture["inputs"][0]["exclusion"] = {"kind": "unsupported", "reason": "retained exclusion"}
+        excluded = figure_results(name, fixture["inputs"] + extra["inputs"], grouped, 3, 4.302652729749462)
+        assert f"{speedup_key}\\endcsname{{2}}" in latex_results(excluded)[0]
+        extra["inputs"][0]["exclusion"] = {"kind": "unsupported", "reason": "retained exclusion"}
+        none = figure_results(name, fixture["inputs"] + extra["inputs"], grouped, 3, 4.302652729749462)
+        assert f"{speedup_key}\\endcsname{{\\textnormal{{unavailable}}}}" in latex_results(none)[0]
+    else:
+        assert speedup_key not in macros
+    assert f"{name}/batax-1st-44rules/{treatments[1]}-over-{treatments[0]}/memory/ratio" in macros
 
 
 @pytest.mark.parametrize("name", ["slotted-runtime", "slotted-multipattern-runtime"])
@@ -100,6 +199,8 @@ def test_exports_preserve_invalid_missing_and_unbounded_results_and_escape_tex(n
     json.dumps(result, allow_nan=False)
     macros, table = latex_results(result)
     assert "\\textnormal{unavailable}" in macros
+    for key in ("ratio-min", "ratio-max"):
+        assert f"{name}/memory/{key}\\endcsname{{\\textnormal{{unavailable}}}}" in macros
     assert r"case\_100\% \& cost\$\#\{\}\textasciitilde{}\textasciicircum{}\textbackslash{}end" in table
     for item in fixture["inputs"]:
         item["selected_row_indices"] = item["selected_row_indices"][:1]
@@ -125,7 +226,13 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
     inputs = []
     groups: list[Any] = []
     for i, (label, baseline, failure) in enumerate(
-        (("boundary", 0.2, False), ("failed", 100, True), ("fast", 0.199, False))
+        (
+            ("boundary", 0.2, False),
+            ("failed", 100, True),
+            ("duplicate", 1, False),
+            ("fast", 0.199, False),
+            ("unresolved", 1, False),
+        )
     ):
         for j, treatment in enumerate(("off", "proofs")):
             key = {
@@ -139,6 +246,7 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                     **fixture["inputs"][j],
                     "label": label,
                     "logical_id": label,
+                    "family": "selected" if label in ("boundary", "duplicate") else label,
                     "file_sha256": label,
                     "treatment": treatment,
                     "selected_row_indices": indices,
@@ -155,7 +263,7 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                             "row_index": index,
                             "wall_sec": baseline * (2 if j else 1),
                             "max_rss_bytes": (2 if j else 1) * 1048576,
-                            "status": "failure" if failure and j else "success",
+                            "status": "failure" if (failure and j) or (label == "unresolved" and not j) else "success",
                         }
                         for index in indices
                     ],
@@ -173,12 +281,14 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
     result = figure_results("corpus-proof-recording-cdf", inputs, grouped, 3, 4.302652729749462)
     for metric in ("runtime", "memory"):
         coverage = result["coverage"][metric]
-        assert coverage["saved_n"] == 3 and coverage["cohort_n"] == 2
-        assert coverage["measured_n"] == 1 and coverage["failed_n"] == 1
+        assert coverage["saved_n"] == 5 and coverage["cohort_n"] == 3
+        assert coverage["measured_n"] == 2 and coverage["failed_n"] == 1
         assert coverage["too_fast_n"] == 1 and coverage["missing_n"] == 0
         assert coverage["q50"] == 2 and coverage["q95"] is None
     macros, _ = latex_results(result)
     assert r"egglogfigure@corpus-proof-recording-cdf/coverage/runtime/q95\endcsname{\textnormal{unavailable}}" in macros
+    assert r"egglogfigure@corpus-proof-recording-cdf/coverage/runtime/project-n\endcsname{2}" in macros
+    assert result["coverage"]["runtime"]["unresolved_n"] == 1
 
 
 def test_shared_corpus_fixture_matches_export_counts_and_bound_view_layout(

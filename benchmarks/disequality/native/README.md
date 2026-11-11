@@ -1,13 +1,13 @@
 # Native parameter-analysis drivers
 
 The four files under `authors/` are byte-identical copies from the
-author-supplied `parameter-analysis` bundle. They run directly on the complete
-checked-in [native corpus](../parameter-analysis.in). There is no driver patch,
+published [`parameter-analysis` bundle](https://zenodo.org/records/23166731).
+They run directly on the complete checked-in [native corpus](../parameter-analysis.in). There is no driver patch,
 input adapter, custom result protocol, or timed conversion.
 
-The author-supplied drivers, native corpus, and generated Egglog translation
+The drivers, native corpus, and generated Egglog translation
 are distributed under [Apache 2.0](../LICENSE-APACHE), as confirmed by George
-Zakhour. See the [Dis-Equality Graphs artifact](https://doi.org/10.5281/zenodo.13938877)
+Zakhour. See the [Dis-Equality Graphs artifact](https://zenodo.org/records/23166731)
 for attribution and citation. The separately pinned DE dependency retains Egg's
 MIT license and the public artifact's explicit MIT grant for Disegg.
 
@@ -43,8 +43,8 @@ proof validation.
 
 ## Corpus and conversion
 
-The native file is the decompression of the supplied `exprs.in.xz`, whose
-SHA-256 is `c0f0628522dfb5e13b641155350ef5ad3d5a981a91da0e07804f680a3d356146`.
+The native file is byte-identical to `parameter-analysis/exprs.in` in the
+[public artifact](https://zenodo.org/records/23166731).
 The 46,346,326-byte native file has SHA-256
 `6e9114194d92079a14272c25c11012ddf21753f655d5d39178fbba96b150dd3d`.
 
@@ -59,10 +59,14 @@ It mirrors the six fixed constraints and equality-first pair order, then adds
 `(check (contradiction))`. It performs no random generation, pair filtering,
 seed selection, engine execution, or proof checking.
 
-The supplied corpus and four-method drivers differ from the public Zenodo
-archive's older 60,000-expression, two-method parameter analysis. This is an
-author-supplied workload comparison, not a reproduction of that older archive's
-inputs or the paper's published timings.
+The archive's `parameter-analysis/run.sh` fixes 100,000 equality pairs and sweeps
+0 through 10,000 disequality pairs in increments of 500 across all four methods.
+The figure replicates its final parameter setting, comparing DE with extlog;
+it does not reproduce the full sweep or the paper's published timings.
+The current archive's corpus and all four drivers are byte-identical to the
+previously supplied files already in this repository.
+[The provenance record](provenance.json) gives the exact archive members, hashes,
+and verification scope; no input or driver replacement was needed.
 
 ## Dependency and source provenance
 
@@ -70,12 +74,13 @@ EE, NEE, and OEE use Egg 0.9.5. DE requires the authors' changes to Egg's e-clas
 and e-graph implementation; vanilla Egg cannot run its `disunion` calls.
 Cargo pins [commit `09d7789`](https://github.com/saulshanabrook/egg/commit/09d7789439b26e131fab7be55a5a3719bbf55216)
 on `saulshanabrook/egg`'s `codex/disegg-artifact-0.9.5` branch. It applies the
-unchanged [public artifact](https://doi.org/10.5281/zenodo.13938878) patch to
+unchanged [public artifact](https://zenodo.org/records/23166731) patch to
 upstream Egg `v0.9.5` (`c590048817a35236ce9910e7c1e0b1fac670822c`). The commit's
 three-file diff is byte-identical to that patch; provenance is recorded in the
-commit message. No suitable public author revision was found, so this fork
-hosts the patch without further changes. No local dependency preparation is
-needed.
+commit message. The published `setup-container` recipe clones the same upstream
+version and applies that patch; the installed container tree was not inspected.
+The fork hosts the patch without further changes. No local dependency
+preparation is needed.
 
 The integration manifest points directly at the original drivers. Its lockfile
 retains the supplied EE lock's transitive versions and adds the pinned DE
@@ -107,7 +112,7 @@ exclusions explicit. For a focused rerun after building the author drivers:
 
 ```sh
 cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --bins
-cargo test --locked -p egglog-experimental --test paper -- parameter-analysis.egg --nocapture
+cargo test --locked -p paper-tests --test paper -- parameter-analysis.egg --nocapture
 ```
 
 The same trial retains the native contradiction and consistent canaries from the

@@ -2,8 +2,9 @@
 
 The parameter-analysis benchmark compares relation-based Egglog NEE,
 its proof overhead, and the four native implementations supplied by the
-authors of [Dis-Equality Graphs](https://doi.org/10.1145/3704913). It uses one
-fixed author-supplied corpus, not the paper's full parameter sweep.
+authors of [Dis-Equality Graphs](https://doi.org/10.1145/3704913). It replicates the final
+configuration of the [public artifact](https://zenodo.org/records/23166731)'s
+parameter sweep, using its unchanged corpus and reference drivers.
 
 The benchmark guide contains commands for [running comparisons](README.md#comparisons)
 and [regenerating the input](README.md#workload-and-regeneration). This document
