@@ -5,8 +5,8 @@ From the code repository root:
 ```sh
 ./bench.py figures
 ./bench.py figures --help
-./bench.py figures math-runtime math-memory
-./bench.py figures slotted-runtime slotted-nested-runtime
+./bench.py figures math-runtime
+./bench.py figures slotted-runtime
 ./bench.py figures --rounds 3
 ./bench.py figures --config path/to/catalog.json
 ./bench.py figures --output-dir ../extended-egglog-paper/figures/eval
@@ -27,11 +27,11 @@ as the output destination.
 
 | Figure | Comparison |
 | --- | --- |
-| `disequality-runtime` | Native DE, EE, NEE, OEE and relation-based Egglog NEE; proofs off |
-| `math-runtime` | Twelve-round Math; Egg/Egglog off/checked proofs; absolute time and within-engine overhead |
-| `math-memory` | The same Math process executions, reporting peak RSS and overhead |
-| `corpus-runtime-cdf` | Congruence-only and checked-proof overhead across the application replays |
-| `corpus-memory-cdf` | The same configurations, executions and runtime-selected files, reporting RSS overhead |
+| `disequality-runtime` | Native DE, EE, NEE, OEE and Egglog NEE; absolute time/RSS and Egglog/native ratios; proofs off |
+| `math-runtime` | Twelve-round Math; Egg/Egglog off/checked proofs; absolute time/RSS and within-engine proof overhead |
+| `corpus-congruence-cdf` | Congruence-only runtime and peak RSS overhead across the application replays |
+| `corpus-proofs-cdf` | Checked-proof runtime and peak RSS overhead across the same runtime-selected replays |
+| `slotted-runtime` | Ten SDQL cases; restricted-aliasing encoding versus native nested matcher; absolute time/RSS and encoding/native ratios |
 
 ## Flat configuration and automatic reuse
 
@@ -42,7 +42,7 @@ and a `figures` object. Each figure declares only `spec`, `files` and
 ```json
 {
   "rounds": 10,
-  "timeout_sec": 300,
+  "timeout_sec": 500,
   "figures": {
     "example": {
       "spec": "example.vl.json",
@@ -93,17 +93,24 @@ Preparation phases are named on stderr before input resolution, corpus metadata,
 cache loading and target resolution begin. `-v`/`--verbose` adds their elapsed
 times and known counts, plus per-attempt start lines when output is redirected.
 Each figure reports `Rendering NAME` or `NAME: unchanged`; all output paths are
-printed in either case.
+printed in either case. Incomplete or unsuccessful conditions list the workload,
+treatment, recorded failure reason and successful sample count, even when the
+images are unchanged.
 
 ## Slotted comparisons
 
-`slotted-runtime` covers all 23 frozen array, SDQL, and logic workloads with the
-full multipattern encoding and native Slotted reference. `slotted-nested-runtime`
-covers the 21 array/SDQL workloads supported by the nested matcher; the two logic
-fixtures require multipattern rules. The nested syntactic-substitution timing
-baseline differs from the encoding's snapshot substitution, so its ratios are
-performance evidence rather than equivalence certificates. Both figures use
-ordinary terminal goals and exclude graph verification. See the
+`slotted-runtime` covers the ten SDQL kernel/phase workloads, comparing the
+restricted-aliasing encoding with the native nested matcher. The native
+syntactic-substitution timing baseline differs from the encoding's snapshot
+substitution, so these measurements are performance evidence rather than
+equivalence certificates. The upper panels show whole-process runtime in seconds
+and peak RSS in MiB from the same executions, with raw observations, arithmetic
+means and 95% Student-t intervals. Lower panels show encoding/native ratios
+with independent-sample Fieller-style intervals. Each metric has its own zero-preserving
+symlog axis; unavailable RSS leaves the runtime estimate intact. The figure
+uses ordinary terminal goals and excludes graph verification. The broader
+array/logic inputs and full-matcher treatments remain
+available through ordinary benchmark file selection. See the
 [slotted input guide](../benchmarks/slotted/README.md) for provenance and treatment details.
 
 ## Selection and statistics
@@ -128,7 +135,7 @@ timestamp and physical row index, including failures. It retains good raw points
 reports an estimate only when all N rows succeeded and the metric is finite.
 Partial observations, timeouts and missing RSS remain explicit. With N >= 2,
 absolute mean intervals use Student's t at 95%. N = 1 permits a mean point but
-no interval. Math overhead uses independent-sample Fieller-style 95% intervals;
+no interval. Individual-workload ratios use independent-sample Fieller-style 95% intervals;
 unavailable or unbounded intervals retain their explanation. The t critical
 value is the only statistical scalar supplied by Python: Vega performs means,
 sample variances, ratios, Fieller calculations, cohort selection and ranking.
@@ -164,29 +171,43 @@ separate validators; those remain under
 
 ## Figure design
 
-The supported manuscript width is **180 mm**. At 85 mm the broad comparisons
-remain visible, but the labels and interval summaries require enlargement.
-These are screen inspections at 96 pixels/inch, not calibrated print tests.
+The figures target the manuscript's **139 mm** line width, checked at
+526 pixels at 96 pixels/inch. The 13-point axis and annotation text scales to
+approximately 8 points at this width. The exported PDFs are also checked in a
+temporary paper build. These are screen inspections, not calibrated print tests.
 
-Math and disequality show individual process runs, a mean tick and the complete
-95% interval on shared, zero-based axes. Math's ratio view keeps the 1× reference
-and exact estimate/interval summary. Direct row labels identify configurations;
-dot color carries no additional engine distinction. Status text appears when
-an estimate is unavailable, without reserving a large empty panel on success.
+Each figure places time on the left and peak RSS on the right. Math,
+disequality and SDQL show individual process runs, means and 95% intervals in
+their upper panels, with ratios and Fieller-style intervals below. Math compares
+checked proofs with proofs off within each engine; disequality divides Egglog
+NEE by each native encoding; SDQL divides the encoding by the native matcher.
+Ratio panels retain a 1× reference. Direct labels identify configurations and
+unavailable estimates. The corpus figures show ratios only.
 
-Each corpus figure gives congruence and checked proofs separate columns. Family
-colors identify dots within a pooled ranking; they are not separately normalized
-family CDFs. A linear 0–6× detail enlarges the dense region, and a shorter overview
-retains every measured tail on a shared full-range axis. Its shaded region links
-the two views. Both views use the same ranks and denominator. Direct 50%/95%
-labels appear in the view containing their crossing; an unreached crossing stays
-explicitly unestablished. Valid/cohort counts appear once per treatment, with
-failed/missing counts when needed and one shared population summary. Detailed
+The corpus figures separate congruence-only from checked proofs. Each figure
+places runtime and peak RSS in adjacent columns, using the same executions and
+runtime-selected denominator. Family colors identify dots within a pooled
+ranking; they are not separately normalized family CDFs. A neutral step line
+connects the pooled CDF beneath the dots. Each metric and configuration fits its
+own x ranges. The full-range overview starts at zero and includes the largest
+measured ratio and the 1× reference. The zoom includes 1×, starts at the observed
+minimum rounded down to tenths when it is below 1×, and caps its upper bound at
+twice the measured median or the full extent, whichever is smaller. Upper bounds
+round upward to two significant digits; a 1.1× fallback keeps empty and zero
+samples finite. This heuristic chooses the view only. Explicit range labels and
+magnification identify the zoom, and the overview shades its exact interval.
+Counts state how many observations fall outside the zoom; every measured tail
+remains in the overview. Both views use the same ranks and
+denominator. The y scales leave headroom above 100%, and scale padding keeps
+boundary circles intact. Direct 50%/95% labels appear in the view containing
+their crossing; an unreached crossing stays explicitly unestablished.
+Valid/cohort counts appear once per metric, with failed/missing counts when
+needed and one shared population summary. Detailed
 family inventories remain in bound inputs and receipts instead of a second table
 inside the image. Treatment identity, crossings and missingness remain readable
 without hue; identifying every individual family still requires color.
 
-The specifications use native layer inheritance and treatment facets, and compute
+The specifications use native layer inheritance and metric facets, and compute
 CDF ranks once before applying viewing domains. They remain directly renderable
 Vega-Lite files, without generated plotting code or precomputed statistics.
 

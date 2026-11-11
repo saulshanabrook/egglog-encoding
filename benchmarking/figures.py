@@ -389,12 +389,43 @@ def render_figures(
         for output in outputs:
             console.print(str(output), soft_wrap=True, markup=False)
             rendered.append(output)
-        incomplete = sum(
-            len(selection["rows"]) < config.rounds or any(row["status"] != "success" for row in selection["rows"])
-            for selection in selections
-        )
-        if incomplete:
-            console.print(f"{figure.name}: {incomplete}/{len(selections)} incomplete or unsuccessful conditions")
+        issues = []
+        for selection in selections:
+            rows = selection["rows"]
+            reasons = []
+            for row in rows:
+                if row["status"] == "success":
+                    continue
+                reason = "failed"
+                message = " ".join((row.get("error_message") or "").split())
+                if row["status"] == "timed-out":
+                    reason = f"timed out after {row['timeout_sec']} seconds"
+                    if message == "timed out" or message == reason:
+                        message = ""
+                if message:
+                    reason += f": {message}"
+                if (limit := row.get("error_memory_limit_bytes")) is not None:
+                    reason += f" (memory allowance {limit / 1024**3:g} GiB)"
+                if row.get("error_exit_code") is not None:
+                    reason += f" (exit {row['error_exit_code']})"
+                if row.get("error_signal") is not None:
+                    reason += f" (signal {row['error_signal']})"
+                reasons.append(reason)
+            if reasons or len(rows) < config.rounds:
+                detail = "; ".join(dict.fromkeys(reasons)) or "incomplete"
+                successful = sum(row["status"] == "success" for row in rows)
+                issues.append(
+                    f"  {selection['physical_path']} · {selection['treatment']}: "
+                    f"{detail}; {successful}/{config.rounds} successful runs"
+                )
+        if issues:
+            console.print(
+                f"{figure.name}: {len(issues)}/{len(selections)} incomplete or unsuccessful conditions "
+                f"(timeout {config.timeout_sec}s)",
+                markup=False,
+            )
+            for issue in issues:
+                console.print(issue, markup=False)
     return tuple(rendered)
 
 

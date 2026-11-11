@@ -138,7 +138,7 @@ or modify the JSONL.
 - `./bench.py figures` collects and renders the configured paper PDFs through the shared
   benchmark phases. `--config` selects a flat JSON catalog with global `rounds`
   and `timeout_sec`, and direct per-figure `spec`, `files`, and `treatments`.
-- The production catalog requests ten executions and a 300-second timeout. Use
+- The production catalog requests ten executions and a 500-second timeout. Use
   `--rounds 1` and temporary reports for synthetic/CLI checks;
   ordinary benchmark defaults are unchanged. There is no cached-only mode.
 - Reuse compatible observations automatically, merge repeated runtime/memory
@@ -148,9 +148,9 @@ or modify the JSONL.
 - Figure collection never acquires sources, regenerates corpus inputs or runs
   separate validators. Retain selected published input hashes/aliases, strict
   failures and source blockers. Source blockers are not saved replay counts.
-- The outputs are `disequality-runtime`, `math-runtime`, `math-memory`,
-  `corpus-runtime-cdf`, `corpus-memory-cdf`, `slotted-runtime`, and
-  `slotted-nested-runtime`, each as PDF/SVG/PNG under
+- The outputs are `disequality-runtime`, `math-runtime`,
+  `corpus-congruence-cdf`, `corpus-proofs-cdf`, and `slotted-runtime`,
+  each as PDF/SVG/PNG under
   `figures/eval/` by default. `--output-dir` can target the paper's
   `figures/eval/` directory. Preserve bound specs and provenance receipts.
 - Run `make figures-test`; inspect the configured exported figures at manuscript width

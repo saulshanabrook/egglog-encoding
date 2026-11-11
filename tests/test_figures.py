@@ -14,9 +14,9 @@ from rich.console import Console
 
 import bench
 from benchmarking import figures
-from benchmarking.models import FileSpec
+from benchmarking.models import FileSpec, Status
 from benchmarking.reports.grouped import grouped_report_path, write_grouped_report
-from benchmarking.reports.store import ReportStore
+from benchmarking.reports.store import ReportRecord, ReportStore
 
 from .report_fixtures import make_record, make_target, make_timing_summary, write_report
 
@@ -64,6 +64,18 @@ def test_config_help_does_not_expand_files(tmp_path: Path, capsys: pytest.Captur
     text = capsys.readouterr().out
     assert "runtime:" in text and "memory:" in text
     assert "--cached" not in text
+
+
+def test_paper_slotted_selection_is_the_complete_sdql_nested_suite() -> None:
+    config = figures.load_config(figures.DEFAULT_CONFIG)
+    (resolved,) = figures.resolve_figures(config, ["slotted-runtime"], figures.ROOT)
+    assert resolved.figure.treatments == ("slotted-ref-nested", "slotted-no-aliasing")
+    assert {file.absolute_path.stem for file in resolved.files} == {
+        f"{kernel}_{phase}-44rules"
+        for kernel in ("batax", "mmm", "mmm_sum", "mttkrp", "ttm")
+        for phase in ("1st", "2nd")
+    }
+    assert all(file.absolute_path.parent.name == "sdql" for file in resolved.files)
 
 
 def test_importing_figures_does_not_import_scipy() -> None:
@@ -434,6 +446,91 @@ def test_render_rejects_a_label_bound_to_another_executable(tmp_path: Path) -> N
             [],
             Console(file=io.StringIO()),
         )
+
+
+@pytest.mark.parametrize("width", [80, 119, 120, 160, 200])
+def test_render_names_missing_and_failed_conditions_even_when_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, width: int
+) -> None:
+    config = figures.load_config(catalog_fixture(tmp_path, rounds=3))
+    files = tuple(
+        FileSpec(f"inputs/{name}.egg", tmp_path / f"{name}.egg", f"sha256:{name}")
+        for name in ("complete", "missing", "partial", "timeout", "[red]failure", "signal", "memory", "cleanup")
+    )
+    rows: list[ReportRecord] = []
+    statuses_by_file: list[list[Status]] = [
+        ["success"] * 3,
+        [],
+        ["success"],
+        ["timed-out"] * 3,
+        ["failure"] * 2,
+        ["failure"],
+        ["failure"],
+        ["timed-out"],
+    ]
+    for file, statuses in zip(files, statuses_by_file, strict=True):
+        for status in statuses:
+            row = make_record(
+                len(rows),
+                started_at=f"2026-10-01T00:00:{len(rows):02}Z",
+                status=status,
+                file_sha256=file.sha256,
+                target_label="figures",
+            )
+            if file.absolute_path.stem == "timeout":
+                row["error_message"] = None
+                row["timeout_sec"] = 300
+            elif file.absolute_path.stem == "[red]failure":
+                row["error_message"] = "bad [red]\n  lookup"
+                row["error_exit_code"] = 101
+            elif file.absolute_path.stem == "signal":
+                row["error_signal"] = 9
+            elif file.absolute_path.stem == "memory":
+                row["error_message"] = "native allocation failed"
+                row["error_exit_code"] = 86
+                row["error_memory_limit_bytes"] = 16 * 1024**3
+            elif file.absolute_path.stem == "cleanup":
+                row["timeout_sec"] = 60
+                row["error_message"] = "process-group cleanup failed: could not reap child"
+            rows.append(row)
+    report = tmp_path / "cache.jsonl"
+    write_report(report, *rows)
+    original = report.read_bytes()
+    grouped = ReportStore(report).grouped_report()
+    write_grouped_report(grouped, grouped_report_path(report))
+    monkeypatch.setattr(figures, "NATIVE_LIMIT_BYTES", 16 * 1024**3)
+    renders = []
+
+    def render(command: list[str], **_kwargs: Any) -> None:
+        renders.append(command)
+        Path(command[command.index("--base") - 1]).write_bytes(b"rendered")
+
+    monkeypatch.setattr(figures.subprocess, "run", render)
+    for unchanged in (False, True):
+        stream = io.StringIO()
+        figures.render_figures(
+            [figures.ResolvedFigure(config.figures[0], files)],
+            config,
+            grouped,
+            report,
+            make_target(target_label="figures"),
+            tmp_path,
+            [],
+            Console(file=stream, width=width, color_system=None),
+        )
+        text = " ".join(stream.getvalue().split())
+        assert "runtime: 7/8 incomplete or unsuccessful conditions (timeout 120s)" in text
+        assert "inputs/missing.egg · off: incomplete; 0/3 successful runs" in text
+        assert "inputs/partial.egg · off: incomplete; 1/3 successful runs" in text
+        assert text.count("timed out after 300 seconds; 0/3 successful runs") == 1
+        assert text.count("failed: bad [red] lookup (exit 101); 0/3 successful runs") == 1
+        assert "inputs/signal.egg · off: failed (signal 9); 0/3 successful runs" in text
+        assert "failed: native allocation failed (memory allowance 16 GiB) (exit 86); 0/3 successful runs" in text
+        assert "timed out after 60 seconds: process-group cleanup failed: could not reap child" in text
+        assert "inputs/complete.egg" not in text
+        assert ("runtime: unchanged" in text) is unchanged
+        assert len(renders) == 3
+        assert report.read_bytes() == original
 
 
 @pytest.fixture

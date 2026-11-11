@@ -4,34 +4,30 @@
   "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
   "params": [
     {"name": "target_label", "value": "figures"},
-    {"name": "timeout_sec", "value": 300},
+    {"name": "timeout_sec", "value": 500},
     {"name": "rounds", "value": 10},
     {"name": "t_critical", "value": 2.2621571628540993},
     {"name": "selected_inputs", "value": []},
-    {"name": "source_blockers", "value": []}
+    {"name": "source_blockers", "value": []},
+    {"name": "view_domains", "expr": "{'Runtime': {min: runtime_min_extent[1], zoom: runtime_zoom_extent[1], full: runtime_full_extent[1]}, 'Peak RSS': {min: memory_min_extent[1], zoom: memory_zoom_extent[1], full: memory_full_extent[1]}}"}
   ],
   "config": {
     "font": "Arial",
     "view": {"stroke": null},
     "axis": {
-      "labelFontSize": 11,
-      "titleFontSize": 12,
+      "labelFontSize": 13,
+      "titleFontSize": 13,
       "gridColor": "#e8eaed",
       "titlePadding": 10,
       "titleFontWeight": "normal"
     },
-    "legend": {"labelFontSize": 11, "title": null, "orient": "top"},
-    "title": {"anchor": "start", "fontSize": 16, "subtitleFontSize": 11, "subtitlePadding": 8}
-  },
-  "title": {
-    "text": "Corpus memory overhead",
-    "subtitle": {
-      "expr": "['Ratios of ' + rounds + '-run means · baseline mean wall time ≥0.2 s · equal replay weight', 'Checked: recording + extraction + checking · 50%/95%: percentiles if complete, coverage otherwise']"
-    }
+    "legend": {"labelFontSize": 13, "title": null, "orient": "top", "rowPadding": 4},
+    "title": {"anchor": "start", "fontSize": 18, "subtitleFontSize": 13, "subtitleLineHeight": 16, "subtitlePadding": 8}
   },
   "usermeta": {
     "statistics": "Newest requested N observations per exact identity, including failures. Complete successful samples only. Ratios of arithmetic means. The CDF has no population confidence band.",
-    "coverage": "50%/95% empirical inverse CDF for complete data; measured coverage thresholds otherwise. Source preparation blockers are not saved replays."
+    "coverage": "50%/95% empirical inverse CDF for complete data; measured coverage thresholds otherwise. Source preparation blockers are not saved replays.",
+    "view_domains": "Per metric/mode, full range starts at zero and fits the maximum, including 1x. Detail starts at the lesser of 1x and the observed minimum rounded down to tenths. Its upper bound is capped at twice the measured median, bounded by the full range, and rounded up to two significant digits. A 1.1x upper fallback keeps zero/empty cases finite. These viewing bounds never change CDF ranks or denominators."
   },
   "transform": [
     {"calculate": "[datum.groups, [null]]", "as": "batches"},
@@ -55,71 +51,89 @@
     {"calculate": "datum.sample_n ? datum.sample_indices : [null]", "as": "runs"},
     {"flatten": ["runs"], "as": ["row_index"]},
     {"calculate": "isValid(datum.row_index) ? datum.observations[indexof(pluck(datum.observations, 'row_index'), datum.row_index)] : null", "as": "run"},
-    {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes / 1048576 : null", "as": "value"},
+    {"calculate": "['Runtime','Peak RSS']", "as": "metrics"},
+    {"flatten": ["metrics"], "as": ["metric"]},
+    {"calculate": "isValid(datum.run) && datum.run.status === 'success' ? (datum.metric === 'Runtime' ? (isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null) : (isValid(datum.run.max_rss_bytes) && isFinite(datum.run.max_rss_bytes) && datum.run.max_rss_bytes > 0 ? datum.run.max_rss_bytes / 1048576 : null)) : null", "as": "value"},
     {"calculate": "isValid(datum.run) && datum.run.status !== 'success' ? 1 : 0", "as": "failed"},
     {"calculate": "isValid(datum.run) && datum.run.status === 'timed-out' ? 1 : 0", "as": "timed_out"},
-    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}], "groupby": ["input_id"]},
+    {"joinaggregate": [{"op": "valid", "field": "value", "as": "valid_n"}, {"op": "mean", "field": "value", "as": "sample_mean"}, {"op": "sum", "field": "failed", "as": "failed_n"}, {"op": "sum", "field": "timed_out", "as": "timeout_n"}], "groupby": ["input_id", "metric"]},
     {"calculate": "datum.sample_n === rounds && datum.valid_n === rounds && !datum.validation_issue", "as": "complete"},
     {"calculate": "datum.complete ? datum.sample_mean : null", "as": "mean"},
     {"calculate": "datum.validation_issue || (datum.failed_n ? datum.sample_n + '/' + rounds + ' observations; ' + datum.failed_n + ' failed (' + datum.timeout_n + ' timeout); estimate unavailable' : datum.valid_n < datum.sample_n ? datum.sample_n + '/' + rounds + ' observations; measurement unavailable; no estimate' : datum.sample_n < rounds ? datum.sample_n + '/' + rounds + ' observations; estimate unavailable' : rounds === 1 ? 'n=1; CI unavailable' : '')", "as": "issue"},
-    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id"]},
+    {"window": [{"op": "row_number", "as": "run_number"}], "sort": [{"field": "run.row_index", "order": "ascending"}], "groupby": ["input_id", "metric"]},
     {"calculate": "datum.input.treatment === 'off' ? 'Off' : datum.input.treatment === 'term' ? 'Congruence' : 'Checked proofs'", "as": "mode"},
     {"calculate": "datum.input.logical_id", "as": "workload_id"},
     {"calculate": "datum.input.family || 'Unclassified'", "as": "family"},
     {"calculate": "datum.input.label", "as": "workload"},
     {"calculate": "isValid(datum.run) && datum.run.status === 'success' && isValid(datum.run.wall_sec) && isFinite(datum.run.wall_sec) && datum.run.wall_sec >= 0 ? datum.run.wall_sec : null", "as": "wall"},
-    {"joinaggregate": [{"op": "valid", "field": "wall", "as": "wall_n"}, {"op": "mean", "field": "wall", "as": "wall_mean"}], "groupby": ["input_id"]},
+    {"joinaggregate": [{"op": "valid", "field": "wall", "as": "wall_n"}, {"op": "mean", "field": "wall", "as": "wall_mean"}], "groupby": ["input_id", "metric"]},
     {"filter": "datum.run_number === 1"},
-    {"aggregate": [{"op": "values", "as": "conditions"}], "groupby": ["workload_id", "family", "workload"]},
+    {"aggregate": [{"op": "values", "as": "conditions"}], "groupby": ["workload_id", "family", "workload", "metric"]},
     {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),'Off')]", "as": "baseline"},
     {"calculate": "isValid(datum.baseline) && datum.baseline.sample_n === rounds && datum.baseline.wall_n === rounds", "as": "baseline_complete"},
     {"calculate": "datum.baseline_complete && datum.baseline.wall_mean >= 0.2 ? 1 : 0", "as": "selected"},
     {"calculate": "datum.baseline_complete && datum.baseline.wall_mean < 0.2 ? 1 : 0", "as": "too_fast"},
     {"calculate": "datum.baseline_complete ? 0 : 1", "as": "unresolved"},
-    {"calculate": "['Congruence','Checked proofs']", "as": "modes"},
-    {"flatten": ["modes"], "as": ["mode"]},
+    {"calculate": "'Congruence'", "as": "mode"},
     {"calculate": "datum.conditions[indexof(pluck(datum.conditions,'mode'),datum.mode)]", "as": "candidate"},
     {"calculate": "datum.selected && datum.baseline.complete && isValid(datum.candidate) && datum.candidate.complete && datum.baseline.mean > 0 ? datum.candidate.mean / datum.baseline.mean : null", "as": "ratio"},
     {"calculate": "isValid(datum.ratio) && isFinite(datum.ratio) && datum.ratio >= 0 ? 1 : 0", "as": "valid"},
     {"calculate": "datum.selected && isValid(datum.candidate) && (datum.candidate.failed_n > 0 || datum.candidate.validation_issue) ? 1 : 0", "as": "failed_outcome"},
     {"calculate": "datum.selected && !datum.valid && !datum.failed_outcome ? 1 : 0", "as": "missing_outcome"},
     {"calculate": "!datum.selected ? '' : !isValid(datum.candidate) || !datum.candidate.sample_n ? 'Missing treatment' : datum.candidate.issue || (!datum.baseline.complete ? 'Baseline metric unavailable' : !datum.valid ? 'Invalid ratio' : '')", "as": "issue"},
-    {"joinaggregate": [{"op": "sum", "field": "selected", "as": "cohort_n"}, {"op": "sum", "field": "valid", "as": "measured_n"}, {"op": "count", "as": "saved_n"}, {"op": "sum", "field": "too_fast", "as": "too_fast_n"}, {"op": "sum", "field": "unresolved", "as": "unresolved_n"}], "groupby": ["mode"]},
-    {"calculate": "datum.valid ? datum.ratio : 1", "as": "extent_ratio"},
-    {"extent": "extent_ratio", "param": "ratio_extent"},
-    {"window": [{"op": "sum", "field": "valid", "as": "ties"}], "sort": [{"field": "ratio", "order": "ascending"}], "groupby": ["mode"], "frame": [null, 0], "ignorePeers": false},
+    {"calculate": "datum.valid ? datum.ratio : null", "as": "valid_ratio"},
+    {"joinaggregate": [{"op": "sum", "field": "selected", "as": "cohort_n"}, {"op": "sum", "field": "valid", "as": "measured_n"}, {"op": "count", "as": "saved_n"}, {"op": "sum", "field": "too_fast", "as": "too_fast_n"}, {"op": "sum", "field": "unresolved", "as": "unresolved_n"}, {"op": "min", "field": "valid_ratio", "as": "minimum_ratio"}, {"op": "median", "field": "valid_ratio", "as": "median_ratio"}, {"op": "max", "field": "valid_ratio", "as": "maximum_ratio"}], "groupby": ["mode", "metric"]},
+    {"calculate": "pow(10, floor(log(max(1, isValid(datum.maximum_ratio) ? datum.maximum_ratio : 1)) / log(10)) - 1)", "as": "full_step"},
+    {"calculate": "max(1.1, ceil(max(1, isValid(datum.maximum_ratio) ? datum.maximum_ratio : 1) / datum.full_step) * datum.full_step)", "as": "full_max"},
+    {"calculate": "isValid(datum.minimum_ratio) ? floor(min(1, datum.minimum_ratio) * 10) / 10 : 0", "as": "zoom_min"},
+    {"calculate": "max(1.1, min(datum.full_max, 2 * (isValid(datum.median_ratio) ? datum.median_ratio : 1)))", "as": "zoom_target"},
+    {"calculate": "pow(10, floor(log(datum.zoom_target) / log(10)) - 1)", "as": "zoom_step"},
+    {"calculate": "min(datum.full_max, ceil(datum.zoom_target / datum.zoom_step) * datum.zoom_step)", "as": "zoom_max"},
+    {"calculate": "datum.metric === 'Runtime' ? datum.zoom_min : 0", "as": "runtime_min_bound"},
+    {"extent": "runtime_min_bound", "param": "runtime_min_extent"},
+    {"calculate": "datum.metric === 'Runtime' ? datum.zoom_max : 0", "as": "runtime_zoom_bound"},
+    {"extent": "runtime_zoom_bound", "param": "runtime_zoom_extent"},
+    {"calculate": "datum.metric === 'Runtime' ? datum.full_max : 0", "as": "runtime_full_bound"},
+    {"extent": "runtime_full_bound", "param": "runtime_full_extent"},
+    {"calculate": "datum.metric === 'Peak RSS' ? datum.zoom_min : 0", "as": "memory_min_bound"},
+    {"extent": "memory_min_bound", "param": "memory_min_extent"},
+    {"calculate": "datum.metric === 'Peak RSS' ? datum.zoom_max : 0", "as": "memory_zoom_bound"},
+    {"extent": "memory_zoom_bound", "param": "memory_zoom_extent"},
+    {"calculate": "datum.metric === 'Peak RSS' ? datum.full_max : 0", "as": "memory_full_bound"},
+    {"extent": "memory_full_bound", "param": "memory_full_extent"},
+    {"window": [{"op": "sum", "field": "valid", "as": "ties"}], "sort": [{"field": "ratio", "order": "ascending"}], "groupby": ["mode", "metric"], "frame": [null, 0], "ignorePeers": false},
     {"calculate": "datum.valid ? datum.ties / datum.cohort_n : null", "as": "cdf"},
     {"calculate": "datum.valid && datum.cdf >= 0.5 ? datum.ratio : null", "as": "crossing50"},
     {"calculate": "datum.valid && datum.cdf >= 0.95 ? datum.ratio : null", "as": "crossing95"},
-    {"calculate": "datum.valid && datum.ratio > 6 ? 1 : 0", "as": "beyond_zoom"},
-    {"joinaggregate": [{"op": "min", "field": "crossing50", "as": "q50"}, {"op": "min", "field": "crossing95", "as": "q95"}, {"op": "sum", "field": "beyond_zoom", "as": "beyond_n"}, {"op": "max", "field": "ratio", "as": "maximum_ratio"}], "groupby": ["mode"]}
+    {"calculate": "datum.valid && datum.ratio > datum.zoom_max ? 1 : 0", "as": "beyond_zoom"},
+    {"joinaggregate": [{"op": "min", "field": "crossing50", "as": "q50"}, {"op": "min", "field": "crossing95", "as": "q95"}, {"op": "sum", "field": "beyond_zoom", "as": "beyond_n"}, {"op": "max", "field": "ratio", "as": "maximum_ratio"}], "groupby": ["mode", "metric"]}
   ],
   "vconcat": [
     {
       "facet": {
         "column": {
-          "field": "mode",
+          "field": "metric",
           "type": "nominal",
-          "sort": ["Congruence", "Checked proofs"],
-          "header": {"title": null, "labelFontSize": 13, "labelFontWeight": "bold", "labels": true}
+          "sort": ["Runtime", "Peak RSS"],
+          "header": {"title": null, "labelFontSize": 14, "labelFontWeight": "bold", "labels": true}
         }
       },
       "spec": {
-        "width": 310,
+        "width": 260,
         "height": 200,
         "encoding": {
           "x": {
             "field": "ratio",
             "type": "quantitative",
-            "title": "Peak RSS / baseline · 0–6× detail",
-            "scale": {"domain": [0, 6], "nice": false},
-            "axis": {"labelExpr": "format(datum.value,'~f') + '×'", "tickCount": 5, "grid": false}
+            "title": null,
+            "scale": {"domain": {"expr": "[view_domains[parent.metric].min, view_domains[parent.metric].zoom]"}, "nice": false, "padding": 4},
+            "axis": {"title": {"expr": "'Zoom ' + format(view_domains[parent.metric].min,'.3~g') + '–' + format(view_domains[parent.metric].zoom,'.3~g') + '× baseline'"}, "labelExpr": "format(datum.value,'~f') + '×'", "tickCount": 5, "grid": false}
           },
           "y": {
             "field": "cdf",
             "type": "quantitative",
             "title": "Share of selected replays",
-            "scale": {"domain": [0, 1]},
+            "scale": {"domain": [0, 1.08], "nice": false, "padding": 4},
             "axis": {"format": ".0%", "values": [0, 0.5, 1], "grid": false}
           }
         },
@@ -127,6 +141,12 @@
           {
             "mark": {"type": "rule", "color": "#a3a7ad"},
             "encoding": {"x": {"datum": 1}, "y": {"value": 0}, "y2": {"value": 200}}
+          },
+          {
+            "name": "cdf_line_zoom",
+            "transform": [{"filter": "datum.valid"}],
+            "mark": {"type": "line", "interpolate": "step-after", "color": "#374151", "strokeWidth": 0.7, "opacity": 0.7, "clip": true},
+            "encoding": {"order": {"field": "ratio", "type": "quantitative", "sort": "ascending"}}
           },
           {
             "name": "cdf_points_zoom",
@@ -138,11 +158,11 @@
                 "type": "nominal",
                 "scale": {
                   "domain": ["eggcc", "hardboiled", "misaal", "churchroad", "dialegg", "luminal", "Unclassified"],
-                  "range": ["#f28e2b", "#59a14f", "#888888", "#76b7b2", "#9c755f", "#e15759", "#4e79a7"]
+                  "range": ["#f28e2b", "#59a14f", "#8064b1", "#76b7b2", "#9c755f", "#e15759", "#4e79a7"]
                 },
                 "legend": {
                   "orient": "bottom",
-                  "columns": 6,
+                  "columns": 3,
                   "labelExpr": "{'eggcc':'Eggcc','hardboiled':'HardBoiled','misaal':'MISAAL','churchroad':'Churchroad','dialegg':'DialEgg','luminal':'Luminal'}[datum.label] || datum.label",
                   "values": ["eggcc", "hardboiled", "misaal", "churchroad", "dialegg", "luminal"]
                 }
@@ -159,18 +179,18 @@
           },
           {
             "transform": [
-              {"aggregate": [{"op": "max", "field": "q50", "as": "q50"}, {"op": "max", "field": "q95", "as": "q95"}, {"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}], "groupby": ["mode"]},
+              {"aggregate": [{"op": "max", "field": "q50", "as": "q50"}, {"op": "max", "field": "q95", "as": "q95"}, {"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}], "groupby": ["mode", "metric", "zoom_min", "zoom_max", "full_max"]},
               {"fold": ["q50", "q95"], "as": ["quantile", "threshold_ratio"]},
               {"calculate": "datum.quantile === 'q50' ? 0.5 : 0.95", "as": "percentile"},
               {"filter": "isValid(datum.threshold_ratio)"},
               {"calculate": "format(datum.percentile,'.0%') + (datum.measured_n === datum.cohort_n ? ' ≤ ' : ' coverage ≤ ') + format(datum.threshold_ratio,'.3g') + '×'", "as": "threshold"},
-              {"filter": "datum.threshold_ratio <= 6"}
+              {"filter": "datum.threshold_ratio <= datum.zoom_max"}
             ],
             "encoding": {"x": {"field": "threshold_ratio"}, "y": {"field": "percentile"}},
             "layer": [
               {
                 "mark": {"type": "rule", "color": "#7a7e84", "strokeDash": [3, 3], "strokeWidth": 0.8},
-                "encoding": {"x": {"datum": 0}, "x2": {"field": "threshold_ratio"}}
+                "encoding": {"x": {"datum": {"expr": "view_domains[parent.metric].min"}}, "x2": {"field": "threshold_ratio"}}
               },
               {
                 "mark": {"type": "rule", "color": "#7a7e84", "strokeDash": [3, 3], "strokeWidth": 0.8},
@@ -180,11 +200,11 @@
                 "name": "cdf_thresholds_zoom",
                 "mark": {
                   "type": "text",
-                  "align": {"expr": "datum.threshold_ratio < (6) / 2 ? \"left\" : \"right\""},
-                  "dx": {"expr": "datum.threshold_ratio < (6) / 2 ? 4 : -4"},
+                  "align": {"expr": "datum.threshold_ratio < (datum.zoom_min + datum.zoom_max) / 2 ? \"left\" : \"right\""},
+                  "dx": {"expr": "datum.threshold_ratio < (datum.zoom_min + datum.zoom_max) / 2 ? 4 : -4"},
                   "baseline": "top",
                   "dy": 4,
-                  "fontSize": 11,
+                  "fontSize": 13,
                   "fontWeight": "bold",
                   "clip": false
                 },
@@ -194,55 +214,64 @@
           },
           {
             "transform": [
-              {"aggregate": [{"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}, {"op": "max", "field": "maximum_ratio", "as": "maximum_ratio"}, {"op": "max", "field": "beyond_n", "as": "beyond_n"}]},
-              {"calculate": "datum.measured_n + '/' + datum.cohort_n + ' valid'", "as": "summary"}
+              {"aggregate": [{"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}, {"op": "max", "field": "maximum_ratio", "as": "maximum_ratio"}, {"op": "max", "field": "beyond_n", "as": "beyond_n"}, {"op": "max", "field": "unresolved_n", "as": "unresolved_n"}], "groupby": ["metric", "zoom_min", "zoom_max", "full_max"]},
+              {"calculate": "datum.measured_n + '/' + datum.cohort_n + ' valid' + (datum.unresolved_n ? ' · unresolved baseline ' + datum.unresolved_n : '') + (datum.measured_n < ceil(0.5 * datum.cohort_n) ? '\\n50%/95% not established' : datum.measured_n < ceil(0.95 * datum.cohort_n) ? '\\n95% not established' : '')", "as": "summary"}
             ],
-            "mark": {"type": "text", "align": "right", "fontSize": 10, "baseline": "bottom", "dy": -5},
-            "encoding": {"x": {"value": 310}, "y": {"value": 0}, "text": {"field": "summary"}}
+            "name": "cdf_detail_status",
+            "mark": {"type": "text", "align": "right", "fontSize": 12, "baseline": "bottom", "dy": {"expr": "datum.measured_n < ceil(0.95 * datum.cohort_n) ? -18 : -5"}, "lineBreak": "\n", "lineHeight": 13},
+            "encoding": {"x": {"value": 260}, "y": {"value": 0}, "text": {"field": "summary"}}
           }
         ]
       },
-      "spacing": 28
+      "resolve": {"scale": {"x": "independent"}},
+      "spacing": 24
     },
     {
       "facet": {
         "column": {
-          "field": "mode",
+          "field": "metric",
           "type": "nominal",
-          "sort": ["Congruence", "Checked proofs"],
-          "header": {"title": null, "labelFontSize": 13, "labelFontWeight": "bold", "labels": false}
+          "sort": ["Runtime", "Peak RSS"],
+          "header": {"title": null, "labelFontSize": 14, "labelFontWeight": "bold", "labels": false}
         }
       },
       "spec": {
-        "width": 310,
+        "width": 260,
         "height": 65,
         "encoding": {
           "x": {
             "field": "ratio",
             "type": "quantitative",
-            "title": "Peak RSS / baseline · full range; shade: 0–6×",
+            "title": null,
             "scale": {
-              "domain": {"expr": "[0, max(6, isValid(ratio_extent[1]) ? ceil(ratio_extent[1] / 5) * 5 : 6)]"},
-              "nice": false
+              "domain": {"expr": "[0, view_domains[parent.metric].full]"},
+              "nice": false, "padding": 4
             },
-            "axis": {"labelExpr": "format(datum.value,'~f') + '×'", "tickCount": 5, "grid": false}
+            "axis": {"title": "Full range", "labelExpr": "format(datum.value,'~f') + '×'", "tickCount": 5, "grid": false}
           },
           "y": {
             "field": "cdf",
             "type": "quantitative",
             "title": null,
-            "scale": {"domain": [0, 1]},
+            "scale": {"domain": [0, 1.08], "nice": false, "padding": 4},
             "axis": {"format": ".0%", "values": [0, 0.5, 1], "grid": false}
           }
         },
         "layer": [
           {
+            "name": "cdf_zoom_region",
             "mark": {"type": "rect", "color": "#e4edf3"},
-            "encoding": {"x": {"datum": 0}, "x2": {"datum": 6}, "y": {"value": 0}, "y2": {"value": 65}}
+            "encoding": {"x": {"datum": {"expr": "view_domains[parent.metric].min"}}, "x2": {"datum": {"expr": "view_domains[parent.metric].zoom"}}, "y": {"value": 0}, "y2": {"value": 65}}
           },
           {
             "mark": {"type": "rule", "color": "#a3a7ad"},
             "encoding": {"x": {"datum": 1}, "y": {"value": 0}, "y2": {"value": 65}}
+          },
+          {
+            "name": "cdf_line",
+            "transform": [{"filter": "datum.valid"}],
+            "mark": {"type": "line", "interpolate": "step-after", "color": "#374151", "strokeWidth": 0.7, "opacity": 0.7, "clip": true},
+            "encoding": {"order": {"field": "ratio", "type": "quantitative", "sort": "ascending"}}
           },
           {
             "name": "cdf_points",
@@ -254,11 +283,11 @@
                 "type": "nominal",
                 "scale": {
                   "domain": ["eggcc", "hardboiled", "misaal", "churchroad", "dialegg", "luminal", "Unclassified"],
-                  "range": ["#f28e2b", "#59a14f", "#888888", "#76b7b2", "#9c755f", "#e15759", "#4e79a7"]
+                  "range": ["#f28e2b", "#59a14f", "#8064b1", "#76b7b2", "#9c755f", "#e15759", "#4e79a7"]
                 },
                 "legend": {
                   "orient": "bottom",
-                  "columns": 6,
+                  "columns": 3,
                   "labelExpr": "{'eggcc':'Eggcc','hardboiled':'HardBoiled','misaal':'MISAAL','churchroad':'Churchroad','dialegg':'DialEgg','luminal':'Luminal'}[datum.label] || datum.label",
                   "values": ["eggcc", "hardboiled", "misaal", "churchroad", "dialegg", "luminal"]
                 }
@@ -275,12 +304,12 @@
           },
           {
             "transform": [
-              {"aggregate": [{"op": "max", "field": "q50", "as": "q50"}, {"op": "max", "field": "q95", "as": "q95"}, {"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}], "groupby": ["mode"]},
+              {"aggregate": [{"op": "max", "field": "q50", "as": "q50"}, {"op": "max", "field": "q95", "as": "q95"}, {"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}], "groupby": ["mode", "metric", "zoom_min", "zoom_max", "full_max"]},
               {"fold": ["q50", "q95"], "as": ["quantile", "threshold_ratio"]},
               {"calculate": "datum.quantile === 'q50' ? 0.5 : 0.95", "as": "percentile"},
               {"filter": "isValid(datum.threshold_ratio)"},
               {"calculate": "format(datum.percentile,'.0%') + (datum.measured_n === datum.cohort_n ? ' ≤ ' : ' coverage ≤ ') + format(datum.threshold_ratio,'.3g') + '×'", "as": "threshold"},
-              {"filter": "datum.threshold_ratio > 6"}
+              {"filter": "datum.threshold_ratio > datum.zoom_max"}
             ],
             "encoding": {"x": {"field": "threshold_ratio"}, "y": {"field": "percentile"}},
             "layer": [
@@ -296,60 +325,48 @@
                 "name": "cdf_thresholds",
                 "mark": {
                   "type": "text",
-                  "align": {
-                    "expr": "datum.threshold_ratio < (max(6, isValid(ratio_extent[1]) ? ceil(ratio_extent[1] / 5) * 5 : 6)) / 2 ? \"left\" : \"right\""
-                  },
-                  "dx": {
-                    "expr": "datum.threshold_ratio < (max(6, isValid(ratio_extent[1]) ? ceil(ratio_extent[1] / 5) * 5 : 6)) / 2 ? 4 : -4"
-                  },
-                  "baseline": "top",
-                  "dy": 4,
-                  "fontSize": 11,
+                  "align": "left",
+                  "baseline": "bottom",
+                  "dy": {"expr": "datum.percentile === 0.5 ? -39 : -22"},
+                  "fontSize": 12,
                   "fontWeight": "bold",
                   "clip": false
                 },
-                "encoding": {"text": {"field": "threshold"}}
+                "encoding": {"x": {"value": 0}, "y": {"value": 0}, "text": {"field": "threshold"}}
               }
             ]
           },
           {
             "transform": [
-              {"aggregate": [{"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}, {"op": "max", "field": "maximum_ratio", "as": "maximum_ratio"}, {"op": "max", "field": "beyond_n", "as": "beyond_n"}]},
-              {"calculate": "datum.beyond_n + ' beyond 6×; max ' + (isValid(datum.maximum_ratio) ? format(datum.maximum_ratio,'.3g') + '×' : 'unavailable')", "as": "summary"}
+              {"aggregate": [{"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}, {"op": "max", "field": "maximum_ratio", "as": "maximum_ratio"}, {"op": "max", "field": "beyond_n", "as": "beyond_n"}], "groupby": ["metric", "zoom_min", "zoom_max", "full_max"]},
+              {"calculate": "(datum.beyond_n ? datum.beyond_n + ' outside zoom' : 'All observations in zoom') + '; max ' + (isValid(datum.maximum_ratio) ? format(datum.maximum_ratio,'.3g') + '×' : 'unavailable')", "as": "summary"}
             ],
-            "mark": {"type": "text", "align": "right", "fontSize": 10, "baseline": "bottom", "dy": -5},
-            "encoding": {"x": {"value": 310}, "y": {"value": 0}, "text": {"field": "summary"}}
+            "name": "cdf_extent_status",
+            "mark": {"type": "text", "align": "right", "fontSize": 12, "baseline": "bottom", "dy": -5},
+            "encoding": {"x": {"value": 260}, "y": {"value": 0}, "text": {"field": "summary"}}
           }
         ]
       },
-      "spacing": 28
+      "resolve": {"scale": {"x": "independent"}},
+      "spacing": 24
     },
     {
       "name": "cdf_coverage",
       "transform": [
-        {"aggregate": [{"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}, {"op": "max", "field": "saved_n", "as": "saved_n"}, {"op": "max", "field": "too_fast_n", "as": "too_fast_n"}, {"op": "max", "field": "unresolved_n", "as": "unresolved_n"}, {"op": "sum", "field": "failed_outcome", "as": "failed_n"}, {"op": "sum", "field": "missing_outcome", "as": "missing_n"}], "groupby": ["mode"]},
-        {"calculate": "datum.mode + ': ' + datum.failed_n + ' failed, ' + datum.missing_n + ' missing' + (datum.measured_n < ceil(0.5 * datum.cohort_n) ? '; 50% not established' : '') + (datum.measured_n < ceil(0.95 * datum.cohort_n) ? '; 95% not established' : '')", "as": "coverage"},
-        {"filter": "datum.measured_n < datum.cohort_n"}
+        {"aggregate": [{"op": "max", "field": "failed_outcome", "as": "failed_outcome"}, {"op": "max", "field": "missing_outcome", "as": "missing_outcome"}], "groupby": ["mode", "workload_id"]},
+        {"calculate": "datum.failed_outcome ? 0 : datum.missing_outcome", "as": "missing_only"},
+        {"aggregate": [{"op": "sum", "field": "failed_outcome", "as": "failed_n"}, {"op": "sum", "field": "missing_only", "as": "missing_n"}], "groupby": ["mode"]},
+        {"calculate": "datum.failed_n + ' failed, ' + datum.missing_n + ' missing'", "as": "coverage"},
+        {"filter": "datum.failed_n || datum.missing_n"}
       ],
-      "width": 650,
+      "width": 544,
       "height": {"step": 18},
-      "mark": {"type": "text", "align": "left", "fontSize": 10},
+      "mark": {"type": "text", "align": "left", "fontSize": 12},
       "encoding": {
-        "y": {"field": "mode", "axis": null, "sort": ["Congruence", "Checked proofs"]},
+        "y": {"field": "mode", "axis": null},
         "text": {"field": "coverage"},
         "x": {"value": 0}
       }
-    },
-    {
-      "name": "cohort_status",
-      "width": 650,
-      "height": 12,
-      "transform": [
-        {"aggregate": [{"op": "max", "field": "saved_n", "as": "saved_n"}, {"op": "max", "field": "cohort_n", "as": "cohort_n"}, {"op": "max", "field": "too_fast_n", "as": "too_fast_n"}, {"op": "max", "field": "unresolved_n", "as": "unresolved_n"}]},
-        {"calculate": "'Saved ' + datum.saved_n + '; selected ' + datum.cohort_n + '; too fast ' + datum.too_fast_n + '; unresolved baseline ' + datum.unresolved_n + '; unavailable sources ' + length(source_blockers)", "as": "population"}
-      ],
-      "mark": {"type": "text", "align": "left", "fontSize": 10},
-      "encoding": {"x": {"value": 0}, "y": {"value": 6}, "text": {"field": "population"}}
     }
   ],
   "spacing": 16,

@@ -1,6 +1,6 @@
 {
   "rounds": 10,
-  "timeout_sec": 300,
+  "timeout_sec": 500,
   "figures": {
     "disequality-runtime": {
       "spec": "eval/disequality-runtime.vl.json",
@@ -27,20 +27,8 @@
         "proof-testing"
       ]
     },
-    "math-memory": {
-      "spec": "eval/math-memory.vl.json",
-      "files": [
-        "../benchmarks/corpus/math/math-iteration-12.egg"
-      ],
-      "treatments": [
-        "egg",
-        "egg-proof-testing",
-        "off",
-        "proof-testing"
-      ]
-    },
-    "corpus-runtime-cdf": {
-      "spec": "eval/corpus-runtime-cdf.vl.json",
+    "corpus-congruence-cdf": {
+      "spec": "eval/corpus-congruence-cdf.vl.json",
       "files": [
         "../benchmarks/corpus/eggcc/*.egg",
         "../benchmarks/corpus/hardboiled/*.egg",
@@ -51,12 +39,11 @@
       ],
       "treatments": [
         "off",
-        "term",
-        "proof-testing"
+        "term"
       ]
     },
-    "corpus-memory-cdf": {
-      "spec": "eval/corpus-memory-cdf.vl.json",
+    "corpus-proofs-cdf": {
+      "spec": "eval/corpus-proofs-cdf.vl.json",
       "files": [
         "../benchmarks/corpus/eggcc/*.egg",
         "../benchmarks/corpus/hardboiled/*.egg",
@@ -67,26 +54,12 @@
       ],
       "treatments": [
         "off",
-        "term",
         "proof-testing"
       ]
     },
     "slotted-runtime": {
       "spec": "eval/slotted-runtime.vl.json",
       "files": [
-        "../benchmarks/slotted/inputs/array/*.egg",
-        "../benchmarks/slotted/inputs/sdql/*.egg",
-        "../benchmarks/slotted/inputs/logic/*.egg"
-      ],
-      "treatments": [
-        "slotted-ref-multi",
-        "slotted"
-      ]
-    },
-    "slotted-nested-runtime": {
-      "spec": "eval/slotted-runtime.vl.json",
-      "files": [
-        "../benchmarks/slotted/inputs/array/*.egg",
         "../benchmarks/slotted/inputs/sdql/*.egg"
       ],
       "treatments": [

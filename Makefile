@@ -131,13 +131,13 @@ figures figures-all:
 	./bench.py figures
 
 figures-expanded:
-	./bench.py figures math-runtime math-memory corpus-runtime-cdf corpus-memory-cdf
+	./bench.py figures math-runtime corpus-congruence-cdf corpus-proofs-cdf
 
 figures-parameter:
 	./bench.py figures disequality-runtime
 
 figures-slotted:
-	./bench.py figures slotted-runtime slotted-nested-runtime
+	./bench.py figures slotted-runtime
 
 figures-test figures-expanded-test figures-parameter-test:
 	cd figures && $(VEGA) node --test eval.test.mjs
