@@ -5,7 +5,9 @@ mod tests {
         ResolvedFact, RuleEvalMode, remove_globals::remove_globals, sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
-    use crate::proofs::proof_checker::eval_expr_with_subst;
+    use crate::proofs::proof_checker::{
+        eval_expr_with_subst, gather_global_actions, process_actions,
+    };
     use crate::proofs::proof_encoding_helpers::recomputable_premises;
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
@@ -530,12 +532,13 @@ mod tests {
                 "(datatype N (Z) (S N) (Pair N N)) (sort V (Vec N)) (sort SN (Set N))",
             )
             .unwrap();
-        for (source, sort) in [
-            ("x", "N"),
-            ("(Pair x (Pair x x))", "N"),
-            ("(vec-get (vec-of x x) 0)", "N"),
-            ("(set-insert (set-of x x) (Z))", "SN"),
-            ("(vec-get (vec-of x) 3)", "N"),
+        for (source, sort, bound) in [
+            ("x", "N", true),
+            ("x", "N", false),
+            ("(Pair x (Pair x x))", "N", true),
+            ("(vec-get (vec-of x x) 0)", "N", true),
+            ("(set-insert (set-of x x) (Z))", "SN", true),
+            ("(vec-get (vec-of x) 3)", "N", true),
         ] {
             let expr = egraph.parser.get_expr_from_string(None, source).unwrap();
             let n = egraph.get_sort_by_name("N").unwrap().clone();
@@ -557,12 +560,37 @@ mod tests {
                 x = dag.app("S".into(), vec![x]);
                 expected.push(x);
             }
-            let bindings = [("x".into(), x)].into_iter().collect();
-            let result = eval_expr_with_subst("subterm-closure", &expr, &mut dag, &bindings);
-            if source == "(vec-get (vec-of x) 3)" {
+            let bindings = if bound {
+                [("x".into(), x)].into_iter().collect()
+            } else {
+                HashMap::default()
+            };
+            let mut no_props_dag = dag.clone();
+            let result =
+                eval_expr_with_subst::<true>("subterm-closure", &expr, &mut dag, &bindings);
+            let no_props = eval_expr_with_subst::<false>(
+                "subterm-closure",
+                &expr,
+                &mut no_props_dag,
+                &bindings,
+            );
+            assert_eq!(dag, no_props_dag, "{source}");
+            assert_eq!(
+                result
+                    .as_ref()
+                    .map(|(term, _)| *term)
+                    .map_err(ToString::to_string),
+                no_props
+                    .as_ref()
+                    .map(|(term, _)| *term)
+                    .map_err(ToString::to_string),
+                "{source}"
+            );
+            if !bound || source == "(vec-get (vec-of x) 3)" {
                 assert!(result.is_err());
                 continue;
             }
+            assert!(no_props.unwrap().1.is_empty());
             let (term, propositions) = result.unwrap();
             let root = match source {
                 "x" => x,
@@ -596,6 +624,81 @@ mod tests {
                     .collect(),
                 "{source}"
             );
+        }
+    }
+
+    #[test]
+    fn action_collection_modes_preserve_bindings_evaluation_and_errors() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype N (Z) (S N)) (sort V (Vec i64))
+            (function f (N) N :merge old)
+            (let x (S (Z)))
+            (set (f x) (Z))
+            (union x (Z))
+            (S x)
+        "#,
+            )
+            .unwrap();
+        let expr = egraph
+            .parser
+            .get_expr_from_string(None, "(vec-get (vec-of 1) 2)")
+            .unwrap();
+        let output = egraph.get_sort_by_name("i64").unwrap().clone();
+        let expr = egraph
+            .typecheck_expr_with_bindings_and_output(&expr, &[], output, crate::Context::Read)
+            .unwrap();
+        let invalid_action = GenericAction::Expr(crate::Span::Panic, expr);
+        let actions = gather_global_actions(&egraph.proof_check_program).collect::<Vec<_>>();
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, GenericAction::Let(..)))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, GenericAction::Union(..)))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, GenericAction::Set(..)))
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, GenericAction::Expr(..)))
+        );
+        for tail in [None, Some(&invalid_action)] {
+            let mut actions = actions.clone();
+            actions.extend(tail);
+            let mut dag = TermDag::default();
+            let mut no_props_dag = dag.clone();
+            let result =
+                process_actions::<true>("action-modes", HashMap::default(), &actions, &mut dag);
+            let no_props = process_actions::<false>(
+                "action-modes",
+                HashMap::default(),
+                &actions,
+                &mut no_props_dag,
+            );
+            assert_eq!(dag, no_props_dag);
+            if tail.is_some() {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    no_props.unwrap_err().to_string()
+                );
+            } else {
+                let result = result.unwrap();
+                let no_props = no_props.unwrap();
+                assert_eq!(result.var_bindings, no_props.var_bindings);
+                assert!(!result.propositions.is_empty());
+                assert!(no_props.propositions.is_empty());
+            }
         }
     }
 
@@ -1144,7 +1247,7 @@ mod tests {
             bindings: &HashMap<String, TermId>,
             store: &mut ProofStore,
         ) -> TermId {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
+            eval_expr_with_subst::<true>(rule_name, expr, &mut store.term_dag, bindings)
                 .unwrap_or_else(|e| panic!("rule '{rule_name}' head did not evaluate: {e}"))
                 .0
         }

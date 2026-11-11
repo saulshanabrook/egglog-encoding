@@ -391,7 +391,7 @@ impl<'a> ProofLifter<'a> {
         at: usize,
         expr: &crate::ast::ResolvedExpr,
     ) -> TermId {
-        crate::proofs::proof_checker::eval_expr_with_subst(
+        crate::proofs::proof_checker::eval_expr_with_subst::<true>(
             "global_action",
             expr,
             &mut store.term_dag,
@@ -943,7 +943,7 @@ impl ProofStore {
             .map(|(var, term)| (var.clone(), *term))
             .collect();
         let eval = |store: &mut Self, expr: &ResolvedExpr| {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings)
+            eval_expr_with_subst::<true>(rule_name, expr, &mut store.term_dag, &bindings)
                 .ok()
                 .map(|(term, _props)| term)
         };
