@@ -120,7 +120,9 @@ or modify the JSONL.
 - Bare `./bench.py` compares `proof-testing` with `off`, including proof
   extraction and checking. Recording-only `proofs` and unchecked
   `proof-extraction` remain explicit choices.
-- The five core egglog treatments and two slotted encoding treatments run
+- `slotted-proof-testing` runs `--slotted --proofs`, translating and checking ground
+  source equality claims. This differs from ordinary recording-only `proofs`.
+- The five core egglog treatments and three slotted encoding treatments run
   `egglog-experimental`. Native slotted treatments run `slotted-reference` with
   explicit matcher/substitution flags. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math

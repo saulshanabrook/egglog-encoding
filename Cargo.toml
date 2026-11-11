@@ -14,6 +14,7 @@ members = [
   "egg-math-benchmark",
   "benchmark-memory",
   "benchmarks/paper-tests",
+  "benchmarks/lmfao",
   "egraph-isomorphism",
   "egglog-experimental",
   "slotted-reference",

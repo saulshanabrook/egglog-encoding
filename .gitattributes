@@ -8,6 +8,10 @@ benchmarks/slotted/inputs/**/*.egg linguist-generated=true
 benchmarks/slotted/inputs/**/*.ref linguist-generated=true
 benchmarks/slotted/correctness/**/*.egg linguist-generated=true
 benchmarks/slotted/correctness/**/*.ref linguist-generated=true
+benchmarks/lmfao/*.conf -whitespace
+benchmarks/lmfao/workload.json linguist-generated=true
+benchmarks/lmfao/inputs/*.egg linguist-generated=true
 benchmarks/reproduction/patches/*.diff -whitespace
+benchmarks/reproduction/lmfao/*.patch -whitespace
 benchmarks/reproduction/fixtures/** -whitespace
 egglog-experimental/tests/slotted/snapshots/*.snap linguist-generated=true

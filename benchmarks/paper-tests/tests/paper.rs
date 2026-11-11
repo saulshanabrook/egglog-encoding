@@ -151,6 +151,29 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>) {
             .collect();
         let before = rendered[..=boundary].join("\n");
         let tail = rendered[boundary + 1..].join("\n");
+        if requested.contains("slotted-proof-testing") {
+            use egglog_experimental::slotted::{
+                Compiler, Options, ProofMode, new_egraph_with_proofs,
+            };
+            let mut compiler = Compiler::new(Options {
+                proof_mode: ProofMode::Prove,
+                ..Default::default()
+            });
+            let mut graph = new_egraph_with_proofs();
+            graph.set_num_threads(1);
+            let program = compiler.compile_program(None, &source).unwrap();
+            let expected = program.to_string().matches("(slotted-prove ").count();
+            assert!(expected > 0, "proof treatment needs ground equality claims");
+            let outputs = program.run(&mut graph).unwrap();
+            assert_eq!(
+                outputs
+                    .iter()
+                    .filter(|o| matches!(o, CommandOutput::UserDefined(_)))
+                    .count(),
+                expected,
+                "every source equality must produce a checked proof"
+            );
+        }
         let mut counts = BTreeMap::new();
         for (name, nested) in [("slotted", false), ("slotted-no-aliasing", true)] {
             if !requested.contains(name) {
@@ -627,6 +650,7 @@ fn main() {
         "egg-nee",
         "egg-oee",
         "slotted",
+        "slotted-proof-testing",
         "slotted-no-aliasing",
         "slotted-ref-multi",
         "slotted-ref-nested",

@@ -119,6 +119,145 @@ def test_default_output_is_checkout_relative_and_explicit_override_is_preserved(
     assert overridden.output_dir == Path("relative-output")
 
 
+def test_lmfao_catalog_selection_and_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarking.lmfao import cli, data
+
+    assert figures.load_config(figures.DEFAULT_CONFIG).lmfao is not None
+    config = catalog_fixture(tmp_path, lmfao={"data": "data", "backend": "backend/build/multifaq"})
+    checked = []
+    monkeypatch.setattr(cli, "verify_backend", lambda path: checked.append(path))
+    monkeypatch.setattr(data, "validate_inputs", lambda path: checked.append(path))
+    monkeypatch.chdir(tmp_path)
+    args, settings = figures.parse_args(
+        [
+            "--config",
+            str(config),
+            "lmfao",
+            "--rounds",
+            "3",
+            "--timeout-sec",
+            "71",
+            "--memory-limit-gib",
+            "2",
+            "--lmfao-data",
+            "alternate-data",
+            "--output-dir",
+            "out",
+            "--lmfao-backend",
+            "alternate-backend",
+            "--lmfao-cxxflags=-O2 -I/boost",
+            "--report",
+            "cache.jsonl",
+        ]
+    )
+    selected = figures.prepare_lmfao(args, settings)
+    assert selected is not None
+    assert (selected.samples, selected.timeout, selected.memory_limit_bytes) == (3, 71, 2 * 1024**3)
+    assert selected.output_dir == tmp_path / "out/lmfao"
+    assert selected.report == tmp_path / "cache.jsonl" and selected.cxxflags == "-O2 -I/boost"
+    assert checked == [tmp_path / "alternate-backend", tmp_path / "alternate-data"]
+    args.names = ["runtime"]
+    assert figures.prepare_lmfao(args, settings) is None
+    assert len(checked) == 2
+
+
+@pytest.mark.parametrize("selection", [[], ["lmfao"]])
+def test_lmfao_missing_setup_fails_before_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    from benchmarking import collection
+
+    config = catalog_fixture(tmp_path, lmfao={"data": "missing", "backend": "missing/build/multifaq"})
+    monkeypatch.setattr(collection, "resolve_requests", lambda *_: pytest.fail("must preflight before building"))
+    report = tmp_path / "cache.jsonl"
+    assert figures.main(["--config", str(config), "--report", str(report), *selection]) == 2
+    assert not report.exists()
+    assert "missing LMFAO provenance" in capsys.readouterr().err
+
+
+def test_lmfao_joins_the_paper_collection_and_reuses_its_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarking import collection, processes
+    from benchmarking.lmfao import cli, data, optimizer
+    from benchmarking.lmfao import report as lmfao_report
+    from benchmarking.reports import store as report_store
+    from benchmarking.workloads import resolve_files
+
+    config = catalog_fixture(tmp_path, lmfao={"data": "data", "backend": "backend/build/multifaq"})
+    (tmp_path / "one.egg").write_text("(check (= 1 1))")
+    path = tmp_path / "cache.jsonl"
+    loads, launched, evaluated, snapshots = [], [], [], []
+
+    class CountStore(ReportStore):
+        def __init__(self, path: Path) -> None:
+            loads.append(path)
+            super().__init__(path)
+
+    def inputs(output: Path, rounds: int) -> dict[str, FileSpec]:
+        output.mkdir(parents=True, exist_ok=True)
+        files = {}
+        for i, mode in enumerate(optimizer.MODES, 2):
+            source = output / f"{mode}.egg"
+            source.write_text(f"(check (= {i} {i}))")
+            files[mode] = resolve_files([str(source)], figures.ROOT)[0]
+        return files
+
+    def observe(*args: Any) -> Any:
+        launched.append(args)
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=1, max_rss_bytes=1048576), None),
+            make_timing_summary(),
+        )
+
+    def summarize(output: Path, store: ReportStore, *args: Any) -> Any:
+        snapshots.append(store)
+        assert store.row_count == 6  # Two repetitions of one figure input and both LMFAO encodings.
+        return {"slotted": {"treatment": "slotted"}}, {"optimizer": {"slotted": {"failures": []}}}
+
+    def evaluate(args: Any, *, collected: Any) -> dict[str, Any]:
+        evaluated.append(args)
+        assert collected[0] == {"slotted": {"treatment": "slotted"}}
+        assert (args.samples, args.timeout, args.report) == (2, 120, path)
+        return {"checked": True}
+
+    monkeypatch.setattr(report_store, "ReportStore", CountStore)
+    monkeypatch.setattr(cli, "verify_backend", lambda _: None)
+    monkeypatch.setattr(data, "validate_inputs", lambda _: None)
+    monkeypatch.setattr(optimizer, "optimizer_inputs", inputs)
+    monkeypatch.setattr(optimizer, "optimizer_report", summarize)
+    monkeypatch.setattr(cli, "run", evaluate)
+    monkeypatch.setattr(cli, "collect_optimizers", lambda *_: pytest.fail("must use the shared collection"))
+    monkeypatch.setattr(lmfao_report, "paper_results", lambda *_: {"lmfao.table.tex": "table"})
+    monkeypatch.setattr(collection, "preflight_collection", lambda *_: None)
+    monkeypatch.setattr(collection, "run_process", observe)
+    monkeypatch.setattr(
+        collection,
+        "resolve_requests",
+        lambda requests, *_: {
+            request.endpoint.target: make_target(target_label="figures", binary_path=tmp_path / "engine")
+            for request in requests
+        },
+    )
+    published = []
+    monkeypatch.setattr(figures, "render_figures", lambda *_, **kwargs: published.append(kwargs))
+    args = ["--config", str(config), "--report", str(path), "--output-dir", str(tmp_path / "out")]
+    assert bench.main(["figures", *args]) == 0
+    assert len(launched) == 6 and loads == [path] and len(evaluated) == 1
+    assert published[0] == {"extra_outputs": {"lmfao.table.tex": "table"}}
+    assert isinstance(snapshots[0], CountStore)
+    # Selecting only LMFAO reuses its observations without collecting the other figures.
+    assert bench.main(["figures", *args, "lmfao"]) == 0
+    assert len(launched) == 6 and loads == [path, path] and len(evaluated) == 2
+    assert bench.main(["figures", *args, "runtime"]) == 0
+    assert len(launched) == 6 and len(evaluated) == 2
+    monkeypatch.setattr(
+        optimizer,
+        "optimizer_report",
+        lambda *_: ({"slotted": {}}, {"optimizer": {"debruijn": {"failures": [{"status": "failure"}]}}}),
+    )
+    assert bench.main(["figures", *args, "lmfao"]) == 2
+    assert len(evaluated) == 2
+
+
 def test_importing_figures_does_not_import_scipy() -> None:
     result = subprocess.run(
         [sys.executable, "-c", "import sys; import benchmarking.figures; assert 'scipy' not in sys.modules"],
@@ -396,8 +535,11 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
     output_argument = None if default_output else output_dir
     original = (tmp_path / "chart.vl.json").read_bytes()
     inventory: figures.FigureInventory = {"workloads": [], "unavailable_cases": []}
-    outputs = figures.render_figures(resolved, config, grouped, report, target, output_argument, console, inventory)
-    assert len(outputs) == 14 and len(calls) == 6
+    extra = {"lmfao.table.tex": "original table"}
+    outputs = figures.render_figures(
+        resolved, config, grouped, report, target, output_argument, console, inventory, extra_outputs=extra
+    )
+    assert len(outputs) == 15 and len(calls) == 6
     assert all(str(output) in stream.getvalue().splitlines() for output in outputs)
     assert bindings[0] == bindings[3]
     params = {p["name"]: p["value"] for p in bindings[0]["params"]}
@@ -421,15 +563,36 @@ def test_temporary_bindings_render_every_time_and_preserve_images_on_failure(
     previous_binding = (output_dir / "runtime.bound.vl.json").read_bytes()
     fail_png = True
     with pytest.raises(figures.subprocess.CalledProcessError if raise_error else ValueError):
-        figures.render_figures(resolved, config, grouped, report, target, output_argument, console, inventory)
+        figures.render_figures(
+            resolved,
+            config,
+            grouped,
+            report,
+            target,
+            output_argument,
+            console,
+            inventory,
+            extra_outputs={"lmfao.table.tex": "new table"},
+        )
     assert {output: output.read_bytes() for output in outputs} == previous_bundle
     assert outputs[0].read_bytes() == b"rendered"
     assert outputs[2].read_bytes() == b"corrupt"
     assert (output_dir / "runtime.bound.vl.json").read_bytes() == previous_binding
     assert set((output_dir).iterdir()) == set(outputs)
     fail_png = False
-    figures.render_figures(resolved, config, grouped, report, target, output_argument, console, inventory)
+    figures.render_figures(
+        resolved,
+        config,
+        grouped,
+        report,
+        target,
+        output_argument,
+        console,
+        inventory,
+        extra_outputs={"lmfao.table.tex": "new table"},
+    )
     assert outputs[2].read_bytes() == b"rendered"
+    assert (output_dir / "lmfao.table.tex").read_text() == "new table"
     assert len(calls) == 24
 
 
@@ -846,7 +1009,7 @@ def test_main_announces_preparation_and_fallback_before_each_operation(
         return console
 
     def inputs(*args: Any) -> Any:
-        assert "Resolving inputs for 2 figures" in stream.getvalue()
+        assert "Resolving inputs for 2 paper outputs" in stream.getvalue()
         events.append("inputs")
         return original_inputs(*args)
 

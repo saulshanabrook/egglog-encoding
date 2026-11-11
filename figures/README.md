@@ -25,6 +25,17 @@ Each of the seven figures has seven companions: PDF, SVG, 3x PNG, `.bound.vl.jso
 `.results.json`, `.numbers.tex` and `.table.tex`. Authored specifications remain
 under `figures/eval/`. Absolute artifact paths are printed on stderr.
 
+The default catalog also includes the **LMFAO execution table**. Follow its
+[setup instructions](../benchmarks/lmfao/README.md#reproduce) before a full run.
+`./bench.py figures lmfao` selects only that experiment; other named subsets do
+not require LMFAO. Missing or mismatched external inputs fail before collection.
+Its outputs are `lmfao.table.tex`, `lmfao.caption.tex`, `lmfao.md` and
+`lmfao.results.json`; plans, generated C++ and checks are retained under `lmfao/`.
+`lmfao/slotted/proof.egg` replays the selected plan through the normal benchmark
+harness; see the [proof replay instructions](../benchmarks/lmfao/README.md#optional-proof-replay).
+Use `\input{figures/eval/lmfao.table.tex}` inside the manuscript's table and
+`\input{figures/eval/lmfao.caption.tex}` for its caption.
+
 After inspecting the outputs, copy the `eval` folder into the manuscript's
 `figures/` directory with the command above. This preserves existing
 `figures/eval/` PDF and TeX include paths. Generation does not require the paper
@@ -46,6 +57,7 @@ before copying it, and remove obsolete artifacts explicitly when needed.
 | `corpus-proof-recording-cdf` | Recording-only proof time and peak-RSS overhead across the same replays; strict correctness coverage retained |
 | `corpus-proofs-cdf` | Full proof recording, extraction and checking time and peak-RSS overhead across the same replays |
 | `slotted-runtime` | Full 44-rule SDQL kernels/phases; aligned runtime/RSS encoding-to-native ratio panels and a table of both metrics |
+| `lmfao` (table) | Favorita covariance queries: LMFAO, slotted and ordinary egglog; preparation time, memory use and query-time ratios |
 | `slotted-multipattern-runtime` | Complete multipattern matching on the original SDQL kernels/phases, omitting pairs with a resource-failing endpoint |
 
 The two Slotted figures share the authored `eval/slotted-runtime.vl.json`
@@ -87,7 +99,17 @@ and a `figures` object. Each figure declares `spec`, `files` and
 }
 ```
 
-No names selects every figure; names select a subset. An alternate catalog is
+The optional top-level `lmfao` entry supplies `data` and `backend` paths, relative
+to the catalog. The default points to `benchmarks/local/lmfao/`, as prepared by
+the case-study guide. `--lmfao-data` and `--lmfao-backend` override those paths;
+`--lmfao-cxxflags` supplies custom generated-program flags, such as a Boost include
+path. The selected repetition count, timeout, memory cap, report and output
+directory also apply to LMFAO. It currently requires the source target to be this
+checkout. A memory limit or timeout for ordinary egglog appears in the table;
+publishing the table requires successful slotted measurements and checked results
+from the generated programs.
+
+No names selects every figure and table; names select a subset. An alternate catalog is
 selected with `--config`, not a positional path. Help lists that catalog without
 expanding files, reading the observation cache or building engines. Spec and
 workload paths resolve relative to the catalog. Globs expand in sorted order;
@@ -109,8 +131,11 @@ are retried after raising the cap; timeouts are retried after raising the deadli
 Completed successes remain reusable after either guard changes, including a lower
 limit or removing the memory limit. Guards affect fresh work and retries rather
 than the identity of completed observations.
-Repeating an unchanged completed invocation launches no
-additional measurements and renders the requested images again.
+Repeating an unchanged completed figure invocation launches no additional
+egraph measurements and renders the requested images again. LMFAO contributes
+its two encodings to the same collection plan and cache. Its C++ preparation,
+answer checks and execution measurements run afresh; these records have their
+own schema in `lmfao.results.json` and are not egraph-cache observations.
 
 The default source is this checkout with label `figures`. `--target figures=@main`
 selects another source using the ordinary target syntax; label-only lookups are

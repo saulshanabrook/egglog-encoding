@@ -15,7 +15,7 @@ from benchmarking import figures
 from benchmarking.engines import Treatment
 from benchmarking.figure_results import corpus_view_domains, figure_results, latex_results
 from benchmarking.models import Exclusion, FileSpec
-from benchmarking.reports.store import GroupedReport, ReportStore
+from benchmarking.reports.store import REPORT_SCHEMA_VERSION, GroupedReport, ReportStore
 
 from .report_fixtures import make_record, make_target, write_report
 from .test_figures import catalog_fixture
@@ -37,7 +37,12 @@ def test_export_statistics_match_shared_executed_vega_fixture(name: str) -> None
         for row in group["samples"]:
             row["treatment"] = treatment
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        {
+            "groups": fixture["groups"],
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
         "fixture",
     )
     result = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -79,7 +84,12 @@ def test_exports_preserve_invalid_missing_and_unbounded_results_and_escape_tex(n
         item["label"] = r"case_100% & cost$#{}~^\end"
     fixture["groups"][0]["samples"][0]["max_rss_bytes"] = float("nan")
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        {
+            "groups": fixture["groups"],
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
         "fixture",
     )
     result = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -152,7 +162,13 @@ def test_corpus_exports_keep_shared_denominators_and_unestablished_coverage_thre
                 }
             )
     grouped = GroupedReport(
-        {"groups": groups, "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9}, "fixture"
+        {
+            "groups": groups,
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
+        "fixture",
     )
     result = figure_results("corpus-proof-recording-cdf", inputs, grouped, 3, 4.302652729749462)
     for metric in ("runtime", "memory"):
@@ -171,7 +187,12 @@ def test_shared_corpus_fixture_matches_export_counts_and_bound_view_layout(
 ) -> None:
     fixture = json.loads(Path(__file__).with_name("figure_statistics.json").read_text())["corpus"]
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        {
+            "groups": fixture["groups"],
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
         "fixture",
     )
     result = figure_results("corpus-proof-recording-cdf", fixture["inputs"], grouped, 3, 4.302652729749462)
