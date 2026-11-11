@@ -12,6 +12,7 @@ use std::{
 use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
+use crate::free_join::receipts::CompactUnionReceipt;
 use crate::{
     RuleMatchId, TableChange, TaggedRowBuffer, UnionOutcome, UnionReceipt,
     action::ExecutionState,
@@ -61,12 +62,19 @@ pub struct DisplacedTable {
     lookup_table: HashMap<Value, RowId>,
     buffered_writes: Arc<SegQueue<(RowBuffer, Option<Vec<Option<RuleMatchId>>>)>>,
     union_trace: Arc<UnionTraceSink>,
+    compact_receipts: Arc<CompactUnionSink>,
 }
 
 #[derive(Default)]
 struct UnionTraceSink {
     active: AtomicBool,
     receipts: Mutex<Vec<UnionReceipt>>,
+}
+
+#[derive(Default)]
+struct CompactUnionSink {
+    active: AtomicBool,
+    receipts: SegQueue<CompactUnionReceipt>,
 }
 
 impl UnionTraceSink {
@@ -232,6 +240,7 @@ impl Default for DisplacedTable {
             lookup_table: HashMap::default(),
             buffered_writes: Arc::new(SegQueue::new()),
             union_trace: Arc::new(UnionTraceSink::default()),
+            compact_receipts: Arc::new(CompactUnionSink::default()),
         }
     }
 }
@@ -245,6 +254,7 @@ impl Clone for DisplacedTable {
             lookup_table: self.lookup_table.clone(),
             buffered_writes: Default::default(),
             union_trace: Default::default(),
+            compact_receipts: Default::default(),
         }
     }
 }
@@ -489,9 +499,23 @@ impl Table for DisplacedTable {
     fn merge(&mut self, _: &mut ExecutionState) -> TableChange {
         while let Some((rowbuf, origins)) = self.buffered_writes.pop() {
             for (index, row) in rowbuf.iter().enumerate() {
+                let origin = origins
+                    .as_ref()
+                    .and_then(|origins| origins.get(index))
+                    .copied()
+                    .flatten();
                 let outcome = match self.insert_impl(row) {
                     Some((parent, child)) => {
                         self.changed = true;
+                        if self.compact_receipts.active.load(Ordering::Acquire)
+                            && let Some(cause) = origin
+                        {
+                            self.compact_receipts.receipts.push(CompactUnionReceipt {
+                                lhs: row[0],
+                                rhs: row[1],
+                                cause,
+                            });
+                        }
                         UnionOutcome::Applied { parent, child }
                     }
                     None => UnionOutcome::Redundant {
@@ -499,11 +523,7 @@ impl Table for DisplacedTable {
                     },
                 };
                 self.union_trace.record(UnionReceipt {
-                    origin: origins
-                        .as_ref()
-                        .and_then(|origins| origins.get(index))
-                        .copied()
-                        .flatten(),
+                    origin,
                     lhs: row[0],
                     rhs: row[1],
                     outcome,
@@ -521,6 +541,26 @@ impl Table for DisplacedTable {
 }
 
 impl DisplacedTable {
+    pub(crate) fn begin_compact_receipts(&self) {
+        while self.compact_receipts.receipts.pop().is_some() {}
+        assert!(
+            !self.compact_receipts.active.swap(true, Ordering::AcqRel),
+            "compact receipt collection is already active"
+        );
+    }
+
+    pub(crate) fn take_compact_receipts(&self) -> Vec<CompactUnionReceipt> {
+        assert!(
+            self.compact_receipts.active.swap(false, Ordering::AcqRel),
+            "compact receipt collection was not active"
+        );
+        let mut receipts = Vec::new();
+        while let Some(receipt) = self.compact_receipts.receipts.pop() {
+            receipts.push(receipt);
+        }
+        receipts
+    }
+
     pub fn begin_union_trace(&self) -> bool {
         self.union_trace.begin()
     }

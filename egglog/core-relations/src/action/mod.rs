@@ -35,6 +35,8 @@ use self::mask::{Mask, MaskIter, ValueSource};
 #[macro_use]
 pub(crate) mod mask;
 
+mod exact_replay;
+
 #[cfg(test)]
 mod tests;
 

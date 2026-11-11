@@ -27,11 +27,13 @@ pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxe
 pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
 pub use free_join::{
-    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GroundedBinding,
-    GroundedIdentityColumn, GroundedRuleSetRun, GuardedRuleSetBatchRunOutcome,
-    GuardedRuleSetRunError, GuardedRuleSetRunOutcome, PrimitiveApplication, RuleExecutionTrace,
-    RuleMatch, RuleMatchId, RuleMatchTraceError, TableApplication, TableId, UnionOutcome,
-    UnionReceipt, Variable, make_external_func, plan::PlanStrategy,
+    AtomId, CompactFactReceipt, CompactReceiptSlice, CompactReceipts, CompactRuleReceipt,
+    CompactUnionReceipt, CounterId, Database, ExternalFunction, ExternalFunctionId,
+    GroundedBinding, GroundedIdentityColumn, GroundedRuleSetRun, GuardedRuleSetBatchRunOutcome,
+    GuardedRuleSetRunError, GuardedRuleSetRunOutcome, PrimitiveApplication, ReceiptFact,
+    ReceiptFactId, RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError,
+    TableApplication, TableId, UnionOutcome, UnionReceipt, Variable, make_external_func,
+    plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};

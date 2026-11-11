@@ -64,6 +64,121 @@ fn run_serial_and_parallel(f: impl Fn() + Send + Sync) {
 }
 
 #[test]
+fn compact_receipts_keep_exact_projected_premises_and_only_effective_commits() {
+    run_serial_and_parallel(|| {
+        let mut db = Database::default();
+        let relation = |arity| {
+            SortedWritesTable::new(arity, arity, None, vec![], Box::new(|_, _, _, _| false))
+        };
+        let a = db.add_table(relation(2), iter::empty(), iter::empty());
+        let b = db.add_table(relation(1), iter::empty(), iter::empty());
+        let out = db.add_table(relation(1), iter::empty(), iter::empty());
+        {
+            let mut buffer = db.new_buffer(a);
+            buffer.stage_insert(&[v(1), v(10)]);
+            buffer.stage_insert(&[v(1), v(11)]);
+        }
+        {
+            let mut buffer = db.new_buffer(b);
+            buffer.stage_insert(&[v(11)]);
+        }
+        db.merge_all();
+
+        let mut rules = RuleSetBuilder::new(&mut db);
+        let mut query = rules.new_rule();
+        query.set_no_decomp(true);
+        let x = query.new_var_named("x");
+        let y = query.new_var_named("projected");
+        query.add_atom(a, &[x.into(), y.into()], &[]).unwrap();
+        query.add_atom(b, &[y.into()], &[]).unwrap();
+        let mut rule = query.build();
+        rule.insert(out, &[x.into()]).unwrap();
+        rule.build_with_description("compact-projected-premise");
+        let rules = rules.build();
+
+        let (report, receipts) = db
+            .run_rule_set_with_compact_receipts(&rules, ReportLevel::TimeOnly)
+            .unwrap();
+        assert!(report.changed);
+        assert_eq!(receipts.pending_matches, 1);
+        assert_eq!(receipts.matches.len(), 1);
+        let root = receipts.fact_id(out, &[v(1)]).unwrap();
+        let slice = receipts.backward_from_fact(root);
+        let mut source_rows = slice
+            .source_facts
+            .iter()
+            .map(|fact| {
+                let fact = &receipts.facts[fact.index()].fact;
+                (fact.table, fact.row.to_vec())
+            })
+            .collect::<Vec<_>>();
+        source_rows.sort_by_key(|(table, row)| (table.index(), row.clone()));
+        assert_eq!(source_rows, vec![(a, vec![v(1), v(11)]), (b, vec![v(11)])]);
+        assert!(!source_rows.contains(&(a, vec![v(1), v(10)])));
+
+        let (report, receipts) = db
+            .run_rule_set_with_compact_receipts(&rules, ReportLevel::TimeOnly)
+            .unwrap();
+        assert!(!report.changed);
+        assert_eq!(receipts.pending_matches, 1);
+        assert!(receipts.matches.is_empty());
+        assert!(receipts.facts.is_empty());
+    });
+}
+
+#[test]
+fn compact_receipts_root_applied_but_not_redundant_unions() {
+    let mut db = Database::default();
+    let source = db.add_table(
+        SortedWritesTable::new(2, 2, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    {
+        let mut buffer = db.new_buffer(source);
+        buffer.stage_insert(&[v(1), v(2)]);
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    query.set_no_decomp(true);
+    let lhs = query.new_var_named("lhs");
+    let rhs = query.new_var_named("rhs");
+    query
+        .add_atom(source, &[lhs.into(), rhs.into()], &[])
+        .unwrap();
+    let mut rule = query.build();
+    rule.insert(uf, &[lhs.into(), rhs.into(), v(0).into()])
+        .unwrap();
+    rule.build_with_description("compact-union");
+    let rules = rules.build();
+
+    let (_, receipts) = db
+        .run_rule_set_with_compact_receipts(&rules, ReportLevel::TimeOnly)
+        .unwrap();
+    assert_eq!(receipts.unions.len(), 1);
+    let slice = receipts.backward_from_equality(v(1), v(2)).unwrap();
+    assert_eq!(slice.matches.len(), 1);
+    assert_eq!(slice.source_facts.len(), 1);
+    assert_eq!(
+        receipts.facts[slice.source_facts[0].index()].fact,
+        crate::ReceiptFact {
+            table: source,
+            row: vec![v(1), v(2)].into_boxed_slice(),
+        }
+    );
+
+    let (_, receipts) = db
+        .run_rule_set_with_compact_receipts(&rules, ReportLevel::TimeOnly)
+        .unwrap();
+    assert_eq!(receipts.pending_matches, 1);
+    assert!(receipts.unions.is_empty());
+    assert!(receipts.matches.is_empty());
+}
+
+#[test]
 fn basic_query() {
     run_serial_and_parallel(basic_query_inner);
 }

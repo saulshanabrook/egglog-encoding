@@ -42,6 +42,12 @@ use crate::action::ExecutionState;
 pub(crate) mod execute;
 pub(crate) mod frame_update;
 pub(crate) mod plan;
+pub(crate) mod receipts;
+
+pub use receipts::{
+    CompactFactReceipt, CompactReceiptSlice, CompactReceipts, CompactRuleReceipt,
+    CompactUnionReceipt, ReceiptFact, ReceiptFactId,
+};
 
 define_id!(
     pub AtomId,
@@ -168,11 +174,11 @@ pub struct RuleMatch {
 }
 
 /// The index of one [`RuleMatch`] within a [`RuleExecutionTrace`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RuleMatchId(u32);
 
 impl RuleMatchId {
-    fn from_index(index: usize) -> Self {
+    pub(crate) fn from_index(index: usize) -> Self {
         Self(u32::try_from(index).expect("one traced iteration exceeded u32 match capacity"))
     }
 

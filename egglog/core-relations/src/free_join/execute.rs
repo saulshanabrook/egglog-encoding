@@ -27,6 +27,7 @@ use crate::{
     free_join::{
         frame_update::{FrameUpdates, UpdateInstr},
         get_index_from_tableinfo,
+        receipts::{CompactReceipts, CompactRunRecorder, ReceiptFact},
     },
     hash_index::{ColumnIndex, IndexBase, TupleIndex},
     offsets::{Offsets, RowId, SortedOffsetSlice, SortedOffsetVector, Subset},
@@ -348,7 +349,59 @@ impl Prober {
 
 impl Database {
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
-        self.run_rule_set_impl(rule_set, report_level, None)
+        self.run_rule_set_impl(rule_set, report_level, None, None)
+    }
+
+    /// Run one ordinary single-bag ruleset iteration while retaining compact
+    /// exact-row receipts for effective commits only. This diagnostic API does
+    /// not recover named bindings or disable the ordinary parallel executor.
+    pub fn run_rule_set_with_compact_receipts(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+    ) -> Result<(RuleSetReport, CompactReceipts), RuleMatchTraceError> {
+        for (plan, desc, _) in rule_set.plans.values() {
+            if matches!(plan, Plan::DecomposedPlan(_)) {
+                return Err(RuleMatchTraceError::DecomposedPlan { rule: desc.clone() });
+            }
+        }
+        let recorder = Arc::new(CompactRunRecorder::default());
+        for (_, info) in self.tables.iter() {
+            if let Some(table) = info
+                .table
+                .as_any()
+                .downcast_ref::<crate::SortedWritesTable>()
+            {
+                table.begin_compact_receipts();
+            }
+            if let Some(table) = info.table.as_any().downcast_ref::<crate::DisplacedTable>() {
+                table.begin_compact_receipts();
+            }
+        }
+        let report = self.run_rule_set_impl(rule_set, report_level, None, Some(recorder.clone()));
+        let mut fact_effects = Vec::new();
+        let mut unions = Vec::new();
+        for (table_id, info) in self.tables.iter() {
+            if let Some(table) = info
+                .table
+                .as_any()
+                .downcast_ref::<crate::SortedWritesTable>()
+            {
+                fact_effects.extend(
+                    table
+                        .take_compact_receipts()
+                        .into_iter()
+                        .map(|commit| (table_id, commit.row, commit.cause)),
+                );
+            }
+            if let Some(table) = info.table.as_any().downcast_ref::<crate::DisplacedTable>() {
+                unions.extend(table.take_compact_receipts());
+            }
+        }
+        Ok((
+            report,
+            CompactReceipts::from_effects(recorder.finish(), fact_effects, unions),
+        ))
     }
 
     /// Run one ordinary ruleset iteration while retaining every match-time
@@ -370,7 +423,7 @@ impl Database {
         }
 
         let mut trace = RuleExecutionTrace::default();
-        let report = self.run_rule_set_impl(rule_set, report_level, Some(&mut trace));
+        let report = self.run_rule_set_impl(rule_set, report_level, Some(&mut trace), None);
         Ok((report, trace))
     }
 
@@ -379,6 +432,7 @@ impl Database {
         rule_set: &RuleSet,
         report_level: ReportLevel,
         trace: Option<&mut RuleExecutionTrace>,
+        compact: Option<Arc<CompactRunRecorder>>,
     ) -> RuleSetReport {
         if rule_set.plans.is_empty() {
             return RuleSetReport {
@@ -419,6 +473,7 @@ impl Database {
                     let desc = desc.clone();
                     let exec_state = exec_state.clone();
                     let match_counter = match_counter.clone();
+                    let compact = compact.clone();
                     scope.spawn(move |rule_scope| {
                         let join_state = JoinState::new(db, exec_state.clone());
                         let mut binding_info = BindingInfo::default();
@@ -426,8 +481,12 @@ impl Database {
                             let table = join_state.db.get_table(info.table);
                             binding_info.insert_subset(id, table.all());
                         }
-                        let mut action_buf =
-                            ScopedActionBuffer::new(rule_scope, rule_set, match_counter.clone());
+                        let mut action_buf = ScopedActionBuffer::new(
+                            rule_scope,
+                            rule_set,
+                            match_counter.clone(),
+                            compact,
+                        );
                         let search_and_apply_timer = Instant::now();
 
                         'eval: {
@@ -562,6 +621,7 @@ impl Database {
                 batches: Default::default(),
                 apply_time: Duration::ZERO,
                 trace,
+                compact,
             };
             for (plan, desc, symbol_map) in rule_set.plans.values() {
                 let report_plan = match report_level {
@@ -907,7 +967,7 @@ impl Database {
         if run_in_parallel {
             rayon::in_place_scope(|scope| {
                 let mut action_buf =
-                    ScopedActionBuffer::new(scope, rule_set, match_counter.clone());
+                    ScopedActionBuffer::new(scope, rule_set, match_counter.clone(), None);
                 for captured in &captured {
                     let bindings = captured.to_map();
                     action_buf.push_bindings(captured.action, &bindings, || exec_state.clone());
@@ -923,6 +983,7 @@ impl Database {
                 batches: Default::default(),
                 apply_time: Duration::ZERO,
                 trace: None,
+                compact: None,
             };
             for captured in &captured {
                 let bindings = captured.to_map();
@@ -1030,6 +1091,7 @@ impl Database {
                 batches: Default::default(),
                 apply_time: Duration::ZERO,
                 trace: None,
+                compact: None,
             };
             let binding = captured[0].to_map();
             action_buf.push_bindings(captured[0].action, &binding, || exec_state.clone());
@@ -2937,7 +2999,20 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         db: &Database,
         exec_state: &ExecutionState<'state>,
     ) {
-        if self.complete_projected_bindings() {
+        if self.compact_recorder().is_some() {
+            expand_binding_sets_compact(
+                self,
+                action,
+                bindings,
+                binding_sets,
+                0,
+                &mut SmallVec::new(),
+                atoms,
+                subsets,
+                db,
+                exec_state,
+            );
+        } else if self.complete_projected_bindings() {
             expand_binding_sets_complete(
                 self,
                 action,
@@ -2959,6 +3034,20 @@ trait ActionBuffer<'state, A: NumericId>: Send {
     /// physically projected match. Ordinary execution never pays this cost.
     fn complete_projected_bindings(&self) -> bool {
         false
+    }
+
+    fn compact_recorder(&self) -> Option<&CompactRunRecorder> {
+        None
+    }
+
+    fn push_bindings_with_origin(
+        &mut self,
+        action: A,
+        bindings: &DenseIdMap<Variable, Value>,
+        _origin: RuleMatchId,
+        to_exec_state: impl FnMut() -> ExecutionState<'state>,
+    ) {
+        self.push_bindings(action, bindings, to_exec_state);
     }
 
     /// Push the given bindings to be executed for the specified action. If this
@@ -3136,6 +3225,7 @@ struct InPlaceActionBuffer<'a> {
     /// Present only for the opt-in, serial match trace. The rule set provides
     /// the stable source names associated with core variables.
     trace: Option<InPlaceRuleMatchTrace<'a>>,
+    compact: Option<Arc<CompactRunRecorder>>,
 }
 
 struct InPlaceRuleMatchTrace<'a> {
@@ -3224,6 +3314,46 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         self.trace.is_some()
     }
 
+    fn compact_recorder(&self) -> Option<&CompactRunRecorder> {
+        self.compact.as_deref()
+    }
+
+    fn push_bindings_with_origin(
+        &mut self,
+        action: ActionId,
+        bindings: &DenseIdMap<Variable, Value>,
+        origin: RuleMatchId,
+        mut to_exec_state: impl FnMut() -> ExecutionState<'a>,
+    ) {
+        let action_state = self.batches.get_or_default(action);
+        action_state.n_runs += 1;
+        action_state.len += 1;
+        let action_info = &self.rule_set.actions[action];
+        unsafe {
+            action_state.bindings.push(bindings, &action_info.used_vars);
+        }
+        action_state
+            .origins
+            .get_or_insert_with(Vec::new)
+            .push(origin);
+        if action_state.len >= VAR_BATCH_SIZE {
+            let mut state = to_exec_state();
+            let mut applications = Vec::new();
+            let mut primitives = Vec::new();
+            let succeeded = state.run_instrs_traced(
+                &action_info.instrs,
+                &mut action_state.bindings,
+                action_state.origins.as_deref().unwrap(),
+                &mut applications,
+                &mut primitives,
+            );
+            action_state.bindings.clear();
+            action_state.origins.as_mut().unwrap().clear();
+            self.match_counter.inc_matches(action, succeeded);
+            action_state.len = 0;
+        }
+    }
+
     fn flush(&mut self, exec_state: &mut ExecutionState) {
         flush_action_states(
             exec_state,
@@ -3259,6 +3389,7 @@ struct ScopedActionBuffer<'inner, 'scope> {
     match_counter: Arc<MatchCounter>,
     batches: DenseIdMap<ActionId, ActionState>,
     needs_flush: bool,
+    compact: Option<Arc<CompactRunRecorder>>,
 }
 
 impl<'inner, 'scope> ScopedActionBuffer<'inner, 'scope> {
@@ -3266,6 +3397,7 @@ impl<'inner, 'scope> ScopedActionBuffer<'inner, 'scope> {
         scope: &'inner rayon::Scope<'scope>,
         rule_set: &'scope RuleSet,
         match_counter: Arc<MatchCounter>,
+        compact: Option<Arc<CompactRunRecorder>>,
     ) -> Self {
         Self {
             scope,
@@ -3273,6 +3405,7 @@ impl<'inner, 'scope> ScopedActionBuffer<'inner, 'scope> {
             batches: Default::default(),
             match_counter,
             needs_flush: false,
+            compact,
         }
     }
 }
@@ -3311,6 +3444,51 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         }
     }
 
+    fn compact_recorder(&self) -> Option<&CompactRunRecorder> {
+        self.compact.as_deref()
+    }
+
+    fn push_bindings_with_origin(
+        &mut self,
+        action: ActionId,
+        bindings: &DenseIdMap<Variable, Value>,
+        origin: RuleMatchId,
+        mut to_exec_state: impl FnMut() -> ExecutionState<'scope>,
+    ) {
+        self.needs_flush = true;
+        let action_state = self.batches.get_or_default(action);
+        action_state.n_runs += 1;
+        action_state.len += 1;
+        let action_info = &self.rule_set.actions[action];
+        unsafe {
+            action_state.bindings.push(bindings, &action_info.used_vars);
+        }
+        action_state
+            .origins
+            .get_or_insert_with(Vec::new)
+            .push(origin);
+        if action_state.len >= VAR_BATCH_SIZE {
+            let mut state = to_exec_state();
+            let mut bindings =
+                mem::replace(&mut action_state.bindings, Bindings::new(VAR_BATCH_SIZE));
+            let origins = mem::take(action_state.origins.as_mut().unwrap());
+            action_state.len = 0;
+            let match_counter = self.match_counter.clone();
+            self.scope.spawn(move |_| {
+                let mut applications = Vec::new();
+                let mut primitives = Vec::new();
+                let succeeded = state.run_instrs_traced(
+                    &action_info.instrs,
+                    &mut bindings,
+                    &origins,
+                    &mut applications,
+                    &mut primitives,
+                );
+                match_counter.inc_matches(action, succeeded);
+            });
+        }
+    }
+
     fn flush(&mut self, exec_state: &mut ExecutionState) {
         flush_action_states(
             exec_state,
@@ -3332,6 +3510,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
     ) {
         let rule_set = self.rule_set;
         let match_counter = self.match_counter.clone();
+        let compact = self.compact.clone();
         let mut inner = local.clone_state();
         self.scope.spawn(move |scope| {
             let mut buf: ScopedActionBuffer<'_, 'scope> = ScopedActionBuffer {
@@ -3340,6 +3519,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
                 match_counter,
                 needs_flush: false,
                 batches: Default::default(),
+                compact,
             };
             work(inner.borrow_mut(), &mut buf);
             if buf.needs_flush {
@@ -3460,6 +3640,81 @@ fn expand_binding_sets_complete<'state, A: NumericId, BUF: ActionBuffer<'state, 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn expand_binding_sets_compact<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Sized>(
+    action_buf: &mut BUF,
+    action: A,
+    bindings: &mut DenseIdMap<Variable, Value>,
+    binding_sets: &BindingSet,
+    idx: usize,
+    selected_rows: &mut SmallVec<[(AtomId, RowId); 4]>,
+    atoms: &DenseIdMap<AtomId, Atom>,
+    subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+    db: &Database,
+    exec_state: &ExecutionState<'state>,
+) {
+    if exec_state.should_stop() {
+        return;
+    }
+    if idx >= binding_sets.len() {
+        let recorder = action_buf
+            .compact_recorder()
+            .expect("compact expansion requires a recorder");
+        let mut premises = Vec::with_capacity(atoms.len());
+        for (atom_id, atom) in atoms.iter() {
+            if atom.table.is_dummy() {
+                continue;
+            }
+            let table = &db.tables[atom.table].table;
+            let selected = selected_rows
+                .iter()
+                .find_map(|(selected_atom, row)| (*selected_atom == atom_id).then_some(*row));
+            let rows = if let Some(row) = selected {
+                table.scan(Subset::Dense(OffsetRange::new(row, row.inc())).as_ref())
+            } else {
+                table.scan(subsets[atom_id].subset.as_ref())
+            };
+            let Some((_, row)) = rows.iter().next() else {
+                return;
+            };
+            premises.push((
+                atom_id,
+                ReceiptFact {
+                    table: atom.table,
+                    row: row.into(),
+                },
+            ));
+        }
+        let origin = recorder.capture(action.index(), premises);
+        action_buf.push_bindings_with_origin(action, bindings, origin, || exec_state.clone());
+        return;
+    }
+    let (atom, vars, buf) = &binding_sets[idx];
+    for (row_id, row) in buf.iter() {
+        for (var, val) in vars.iter().zip(row.iter()) {
+            bindings.insert(*var, *val);
+        }
+        if let Some(atom) = atom {
+            selected_rows.push((*atom, row_id));
+        }
+        expand_binding_sets_compact(
+            action_buf,
+            action,
+            bindings,
+            binding_sets,
+            idx + 1,
+            selected_rows,
+            atoms,
+            subsets,
+            db,
+            exec_state,
+        );
+        if atom.is_some() {
+            selected_rows.pop();
+        }
+    }
+}
+
 /// Complete a physically projected match with one deterministic supporting
 /// row from each exact live atom subset. This runs at the final native join
 /// leaf, before rule heads or merge/rebuild, so it neither issues a second
@@ -3549,6 +3804,16 @@ fn flush_action_states(
                         .expect("traced action batches retain lane origins"),
                     applications,
                     primitives,
+                )
+            } else if let Some(origins) = origins.as_deref() {
+                let mut applications = Vec::new();
+                let mut primitives = Vec::new();
+                exec_state.run_instrs_traced(
+                    &rule_set.actions[action].instrs,
+                    bindings,
+                    origins,
+                    &mut applications,
+                    &mut primitives,
                 )
             } else {
                 exec_state.run_instrs(&rule_set.actions[action].instrs, bindings)

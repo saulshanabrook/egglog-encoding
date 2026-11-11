@@ -27,6 +27,7 @@ use crate::{
     TableMutationReceipt,
     action::ExecutionState,
     common::{HashMap, ShardData, ShardId, SubsetTracker, Value},
+    free_join::receipts::CompactTableCommit,
     hash_index::{ColumnIndex, Index},
     offsets::{OffsetRange, Offsets, RowId, Subset, SubsetRef},
     parallel_heuristics::parallelize_table_op,
@@ -151,6 +152,7 @@ pub struct SortedWritesTable {
     // Used to manage incremental rebuilds.
     subset_tracker: SubsetTracker,
     mutation_trace: Arc<TableMutationTraceSink>,
+    compact_receipts: Arc<CompactCommitSink>,
 }
 
 #[derive(Clone)]
@@ -162,6 +164,26 @@ struct PendingInsertCause {
 struct TableMutationTraceSink {
     active: AtomicBool,
     receipts: Mutex<Vec<TableMutationReceipt>>,
+}
+
+#[derive(Default)]
+struct CompactCommitSink {
+    active: AtomicBool,
+    commits: SegQueue<CompactTableCommit>,
+}
+
+impl CompactCommitSink {
+    fn record(&self, row: &[Value], cause: &TableMutationCause) {
+        if !self.active.load(Ordering::Acquire) {
+            return;
+        }
+        if let TableMutationCause::Rule { origin, .. } = cause {
+            self.commits.push(CompactTableCommit {
+                row: row.into(),
+                cause: *origin,
+            });
+        }
+    }
 }
 
 impl TableMutationTraceSink {
@@ -207,6 +229,7 @@ impl Clone for SortedWritesTable {
             rebuild_index: Index::new(self.to_rebuild.clone(), ColumnIndex::new()),
             subset_tracker: Default::default(),
             mutation_trace: Arc::new(TableMutationTraceSink::default()),
+            compact_receipts: Arc::new(CompactCommitSink::default()),
         }
     }
 }
@@ -688,7 +711,28 @@ impl SortedWritesTable {
             rebuild_index,
             subset_tracker: Default::default(),
             mutation_trace: Arc::new(TableMutationTraceSink::default()),
+            compact_receipts: Arc::new(CompactCommitSink::default()),
         }
+    }
+
+    pub(crate) fn begin_compact_receipts(&self) {
+        while self.compact_receipts.commits.pop().is_some() {}
+        assert!(
+            !self.compact_receipts.active.swap(true, Ordering::AcqRel),
+            "compact receipt collection is already active"
+        );
+    }
+
+    pub(crate) fn take_compact_receipts(&self) -> Vec<CompactTableCommit> {
+        assert!(
+            self.compact_receipts.active.swap(false, Ordering::AcqRel),
+            "compact receipt collection was not active"
+        );
+        let mut commits = Vec::new();
+        while let Some(commit) = self.compact_receipts.commits.pop() {
+            commits.push(commit);
+        }
+        commits
     }
 
     /// Flush all pending removals, in parallel.
@@ -853,6 +897,7 @@ impl SortedWritesTable {
                                 self.data.set_stale(*row);
                                 *row = new;
                                 changed = true;
+                                self.compact_receipts.record(&committed, &cause);
                                 self.mutation_trace.record(TableMutationReceipt {
                                     table: TableId::dummy(),
                                     cause,
@@ -898,6 +943,7 @@ impl SortedWritesTable {
                                 TableEntry::hashcode,
                             );
                             changed = true;
+                            self.compact_receipts.record(query, &cause);
                             self.mutation_trace.record(TableMutationReceipt {
                                 table: TableId::dummy(),
                                 cause,
@@ -942,6 +988,7 @@ impl SortedWritesTable {
                                 self.data.set_stale(*row);
                                 *row = new;
                                 changed = true;
+                                self.compact_receipts.record(&committed, &cause);
                                 self.mutation_trace.record(TableMutationReceipt {
                                     table: TableId::dummy(),
                                     cause,
@@ -975,6 +1022,7 @@ impl SortedWritesTable {
                                 TableEntry::hashcode,
                             );
                             changed = true;
+                            self.compact_receipts.record(query, &cause);
                             self.mutation_trace.record(TableMutationReceipt {
                                 table: TableId::dummy(),
                                 cause,
@@ -1038,7 +1086,7 @@ impl SortedWritesTable {
                         // contention.
                         let mut cur_row = start_row;
                         let read_handle = row_writer.read_handle();
-                        for row in staged.rows() {
+                        for (row, cause) in staged.rows() {
                             if row.first().map(Value::is_stale).unwrap_or(false) {
                                 cur_row = cur_row.inc();
                                 continue;
@@ -1083,6 +1131,9 @@ impl SortedWritesTable {
                                         }
                                         occ.get_mut().row = cur_row;
                                         changed = true;
+                                        if let Some(cause) = cause {
+                                            self.compact_receipts.record(row, &cause.cause);
+                                        }
                                     } else {
                                         // Mark the new row as stale: we didn't end up needing it.
                                         unsafe {
@@ -1095,6 +1146,9 @@ impl SortedWritesTable {
                                 }
                                 Entry::Vacant(v) => {
                                     changed = true;
+                                    if let Some(cause) = cause {
+                                        self.compact_receipts.record(row, &cause.cause);
+                                    }
                                     v.insert(TableEntry {
                                         hashcode: hc as HashCode,
                                         row: cur_row,
@@ -1111,12 +1165,19 @@ impl SortedWritesTable {
                 // * Add new values to `staged`
                 // * Removing entries in `shard` and mark them as stale in
                 // `data` if they will be overwritten.
-                while let Some((buf, _causes)) = queue.pop() {
+                while let Some((buf, causes)) = queue.pop() {
                     // We create a read_handle once per batch to avoid blocking
                     // too many threads if someone needs to resize the row
                     // writer.
-                    for row in buf.non_stale() {
-                        staged.insert(row, |cur, new, out| {
+                    for (index, row) in buf.iter().enumerate() {
+                        if row.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let cause = causes
+                            .as_ref()
+                            .and_then(|causes| causes.get(index))
+                            .and_then(Clone::clone);
+                        staged.insert(row, cause, |cur, new, out| {
                             (self.merge)(&mut exec_state, cur, new, out)
                         });
                         if staged.len() >= BATCH_SIZE {
@@ -1648,11 +1709,12 @@ struct StagedOutputs {
     rows: RowBuffer,
     n_stale: usize,
     scratch: Pooled<Vec<Value>>,
+    causes: Vec<Option<PendingInsertCause>>,
 }
 
 impl StagedOutputs {
-    fn rows(&self) -> impl Iterator<Item = &[Value]> {
-        self.rows.iter()
+    fn rows(&self) -> impl Iterator<Item = (&[Value], Option<&PendingInsertCause>)> {
+        self.rows.iter().zip(self.causes.iter().map(Option::as_ref))
     }
     fn new(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
         let mut res = with_pool_set(|ps| StagedOutputs {
@@ -1662,6 +1724,7 @@ impl StagedOutputs {
             hash: ps.get(),
             rows: RowBuffer::new(n_cols),
             scratch: ps.get(),
+            causes: Vec::new(),
         });
         res.hash.reserve(capacity, TableEntry::hashcode);
         res.rows.reserve(capacity);
@@ -1671,6 +1734,7 @@ impl StagedOutputs {
         self.hash.clear();
         self.rows.clear();
         self.n_stale = 0;
+        self.causes.clear();
     }
     fn len(&self) -> usize {
         self.rows.len() - self.n_stale
@@ -1679,6 +1743,7 @@ impl StagedOutputs {
     fn insert(
         &mut self,
         row: &[Value],
+        cause: Option<PendingInsertCause>,
         mut merge_fn: impl FnMut(&[Value], &[Value], &mut Vec<Value>) -> bool,
     ) {
         if row[0].is_stale() {
@@ -1699,6 +1764,7 @@ impl StagedOutputs {
                 let cur = self.rows.get_row(occupied_entry.get().row);
                 if merge_fn(cur, row, &mut self.scratch) {
                     let new = self.rows.add_row(&self.scratch);
+                    self.causes.push(cause);
                     self.rows.set_stale(occupied_entry.get().row);
                     self.n_stale += 1;
                     occupied_entry.get_mut().row = new;
@@ -1707,6 +1773,7 @@ impl StagedOutputs {
             }
             Entry::Vacant(vacant_entry) => {
                 let next = self.rows.add_row(row);
+                self.causes.push(cause);
                 vacant_entry.insert(TableEntry {
                     hashcode: hc as _,
                     row: next,
