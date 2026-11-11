@@ -193,6 +193,80 @@ fn flat_storage_accepts_append_and_scan_semantics() {
 }
 
 #[test]
+fn matching_columns_preserve_projection_subsumption_and_index_refresh() {
+    for flat in [false, true] {
+        let mut egraph = EGraph::default();
+        let int = egraph.base_values_mut().register_type::<i64>();
+        let unit_ty = egraph.base_values_mut().register_type::<()>();
+        let unit = egraph.base_values().get(());
+        let a = egraph.fresh_id();
+        let b = egraph.fresh_id();
+        let missing = egraph.fresh_id();
+        let config = FunctionConfig {
+            schema: vec![ColumnTy::Base(int), ColumnTy::Id, ColumnTy::Base(unit_ty)],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "proof-row".into(),
+            can_subsume: !flat,
+        };
+        let table = if flat {
+            egraph.add_internal_flat_table(config)
+        } else {
+            egraph.add_table(config)
+        };
+        let keys = [10i64, 20, 30, 40, 50].map(|n| egraph.base_values().get(n));
+        let mut expected = vec![
+            (vec![keys[0], a, unit], false),
+            (vec![keys[1], b, unit], false),
+            (vec![keys[2], a, unit], false),
+        ];
+        egraph.add_values(expected.iter().map(|(row, _)| (table, row.clone())));
+        for phase in 0..3 {
+            if phase == 1 {
+                if !flat {
+                    let action = TableAction::new(&egraph, table);
+                    egraph.with_execution_state(None, |state| {
+                        action.subsume(state, [keys[0], a].into_iter());
+                        action.remove(state, &[keys[1], b]);
+                    });
+                    egraph.flush_updates();
+                    expected[0].1 = true;
+                    expected.remove(1);
+                }
+                let row = vec![keys[3], a, unit];
+                egraph.add_values([(table, row.clone())]);
+                expected.push((row, false));
+            } else if phase == 2 {
+                // A major generation change must invalidate both hit and miss
+                // entries retained by earlier indexed reads.
+                egraph.clear_table(table);
+                let row = vec![keys[4], missing, unit];
+                egraph.add_values([(table, row.clone())]);
+                expected = vec![(row, false)];
+            }
+            // The proof ID is the last input, not the shared Unit output.
+            for (column, value) in [(1, a), (1, b), (1, missing), (2, unit)] {
+                let mut actual = Vec::new();
+                egraph.for_each_matching_col(table, column, value, |row| {
+                    assert_eq!(row.vals.len(), 3);
+                    actual.push((row.vals.to_vec(), row.subsumed));
+                });
+                let mut matching: Vec<_> = expected
+                    .iter()
+                    .filter(|(row, _)| row[column] == value)
+                    .cloned()
+                    .collect();
+                actual.sort();
+                matching.sort();
+                assert_eq!(actual, matching, "flat={flat}, phase={phase}, col={column}");
+            }
+        }
+    }
+}
+
+#[test]
 fn mint_batches_preserve_rows_and_fresh_ids() {
     for n_args in [0, 2, 12] {
         let mut egraph = EGraph::default();
