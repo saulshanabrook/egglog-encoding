@@ -1409,12 +1409,9 @@ end
 Exhaustion does not distinguish divergence from a terminating run that needs more passes. -/
 def runFuel : Nat := 64
 
-/-- The state with subsumption forgotten: what a check sees. -/
-def FDatabase.forgetSubsumed (d : FDatabase) : FDatabase := { d with subsumed := [] }
-
-/-- The final check, computed: `QueryHolds` on the state with subsumption forgotten. -/
-def FDatabase.holds (d : FDatabase) (q : Query) : Bool :=
-  !(matchQuery d.forgetSubsumed q).isEmpty
+/-- The final check, computed: `QueryHolds` on the final state, an ordinary query over its
+live rows. -/
+def FDatabase.holds (d : FDatabase) (q : Query) : Bool := !(matchQuery d q).isEmpty
 
 /-- Run a program's schedule from the initial database. The final check is read off the
 result with `FDatabase.holds`; `observe` combines the two. -/

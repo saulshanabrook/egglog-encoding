@@ -66,24 +66,26 @@ def Result.succeeded : Result → Bool
   | .ok => true
   | .checkFailed => false
 
-/-- Program evaluation: run the schedule, then decide the outcome with the final check.
-The check sees subsumed rows via `Database.forgetSubsumed`, as egglog's `check` does.
-Running `P` from the empty state is `Eval Database.empty P`. -/
+/-- Program evaluation: run the schedule, then decide the outcome with the final check, an
+ordinary query over the live rows of the reached e-graph, with the semantics of a rule query.
+egglog's `check` currently also sees subsumed rows (`check_facts` queries with
+`include_subsumed`); the model diverges from it here deliberately. Running `P` from the
+empty state is `Eval Database.empty P`. -/
 @[blueprint "def:behavior"
   (statement := /--
   \begin{mathpar}
-  \ir{Ok}{\langle S,G\rangle\Downarrow(E',X')\\(E',\emptyset),\sigma\models Q}
+  \ir{Ok}{\langle S,G\rangle\Downarrow G'\\G',\sigma\models Q}
     {\langle S;\kw{check}\ Q,G\rangle\Downarrow\kw{ok}}
   \and
-  \ir{Error}{\langle S,G\rangle\Downarrow(E',X')\\\nexists\sigma.\ (E',\emptyset),\sigma\models Q}
+  \ir{Error}{\langle S,G\rangle\Downarrow G'\\\nexists\sigma.\ G',\sigma\models Q}
     {\langle S;\kw{check}\ Q,G\rangle\Downarrow\kw{error}}
   \end{mathpar}
   -/)
   (latexEnv := "paperfragment")]
 inductive Eval : Database → Program → Result → Prop where
   | ok {db d : Database} {P : Program} :
-      Reach db P.schedule d → QueryHolds d.forgetSubsumed P.check → Eval db P .ok
+      Reach db P.schedule d → QueryHolds d P.check → Eval db P .ok
   | checkFailed {db d : Database} {P : Program} :
-      Reach db P.schedule d → ¬ QueryHolds d.forgetSubsumed P.check → Eval db P .checkFailed
+      Reach db P.schedule d → ¬ QueryHolds d P.check → Eval db P .checkFailed
 
 end Egglog

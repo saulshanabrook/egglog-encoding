@@ -92,11 +92,6 @@ theorem empty : Inv P Database.empty where
   finite := Set.finite_empty
   ctors := Database.empty_ctorsIn
 
-theorem forgetSubsumed (h : Inv P d) : Inv P d.forgetSubsumed where
-  good := h.good.forgetSubsumed
-  finite := h.finite
-  ctors := h.ctors
-
 theorem runRules (hP : programOk P = true) (h : Inv P d) {R : List Rule}
     (hR : ∀ r ∈ R, r ∈ P.rules) : Inv P (RunRules R d) where
   good := h.good.runRules fun r hr => programOk_rule_unionFree hP (hR r hr)
@@ -202,12 +197,6 @@ theorem eraseLog (hP : programOk P = true) : d'.eraseLog = d := by
     · intro hq
       exact ⟨h.eqs hq, h.inv.noLog hP q.1 ⟨q, hq, Or.inl (Term.self_mem_subterms _)⟩⟩
   · exact h.subsumed
-
-theorem forgetSubsumed : Rel P d.forgetSubsumed d'.forgetSubsumed where
-  inv := h.inv.forgetSubsumed
-  subsumed := rfl
-  eqs := h.eqs
-  log := h.log
 
 end Rel
 

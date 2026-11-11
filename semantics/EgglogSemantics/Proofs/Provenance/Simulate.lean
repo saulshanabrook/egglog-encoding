@@ -117,10 +117,6 @@ theorem queryMatches_iff (hP : programOk P = true) (hd : Inv P d) (h : RelC P d 
   exact ⟨fun hm => QueryMatches.sameMeaning hx.symm ht.symm hm,
     fun hm => QueryMatches.sameMeaning hx ht hm⟩
 
-theorem forgetSubsumed (h : RelC P d d') : RelC P d.forgetSubsumed d'.forgetSubsumed :=
-  let ⟨x, hx, hr⟩ := h
-  ⟨x.forgetSubsumed, hx.forgetSubsumed, hr.forgetSubsumed⟩
-
 end RelC
 
 /-! ### The log rows a pass can write -/

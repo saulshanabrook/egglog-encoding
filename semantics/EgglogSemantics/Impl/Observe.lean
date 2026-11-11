@@ -19,8 +19,20 @@ def observeWith (step : FDatabase → Schedule → Option FDatabase)
     Option ExecutionResult :=
   (step db P.schedule).map fun d => if holds d P.check then .ok d else .checkFailed
 
-/-- `Eval`, computed: the general interpreter with observable check failure. -/
-def observe (P : Program) : Option ExecutionResult :=
-  observeWith (execSchedule runFuel) FDatabase.holds FDatabase.empty P
+/-- The state with subsumption forgotten: what egglog's `check` currently sees
+(`check_facts` queries with `include_subsumed`). -/
+def FDatabase.forgetSubsumed (d : FDatabase) : FDatabase := { d with subsumed := [] }
+
+/-- The final check with egglog's current `check` semantics when `includeSubsumed` is set:
+the query runs on the state with subsumption forgotten. Otherwise `FDatabase.holds`. -/
+def FDatabase.holdsWith (includeSubsumed : Bool) (d : FDatabase) (q : Query) : Bool :=
+  bif includeSubsumed then d.forgetSubsumed.holds q else d.holds q
+
+/-- `Eval`, computed: the general interpreter with observable check failure. With
+`checkIncludesSubsumed` the final check sees subsumed rows, as egglog's `check` currently
+does; this compatibility mode serves differential testing, and the refinement theorems are
+about the default. -/
+def observe (P : Program) (checkIncludesSubsumed : Bool := false) : Option ExecutionResult :=
+  observeWith (execSchedule runFuel) (FDatabase.holdsWith checkIncludesSubsumed) FDatabase.empty P
 
 end Egglog

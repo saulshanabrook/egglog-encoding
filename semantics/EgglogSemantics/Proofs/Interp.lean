@@ -105,21 +105,20 @@ theorem exec_complete {p : Program} {out : Database}
 /-- The executable final check agrees with the existential specification query. -/
 theorem FDatabase.holds_iff_queryHolds {d : FDatabase} (he : d.Closed)
     (hi : d.IndexOk) (hj : d.IndexCurrent) (q : Query) :
-    d.holds q = true ↔ QueryHolds d.toDatabase.forgetSubsumed q := by
-  simpa only [FDatabase.holds, Bool.not_eq_true', FDatabase.toDatabase_forgetSubsumed] using
-    (queryHolds_iff_matchQuery he.forgetSubsumed hi.forgetSubsumed hj.forgetSubsumed q).symm
+    d.holds q = true ↔ QueryHolds d.toDatabase q := by
+  simpa only [FDatabase.holds, Bool.not_eq_true'] using (queryHolds_iff_matchQuery he hi hj q).symm
 
 /-- Command refinement and final-check agreement for the source fragment. -/
 theorem exec_programStep_check {p : Program} {e : FDatabase}
     (hp : p.schedule.monotoneB = true) (ho : p.OrderingFree)
     (hs : exec p = some e) :
     ∃ out, Reach Database.empty p.schedule out ∧ e.toDatabase.SameMeaning out ∧
-      (e.holds p.check = true ↔ QueryHolds out.forgetSubsumed p.check) := by
+      (e.holds p.check = true ↔ QueryHolds out p.check) := by
   obtain ⟨out, hout, hm⟩ := exec_programStep hp ho hs
   have he := InterpReady.empty.schedule hs
   exact ⟨out, hout, hm, (FDatabase.holds_iff_queryHolds he.closed he.indexOk
     he.indexCurrent p.check).trans
-    (SourceMeaning.queryHolds_iff he.wf.forgetSubsumed (hout.wf Database.WF.empty).forgetSubsumed hm.forgetSubsumed
+    (SourceMeaning.queryHolds_iff he.wf (hout.wf Database.WF.empty) hm
       (Database.hasReps_of_finite e.finite_toDatabase)
       (Database.hasReps_of_finite hout.finite_from_empty) ho.2)⟩
 
@@ -130,7 +129,7 @@ theorem observe_eq_exec (p : Program) : observe p = (exec p).map
 /-- A command simulation with check agreement gives both observable finite outcomes. -/
 theorem observe_eval_of_exec {p : Program} {r : ExecutionResult}
     (hcheck : ∀ e, exec p = some e → ∃ out, Reach Database.empty p.schedule out ∧
-      (e.holds p.check = true ↔ QueryHolds out.forgetSubsumed p.check))
+      (e.holds p.check = true ↔ QueryHolds out p.check))
     (hs : observe p = some r) :
     ∃ result, Eval Database.empty p result ∧ result.succeeded = r.succeeded := by
   rw [observe_eq_exec] at hs

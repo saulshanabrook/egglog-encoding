@@ -106,7 +106,7 @@ private def nested : Program :=
 #guard rejects (⟨Schedule.seqAll [.run [⟨[], [.expr (.var "unbound")]⟩]], []⟩)
   (.rule ⟨a, a⟩ 0 [] [])
 
--- The source fragment excludes both nonmonotone language constructs.
+-- The checker's fragment excludes both nonmonotone language constructs.
 #guard !sourceOk ⟨Schedule.seqAll [.run [⟨[], [.subsume "F" [a.toExpr]]⟩]], []⟩
 #guard !sourceOk ⟨Schedule.seqAll [.run [⟨[.ne a.toExpr b.toExpr], []⟩]], []⟩
 

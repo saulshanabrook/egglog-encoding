@@ -234,16 +234,6 @@ theorem mem_addTerms {db : Database} {ts : List Term} {t : Term} (h : t ∈ ts) 
   | nil => rfl
   | cons t ts ih => exact ih (db.addTerm t)
 
-@[simp] theorem forgetSubsumed_eqs (db : Database) :
-    db.forgetSubsumed.eqs = db.eqs := rfl
-
-@[simp] theorem forgetSubsumed_subsumed (db : Database) :
-    db.forgetSubsumed.subsumed = ∅ := rfl
-
-@[simp] theorem forgetSubsumed_eq_self {db : Database} (h : db.subsumed = ∅) :
-    db.forgetSubsumed = db := by
-  apply Database.ext <;> simp [forgetSubsumed, h]
-
 theorem live_of_subsumed_empty {db : Database} (h : db.subsumed = ∅) :
     db.live = {t | Cong db t t} := by
   ext t
@@ -294,8 +284,6 @@ namespace WF
 
 theorem addSubsumed {db : Database} (h : WF db) (X : Set Term) :
     WF (db.addSubsumed X) := ⟨h.litsIsolated⟩
-
-theorem forgetSubsumed {db : Database} (h : WF db) : WF db.forgetSubsumed := ⟨h.litsIsolated⟩
 
 theorem empty : WF Database.empty where
   litsIsolated := by simp [Database.empty, LitsIsolated]

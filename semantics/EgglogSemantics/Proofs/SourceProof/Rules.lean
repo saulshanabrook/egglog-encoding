@@ -5,8 +5,8 @@ import EgglogSemantics.Proofs.Source.Domain
 
 namespace Egglog.SourceProof
 
-/-- `sourceOk` is `Program.Fragment`, decided. -/
-theorem sourceOk_fragment {P : Program} (h : sourceOk P = true) : P.Fragment :=
+/-- `sourceOk` is the checker's `Fragment`, decided. -/
+theorem sourceOk_fragment {P : Program} (h : sourceOk P = true) : Fragment P :=
   of_decide_eq_true h
 
 /-- A checked head fact follows from a valid source rule firing, up to supported terms. -/
@@ -29,7 +29,7 @@ theorem ruleFacts_supported {P : Program} {db : Database}
     simp only [Bool.and_eq_true_iff, decide_eq_true_eq] at hchecks
     have hh : ∀ c ∈ premises, c.Holds db.completion :=
       fun c hc => (hp c hc).completion hw
-    have hn := (sourceOk_fragment hok).noMin.1 r (hmem r hr)
+    have hn := (sourceOk_fragment hok).orderingFree.1 r (hmem r hr)
     have hm : ∀ p ∈ r.query, p.monotoneB = true :=
       List.all_eq_true.mp (Bool.and_eq_true_iff.mp
         (List.all_eq_true.mp

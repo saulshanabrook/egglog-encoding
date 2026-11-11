@@ -1,0 +1,10 @@
+; Subsuming an absent row builds it. A congruent spelling built later stays hidden.
+; The live-row check fails; egglog's include-subsumed check succeeds.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(subsume (F (A)))
+(union (A) (B))
+(F (B))
+(check (F (B)))

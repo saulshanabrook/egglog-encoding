@@ -21,13 +21,6 @@ theorem Cong.iff_eq_and_mem_of_diag {db : Database} (hd : db.Diag) {a b : Term} 
   · rintro ⟨rfl, ha⟩
     exact Database.toCong ha
 
-/-- Marks only hide rows from lookups; forgetting them restores semantic existence. -/
-theorem Database.live_forgetSubsumed (db : Database) :
-    db.forgetSubsumed.live = {t | Cong db t t} := by
-  ext t
-  simp only [Database.live_of_subsumed_empty (db := db.forgetSubsumed) rfl, Set.mem_setOf_eq,
-    Cong.iff_of_eqs_eq (d := db.forgetSubsumed) (e := db) rfl]
-
 /-- Every mark names a term that semantically exists. -/
 def Database.MarksExist (db : Database) : Prop :=
   ∀ t ∈ db.subsumed, Cong db t t

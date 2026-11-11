@@ -9,18 +9,12 @@ namespace Egglog.Provenance
 
 variable {P : Program}
 
-/-- The check on the instrumented final state, with subsumption forgotten, holds exactly
-when it holds on the original's. -/
+/-- The check on the instrumented final state holds exactly when it holds on the
+original's: it is a keyed query of data names, like a rule query. -/
 theorem check_corr (hP : programOk P = true) (hk : Query.VarsKeyed P.check) {e d' : Database}
     (he : Inv P e) (hrel : RelC P e d') :
-    QueryHolds d'.forgetSubsumed P.check ↔ QueryHolds e.forgetSubsumed P.check := by
-  obtain ⟨x, hx, hr⟩ := hrel
-  rw [queryHolds_iff (hr.forgetSubsumed.shadow hP) hk (logFreeQuery_check hP)]
-  have hm : e.forgetSubsumed.SameMeaning x.forgetSubsumed := hx.forgetSubsumed
-  have ht : e.forgetSubsumed.terms = x.forgetSubsumed.terms :=
-    he.good.forgetSubsumed.terms_eq_of_sameMeaning hr.inv.good.forgetSubsumed hm
-  exact ⟨fun ⟨σ, hσ⟩ => ⟨σ, QueryMatches.sameMeaning hm.symm ht.symm hσ⟩,
-    fun ⟨σ, hσ⟩ => ⟨σ, QueryMatches.sameMeaning hm ht hσ⟩⟩
+    QueryHolds d' P.check ↔ QueryHolds e P.check :=
+  exists_congr fun _ => hrel.queryMatches_iff hP he hk (logFreeQuery_check hP)
 
 /-- The instrumented program's outcomes and divergence agree with the original's, and
 erasing the log from its final state gives the original's final state up to meaning. -/
@@ -36,7 +30,7 @@ theorem encode_correct {P P' : Program} (hI : Instrumentable P) (h : encode P = 
   have hinv : Inv P Database.empty := Inv.empty
   have hrel : RelC P Database.empty Database.empty := RelC.of_rel (Rel.empty P)
   have hchk : ∀ {e d' : Database}, Inv P e → RelC P e d' →
-      (QueryHolds d'.forgetSubsumed P'.check ↔ QueryHolds e.forgetSubsumed P.check) := by
+      (QueryHolds d' P'.check ↔ QueryHolds e P.check) := by
     intro e d' he hr
     rw [hcheck]
     exact check_corr hP hI.keyedCheck he hr

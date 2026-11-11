@@ -4,14 +4,14 @@ import EgglogSemantics.Proofs.Step
 namespace Egglog
 
 @[simp] theorem Eval.ok_iff {db : Database} {p : Program} :
-    Eval db p .ok ↔ ∃ d, Reach db p.schedule d ∧ QueryHolds d.forgetSubsumed p.check := by
+    Eval db p .ok ↔ ∃ d, Reach db p.schedule d ∧ QueryHolds d p.check := by
   constructor
   · intro h; cases h with | ok hs hq => exact ⟨_, hs, hq⟩
   · rintro ⟨d, hs, hq⟩; exact .ok hs hq
 
 @[simp] theorem Eval.failed_iff {db : Database} {p : Program} :
     Eval db p .checkFailed ↔
-      ∃ d, Reach db p.schedule d ∧ ¬ QueryHolds d.forgetSubsumed p.check := by
+      ∃ d, Reach db p.schedule d ∧ ¬ QueryHolds d p.check := by
   constructor
   · intro h; cases h with | checkFailed hs hq => exact ⟨_, hs, hq⟩
   · rintro ⟨d, hs, hq⟩; exact .checkFailed hs hq

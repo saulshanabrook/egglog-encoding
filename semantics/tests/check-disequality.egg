@@ -1,0 +1,15 @@
+; A disequality in the final check, after a saturation and a union: the check is a query
+; like a rule's, so it may ask for two classes that differ.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor C () Math)
+(constructor Edge (Math Math) Math)
+(constructor Path (Math Math) Math)
+(Edge (A) (B))
+(Edge (B) (C))
+(rule ((Edge x y)) ((Path x y)))
+(rule ((Path x y) (Edge y z) (!= x z)) ((Path x z)))
+(run-schedule (saturate (run)))
+(union (A) (C))
+(check (Path x y) (!= x y) (= x (A)) (= (A) (C)))

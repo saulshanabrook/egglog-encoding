@@ -1,0 +1,11 @@
+; The final check must not find another spelling of a subsumed row.
+; The live-row check fails; egglog's include-subsumed check succeeds.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(F (A))
+(F (B))
+(union (A) (B))
+(subsume (F (A)))
+(check (F (B)))
