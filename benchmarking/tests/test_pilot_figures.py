@@ -419,6 +419,11 @@ def test_pilot_catalog_preserves_full_corpus_complete_cases_and_reference_scope(
     assert experiments["disequality-proofs"]["reference"] == "egg-nee-proof-extraction"
     logical = files[experiments["disequality-proofs"]["files"][0]]
     assert logical.for_binary("egg-nee-proofs").absolute_path.suffix == ".in"
+    batax = files["benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"]
+    checked = batax.exclusion_for("slotted-proof-testing", memory_limit_bytes=17179869184)
+    assert checked is not None and checked.reason.startswith("Defer the full BATAX second-phase source proof")
+    timed = batax.exclusion_for("slotted-proof-extraction", memory_limit_bytes=17179869184)
+    assert timed is not None and "encoded multipattern mode" in timed.reason
     spec = TREATMENT_SPECS["egg-nee-proof-extraction"]
     assert spec.allocator_limit and spec.build_args[-4:] == ("--features", "proof-driver", "--bin", "egg-nee-proofs")
 

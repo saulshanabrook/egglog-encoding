@@ -133,7 +133,12 @@ def load_experiments(path: Path) -> tuple[dict[str, Any], dict[str, FileSpec]]:
                                 dict.fromkeys(
                                     (
                                         *rule.treatments,
-                                        *(name for name, original in aliases.items() if original in rule.treatments),
+                                        *(
+                                            name
+                                            for name, original in aliases.items()
+                                            if original in rule.treatments
+                                            and not any(name in explicit.treatments for explicit in file.exclusions)
+                                        ),
                                     )
                                 )
                             ),
