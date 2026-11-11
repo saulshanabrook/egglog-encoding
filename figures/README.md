@@ -29,9 +29,9 @@ After inspecting the outputs, copy the `eval` folder into the manuscript's
 `figures/` directory with the command above. This preserves existing
 `figures/eval/` PDF and TeX include paths. Generation does not require the paper
 repository. PDF and TeX files are manuscript inputs with no JSON runtime
-dependency; bound specifications retain the original grouped-cache URL and need
-that cache for rerendering. Results JSON includes the selected observations and
-their provenance. `--output-dir PATH` overrides the common output folder;
+dependency. Bound specifications and results JSON retain the selected observations
+and their provenance for portable `--reuse-from DIR --no-runs` replay, without
+the original working cache. `--output-dir PATH` overrides the common output folder;
 relative overrides resolve from the invocation directory.
 
 A subset invocation updates only its selected figure filenames. Outputs from
