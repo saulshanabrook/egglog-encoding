@@ -313,8 +313,8 @@ differently between an edge and its restatement.
        (RenamesToLeader a m2 c)
        (!= a c) (!= a b)
        (= csa (FreeVars a)) (= csb (FreeVars b)) (= csc (FreeVars c))
-       (= m1 (compose csa (compose m1 csb)))
-       (= m2 (compose csa (compose m2 csc)))
+       (guard (map-restriction-eq m1 csa csb))
+       (guard (map-restriction-eq m2 csa csc))
        (= (ordering-max b c) b)
        (guard (or (bool-!= b c)
                   (and (bool= b c) (bool-!= m1 m2) (bool= (ordering-max m1 m2) m1)))))
@@ -1033,6 +1033,10 @@ Three of the primitives do more than their signature says, for the same reason.
 `node-shape` walks the product of the children's groups once and returns the canonical
 edges, the renaming back, and the node's own symmetries together, so the key and the
 symmetries cost one walk, with `_shapeof_F` carrying both to their consumers.
+
+`map-restriction-eq m range domain` checks `m = range ∘ m ∘ domain` without
+materializing either intermediate composition. Leader reconciliation keeps the
+same pairwise rule and ordering while avoiding those temporary maps.
 
 Interned frames share immutable storage, so reading a frame in a primitive does
 not copy its partition or slot maps. `vec-get` and `vec-length` borrow the vector's

@@ -4,6 +4,20 @@ use super::terms::*;
 use super::*;
 use std::collections::BTreeMap;
 
+/// Compare a restricted composition without allocating either intermediate map.
+/// This also handles non-identity maps, so it has exactly the semantics of
+/// `map == range ∘ map ∘ domain`, not an unchecked slot-set assumption.
+fn restriction_eq<T: Copy + Ord>(
+    map: &BTreeMap<T, T>,
+    range: &BTreeMap<T, T>,
+    domain: &BTreeMap<T, T>,
+) -> bool {
+    domain
+        .iter()
+        .filter_map(|(from, to)| Some((from, range.get(map.get(to)?)?)))
+        .eq(map.iter())
+}
+
 /// Decode a renaming's entries as slot numbers.
 fn slot_map(bv: &BaseValues, m: &BTreeMap<Value, Value>) -> Renaming {
     m.iter()
@@ -129,6 +143,15 @@ fn lit_binding(carried: bool) -> impl Fn(&TermDag, &[TermId]) -> Option<Binding>
 
 #[rustfmt::skip]
 pub(super) fn register_map(eg: &mut EGraph, arc: ArcSort) {
+    add_primitive_with_validator!(eg, "map-restriction-eq" = |m: @MapContainer (arc), range: @MapContainer (arc), domain: @MapContainer (arc)| -> bool {
+        restriction_eq(&m.data, &range.data, &domain.data)
+    }, |dag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [m, range, domain] = args else { return None };
+        let m = renaming_from_term(dag, *m)?;
+        let range = renaming_from_term(dag, *range)?;
+        let domain = renaming_from_term(dag, *domain)?;
+        Some(dag.lit(Literal::Bool(restriction_eq(&m.0, &range.0, &domain.0))))
+    });
     add_primitive_with_validator!(eg, "map-intersect" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_intersect(&xs.data, &ys.data)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(Renaming(map_intersect(&a.0,&b.0))) }));
     add_primitive_with_validator!(eg, "compose-total" = |a: @MapContainer (arc), b: @MapContainer (arc)| -?> @MapContainer (arc) { Some(map_container(compose_total(&a.data, &b.data)?)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(Renaming(compose_total(&a.0,&b.0)?)) }));
     add_primitive_with_validator!(eg, "map-image" = |a: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_image(&a.data)) }, renamings_validator(|ms| { let [a] = ms else { return None }; Some(Renaming(map_image(&a.0))) }));
@@ -421,4 +444,38 @@ fn map_intersect<T: Copy + Ord>(a: &BTreeMap<T, T>, b: &BTreeMap<T, T>) -> BTree
         .filter(|(k, v)| b.get(k) == Some(v))
         .map(|(k, v)| (*k, *v))
         .collect()
+}
+
+#[cfg(test)]
+mod restriction_tests {
+    use super::*;
+
+    #[test]
+    fn restriction_predicate_matches_materialized_compositions() {
+        // All partial maps on two slots, including non-injections and maps
+        // that are not identity slot sets.
+        let maps: Vec<BTreeMap<i64, i64>> = (0..9)
+            .map(|mut code| {
+                [-2, 7]
+                    .into_iter()
+                    .filter_map(|key| {
+                        let digit = code % 3;
+                        code /= 3;
+                        (digit != 0).then(|| (key, [-2, 7][digit - 1]))
+                    })
+                    .collect()
+            })
+            .collect();
+        for m in &maps {
+            for range in &maps {
+                for domain in &maps {
+                    assert_eq!(
+                        restriction_eq(m, range, domain),
+                        *m == compose(range, &compose(m, domain)),
+                        "map={m:?}, range={range:?}, domain={domain:?}"
+                    );
+                }
+            }
+        }
+    }
 }
