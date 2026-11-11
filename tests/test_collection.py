@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from rich.console import Console
@@ -743,20 +743,24 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     collection.collect_rows(store, plan, 120, console)
 
     assert stream.getvalue().splitlines() == [
-        "  [1/3] file.egg · off · 1/3: succeeded after 0.250s",
-        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context",
-        "  [3/3] file.egg · off · 3/3: timed out after 120 seconds",
+        "abc123 · Round 1/3",
+        "  [1/1] file.egg · off: succeeded after 0.250s",
+        "abc123 · Round 2/3",
+        "  [1/1] file.egg · off: failed after 0.500s: bad rule more context",
+        "abc123 · Round 3/3",
+        "  [1/1] file.egg · off: timed out after 120 seconds",
         "abc123: collected 3 fresh runs · 1 successful, 1 failed, 1 timed out",
     ]
     assert store.row_count == 3
 
 
-@pytest.mark.parametrize("width", [80, 120])
+@pytest.mark.parametrize("width", [80, 119, 120, 160, 200])
 def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     width: int,
 ) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
     target = make_target(binary_path=ROOT / "egglog-experimental")
     run = planned_run(required=2)
     plan = collection.CollectionPlan(target, (run,))
@@ -788,6 +792,112 @@ def test_terminal_progress_keeps_success_transient_but_surfaces_failure(
     assert "succeeded after" not in rendered
     assert "file.egg" in rendered
     assert "off" in rendered
+    assert rendered.count("abc123 · Round 1/2") == 1
+    assert rendered.count("abc123 · Round 2/2") == 1
+    assert "completed" in rendered
     assert "ETA" not in rendered
     assert "failed after 0.500s: bad rule" in rendered
     assert "abc123: collected 2 fresh runs · 1 successful, 1 failed" in rendered
+
+
+@pytest.mark.parametrize("width", [80, 119, 120, 160, 200])
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("cache_state", ["cached", "partial", "fresh"])
+def test_round_progress_counts_only_remaining_work_and_preserves_execution_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    width: int,
+    terminal: bool,
+    cache_state: str,
+) -> None:
+    monkeypatch.setenv("TERM", "xterm-256color")
+    target = make_target(target_label="#95", binary_path=ROOT / "egglog-experimental")
+    files = tuple(planned_run(filename=name).file for name in ("parameter-analysis.egg", "math.egg"))
+    endpoints = (endpoint(target, "off"), endpoint(target, "proofs"))
+    identities = tuple((file, selected) for file in files for selected in endpoints)
+    cached_counts = {"cached": (3, 3, 3, 3), "partial": (3, 2, 1, 0), "fresh": (0, 0, 0, 0)}[cache_state]
+    round_indices = {
+        "cached": (),
+        "partial": ((1, 2, 3), (2, 3), (3,)),
+        "fresh": ((0, 1, 2, 3),) * 3,
+    }[cache_state]
+    store = ReportStore(tmp_path / "report.jsonl")
+    for (file, selected), count in zip(identities, cached_counts, strict=True):
+        for index in range(count):
+            record = make_record(
+                index,
+                started_at=f"2026-10-02T00:00:0{index}Z",
+                file_sha256=file.sha256,
+                treatment=selected.treatment,
+            )
+            record["file_path"] = file.display_path
+            store.append(record)
+    before = store.path.read_bytes() if store.path.exists() else b""
+    plan = collection.build_collection_plan(store, target, endpoints, files, 3, 120, False)
+    progress_instances: list[collection.Progress] = []
+    original_progress = collection.Progress
+
+    def observe_progress(*args: Any, **kwargs: Any) -> collection.Progress:
+        progress = original_progress(*args, auto_refresh=False, **kwargs)
+        progress_instances.append(progress)
+        return progress
+
+    observed: list[tuple[str, models.Treatment, float, float | None]] = []
+
+    def run_process(
+        _binary: Path,
+        _root: Path,
+        file: models.FileSpec,
+        treatment: models.Treatment,
+        _timeout: int,
+        _encoding: models.DisequalityEncoding,
+    ) -> collection.ProcessObservation:
+        progress = progress_instances[0]
+        assert len(progress.tasks) == 1
+        task = progress.tasks[0]
+        assert task.visible
+        observed.append((file.display_path, treatment, task.completed, task.total))
+        progress.refresh()
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=0.25), None),
+            make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "Progress", observe_progress)
+    monkeypatch.setattr(collection, "run_process", run_process)
+    stream = io.StringIO()
+    console = Console(file=stream, width=width, color_system=None, force_terminal=terminal)
+    collection.emit_collection_plan(console, plan)
+    collection.collect_rows(store, plan, 120, console)
+
+    assert observed == [
+        (identities[index][0].display_path, identities[index][1].treatment, completed, len(indices))
+        for indices in round_indices
+        for completed, index in enumerate(indices)
+    ]
+    assert store.row_count == 12
+    assert store.path.read_bytes().startswith(before)
+    rendered = stream.getvalue()
+    if not round_indices:
+        assert not progress_instances
+        assert rendered == "#95: 12/12 runs cached · nothing to collect\n"
+        assert store.path.read_bytes() == before
+        return
+    assert len(progress_instances) == 1
+    task = progress_instances[0].tasks[0]
+    assert task.completed == task.total == len(round_indices[-1])
+    for round_number in range(1, len(round_indices) + 1):
+        assert rendered.count(f"#95 · Round {round_number}/3") == 1
+    assert rendered.count("Round ") == 3
+    assert "/12 completed" not in rendered and "/6 completed" not in rendered
+    assert f"#95: collected {len(observed)} fresh runs · {len(observed)} successful" in rendered
+    if terminal:
+        assert "completed" in rendered
+        assert "succeeded after" not in rendered
+    else:
+        assert [line for line in rendered.splitlines() if line.startswith("  [")] == [
+            f"  [{completed + 1}/{len(indices)}] {identities[index][0].display_path} · "
+            f"{identities[index][1].treatment}: succeeded after 0.250s"
+            for indices in round_indices
+            for completed, index in enumerate(indices)
+        ]

@@ -18,7 +18,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     Progress,
     TextColumn,
     TimeElapsedColumn,
@@ -398,15 +397,13 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
 def collection_label(
     file_spec: FileSpec,
     treatment: Treatment,
-    round_index: int,
-    rounds: int,
     disequality_encoding: DisequalityEncoding = "nee",
 ) -> str:
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
     encoding = f"/{disequality_encoding}" if disequality_encoding != "nee" else ""
-    return f"{filename} · {treatment}{encoding} · {round_index + 1}/{rounds}"
+    return f"{filename} · {treatment}{encoding}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -503,7 +500,6 @@ def collect_rows(
         return
     total_observations = plan.total_missing_observations
     max_deficit = max(run.missing_observations for run in plan.runs)
-    completed_observations = 0
     result_counts: Counter[Status] = Counter()
 
     with Progress(
@@ -518,7 +514,7 @@ def collect_rows(
             pulse_style="cyan",
             table_column=Column(no_wrap=True),
         ),
-        MofNCompleteColumn(table_column=Column(no_wrap=True)),
+        TextColumn("{task.completed:.0f}/{task.total:.0f} completed", table_column=Column(no_wrap=True)),
         TimeElapsedColumn(table_column=Column(no_wrap=True)),
         console=console,
         transient=True,
@@ -526,19 +522,20 @@ def collect_rows(
     ) as progress:
         process_task = progress.add_task(
             "Collecting",
-            total=total_observations,
+            total=0,
             current="starting",
+            visible=False,
         )
         for round_index in range(max_deficit):
-            for run in plan.runs:
-                if round_index >= run.missing_observations:
-                    continue
-                observation_number = completed_observations + 1
+            round_runs = tuple(run for run in plan.runs if round_index < run.missing_observations)
+            if not round_runs:
+                continue
+            console.print(Text(f"{target.display_label} · Round {round_index + 1}/{max_deficit}"))
+            progress.reset(process_task, total=len(round_runs), current="starting", visible=True)
+            for observation_number, run in enumerate(round_runs, 1):
                 label = collection_label(
                     run.file,
                     run.treatment,
-                    round_index,
-                    run.missing_observations,
                     run.disequality_encoding,
                 )
                 progress.update(
@@ -568,7 +565,6 @@ def collect_rows(
                         observation=observation,
                     )
                 )
-                completed_observations += 1
                 result_counts[observation.result.status] += 1
                 progress.update(
                     process_task,
@@ -578,7 +574,7 @@ def collect_rows(
                 if not console.is_terminal or observation.result.status != "success":
                     progress.console.print(
                         Text(
-                            f"  [{observation_number}/{total_observations}] {label}: "
+                            f"  [{observation_number}/{len(round_runs)}] {label}: "
                             f"{format_timing_result(observation.result)}"
                         )
                     )
