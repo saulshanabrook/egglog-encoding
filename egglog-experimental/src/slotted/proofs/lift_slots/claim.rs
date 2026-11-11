@@ -2,221 +2,204 @@
 
 use super::*;
 
-impl SlotLifter<'_> {
-    /// Reframe `p`'s content onto `target`, renaming redundant slots at the
-    /// occurrences where a plain bijection fails.
-    pub(super) fn fit(
+impl SlotLifter<'_, NativeProofs<'_>> {
+    /// Align a built head using the supports of its input occurrences. The
+    /// shared coordinates are determined by supported slots and written slot
+    /// arguments; each input's remaining names are transported independently.
+    pub(super) fn align_occurrences(
         &mut self,
-        p: ViewId,
+        proof: ViewId,
         target: TermId,
-        occ: &HashMap<Vec<usize>, Occurrence>,
+        occurrences: &HashMap<Vec<usize>, Occurrence>,
+        reframe: bool,
     ) -> LiftResult<ViewId> {
-        let mut p = self.content_form(p);
-        for _ in 0..64 {
-            let content = self.out.edge(p).rhs;
-            if content == target {
-                return Ok(p);
-            }
-            let mut pairs: Vec<(Vec<usize>, i64, i64)> = vec![];
-            self.slot_pairs(content, target, &mut vec![], &mut pairs)?;
-            // a bijection where it is one; a conflict names both positions, since
-            // either may be the one holding a redundant slot
-            let mut beta: BTreeMap<i64, (i64, Vec<usize>)> = BTreeMap::new();
-            let mut inverse_beta: BTreeMap<i64, (i64, Vec<usize>)> = BTreeMap::new();
-            let mut conflict: Option<Vec<(Vec<usize>, i64, i64)>> = None;
-            for (path, x, t) in &pairs {
-                match (beta.get(x), inverse_beta.get(t)) {
-                    (Some((t0, path0)), _) if t0 != t => {
-                        conflict = Some(vec![(path.clone(), *x, *t), (path0.clone(), *x, *t0)]);
-                        break;
+        let mut proof = self.content_form(proof);
+        let mut content = self.out.edge(proof).rhs;
+        if content == target {
+            return Ok(proof);
+        }
+        let requested = target;
+        let mut target = target;
+        if !reframe {
+            (content, target) =
+                self.program
+                    .canonical_binders(&mut self.out.term_dag, content, target);
+            let ordinary = self.out.proof(proof);
+            let ordinary = self.out.alpha(ordinary, content);
+            proof = self.out.plain(ordinary);
+        }
+        if reframe && let Some(coordinates) = self.term_coordinates(content, target) {
+            let proof = self.out.reframe(proof, coordinates);
+            let renaming = self.out.edge(proof).renaming.clone();
+            let actual = rename(&mut self.out.term_dag, &renaming, target);
+            let ordinary = self.out.proof(proof);
+            let ordinary = self.out.alpha(ordinary, actual);
+            return Ok(self.out.view(ordinary, target, renaming));
+        }
+        let mut opaque = HashMap::default();
+        let mut coordinates = Vec::new();
+        let mut pending = vec![(content, target, Vec::new())];
+        while let Some((from, to, path)) = pending.pop() {
+            if let Some(occurrence) = occurrences.get(&path) {
+                let class = self.dec(occurrence.cls)?;
+                let (basis, class_coordinates) = match occurrence.row {
+                    Some((_, row)) => {
+                        let row = self.out.edge(row);
+                        (row.rhs, row.renaming.inverse())
                     }
-                    (None, Some((x0, path0))) if x0 != x => {
-                        conflict = Some(vec![(path.clone(), *x, *t), (path0.clone(), *x0, *t)]);
-                        break;
-                    }
-                    _ => {
-                        beta.insert(*x, (*t, path.clone()));
-                        inverse_beta.insert(*t, (*x, path.clone()));
-                    }
-                }
-            }
-            let beta: BTreeMap<i64, i64> = beta.iter().map(|(k, (v, _))| (*k, *v)).collect();
-            let inverse_beta: BTreeMap<i64, i64> =
-                inverse_beta.iter().map(|(k, (v, _))| (*k, *v)).collect();
-            let Some(candidates) = conflict else {
-                let sigma = Renaming::completing(beta.into_iter()).ok_or("non-bijective fit")?;
-                let r = self.out.reframe(p, sigma);
-                let got = self.out.edge(r).rhs;
-                if got != target {
-                    return Err(format!(
-                        "fitting {} onto {} produced {}",
-                        self.out_string(content),
-                        self.out_string(target),
-                        self.out_string(got)
-                    ));
-                }
-                return Ok(self.note(r));
-            };
-            // the names each position may take: the target's, the slot already
-            // sent to the target's, and only then a fresh one -- a fresh name is
-            // progress only where nothing names the slot's destination
-            let mut attempts: Vec<(Vec<usize>, i64, i64)> = vec![];
-            for (path, x, t) in &candidates {
-                if *t != *x {
-                    attempts.push((path.clone(), *x, *t));
-                }
-                if let Some(&x0) = inverse_beta.get(t)
-                    && x0 != *x
+                    None => (class, Renaming::identity()),
+                };
+                if let Some(from) = self.term_coordinates(basis, from)
+                    && let Some(to) = self.term_coordinates(basis, to)
                 {
-                    attempts.push((path.clone(), *x, x0));
+                    let mut slots = self.program.free_slots(&self.out.term_dag, class);
+                    if let Some(support) = occurrence.support {
+                        let support = self.support_slots(support)?;
+                        slots.retain(|slot| support.contains(slot));
+                    }
+                    coordinates.extend(slots.into_iter().map(|slot| {
+                        (
+                            from.apply(class_coordinates.apply(slot)),
+                            to.apply(class_coordinates.apply(slot)),
+                        )
+                    }));
+                    opaque.insert(path, *occurrence);
+                    continue;
                 }
             }
-            for (path, x, _) in &candidates {
-                let f = self.fresh();
-                attempts.push((path.clone(), *x, f));
-            }
-            let mut errors: Vec<String> = vec![];
-            let mut found: Option<(Vec<usize>, ViewId)> = None;
-            let mut any = false;
-            'attempts: for (path, x, want) in attempts {
-                // the occurrences holding this position, innermost first: the
-                // slot may be redundant in any of them, or a symmetry of one may
-                // move it
-                let mut occ_path = path.clone();
-                loop {
-                    if let Some(&cls) = occ.get(&occ_path) {
-                        any = true;
-                        let o = self.subterm_at(content, &occ_path)?;
-                        if all_slots(&self.out.term_dag, o).contains(&want) {
-                            match self.occurrence_symmetry(cls, o, x, want) {
-                                Ok(sym) => {
-                                    found = Some((occ_path, sym));
-                                    break 'attempts;
-                                }
-                                Err(e) => errors.push(format!(
-                                    "slot ${x} of {} would have to become ${want}, which it also holds ({e})",
-                                    self.out_string(o)
-                                )),
-                            }
-                        } else {
-                            match self.occurrence_cert(cls, o, x, want) {
-                                Ok(cert) => {
-                                    found = Some((occ_path, cert));
-                                    break 'attempts;
-                                }
-                                Err(e) => errors.push(e),
-                            }
-                        }
-                    }
-                    if occ_path.pop().is_none() {
-                        break;
-                    }
+            match (self.out.term_dag.get(from), self.out.term_dag.get(to)) {
+                (Term::App(a, left), Term::App(b, right))
+                    if a == b && left.len() == right.len() =>
+                {
+                    pending.extend(left.iter().zip(right).enumerate().map(|(i, (&a, &b))| {
+                        let mut path = path.clone();
+                        path.push(i);
+                        (a, b, path)
+                    }));
                 }
-            }
-            if !any {
-                errors.push("no occurrence holds the conflicting slots".to_string());
-            }
-            let Some((occ_path, cert)) = found else {
-                return Err(format!(
-                    "fitting {} onto {}: {}",
-                    self.out_string(content),
-                    self.out_string(target),
-                    errors.join("; ")
-                ));
-            };
-            if occ_path.is_empty() {
-                // the whole content: compose directly
-                p = self.trans(p, cert)?;
-                p = self.content_form(p);
-            } else {
-                p = self.congr_at(p, &occ_path, cert)?;
-                p = self.content_form(p);
-            }
-            if self.out.edge(p).rhs == content {
-                return Err(format!(
-                    "fitting {} onto {}: a certificate changed nothing: {} at {occ_path:?}\n{}",
-                    self.out_string(content),
-                    self.out_string(target),
-                    self.prop_string(cert),
-                    self.out.proof_to_string(cert)
-                ));
+                (Term::Var(_), Term::Var(_)) => {
+                    let a = slot_of(&self.out.term_dag, from).ok_or("non-slot in built head")?;
+                    let b = slot_of(&self.out.term_dag, to).ok_or("non-slot in encoded head")?;
+                    coordinates.push((a, b));
+                }
+                (a, b) if a == b => {}
+                _ => return Err("constructed head and source instance differ in shape".into()),
             }
         }
-        let content = self.out.edge(p).rhs;
-        Err(format!(
-            "fitting {} onto {} did not converge",
-            self.out_string(content),
-            self.out_string(target)
-        ))
+        let coordinates = Renaming::completing(coordinates)
+            .ok_or("constructed head identifies distinct supported coordinates")?;
+        if reframe {
+            proof = self.out.reframe(proof, coordinates);
+        } else if !coordinates.is_identity() {
+            return Err(format!(
+                "recorded occurrence supports require a nonidentity coordinate change {coordinates}"
+            ));
+        }
+        let mut paths: Vec<_> = opaque.keys().collect();
+        paths.sort();
+        for path in paths {
+            let from = self.subterm_at(self.out.edge(proof).rhs, path)?;
+            let to = self.subterm_at(target, path)?;
+            if from == to {
+                continue;
+            }
+            let occurrence = opaque[path];
+            let class = self.dec(occurrence.cls)?;
+            let (basis, class_coordinates) = match occurrence.row {
+                Some((_, row)) => {
+                    let row = self.out.edge(row);
+                    (row.rhs, row.renaming.inverse())
+                }
+                None => (class, Renaming::identity()),
+            };
+            let from_coordinates = self
+                .term_coordinates(basis, from)
+                .ok_or("built occurrence differs from its input class")?;
+            let to_coordinates = self
+                .term_coordinates(basis, to)
+                .ok_or("encoded occurrence differs from its input class")?;
+            let permutation = class_coordinates
+                .inverse()
+                .compose(&from_coordinates.inverse())
+                .compose(&to_coordinates)
+                .compose(&class_coordinates);
+            let mut certificate =
+                if permutation.moves_any(&self.program.free_slots(&self.out.term_dag, class)) {
+                    let support = occurrence
+                        .support
+                        .ok_or("built input lacks its recorded support")?;
+                    self.support_permutation(support, occurrence.cls, &permutation)?
+                } else {
+                    let proof = self.reflexive(class)?;
+                    let target = rename(&mut self.out.term_dag, &permutation, class);
+                    let proof = self.out.proof(proof);
+                    let proof = self.out.alpha(proof, target);
+                    self.out.view(proof, class, permutation)
+                };
+            if let Some((_, row)) = occurrence.row {
+                let back = self.out.sym(row);
+                certificate = self.transport(certificate, back)?;
+            }
+            certificate = self.rename_both(certificate, &from_coordinates);
+            let mut ordinary = self.out.proof(certificate);
+            if self.out.proposition(ordinary).lhs != from {
+                let reverse = self.out.plain(ordinary);
+                let reverse = self.out.sym(reverse);
+                ordinary = self.out.proof(reverse);
+                ordinary = self.out.alpha(ordinary, from);
+                let reverse = self.out.plain(ordinary);
+                let reverse = self.out.sym(reverse);
+                ordinary = self.out.proof(reverse);
+            }
+            if self.out.proposition(ordinary).rhs != to {
+                ordinary = self.out.alpha(ordinary, to);
+            }
+            let certificate = self.out.plain(ordinary);
+            proof = if path.is_empty() {
+                self.trans(proof, certificate)?
+            } else {
+                self.congr_at(proof, path, certificate)?
+            };
+        }
+        if self.out.edge(proof).rhs != target {
+            return Err("recorded input transports did not produce the constructed head".into());
+        }
+        if !reframe && target != requested {
+            let ordinary = self.out.proof(proof);
+            let ordinary = self.out.alpha(ordinary, requested);
+            proof = self.out.plain(ordinary);
+        }
+        Ok(proof)
     }
 
-    /// Rename the free slots of `p`'s content, one certificate at a time, until
-    /// they are the target's; bound names are left to the final coordinate alignment. Fails where
-    /// a free slot that differs is not redundant.
+    pub(super) fn term_coordinates(&mut self, from: TermId, to: TermId) -> Option<Renaming> {
+        if self.term_shapes.get(&self.out.term_dag, from)
+            != self.term_shapes.get(&self.out.term_dag, to)
+        {
+            return None;
+        }
+        term_renaming(&self.out.term_dag, &[(from, to)]).or_else(|| {
+            self.program
+                .renaming_between(&mut self.out.term_dag, from, to)
+        })
+    }
+
+    pub(super) fn fit(
+        &mut self,
+        proof: ViewId,
+        target: TermId,
+        occurrences: &HashMap<Vec<usize>, Occurrence>,
+    ) -> LiftResult<ViewId> {
+        self.align_occurrences(proof, target, occurrences, true)
+    }
+
     pub(super) fn fit_content(
         &mut self,
-        p: ViewId,
+        proof: ViewId,
         target: TermId,
-        occ: &HashMap<Vec<usize>, Occurrence>,
+        occurrences: &HashMap<Vec<usize>, Occurrence>,
     ) -> LiftResult<ViewId> {
-        let mut p = self.content_form(p);
-        for _ in 0..64 {
-            let content = self.out.edge(p).rhs;
-            let free = self.program.free_slots(&self.out.term_dag, content);
-            let mut pairs: Vec<(Vec<usize>, i64, i64)> = vec![];
-            self.slot_pairs(content, target, &mut vec![], &mut pairs)?;
-            let differing: Vec<&(Vec<usize>, i64, i64)> = pairs
-                .iter()
-                .filter(|(_, x, t)| x != t && free.contains(x))
-                .collect();
-            let slots = all_slots(&self.out.term_dag, content);
-            // a slot whose target name is free to take, else any (through a
-            // fresh name, to break a cycle)
-            let chosen = differing
-                .iter()
-                .find(|(_, _, t)| !slots.contains(t))
-                .or(differing.first())
-                .cloned()
-                .cloned();
-            let Some((path, x, t)) = chosen else {
-                return self.fit(p, target, occ);
-            };
-            let mut occ_path = path.clone();
-            let mut errors = Vec::new();
-            let (sub, cert) = loop {
-                if let Some(&o) = occ.get(&occ_path) {
-                    let sub = self.subterm_at(content, &occ_path)?;
-                    let want = if all_slots(&self.out.term_dag, sub).contains(&t) {
-                        self.fresh()
-                    } else {
-                        t
-                    };
-                    match self.occurrence_cert(o, sub, x, want) {
-                        Ok(cert) => break (sub, cert),
-                        Err(error) => errors.push(error),
-                    }
-                }
-                if occ_path.pop().is_none() {
-                    return Err(errors.join("; "));
-                }
-            };
-            log::debug!("content fit certificate: {}", self.prop_string(cert));
-            p = if occ_path.is_empty() {
-                self.trans(p, cert)?
-            } else {
-                self.congr_at(p, &occ_path, cert)?
-            };
-            p = self.content_form(p);
-            if self.out.edge(p).rhs == content {
-                return Err(format!(
-                    "the certificate for ${x} in {} changed nothing: {}\n{}",
-                    self.out_string(sub),
-                    self.prop_string(cert),
-                    self.out.proof_to_string(cert)
-                ));
-            }
-        }
-        Err("content fitting did not converge".into())
+        self.align_occurrences(proof, target, occurrences, false)
     }
 
     pub(super) fn subterm_at(&self, term: TermId, path: &[usize]) -> LiftResult<TermId> {
@@ -230,59 +213,17 @@ impl SlotLifter<'_> {
         Ok(t)
     }
 
-    fn slot_pairs(
-        &self,
-        a: TermId,
-        b: TermId,
-        path: &mut Vec<usize>,
-        out: &mut Vec<(Vec<usize>, i64, i64)>,
-    ) -> LiftResult<()> {
-        let dag = &self.out.term_dag;
-        match (dag.get(a).clone(), dag.get(b).clone()) {
-            (Term::Var(_), Term::Var(_)) => {
-                match (
-                    super::super::terms::slot_of(dag, a),
-                    super::super::terms::slot_of(dag, b),
-                ) {
-                    (Some(x), Some(y)) => {
-                        out.push((path.clone(), x, y));
-                        Ok(())
-                    }
-                    _ if a == b => Ok(()),
-                    _ => Err(format!(
-                        "cannot fit {} to {}",
-                        self.out_string(a),
-                        self.out_string(b)
-                    )),
-                }
-            }
-            (Term::Lit(x), Term::Lit(y)) if x == y => Ok(()),
-            (Term::App(h1, c1), Term::App(h2, c2)) if h1 == h2 && c1.len() == c2.len() => {
-                for (j, (x, y)) in c1.iter().zip(c2.iter()).enumerate() {
-                    path.push(j);
-                    self.slot_pairs(*x, *y, path, out)?;
-                    path.pop();
-                }
-                Ok(())
-            }
-            _ => Err(format!(
-                "cannot fit {} to {}",
-                self.out_string(a),
-                self.out_string(b)
-            )),
-        }
-    }
-
     pub(super) fn claim(
         &mut self,
         root: ProofId,
         claim: &Claim,
         query: &ProofNames,
         roots: [&str; 2],
+        patterns: [TermId; 2],
     ) -> LiftResult<ViewId> {
-        let frame = matched_frame(self.egg, root, query)?;
+        let frame = matched_frame(self.egg.store, root, query)?;
         let coset = Self::coset_symmetry(&frame, roots)?;
-        let root = query_firing(self.egg, root, &query.frame)?;
+        let root = query_firing(self.egg.store, root, &query.frame)?;
         let proof = self.egg.get(root).clone();
         let Justification::Rule {
             premise_proofs,
@@ -302,13 +243,17 @@ impl SlotLifter<'_> {
         let cls_a = self.sub(&substitution, class_a?)?;
         let cls_b = self.sub(&substitution, class_b?)?;
         let bridges = HashMap::default();
+        let selected = self.selected_readings(root, None, &substitution)?;
         let side = |i: usize| -> LiftResult<ExpandCtx<'_>> {
             let names = query.patterns.get(i).ok_or("missing claim pattern names")?;
             Ok(ExpandCtx {
+                firing: root,
+                root_binding: query.classes.get(roots[i]).cloned(),
                 prems: &premise_proofs,
                 subst: &substitution,
-                classes: query.classes.clone(),
                 readings: query.readings.clone(),
+                labels: &query.atoms,
+                selected: &selected,
                 names: names.iter().cloned().collect(),
                 bridges: &bridges,
             })
@@ -319,19 +264,23 @@ impl SlotLifter<'_> {
         let src_b = self
             .program
             .refresh_binders(&mut self.out.term_dag, claim.rhs);
+        let patterns = patterns.map(|pattern| {
+            self.program
+                .refresh_binders(&mut self.out.term_dag, pattern)
+        });
         let ctx_a = side(0)?;
         let Expansion {
             proof: pa,
             occurrences: occ_a,
             ..
-        } = self.expand(cls_a, src_a, &[], &ctx_a, HashMap::default())?;
+        } = self.expand(cls_a, patterns[0], &[], &ctx_a, HashMap::default())?;
         let pa = self.fit(pa, src_a, &occ_a)?; // cls_a = ·src_a
         let ctx_b = side(1)?;
         let Expansion {
             proof: pb,
             occurrences: occ_b,
             ..
-        } = self.expand(cls_b, src_b, &[], &ctx_b, HashMap::default())?;
+        } = self.expand(cls_b, patterns[1], &[], &ctx_b, HashMap::default())?;
         for (path, o) in &occ_b {
             log::debug!(
                 "claim side b occurrence {path:?}: {}",
@@ -353,32 +302,23 @@ impl SlotLifter<'_> {
                 .ok_or("the claim has no proof of its class equality")?;
             self.eq(prem)?
         };
-        let sa = self.out.sym(pa);
-        let left = self.trans(sa, e)?;
+        let mut left = self.out.sym(pa);
+        if claim.kind != super::super::format::ClaimKind::RenamingEq && !is_identity(&coset) {
+            let group = self.group_premise(&premise_proofs, cls_a)?;
+            let symmetry = self.symmetry(cls_a, &inverse(&coset), group)?;
+            left = self.trans(left, symmetry)?;
+        }
+        let left = self.trans(left, e)?;
         let result = self.trans(left, pb)?;
-        self.finish_claim(
-            result,
-            pb,
-            claim,
-            cls_a,
-            &premise_proofs,
-            Some(&coset),
-            &occ_b,
-        )
+        self.finish_claim(result, pb, claim, &occ_b)
     }
 
-    /// `result: src_a = M·src_b` says what the claim says once `M` leaves the
-    /// free slots of `src_b` alone; redundant slots and the symmetry `coset-same`
-    /// chose can fix it.
-    #[allow(clippy::too_many_arguments)]
+    /// Finish a claim after applying the symmetry selected by its query frame.
     fn finish_claim(
         &mut self,
         result: ViewId,
         pb: ViewId,
         claim: &Claim,
-        cls_a: TermId,
-        premise_proofs: &[ProofId],
-        coset: Option<&SlotMap>,
         occ_b: &HashMap<Vec<usize>, Occurrence>,
     ) -> LiftResult<ViewId> {
         if claim.kind == super::super::format::ClaimKind::RenamingEq {
@@ -388,147 +328,20 @@ impl SlotLifter<'_> {
         let src_a = self.out.edge(result).lhs;
         let free = self.program.free_slots(&self.out.term_dag, src_b);
         let free_a = self.program.free_slots(&self.out.term_dag, src_a);
-        let result = self.fix_redundant(result, pb, src_b, &free)?;
-        let result = match self.fit_content(result, src_b, occ_b) {
-            Ok(r) => r,
-            Err(e) => {
-                log::debug!("content fit of the claim failed: {e}");
-                result
-            }
-        };
         let prop = self.out.normalize(self.out.edge(result).clone());
         if !prop.renaming.moves_any(&free) || !prop.renaming.moves_any(&free_a) {
             return Ok(result);
         }
-        // try the symmetry coset-same picked, in either direction
-        if let Some(g) = coset {
-            let grp_proof = premise_proofs
-                .iter()
-                .copied()
-                .find(|p| {
-                    let t = self.egg.get(*p).lhs();
-                    self.app(t).is_some_and(|(h, a)| {
-                        h.starts_with("EclassGroup_") && a.first() == Some(&cls_a)
-                    })
-                })
-                .ok_or("claim without a group row")?;
-            let t = self.dec(cls_a)?;
-            let mut notes: Vec<String> = vec![];
-            for cand in [g.clone(), inverse(g)] {
-                let s = match self.symmetry(cls_a, &cand, grp_proof) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        notes.push(format!("symmetry {}: {e}", slot_map_string(&cand)));
-                        continue;
-                    }
-                };
-                {
-                    // insert the symmetry where the chain passes through the class
-                    let Some(at) = self.known.get(&t).copied() else {
-                        continue;
-                    };
-                    let _ = at;
-                    // rebuild: result = (src_a = ·cls_a) ; sym ; (cls_a = ·src_b)
-                    let to_class = self.chain_to(result, t);
-                    let Some((left, right)) = to_class else {
-                        continue;
-                    };
-                    let left = self.trans(left, s)?;
-                    let r = self.trans(left, right)?;
-                    let r = self.fix_redundant(r, pb, src_b, &free)?;
-                    // a redundant slot the symmetry exposed, as on the main path
-                    let r = match self.fit_content(r, src_b, occ_b) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            log::debug!("content fit after the symmetry failed: {e}");
-                            r
-                        }
-                    };
-                    let prop = self.out.normalize(self.out.edge(r).clone());
-                    if !prop.renaming.moves_any(&free) || !prop.renaming.moves_any(&free_a) {
-                        return Ok(r);
-                    }
-                    notes.push(format!(
-                        "with symmetry {}: {}",
-                        slot_map_string(&cand),
-                        self.prop_string(r)
-                    ));
-                }
-            }
-            return Err(format!(
-                "the claim's proof came out as {} which moves a free slot of {} ({})",
-                self.prop_string(result),
-                self.out_string(src_b),
-                notes.join("; ")
-            ));
+        let result = self.fit_content(result, src_b, occ_b)?;
+        let prop = self.out.normalize(self.out.edge(result).clone());
+        if !prop.renaming.moves_any(&free) || !prop.renaming.moves_any(&free_a) {
+            return Ok(result);
         }
         Err(format!(
             "the claim's proof came out as {} which moves a free slot of {}",
             self.prop_string(result),
             self.out_string(src_b)
         ))
-    }
-
-    /// Split a transitivity chain at the proof whose right-hand side is `mid`:
-    /// `(lhs = ·mid, mid = ·rhs)`.
-    fn chain_to(&mut self, proof: ViewId, mid: TermId) -> Option<(ViewId, ViewId)> {
-        match self.out.chain(proof) {
-            Some((a, b)) => {
-                if self.out.edge(a).rhs == mid {
-                    return Some((a, b));
-                }
-                if let Some((a1, a2)) = self.chain_to(a, mid) {
-                    let right = self.out.trans(a2, b).ok()?;
-                    return Some((a1, right));
-                }
-                if let Some((b1, b2)) = self.chain_to(b, mid) {
-                    let left = self.out.trans(a, b1).ok()?;
-                    return Some((left, b2));
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// Where `result: src_a = M·src_b` moves a free slot `s` of `src_b` to a slot
-    /// absent from `src_b`, and the class term `pb` reaches `src_b` through lacks
-    /// both, the slot is redundant: `src_b = (s u)·src_b` follows, and composing it
-    /// in fixes `s`.
-    fn fix_redundant(
-        &mut self,
-        mut result: ViewId,
-        pb: ViewId,
-        src_b: TermId,
-        free: &BTreeSet<i64>,
-    ) -> LiftResult<ViewId> {
-        let src_slots = all_slots(&self.out.term_dag, src_b);
-        let to_class = self.out.sym(pb); // src_b = ·cls_b
-        for _ in 0..free.len() + 1 {
-            let m = self.out.normalize(self.out.edge(result).clone()).renaming;
-            let Some(&s) = free.iter().find(|s| m.apply(**s) != **s) else {
-                return Ok(result);
-            };
-            let u = m.inverse().apply(s);
-            if src_slots.contains(&u) {
-                return Ok(result);
-            }
-            let tau = Renaming::new([(s, u), (u, s)]).unwrap();
-            let renamed = self.rename_both(to_class, &tau); // τ·src_b = ·cls_b
-            let (p1, p2) = (
-                self.out.normalize(self.out.edge(to_class).clone()),
-                self.out.normalize(self.out.edge(renamed).clone()),
-            );
-            if p1.renaming != p2.renaming || p1.rhs != p2.rhs {
-                return Ok(result);
-            }
-            let back = self.out.sym(renamed);
-            let cert = self.trans(to_class, back)?; // src_b = ·(τ·src_b)
-            let cert = self.out.reframe(cert, tau.inverse()); // src_b = τ·src_b
-            let cert = self.note(cert);
-            result = self.trans(result, cert)?;
-        }
-        Ok(result)
     }
 
     /// The group element relating the roots in their shared query frame.

@@ -1,13 +1,11 @@
 use egglog::ast::{Literal, Sexp, parse_sexps};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Clone, Default)]
 struct Scope {
-    globals: BTreeSet<String>,
-    // A payload argument must be a literal, even when its name denotes a global elsewhere.
-    constructors: BTreeMap<String, Vec<bool>>,
+    constructors: BTreeSet<String>,
 }
 
 fn call<'a, 'src>(form: &'a Sexp<'src>) -> Option<(&'a str, &'a [Sexp<'src>])> {
@@ -34,27 +32,25 @@ fn read(source: &str) -> Result<String> {
 }
 
 impl Scope {
-    fn constructor(&mut self, name: &str, inputs: &[Sexp]) {
-        let columns = inputs.iter().take_while(|input| !matches!(input, Sexp::Atom(name, _) if name.starts_with(':')))
-            .map(|input| matches!(input, Sexp::Atom(sort, _) if matches!(sort.as_ref(), "i64" | "String"))).collect();
-        self.constructors.insert(name.into(), columns);
-    }
-
     fn datatype(&mut self, variants: &[Sexp]) {
         for variant in variants {
-            if let Some((name, inputs)) = call(variant) {
-                self.constructor(name, inputs);
+            if let Some((name, _)) = call(variant) {
+                self.constructors.insert(name.into());
             }
         }
     }
 
     fn declare(&mut self, form: &Sexp) {
         match call(form) {
-            Some(("constructor", [Sexp::Atom(name, _), Sexp::List(inputs, _), ..])) => {
-                self.constructor(name, inputs)
+            Some(("constructor", [Sexp::Atom(name, _), ..])) => {
+                self.constructors.insert(name.to_string());
             }
             Some(("datatype", [_, variants @ ..])) => self.datatype(variants),
-            Some(("datatype*", [Sexp::List(datatypes, _)])) => {
+            Some(("datatype*", datatypes)) => {
+                let datatypes = match datatypes {
+                    [Sexp::List(nested, _)] if call(&datatypes[0]).is_none() => nested.as_slice(),
+                    other => other,
+                };
                 for datatype in datatypes {
                     if let Some((_, variants)) = call(datatype) {
                         self.datatype(variants);
@@ -62,29 +58,6 @@ impl Scope {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn ground(&self, expr: &Sexp) -> bool {
-        match expr {
-            Sexp::Atom(name, _) => name.starts_with('$') || self.globals.contains(name.as_ref()),
-            Sexp::Literal(..) => true,
-            Sexp::List(..) => {
-                let Some((head, args)) = call(expr) else {
-                    return false;
-                };
-                let columns = self
-                    .constructors
-                    .get(head)
-                    .expect("compiled source declares its constructors");
-                args.iter().zip(columns).all(|(arg, payload)| {
-                    if *payload {
-                        matches!(arg, Sexp::Literal(..))
-                    } else {
-                        self.ground(arg)
-                    }
-                })
-            }
         }
     }
 }
@@ -108,9 +81,6 @@ pub fn expected_proofs(source: &str) -> Result<usize> {
             }
         }
         match call(form) {
-            Some(("let", [Sexp::Atom(name, _), _])) => {
-                scope.globals.insert(name.to_string());
-            }
             Some(("push", [])) => {
                 scopes.push(scope.clone());
                 region_start = i + 1;
@@ -119,24 +89,16 @@ pub fn expected_proofs(source: &str) -> Result<usize> {
                 scope = scopes.pop().ok_or("pop without push")?;
                 region_start = i + 1;
             }
-            Some(("check", [fact])) => {
-                match call(fact) {
-                    Some(("=" | "renaming-=", [lhs, rhs]))
-                        if scope.ground(lhs) && scope.ground(rhs) =>
-                    {
-                        count += 1
+            Some(("check", facts)) if !facts.is_empty() => {
+                if facts.iter().all(|fact| match call(fact) {
+                    Some(("=" | "renaming-=", [_, _])) => true,
+                    Some(("__internal-holds", [_, Sexp::Atom(ctor, _)])) => {
+                        scope.constructors.contains(ctor.as_ref())
                     }
-                    // Internal existence sugar yields an equality for nullary constructors.
-                    Some(("__internal-holds", [term, Sexp::Atom(ctor, _)]))
-                        if scope
-                            .constructors
-                            .get(ctor.as_ref())
-                            .is_some_and(Vec::is_empty)
-                            && scope.ground(term) =>
-                    {
-                        count += 1
-                    }
-                    _ => {}
+                    Some((head, _)) => scope.constructors.contains(head),
+                    _ => false,
+                }) {
+                    count += 1;
                 }
             }
             _ => {}

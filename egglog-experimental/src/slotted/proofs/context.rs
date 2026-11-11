@@ -1,6 +1,7 @@
 //! Native source rules, declaration scopes, and binding semantics for proof checking.
 
 use super::bindings::GlobalNames;
+#[cfg(test)]
 use super::format::{Claim, ClaimKind};
 use super::terms::{FreshSlots, Renaming, slot_of};
 use super::{HashMap, HashSet};
@@ -32,7 +33,7 @@ pub struct SourceRule {
     pub(in crate::slotted) normal: super::normal_form::NormalRule,
 }
 
-pub(super) trait SourceFact {
+pub(in crate::slotted) trait SourceFact {
     fn terms(&self) -> Vec<&ResolvedExpr>;
     fn binding(&self) -> Option<(&String, &ResolvedExpr)>;
 }
@@ -136,7 +137,7 @@ impl SourceRule {
         (lhs, rhs)
     }
 
-    pub(super) fn conditions(&self) -> &[ResolvedFact] {
+    pub(in crate::slotted) fn conditions(&self) -> &[ResolvedFact] {
         &self.rule.body[1..]
     }
 
@@ -173,6 +174,7 @@ impl SourceRule {
 }
 
 impl ProofContext {
+    #[cfg(test)]
     pub(super) fn claim_expr(
         &self,
         dag: &mut TermDag,
@@ -209,6 +211,91 @@ impl ProofContext {
         }
     }
 
+    /// Resolve globals and slot names while retaining local query variables.
+    pub(super) fn query_pattern(
+        &self,
+        dag: &mut TermDag,
+        expr: &Expr,
+    ) -> Result<TermId, SourceError> {
+        match expr {
+            Expr::Var(_, name) if !name.starts_with('$') && !self.lets.contains_key(name) => {
+                Ok(dag.var(name.clone()))
+            }
+            Expr::Call(_, head, args) => {
+                let args = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        if matches!(self.constructors[head].columns[i], ColumnKind::Payload(_))
+                            && let Expr::Var(_, name) = arg
+                        {
+                            Ok(dag.var(name.clone()))
+                        } else {
+                            self.query_pattern(dag, arg)
+                        }
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(dag.app(head.clone(), args))
+            }
+            _ => self.ground_term(dag, expr),
+        }
+    }
+
+    pub(super) fn query_variables(&self, expr: &Expr) -> BTreeSet<String> {
+        match expr {
+            Expr::Var(_, name) if !name.starts_with('$') && !self.lets.contains_key(name) => {
+                [name.clone()].into()
+            }
+            Expr::Call(_, head, args) => args
+                .iter()
+                .enumerate()
+                .flat_map(|(i, arg)| {
+                    if matches!(self.constructors[head].columns[i], ColumnKind::Payload(_)) {
+                        arg.vars().collect()
+                    } else {
+                        self.query_variables(arg)
+                    }
+                })
+                .collect(),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    pub(super) fn query_instance(
+        &self,
+        dag: &mut TermDag,
+        expr: &Expr,
+        witnesses: &HashMap<String, TermId>,
+    ) -> Result<TermId, SourceError> {
+        match expr {
+            Expr::Var(_, name) if !name.starts_with('$') && !self.lets.contains_key(name) => {
+                witnesses
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| SourceError(format!("missing query witness {name}")))
+            }
+            Expr::Call(_, head, args) => {
+                let args = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        if matches!(self.constructors[head].columns[i], ColumnKind::Payload(_))
+                            && let Expr::Var(_, name) = arg
+                        {
+                            witnesses.get(name).copied().ok_or_else(|| {
+                                SourceError(format!("missing payload witness {name}"))
+                            })
+                        } else {
+                            self.query_instance(dag, arg, witnesses)
+                        }
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(dag.app(head.clone(), args))
+            }
+            _ => self.ground_term(dag, expr),
+        }
+    }
+
     pub(super) fn ground_name(&self, dag: &mut TermDag, name: &str) -> Result<TermId, SourceError> {
         if let Some(suffix) = name.strip_prefix('$') {
             let number = suffix.parse::<i64>().ok();
@@ -231,9 +318,7 @@ impl ProofContext {
 
     /// The free slots of a ground term, by the constructors' binder columns.
     pub fn free_slots(&self, dag: &TermDag, term: TermId) -> BTreeSet<i64> {
-        let mut out = BTreeSet::new();
-        self.free_slots_into(dag, term, &mut out);
-        out
+        self.free_slots_memo(dag, term, &mut HashMap::default())
     }
 
     /// Compare well-formed source terms up to scoped bound names.
@@ -246,7 +331,12 @@ impl ProofContext {
         lhs == rhs
     }
 
-    fn canonical_binders(&self, dag: &mut TermDag, lhs: TermId, rhs: TermId) -> (TermId, TermId) {
+    pub(super) fn canonical_binders(
+        &self,
+        dag: &mut TermDag,
+        lhs: TermId,
+        rhs: TermId,
+    ) -> (TermId, TermId) {
         let slots: BTreeSet<_> = super::terms::all_slots(dag, lhs)
             .into_iter()
             .chain(super::terms::all_slots(dag, rhs))
@@ -258,7 +348,7 @@ impl ProofContext {
         (canonical(dag, lhs), canonical(dag, rhs))
     }
 
-    pub(super) fn renaming_between(
+    pub(in crate::slotted) fn renaming_between(
         &self,
         dag: &mut TermDag,
         lhs: TermId,
@@ -280,7 +370,16 @@ impl ProofContext {
         self.renaming_between(dag, lhs, rhs).is_some()
     }
 
-    fn free_slots_into(&self, dag: &TermDag, term: TermId, out: &mut BTreeSet<i64>) {
+    fn free_slots_memo(
+        &self,
+        dag: &TermDag,
+        term: TermId,
+        memo: &mut HashMap<TermId, BTreeSet<i64>>,
+    ) -> BTreeSet<i64> {
+        if let Some(slots) = memo.get(&term) {
+            return slots.clone();
+        }
+        let mut out = BTreeSet::new();
         match dag.get(term) {
             Term::Lit(_) => {}
             Term::Var(_) => {
@@ -289,45 +388,57 @@ impl ProofContext {
                 }
             }
             Term::App(head, children) => {
-                let Some(ctor) = self.constructors.get(head) else {
-                    for &c in children {
-                        self.free_slots_into(dag, c, out);
+                if let Some(ctor) = self.constructors.get(head) {
+                    let mut bound: Vec<i64> = vec![];
+                    for (col, &child) in ctor.columns.iter().zip(children) {
+                        match col {
+                            ColumnKind::Payload(_) => {}
+                            ColumnKind::Var => out.extend(self.free_slots_memo(dag, child, memo)),
+                            ColumnKind::Binder => {
+                                if let Some(slot) = slot_of(dag, child) {
+                                    bound.push(slot);
+                                }
+                            }
+                            ColumnKind::Child => {
+                                let mut inner = self.free_slots_memo(dag, child, memo);
+                                for b in bound.drain(..) {
+                                    inner.remove(&b);
+                                }
+                                out.extend(inner);
+                            }
+                        }
                     }
-                    return;
-                };
-                let mut bound: Vec<i64> = vec![];
-                for (col, &child) in ctor.columns.iter().zip(children) {
-                    match col {
-                        ColumnKind::Payload(_) => {}
-                        ColumnKind::Var => self.free_slots_into(dag, child, out),
-                        ColumnKind::Binder => {
-                            if let Some(slot) = slot_of(dag, child) {
-                                bound.push(slot);
-                            }
-                        }
-                        ColumnKind::Child => {
-                            let mut inner = BTreeSet::new();
-                            self.free_slots_into(dag, child, &mut inner);
-                            for b in bound.drain(..) {
-                                inner.remove(&b);
-                            }
-                            out.extend(inner);
-                        }
+                } else {
+                    for &c in children {
+                        out.extend(self.free_slots_memo(dag, c, memo));
                     }
                 }
             }
         }
+        memo.insert(term, out.clone());
+        out
     }
 
     /// Give each binder a name distinct from other binders and free slots,
     /// preserving names that are already distinct.
     pub fn refresh_binders(&self, dag: &mut TermDag, term: TermId) -> TermId {
+        self.refresh_binders_avoiding(dag, term, &BTreeSet::new())
+    }
+
+    pub(super) fn refresh_binders_avoiding(
+        &self,
+        dag: &mut TermDag,
+        term: TermId,
+        avoid: &BTreeSet<i64>,
+    ) -> TermId {
         let mut slots = FreshSlots::new(
             super::terms::all_slots(dag, term)
                 .into_iter()
-                .chain(self.slot_names.values().copied()),
+                .chain(self.slot_names.values().copied())
+                .chain(avoid.iter().copied()),
         );
-        let free = self.free_slots(dag, term);
+        let mut free = self.free_slots(dag, term);
+        free.extend(avoid);
         let mut binders = HashMap::<i64, usize>::default();
         let mut pending = vec![term];
         while let Some(t) = pending.pop() {
@@ -422,28 +533,6 @@ impl ProofContext {
                 false
             }
         }
-    }
-
-    /// Every term the program built: the subterms of its `let`s and `union`s.
-    pub fn built_terms(&self, dag: &TermDag) -> Vec<TermId> {
-        let mut seen = HashSet::default();
-        let mut out = vec![];
-        let mut stack: Vec<TermId> = self
-            .lets
-            .values()
-            .copied()
-            .chain(self.unions.iter().flat_map(|u| [u.lhs, u.rhs]))
-            .collect();
-        while let Some(t) = stack.pop() {
-            if !seen.insert(t) {
-                continue;
-            }
-            if let Term::App(_, children) = dag.get(t) {
-                out.push(t);
-                stack.extend(children.iter().copied());
-            }
-        }
-        out
     }
 
     /// Whether either orientation of an equality was asserted by a source union.

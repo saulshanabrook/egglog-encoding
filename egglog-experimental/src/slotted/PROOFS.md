@@ -96,8 +96,7 @@ rule declaration.
 
 RHS-only slot literals must be fresh for every other binding and the globals
 in scope at the rule declaration. The conclusion is
-`L[σ] = R[σ]`, its reverse, or reflexivity of a subterm of either side. A
-right-hand side using `subst` is unsupported.
+`L[σ] = R[σ]`, its reverse, or reflexivity of a subterm of either side.
 
 **RenamingEq premise.** Holds two ordinary equality proof references,
 `left` and `right`. For `(renaming-= a b)`, they establish `a[σ] = ar` and
@@ -186,17 +185,15 @@ root equality, not another inference rule. For example, alpha-renaming needs onl
 
 # Normalization
 
-The lifted proof is checked before and after a normalization pass. The pass
-carries an accumulated permutation through Sym, Trans, Congr, and Alpha, materializing
-it in their endpoints. Nested equivariance steps compose. Source axioms and
-rule instances retain their provenance and substitutions, so remaining
-equivariance steps sit immediately above source steps. A renamed source union
-still has a proof of the original union underneath it.
+The lifted proof is checked before and after simplification. The pass composes
+adjacent equivariance and Alpha steps and removes reflexive congruence, symmetry,
+transitivity, and double symmetry. Each reachable proof is simplified once.
+Equivariance can remain around a compound derivation: distributing it across
+shared premises could duplicate that derivation for every incoming renaming.
 
-The pass also removes reflexive congruence, symmetry and transitivity steps and
-double symmetry. It memoizes by proof ID and accumulated permutation: shared
-subproofs stay shared when used in the same coordinates. Slot names are assigned
-to the resulting displayed proof, reserving all source names and rule variables.
+Source axioms and rule instances retain their provenance and substitutions.
+A renamed source union still has a proof of the original union underneath it.
+Slot names in the displayed proof reserve all source names and rule variables.
 
 # The proof profile
 
@@ -210,8 +207,9 @@ by renaming content, so runtime reads and proof validation agree on each index.
 
 The proof-compatible encoding represents these operations as follows:
 
-- *Shape tables.* `_shape_F` becomes `_shape_class_F (key...) <sort> :merge old`
-  and `_shape_back_F (key...) Renaming :merge old`, both set by the index rule;
+- *Shape tables.* `_shape_F` becomes `_shape_class_F (key... back) <sort> :merge old`
+  and `_shape_back_F (key...) Renaming :merge old`. The class lookup includes the
+  selected back renaming, so rebuilding cannot pair values from different entries.
   `_shapeof_F` becomes `_shapeof_edges_F (...) Renamings :no-merge`, holding
   `[s1 .. sn, back]`, and `_shapeof_syms_F (...) Group :no-merge`.
 - *Shape collisions.* The collision a merge block stated is a rule,
@@ -227,7 +225,9 @@ The proof-compatible encoding represents these operations as follows:
   Source-term extraction uses the same cost model and decoder in both modes.
 - *Claims.* Supported equality checks compile to `slotted-prove` over the shared
   query compiler's facts. The command extracts an existence proof, reconstructs
-  the matched source terms, and checks their equality. Other checks use the same
+  one shared substitution for every fact, and checks the instantiated equalities.
+  Constructor-existence facts use reflexivity of the witnessed term.
+  Other checks use the same
   queries without proof extraction. `--slotted-proof-checks` runs this encoding
   with ordinary checks for comparison.
 
@@ -270,12 +270,28 @@ checking context. Rule steps instantiate auxiliary bindings and expand their
 
 The pass in [`proofs/lift_slots`](proofs/lift_slots) produces proofs over those
 flattened rewrites. A separate pass in [`flatten/unflatten.rs`](flatten/unflatten.rs)
-reconstructs nested terms using the atom equalities, congruence, projection, and
-equivariance. It replaces
-each flattened rule application with an application of the original rewrite,
-reconstructs evidence for the original `:when` facts, and removes generated
-variables from substitutions. The final checker uses only the original source
-program and the resulting ordinary equality proof.
+replays the original rule's constructor traversal, consuming flattened atom and
+global premises in the order that flattening produced them. Join ordering changes
+the encoded match, but leaves this source premise order intact. Congruence expands
+nested patterns; explicit Alpha steps restore their binder scopes. Each firing's
+queues and occurrence proofs are temporary. There is no equality-graph search or
+stored reconstruction recipe.
+
+Slot lifting consumes source action and rule-head positions emitted during native
+proof lifting. Shared lowering traversals identify the corresponding source
+terms. Pattern occurrences carry support evidence through class congruences;
+restricted constructed children retain ordinary equality proofs that justify
+later renamings. Slot alignment uses those occurrences and the recorded frame
+readings. Class-group operations replay the runtime's closure and reading
+enumeration. These derivations follow the selected native proof and its premises,
+without searching for alternative witnesses or certificates.
+
+The pass replaces each flattened application with the original rewrite and its
+original `:when` facts, and removes generated variables from substitutions. Slot
+lifting proves existence of a head-built subterm by projection from the complete
+rule result, preserving that occurrence for later passes. Unflattening preserves
+every input step's exact endpoints, so ordinary equality steps replay directly.
+The final checker uses only the original source program and the resulting proof.
 
 Generated slots come from one supply that reserves all interned source slots, the input terms' slots,
 encoded renaming coordinates, and names introduced during lifting. Negative
@@ -317,11 +333,14 @@ have a short Sym/Equivariance/Trans derivation.
 
 `group-shrink` computes `group-close(group-restrict old-group slots)` and stages
 it in `GroupReplace`; `group-restore` publishes the result. To prove a restricted
-group element, slot lifting finds a product of the restricted generators and
-composes the corresponding proofs for the original generators. The full equality
+group element, slot lifting replays the runtime's closure and composes the
+corresponding proofs for the original generators. The full equality
 retains any action on redundant slots and must agree with the requested symmetry
 on the surviving slots. `EclassGroup` merges use `set-union`, so each generator
 keeps the proof from its contributing side. `GroupReplace` merges select `new`.
+Omitted slots have separate redundancy certificates through the same derivation;
+the completed permutation may still act on them. Invocation merges use those
+certificates to reconcile the two completions of their shared partial name.
 
 | rule firing | derivation |
 | --- | --- |
@@ -334,7 +353,8 @@ keeps the proof from its contributing side. `GroupReplace` merges select `new`.
 | child update | Equivariance into the parent's names, then Congr with the child's edge |
 | binder scope | Reframe the edge away from the bound slot; transport equality when needed |
 | shape collision, node symmetries | Congr with transported child symmetries, then align edge coordinates |
-| invocation naming | the edge, then Congr with the symmetry `coset-min` chose |
+| invocation naming | compose the edge with the symmetry `coset-min` chose |
+| invocation merge | reconcile completions using support certificates, then Sym and Trans |
 | user rewrite | Rule, with premises built from the atom rows by Congr and Equivariance |
 | claim | the two terms' atom proofs, the class equality, and the `coset-same` symmetry |
 
@@ -352,10 +372,12 @@ and [fresh names avoiding source and rule variables](../../tests/snapshots/slott
 They run with `make check` or
 `cargo test -p egglog-experimental --test slotted_proofs demo_proof_snapshots`.
 
-`egglog-experimental --slotted --proofs source.egg` prints a proof for a check
-containing one positive `=` or `renaming-=` fact. Its terms may contain constructors,
-globals, slots, and literal payloads. Checks with term or payload pattern variables,
-multiple facts, negation, or other predicates are checked without printing a proof.
+`egglog-experimental --slotted --proofs source.egg` prints proofs for checks
+containing positive `=`, `renaming-=`, and constructor-existence facts. These may
+use term and payload pattern variables, constructors, globals, and slots. All
+facts in one check share a matched witness. Negation and other predicates use
+ordinary checks. Extraction returns a source term without a proof. Substitution
+is not supported in proof mode.
 
 To replay lowered code, use
 `egglog-experimental --slotted-encoded --proofs --slotted-source source.egg encoded.egg`.
@@ -373,9 +395,9 @@ ordinary execution and checks a source proof for every probe. Nested fixtures
 use the no-aliasing matcher. These tests run in the normal workspace suite and
 `make check`; they use committed inputs without Python orchestration or live
 fixture generation.
-Sources using `subst` are ignored because it has no proof translation;
-the CLI refuses them. `--slotted-proof-checks` runs the same encoding with ordinary
-checks for comparison.
+Substitution fixtures are excluded from this proof suite.
+`--slotted-proof-checks` runs the proof-compatible encoding with ordinary checks
+for comparison.
 
 The CLI accepts compiled inputs through egglog's `CliProgram` interface.
 The core crate has no slotted commands, claim types, proof state, or CLI flags.

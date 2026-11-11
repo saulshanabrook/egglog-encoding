@@ -12,19 +12,19 @@ Source:
 
 Proof:
 (let t (Pair (V $a) (V $b)))
-(let prf (Fiat (= (V $a) (V $a))))
-(let prop (= (V $b) (V $b)))
-(let prf_1 (Equivariance prop prf (renaming ($a $b) ($b $a))))
-(let prf_2 (Fiat (= () ())))
+(let prf (Fiat (= t t)))
+(let prf_1 (Proj (= (V $a) (V $a)) prf 0))
+(let prf_2 (Equivariance (= (V $b) (V $b)) prf_1 (renaming ($a $b) ($b $a))))
+(let prf_3 (Fiat (= () ())))
 (Rule
   (= t (Hit))
   (name "guards")
   (premises
-    (Fiat (= t t))
-    (RenamingEq (renaming-= (V $a) (V $b)) prf (Fiat prop))
+    prf
+    (RenamingEq (renaming-= (V $a) (V $b)) prf_1 prf_2)
+    prf_2
+    prf_3
     prf_1
     prf_2
-    prf
-    prf_1
-    prf_2)
+    prf_3)
   (substitution ($x $a) ($y $b)))

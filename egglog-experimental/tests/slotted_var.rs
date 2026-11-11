@@ -22,6 +22,30 @@ fn variable_equalities_do_not_cross_carriers() {
     check(source);
 }
 
+#[test]
+fn invocation_merges_preserve_binders_after_support_shrinks() {
+    for symmetry_first in [false, true] {
+        let symmetry = "(union (Pair (V $a) (V $b)) (Pair (V $b) (V $a)))";
+        let restriction = "(union (Pair (V $a) (V $b)) (Pair (V $a) (V $c)))";
+        let unions = if symmetry_first {
+            format!("{symmetry}\n{restriction}")
+        } else {
+            format!("{restriction}\n{symmetry}")
+        };
+        check_inputs(&[
+            r#"
+                (datatype Expr (V Var) (Pair Expr Expr) (Lam Var Expr :binder 0))
+                (let term (Lam $bound (Pair (V $bound) (V $free))))
+            "#,
+            &unions,
+            r#"
+                (check (= term (Lam $renamed (Pair (V $renamed) (V $free)))))
+                (extract term)
+            "#,
+        ]);
+    }
+}
+
 fn check(source: &str) {
     check_inputs(&[source]);
 }

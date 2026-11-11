@@ -167,9 +167,17 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
     let other = names("n", n);
     let other_node = op.node(name, &other, &kids, &pays);
     if proofs {
+        // Key rebuilding may retain different old rows in the two tables. The
+        // selected back renaming must therefore be part of the class lookup.
+        let class_key = |edges: &[String], back: &str| {
+            let mut key = op.node(&format!("_shape_class_{name}"), edges, &kids, &pays);
+            key.pop();
+            key.push_str(&format!(" {back})"));
+            key
+        };
         out.extend([
             format!(
-                "(function _shape_class_{name} ({cols}) {} :merge old)",
+                "(function _shape_class_{name} ({cols} Renaming) {} :merge old)",
                 s.sort
             ),
             format!("(function _shape_back_{name} ({cols}) Renaming :merge old)"),
@@ -182,11 +190,11 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
                 vec!["Renaming Group"; n].join(" ")
             ),
         ]);
-        let class_key = op.node(&format!("_shape_class_{name}"), &canonical, &kids, &pays);
+        let indexed_class = class_key(&canonical, &format!("(vec-get sh {n})"));
         let back_key = op.node(&format!("_shape_back_{name}"), &canonical, &kids, &pays);
         let cached_edges = cached.replace("_shapeof_", "_shapeof_edges_");
         let cached_syms = cached.replace("_shapeof_", "_shapeof_syms_");
-        out.push(format!("(rule ((= c {node}) {group_facts} (= sh (node-shape (vec-of {}) (vec-of {})))) ((set {class_key} c) (set {back_key} (vec-get sh {n})) (set {cached_edges} (vec-of {shape_outputs})) (set {cached_syms} (symmetries-of sh {}))) :ruleset slotted-shape :name \"slotted/shape-index/{name}\")", edges.join(" "), groups.join(" "), n+1));
+        out.push(format!("(rule ((= c {node}) {group_facts} (= sh (node-shape (vec-of {}) (vec-of {})))) ((set {indexed_class} c) (set {back_key} (vec-get sh {n})) (set {cached_edges} (vec-of {shape_outputs})) (set {cached_syms} (symmetries-of sh {}))) :ruleset slotted-shape :name \"slotted/shape-index/{name}\")", edges.join(" "), groups.join(" "), n+1));
         out.push(format!("(rule ((= c {node}) {group_facts} (= syms {cached_syms}) (= cs ({} c))) ((set ({} c) (group-restrict syms cs))) :ruleset slotted-group :name \"slotted/node-symmetry/{name}\")", s.free_vars, s.group));
         let unpacked = shapes
             .iter()
@@ -194,9 +202,9 @@ pub(super) fn constructor(op: &Constructor, s: &Symbols, proofs: bool) -> String
             .map(|(i, v)| format!("(= {v} (vec-get sh {i}))"))
             .collect::<Vec<_>>()
             .join(" ");
-        let class_key = op.node(&format!("_shape_class_{name}"), &shapes, &kids, &pays);
+        let stored_class = class_key(&shapes, "back0");
         let back_key = op.node(&format!("_shape_back_{name}"), &shapes, &kids, &pays);
-        out.push(format!("(rule ((= c {node}) {group_facts} (= sh {cached_edges}) {unpacked} (= back (vec-get sh {n})) (= c0 {class_key}) (= back0 {back_key}) (guard (or (bool-!= c c0) (bool-!= back back0)))) ((set ({} c (compose back (inverse back0)) c0) ())) :ruleset slotted-shape :name \"slotted/shape-collision/{name}\")", s.shape_equal));
+        out.push(format!("(rule ((= c {node}) {group_facts} (= sh {cached_edges}) {unpacked} (= back (vec-get sh {n})) (= c0 {stored_class}) (= back0 {back_key}) (guard (or (bool-!= c c0) (bool-!= back back0)))) ((set ({} c (compose back (inverse back0)) c0) ())) :ruleset slotted-shape :name \"slotted/shape-collision/{name}\")", s.shape_equal));
         let other_cached = cache(&other).replace("_shapeof_", "_shapeof_edges_");
         let equal = (0..n)
             .map(|i| format!("(= (vec-get sh1 {i}) (vec-get sh2 {i}))"))

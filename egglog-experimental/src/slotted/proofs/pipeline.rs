@@ -9,8 +9,7 @@ use super::terms::FreshSlots;
 use crate::slotted::flatten::unflatten;
 use crate::slotted::query::ProofNames;
 use egglog::TermDag;
-use egglog::ast::{Command, Expr, Fact};
-use egglog::proof::{ProofId, ProofStore};
+use egglog::ast::{Expr, Fact};
 use egglog::{CommandOutput, EGraph, Error, UserDefinedCommand};
 use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
@@ -65,7 +64,7 @@ pub(in crate::slotted) struct ProofRequest {
     pub source: ResolvedSlottedProgram,
     pub flattened: ResolvedSlottedProgram,
     pub names: EncodingNames,
-    pub claim: SlottedClaim,
+    pub claims: Vec<SlottedClaim>,
 }
 
 impl ProofRequest {
@@ -74,40 +73,63 @@ impl ProofRequest {
         graph: &mut EGraph,
         facts: Vec<Fact>,
     ) -> Result<Vec<CommandOutput>, Error> {
-        let outputs = graph.run_program(vec![Command::Prove(egglog::span!(), facts)])?;
-        let (store, root) = outputs
-            .into_iter()
-            .find_map(|o| match o {
-                CommandOutput::ProveExists {
-                    proof_store,
-                    proof_id,
-                } => Some((proof_store, proof_id)),
-                _ => None,
-            })
-            .ok_or_else(|| error("no existence proof returned"))?;
-        let text = self.prove(&store, root).map_err(error)?;
+        let text = self.prove(graph, facts).map_err(error)?;
+        log::debug!("query extracted");
         Ok(vec![CommandOutput::UserDefined(Arc::new(text))])
     }
 
+    #[cfg(test)]
     fn contexts(
         &self,
         slot_names: &BTreeMap<String, i64>,
     ) -> Result<(ProofContext, ProofContext, TermDag), SourceError> {
         let mut dag = TermDag::default();
-        let source = self.source.context(&mut dag, slot_names.clone())?;
-        let flattened = self
-            .flattened
-            .flattened_context(&mut dag, source.slot_names.clone())?;
+        let (source, flattened) = self.contexts_in(&mut dag, slot_names)?;
         Ok((source, flattened, dag))
     }
 
+    pub(super) fn contexts_in(
+        &self,
+        dag: &mut TermDag,
+        slot_names: &BTreeMap<String, i64>,
+    ) -> Result<(ProofContext, ProofContext), SourceError> {
+        let source = self.source.context(dag, slot_names.clone())?;
+        let flattened = self
+            .flattened
+            .flattened_context(dag, source.slot_names.clone())?;
+        Ok((source, flattened))
+    }
+
     /// Lift and check an encoded proof, returning the source proof's text.
-    fn prove(&self, egg: &ProofStore, root: ProofId) -> Result<String, String> {
-        let claim = &self.claim;
+    fn prove(&self, graph: &mut EGraph, facts: Vec<Fact>) -> Result<String, String> {
+        let claim = &self.claims[0];
         let resolved = &self.source;
-        let (program, flattened, mut dag) = self
-            .contexts(&claim.slot_names)
+        let mut dag = TermDag::default();
+        let (program, flattened) = self
+            .contexts_in(&mut dag, &claim.slot_names)
             .map_err(|e| e.to_string())?;
+        let mut evidence = lift_slots::source::Certificates {
+            store: super::format::SlottedProofStore::new(dag),
+            ..Default::default()
+        };
+        let mut source = lift_slots::source::SourceLifter::new(
+            &flattened,
+            &self.flattened,
+            &self.names,
+            &evidence,
+        );
+        let (egg, root) = graph
+            .prove_facts_with_visitor(facts, &mut |store, id, origin| {
+                source.visit(store, id, origin)
+            })
+            .map_err(|error| error.to_string())?;
+        evidence = source.finish()?;
+        let native = lift_slots::NativeProofs {
+            store: &egg,
+            program: graph.proof_checking_program(),
+        };
+        let egg = &egg;
+        let mut dag = evidence.store.term_dag.clone();
         let frame = matched_frame(egg, root, &claim.names)?;
         let mut coordinates = BTreeMap::new();
         for &slot in program.slot_names.values() {
@@ -136,36 +158,78 @@ impl ProofRequest {
             };
             query_program.slot_names.insert(name, slot);
         }
-        // The globals were parsed before assigning query-local slot witnesses.
-        let source = query_program
-            .claim_expr(&mut dag, &claim.kind, &claim.lhs, &claim.rhs)
-            .map_err(|e| format!("claim {claim}: {e}"))?;
-        log::debug!(
-            "egglog proof of claim {claim}:\n{}",
-            egg.proof_to_string(root)
-        );
-        let (store, proof) = lift_slots::lift(
+        log::debug!("query witness start");
+        let witnesses = lift_slots::query_witness(
             &flattened,
-            dag,
+            &query_program,
+            &mut dag,
             &self.names,
-            egg,
+            native,
             root,
-            &source,
-            &claim.names,
-            [&claim.lhs_root, &claim.rhs_root],
-        )
-        .map_err(|e| format!("claim {claim}: {e}"))?;
-        let (mut store, proof) = unflatten::lift(store, &program, proof)?;
-        check_claim(&mut store, resolved, &source, proof).map_err(|e| {
-            format!(
-                "the translated proof does not check: {e}\n{}",
-                store.proof_to_string(proof)
+            &self.claims,
+            &evidence,
+        )?;
+        log::debug!("query witness done");
+        let mut texts = Vec::new();
+        for claim in &self.claims {
+            let patterns = [
+                query_program.query_pattern(&mut dag, &claim.lhs),
+                query_program.query_pattern(&mut dag, &claim.rhs),
+            ];
+            let [lhs_pattern, rhs_pattern] = patterns;
+            let patterns = [
+                lhs_pattern.map_err(|e| e.to_string())?,
+                rhs_pattern.map_err(|e| e.to_string())?,
+            ];
+            // Every fact is instantiated with the same existential witnesses.
+            let source = super::format::Claim {
+                kind: if claim.kind == "=" {
+                    super::format::ClaimKind::Eq
+                } else {
+                    super::format::ClaimKind::RenamingEq
+                },
+                lhs: query_program
+                    .query_instance(&mut dag, &claim.lhs, &witnesses)
+                    .map_err(|e| format!("claim {claim}: {e}"))?,
+                rhs: query_program
+                    .query_instance(&mut dag, &claim.rhs, &witnesses)
+                    .map_err(|e| format!("claim {claim}: {e}"))?,
+            };
+            log::trace!(
+                "egglog proof of claim {claim}:\n{}",
+                egg.proof_to_string(root)
+            );
+            let (store, proof) = lift_slots::lift(
+                &flattened,
+                dag.clone(),
+                &self.names,
+                native,
+                root,
+                &source,
+                &claim.names,
+                [&claim.lhs_root, &claim.rhs_root],
+                patterns,
+                &evidence,
             )
-        })?;
-        let proof = store.simplify(proof);
-        let renaming = check_claim(&mut store, resolved, &source, proof)
-            .map_err(|e| format!("the normalized proof does not check: {e}"))?;
-        Ok(store.claim_to_string(proof, &renaming))
+            .map_err(|e| format!("claim {claim}: {e}"))?;
+            log::debug!("query lifted {} steps", store.len());
+            let (mut store, proof) = unflatten::lift(store, &program, &flattened, proof)?;
+            log::debug!("query unflattened {} steps", store.len());
+            check_claim(&mut store, resolved, &source, proof).map_err(|e| {
+                format!(
+                    "the translated proof does not check: {e}\n{}",
+                    store.proof_to_string(proof)
+                )
+            })?;
+            log::debug!("query checked {} steps", store.len());
+            let proof = store.simplify(proof);
+            log::debug!("query simplified {} steps", store.len());
+            let renaming = check_claim(&mut store, resolved, &source, proof)
+                .map_err(|e| format!("the normalized proof does not check: {e}"))?;
+            log::debug!("query formatting");
+            texts.push(store.claim_to_string(proof, &renaming));
+        }
+        Ok(texts.join("\n"))
     }
 }
 

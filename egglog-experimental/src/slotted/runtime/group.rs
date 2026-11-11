@@ -18,16 +18,31 @@ pub(super) fn restrict<T: Copy + Ord>(
 
 /// Close finite slot maps under composition, including partial maps during restriction.
 pub(super) fn close<T: Copy + Ord>(group: &[impl Borrow<Map<T>>]) -> Vec<Map<T>> {
+    close_with(group, |_| {})
+}
+
+/// How an element of the closure was produced. Product indexes refer to earlier outputs.
+pub(in crate::slotted) enum Composition {
+    Input(usize),
+    Product(usize, usize),
+}
+
+/// Compute the closure, reporting one derivation per output in output order.
+pub(in crate::slotted) fn close_with<T: Copy + Ord>(
+    group: &[impl Borrow<Map<T>>],
+    mut record: impl FnMut(Composition),
+) -> Vec<Map<T>> {
     let mut known = Vec::new();
     let mut seen = BTreeSet::new();
     let mut generators = Vec::new();
-    for generator in group {
+    for (i, generator) in group.iter().enumerate() {
         let generator = generator.borrow();
         if !seen.insert(generator.clone()) {
             continue;
         }
-        generators.push(generator);
+        generators.push((generator, known.len()));
         known.push(generator.clone());
+        record(Composition::Input(i));
         // Every generated map is a nonempty word in the generators. Extending
         // words on one side suffices, including for partial maps during slot
         // restriction. Revisit old words when adding a new generator; any input
@@ -35,10 +50,11 @@ pub(super) fn close<T: Copy + Ord>(group: &[impl Borrow<Map<T>>]) -> Vec<Map<T>>
         // group needs only a small generating subset, not all pairs of elements.
         let mut next = 0;
         while next < known.len() {
-            for generator in &generators {
+            for (generator, index) in &generators {
                 let m = compose(&known[next], generator);
                 if seen.insert(m.clone()) {
                     known.push(m);
+                    record(Composition::Product(next, *index));
                 }
             }
             next += 1;
@@ -77,7 +93,18 @@ pub(super) fn coset_min<T: Copy + Ord>(
     map: &Map<T>,
     group: &[impl Borrow<Map<T>>],
 ) -> Option<Map<T>> {
-    group.iter().map(|g| compose(map, g.borrow())).min()
+    coset_min_with_index(map, group).map(|(_, least)| least)
+}
+
+pub(in crate::slotted) fn coset_min_with_index<T: Copy + Ord>(
+    map: &Map<T>,
+    group: &[impl Borrow<Map<T>>],
+) -> Option<(usize, Map<T>)> {
+    group
+        .iter()
+        .enumerate()
+        .map(|(index, g)| (index, compose(map, g.borrow())))
+        .min_by(|(_, a), (_, b)| a.cmp(b))
 }
 
 pub(super) fn coset_same<T: Copy + Ord>(
@@ -89,13 +116,32 @@ pub(super) fn coset_same<T: Copy + Ord>(
 }
 
 pub(super) fn slot_closure<T: Copy + Ord>(group: &[impl Borrow<Map<T>>], slots: &Map<T>) -> Map<T> {
+    slot_closure_with(group, slots, |_, _, _| {})
+}
+
+/// Report each removed slot, its group element, and whether the inverse image removed it.
+pub(in crate::slotted) fn slot_closure_with<T: Copy + Ord>(
+    group: &[impl Borrow<Map<T>>],
+    slots: &Map<T>,
+    mut removed: impl FnMut(T, usize, bool),
+) -> Map<T> {
     let mut kept: BTreeSet<T> = slots.keys().copied().collect();
-    for g in group {
+    for (index, g) in group.iter().enumerate() {
         let g = g.borrow();
         let forward: BTreeSet<T> = compose(g, slots).values().copied().collect();
         let inverse: Map<T> = g.iter().map(|(k, v)| (*v, *k)).collect();
         let backward: BTreeSet<T> = compose(&inverse, slots).values().copied().collect();
-        kept.retain(|x| forward.contains(x) && backward.contains(x));
+        kept.retain(|x| {
+            if !forward.contains(x) {
+                removed(*x, index, false);
+                false
+            } else if !backward.contains(x) {
+                removed(*x, index, true);
+                false
+            } else {
+                true
+            }
+        });
     }
     kept.into_iter().map(|x| (x, x)).collect()
 }
@@ -140,6 +186,15 @@ mod tests {
             input.reverse();
             input.extend(input.clone());
             assert_eq!(close(&input).into_iter().collect::<BTreeSet<_>>(), expected);
+            let mut replayed = Vec::new();
+            let closed = close_with(&input, |step| {
+                let value = match step {
+                    Composition::Input(i) => input[i].clone(),
+                    Composition::Product(a, b) => compose(&replayed[a], &replayed[b]),
+                };
+                replayed.push(value);
+            });
+            assert_eq!(replayed, closed);
         }
     }
 
