@@ -1,0 +1,136 @@
+--- a/scripts/reproduction_prepare_misaal.py
++++ b/scripts/reproduction_prepare_misaal.py
+@@ -119,6 +119,29 @@
+         write_json(patch.with_suffix(".after.json"), {"path": str(source), "sha256": sha256_file(source)})
+ 
+ 
++def patch_wrapper_inliner(preparation: Preparation) -> None:
++    """Map call arguments only; CallInst operands also include the callee/bundles."""
++    source = preparation.directory / "sources/MISAAL/frontends/halide/src/CodeGen_LLVM.cpp"
++    before = """    if (!CF) return;
++
++    // Map Arguments in the VMAP
++    for (unsigned i = 0; i < CI->getNumOperands(); i++) {
++        llvm::Value *ActualParam = CI->getArgOperand(i);
++
++        llvm::Value *FormalParam = llvm::dyn_cast<llvm::Argument>((CF->arg_begin() + i));
++
++        VMap[FormalParam] = ActualParam;
++    }
++"""
++    after = before.replace(
++        "    // Map Arguments in the VMAP\n",
++        "    internal_assert(!CF->isVarArg() && CI->arg_size() == CF->arg_size())\n"
++        '        << "Hydride wrapper call must match the fixed formal argument count";\n\n'
++        "    // Map Arguments in the VMAP\n",
++    ).replace("i < CI->getNumOperands()", "i < CI->arg_size()")
++    preparation.patch(source, [(before, after)], "halide-wrapper-inliner-arguments")
++
++
+ def patch_pattern_cache(preparation: Preparation) -> None:
+     """Keep cache bytes/generation unchanged while allowing an attempt-owned directory."""
+     for module, stem in {"Halide": "halide", "x86": "x86", "ARM": "ARM", "HVX": "hvx"}.items():
+@@ -234,6 +257,7 @@
+         [("if (${OPTION} OR Halide_SHARED_LLVM)", "if (${OPTION})")],
+         "halide-selected-llvm-targets",
+     )
++    patch_wrapper_inliner(preparation)
+     build = directory / "halide-build"
+     cmake = ["uv", "tool", "run", "--from", "cmake==3.31.10", "cmake"]
+     preparation.step(
+@@ -433,6 +457,7 @@
+         "lib/patterns/Halide.py",
+         "lib/patterns/ARM.py",
+         "lib/patterns/HVX.py",
++        "frontends/halide/src/CodeGen_LLVM.cpp",
+         "frontends/halide/src/Rosette.cpp",
+         "frontends/halide/src/misaal.cpp",
+         "frontends/halide/src/misaal.h",
+--- a/tests/test_reproduction_prepare_misaal.py
++++ b/tests/test_reproduction_prepare_misaal.py
+@@ -151,3 +151,85 @@
+     preparation.patch_wide_literals(attempt)
+     assert source.read_text() == f'isAMatch(CI, 3, int512_t("{value}"))\n' * 12
+     assert not list((tmp_path / "steps").iterdir())
++
++
++INLINER_CONTEXT = """    if (!CF) return;
++
++    // Map Arguments in the VMAP
++    for (unsigned i = 0; i < CI->getNumOperands(); i++) {
++        llvm::Value *ActualParam = CI->getArgOperand(i);
++
++        llvm::Value *FormalParam = llvm::dyn_cast<llvm::Argument>((CF->arg_begin() + i));
++
++        VMap[FormalParam] = ActualParam;
++    }
++"""
++
++
++@pytest.mark.parametrize("drift", [False, True])
++def test_wrapper_inliner_patch_is_narrow_and_rejects_context_drift(tmp_path: Path, drift: bool) -> None:
++    attempt = preparation.Preparation(tmp_path)
++    source = tmp_path / "sources/MISAAL/frontends/halide/src/CodeGen_LLVM.cpp"
++    source.parent.mkdir(parents=True)
++    original = "// retained prefix\n" + INLINER_CONTEXT + "// retained cloning/remapping body\n"
++    if drift:
++        original = original.replace("VMap[FormalParam]", "VMap[changed]")
++    source.write_text(original)
++    digest = preparation.sha256_file(source)
++    if drift:
++        with pytest.raises(ValueError, match="exactly one context"):
++            preparation.patch_wrapper_inliner(attempt)
++        assert source.read_text() == original
++        assert not (tmp_path / "patches").exists()
++        return
++    preparation.patch_wrapper_inliner(attempt)
++    changed = source.read_text()
++    assert "i < CI->getNumOperands()" not in changed
++    assert "i < CI->arg_size()" in changed
++    assert "!CF->isVarArg() && CI->arg_size() == CF->arg_size()" in changed
++    assert changed.startswith("// retained prefix\n") and changed.endswith("// retained cloning/remapping body\n")
++    patch = tmp_path / "patches/halide-wrapper-inliner-arguments.patch"
++    assert "-    for (unsigned i = 0; i < CI->getNumOperands(); i++)" in patch.read_text()
++    assert json.loads(patch.with_suffix(".before.json").read_text())["sha256"] == digest
++    assert json.loads(patch.with_suffix(".after.json").read_text())["sha256"] == preparation.sha256_file(source)
++    assert not list(attempt.logs.iterdir())
++
++
++def test_fresh_preparation_repairs_inliner_before_first_halide_configure(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    backend = tmp_path / "backend"
++    backend.write_text("test backend")
++    monkeypatch.setattr(preparation, "EGGLOG_SHA256", preparation.sha256_file(backend))
++    monkeypatch.setattr(preparation.platform, "system", lambda: "Darwin")
++    monkeypatch.setattr(preparation.platform, "machine", lambda: "arm64")
++    calls = []
++
++    class ReachedConfigure(Exception):
++        pass
++
++    def step(self: preparation.Preparation, name: str, command: list[str], **kwargs: object) -> str:
++        calls.append(name)
++        if name == "misaal-clone":
++            frontend = tmp_path / "sources/MISAAL/frontends/halide"
++            (frontend / "src").mkdir(parents=True)
++            (frontend / "dependencies/llvm").mkdir(parents=True)
++            (frontend / "src/CodeGen_LLVM.cpp").write_text(INLINER_CONTEXT)
++            (frontend / "src/CMakeLists.txt").write_text("    HydrideCodeGen.cpp\n")
++            (frontend / "dependencies/llvm/CMakeLists.txt").write_text("if (${OPTION} OR Halide_SHARED_LLVM)\n")
++        if name == "misaal-head":
++            return preparation.MISAAL_REVISION
++        if name == "hydride-head":
++            return preparation.HYDRIDE_REVISION
++        if name == "halide-configure":
++            source = tmp_path / "sources/MISAAL/frontends/halide/src/CodeGen_LLVM.cpp"
++            assert "i < CI->arg_size()" in source.read_text()
++            assert (tmp_path / "patches/halide-wrapper-inliner-arguments.after.json").is_file()
++            raise ReachedConfigure
++        assert "build" not in name
++        return ""
++
++    monkeypatch.setattr(preparation.Preparation, "step", step)
++    with pytest.raises(ReachedConfigure):
++        preparation.prepare(tmp_path, backend)
++    assert calls[-1] == "halide-configure"

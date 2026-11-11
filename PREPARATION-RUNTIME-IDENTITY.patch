@@ -1,0 +1,310 @@
+--- a/scripts/reproduction_stages.py
++++ b/scripts/reproduction_stages.py
+@@ -4,6 +4,7 @@
+ 
+ import hashlib
+ import json
++import os
+ import re
+ from collections.abc import Callable, Mapping
+ from datetime import UTC, datetime
+@@ -12,6 +13,35 @@
+ 
+ from benchmarking.targets import sha256_file
+ from scripts.reproduction_process import exclusive_job
++
++
++def directory_identity(directory: Path) -> str:
++    """Bind runtime tree membership and bytes, including external symlink targets."""
++    if not directory.is_dir():
++        raise ValueError(f"retained artifact directory is missing: {directory}")
++    digest = hashlib.sha256()
++    ancestors: set[Path] = set()
++
++    def visit(path: Path) -> None:
++        relative = path.relative_to(directory).as_posix()
++        link = os.readlink(path) if path.is_symlink() else None
++        if path.is_dir():
++            resolved = path.resolve()
++            if resolved in ancestors:
++                raise ValueError(f"cycle in retained artifact directory: {path}")
++            digest.update(json.dumps([relative, "directory", link]).encode() + b"\n")
++            ancestors.add(resolved)
++            for child in sorted(path.iterdir()):
++                if child.name not in {".git", "__pycache__"}:
++                    visit(child)
++            ancestors.remove(resolved)
++        elif path.is_file():
++            digest.update(json.dumps([relative, "file", link, sha256_file(path)]).encode() + b"\n")
++        else:
++            raise ValueError(f"retained artifact is missing or not a regular file/directory: {path}")
++
++    visit(directory)
++    return digest.hexdigest()
+ 
+ 
+ def run_stage(
+@@ -27,7 +57,9 @@
+ 
+     The caller owns source/configuration/dependency identity and the substantive
+     completion checks. This layer serializes execution and binds their outcome
+-    to retained files. A failed attempt is evidence, not an invitation to retry.
++    to retained files and declared directory trees. A failed attempt is evidence,
++    not an invitation to retry. Old receipts without directory identities retain
++    their original file-only reuse contract.
+     """
+     if not all(re.fullmatch(r"[A-Za-z0-9_.-]+", value) and value not in (".", "..") for value in (case, stage)):
+         raise ValueError("case and stage must be safe path components")
+@@ -39,7 +71,15 @@
+         if previous and not retry:
+             record: dict[str, Any] = json.loads(previous[-1].read_text())
+             artifacts = record["artifacts"]
+-            intact = all(Path(path).is_file() and sha256_file(Path(path)) == sha for path, sha in artifacts.items())
++            try:
++                intact = all(
++                    Path(path).is_file() and sha256_file(Path(path)) == sha for path, sha in artifacts.items()
++                ) and all(
++                    directory_identity(Path(path)) == sha
++                    for path, sha in record.get("artifact_directories", {}).items()
++                )
++            except (OSError, ValueError):
++                intact = False
+             if intact:
+                 return record
+         # Count directories, including an abruptly terminated attempt with no
+@@ -55,17 +95,23 @@
+             "started_at": datetime.now(UTC).isoformat(),
+             "status": "interrupted",
+             "artifacts": {},
++            "artifact_directories": {},
+         }
+         receipt = attempt / "stage.json"
+         receipt.write_text(json.dumps(record, indent=2) + "\n")
+         try:
+             outcome = execute(attempt)
+-            outputs = [Path(path).resolve() for path in outcome.pop("artifacts", [])]
++            outputs = [Path(path).absolute() for path in outcome.pop("artifacts", [])]
++            directories = [Path(path).absolute() for path in outcome.pop("artifact_directories", [])]
+             if outcome["status"] == "success" and not outputs:
+                 raise ValueError("successful acquisition stage must retain actual outputs")
+             if any(not path.is_file() for path in outputs):
+                 raise ValueError("stage reported missing output artifacts")
+-            record.update(outcome, artifacts={str(path): sha256_file(path) for path in outputs})
++            record.update(
++                outcome,
++                artifacts={str(path): sha256_file(path) for path in outputs},
++                artifact_directories={str(path): directory_identity(path) for path in directories},
++            )
+         except (OSError, ValueError) as error:
+             record.update(status="resource-stopped" if "guard refused" in str(error) else "blocked", reason=str(error))
+         finally:
+--- a/scripts/reproduction_preparation.py
++++ b/scripts/reproduction_preparation.py
+@@ -66,12 +66,29 @@
+     artifacts = {
+         str(path.resolve())
+         for path in attempt.rglob("*")
+-        if path.is_file() and not ignored.intersection(path.relative_to(attempt).parts)
++        if path.is_file()
++        and path != attempt / "stage.json"
++        and not ignored.intersection(path.relative_to(attempt).parts)
+     }
+     artifacts.update(record.get("artifacts", {}))
++    directories = set(record.get("artifact_directories", []))
+     if record["status"] == "success":
+         settings = json.loads(Path(record["settings"]).read_text())[family]
+         for value in settings["paths"].values():
+             if value is not None and Path(value).is_file():
+-                artifacts.add(str(Path(value).resolve()))
+-    return {**record, "artifacts": sorted(artifacts)}
++                artifacts.add(str(Path(value).absolute()))
++        # Principal binaries are explicit files above; build/cache directories
++        # remain disposable. Source and declared runtime trees also bind new or
++        # removed members, which a fixed list of existing files cannot detect.
++        dependencies = [*settings.get("identity_paths", []), settings["paths"].get("checkout")]
++        for value in dependencies:
++            if value is None:
++                continue
++            path = Path(value).absolute()
++            if path.is_dir():
++                directories.add(str(path))
++            elif path.is_file():
++                artifacts.add(str(path))
++            else:
++                raise ValueError(f"prepared runtime dependency is missing: {path}")
++    return {**record, "artifacts": sorted(artifacts), "artifact_directories": sorted(directories)}
+--- a/tests/test_reproduction_stages.py
++++ b/tests/test_reproduction_stages.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -83,3 +84,79 @@
+     )
+     assert result["status"] == "resource-stopped"
+     assert result["reason"] == "host reserve"
++
++
++@pytest.mark.parametrize("change", ["bytes", "add", "remove", "empty-directory", "symlink-target"])
++def test_runtime_directory_changes_invalidate_reuse(tmp_path: Path, change: str) -> None:
++    runtime = tmp_path / "runtime"
++    runtime.mkdir()
++    library = runtime / "library"
++    library.write_text("original library")
++    external = tmp_path / "external"
++    external.mkdir()
++    (external / "module").write_text("original external module")
++    (runtime / "linked-modules").symlink_to(external, target_is_directory=True)
++    launches = 0
++
++    def execute(attempt: Path) -> dict[str, Any]:
++        nonlocal launches
++        launches += 1
++        receipt = attempt / "native-completion.json"
++        receipt.write_text("{}")
++        return {"status": "success", "artifacts": [str(receipt)], "artifact_directories": [str(runtime)]}
++
++    first = run_stage(tmp_path / "stages", "case", "prepare", {}, execute)
++    saved = (Path(first["attempt"]) / "stage.json").read_bytes()
++    assert run_stage(tmp_path / "stages", "case", "prepare", {}, execute) == first
++    if change == "bytes":
++        library.write_text("changed library")
++    elif change == "add":
++        (runtime / "new-library").write_text("new")
++    elif change == "remove":
++        library.unlink()
++    elif change == "empty-directory":
++        (runtime / "new-directory").mkdir()
++    else:
++        (external / "module").write_text("changed external module")
++    second = run_stage(tmp_path / "stages", "case", "prepare", {}, execute)
++    assert launches == 2 and second["status"] == "success"
++    assert second["artifact_directories"] != first["artifact_directories"]
++    assert second["attempt"] != first["attempt"]
++    assert (Path(first["attempt"]) / "stage.json").read_bytes() == saved
++
++
++def test_transient_tree_files_are_ignored_and_symlink_cycles_are_rejected(tmp_path: Path) -> None:
++    runtime = tmp_path / "runtime"
++    runtime.mkdir()
++    receipt = tmp_path / "completion.json"
++    receipt.write_text("{}")
++
++    def execute(_: Path) -> dict[str, Any]:
++        return {"status": "success", "artifacts": [str(receipt)], "artifact_directories": [str(runtime)]}
++
++    first = run_stage(tmp_path / "stages", "case", "prepare", {}, execute)
++    for name in (".git", "__pycache__"):
++        (runtime / name).mkdir()
++        (runtime / name / "transient").write_text("transient")
++    assert run_stage(tmp_path / "stages", "case", "prepare", {}, execute) == first
++    (runtime / "cycle").symlink_to(runtime, target_is_directory=True)
++    second = run_stage(tmp_path / "stages", "case", "prepare", {}, execute)
++    assert second["status"] == "blocked"
++    assert "cycle" in second["reason"]
++
++
++def test_legacy_file_only_receipt_remains_reusable(tmp_path: Path) -> None:
++    artifact = tmp_path / "actual-output"
++    artifact.write_text("retained bytes")
++    first = run_stage(
++        tmp_path / "stages", "case", "capture", {}, lambda _: {"status": "success", "artifacts": [str(artifact)]}
++    )
++    del first["artifact_directories"]
++    receipt = Path(first["attempt"]) / "stage.json"
++    receipt.write_text(json.dumps(first))
++    assert (
++        run_stage(
++            tmp_path / "stages", "case", "capture", {}, lambda _: pytest.fail("legacy receipt must remain readable")
++        )
++        == first
++    )
+--- a/tests/test_reproduction_preparation.py
++++ b/tests/test_reproduction_preparation.py
+@@ -9,6 +9,7 @@
+ 
+ from scripts import reproduction_preparation as preparation
+ from scripts import reproduction_prepare_hardboiled as hardboiled
++from scripts.reproduction_stages import run_stage
+ 
+ 
+ def test_guard_refusal_remains_a_safety_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@@ -34,3 +35,74 @@
+     result = preparation.prepare_family("hardboiled", tmp_path, tmp_path / "missing-engine")
+     assert result["status"] == "preparation-blocked"
+     assert "engine is missing" in result["reason"]
++
++
++@pytest.mark.parametrize("change", ["identity-file", "deleted-identity-file", "runtime-member", "header", "binary"])
++def test_preparation_reuse_binds_runtime_dependencies(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
++) -> None:
++    engine = tmp_path / "engine"
++    engine.write_text("ordinary engine")
++    dependency = tmp_path / "external-llvm.dylib"
++    dependency.write_text("original external LLVM")
++    runtime = tmp_path / "racket-runtime"
++    runtime.mkdir()
++    (runtime / "existing-module").write_text("existing")
++    launches = 0
++    prepared_paths: dict[str, Path] = {}
++
++    def prepare(output: Path, llvm: Path) -> Path:
++        nonlocal launches
++        launches += 1
++        checkout = output / "sources"
++        checkout.mkdir()
++        build = output / "halide-build"
++        include = build / "include"
++        include.mkdir(parents=True)
++        (include / "Halide.h").write_text("original header")
++        binary = build / "native-optimizer"
++        binary.write_text("actual native binary fixture")
++        # Disposables stay outside the declared runtime identity.
++        (build / "unused.o").write_text("object file")
++        prepared_paths.update(header=include / "Halide.h", binary=binary)
++        path = output / "settings.json"
++        path.write_text(
++            json.dumps(
++                {
++                    "hardboiled": {
++                        "paths": {"checkout": str(checkout), "build": str(build), "binary": str(binary)},
++                        "identity_paths": [str(dependency), str(runtime), str(include)],
++                    }
++                }
++            )
++        )
++        return path
++
++    monkeypatch.setattr(hardboiled, "prepare", prepare)
++
++    def execute(attempt: Path) -> dict:
++        return preparation.prepare_family("hardboiled", attempt, engine)
++
++    first = run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute)
++    assert first["status"] == "success"
++    assert str(dependency) in first["artifacts"]
++    assert str(runtime) in first["artifact_directories"]
++    assert str(prepared_paths["binary"]) in first["artifacts"]
++    assert str(prepared_paths["header"].parent) in first["artifact_directories"]
++    assert all(not path.endswith("unused.o") for path in first["artifacts"])
++    saved = (Path(first["attempt"]) / "stage.json").read_bytes()
++    assert run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute) == first
++    if change == "identity-file":
++        dependency.write_text("changed external LLVM")
++    elif change == "deleted-identity-file":
++        dependency.unlink()
++    elif change == "runtime-member":
++        (runtime / "new-module").write_text("new module")
++    else:
++        prepared_paths[change].write_text("changed native prerequisite")
++    second = run_stage(tmp_path / "stages", "hardboiled", "prepare", {}, execute)
++    assert launches == 2 and second["attempt"] != first["attempt"]
++    assert second["status"] == ("blocked" if change == "deleted-identity-file" else "success")
++    if change == "deleted-identity-file":
++        assert "runtime dependency is missing" in second["reason"]
++    assert (Path(first["attempt"]) / "stage.json").read_bytes() == saved

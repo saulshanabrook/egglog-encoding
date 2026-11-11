@@ -1,0 +1,620 @@
+--- a/scripts/dialegg_speq_complete.py
++++ b/scripts/dialegg_speq_complete.py
+@@ -11,6 +11,7 @@
+ import hashlib
+ import json
+ import os
++import re
+ import shutil
+ import subprocess
+ import sys
+@@ -196,13 +197,16 @@
+         "backend_sha256": hashlib.sha256(backend.read_bytes()).hexdigest(),
+         "command": [str(backend), str(source)],
+         "cwd": str(Path.cwd()),
++        "environment": {"RUST_LOG": "info"},
+         "status": "running",
+         "extract_requests": [tokens for _, _, tokens in egglog_forms(source.read_text()) if tokens[1] == "extract"],
+     }
+     receipt = source.with_suffix(".json")
+     save_manifest(receipt, manifest)
+     with stdout.open("wb") as out, stderr.open("wb") as err:
+-        process = subprocess.run(manifest["command"], stdout=out, stderr=err, check=False)
++        process = subprocess.run(
++            manifest["command"], stdout=out, stderr=err, check=False, env={**os.environ, **manifest["environment"]}
++        )
+     manifest.update(
+         returncode=process.returncode,
+         stdout_sha256=hashlib.sha256(stdout.read_bytes()).hexdigest(),
+@@ -214,6 +218,11 @@
+             raise ValueError(f"native backend failed with exit {process.returncode}")
+         outputs = validate_extract_output(source.read_text(), stdout.read_text(), line_protocol=True)
+         manifest.update(status="complete", output_terms=outputs, output_count=len(outputs))
++        logged = re.findall(r"extracted with cost (\d+): ([^\n]+)", stderr.read_text())
++        if len(logged) == len(outputs) and [egglog_forms(term)[0][2] for _, term in logged] == outputs:
++            manifest["extract_costs"] = [int(cost) for cost, _ in logged]
++        else:
++            manifest["cost_evidence_unavailable"] = "native extraction cost logs missing or not bound to output terms"
+     except ValueError as error:
+         manifest["reason"] = str(error)
+     save_manifest(receipt, manifest)
+@@ -285,6 +294,11 @@
+ 
+ def capture_complete_dialegg(args: argparse.Namespace, cases: list[str], output: Path) -> dict[str, Any]:
+     """Require complete native reconstruction and exact standalone output agreement per parent."""
++    from scripts.reproduction_validation import (
++        materialize_static_native_contract,
++        static_extract_model,
++        validate_static_native_output,
++    )
+     from scripts.suite_capture_dialegg_speq import modernize_dialegg_invocation
+ 
+     source = args.dialegg_source.resolve()
+@@ -396,39 +410,83 @@
+         for invocation, raw in zip(row["invocations"], raw_calls, strict=True):
+             modern = modernize_dialegg_invocation(raw.read_text(), prelude, diagnostic_queries=False)
+             replay = raw.with_suffix(".standalone.egg")
+-            replay.write_text(modern)
+-            invocation["standalone"] = str(replay)
+-            invocation["standalone_sha256"] = hashlib.sha256(replay.read_bytes()).hexdigest()
+             invocation["output_contract"] = {
+                 "kind": "ordinary-best-extract",
+                 "extract_requests": invocation["native"]["extract_requests"],
+                 "expected_terms": invocation["native"]["output_terms"],
+-                "cost_semantics": "source constructor and dynamic costs preserved; original CLI does not print costs",
++                "cost_semantics": "source constructor and dynamic costs preserved; exact native terms required",
+                 "zero_root_helper": not invocation["native"]["output_count"],
+             }
++            native = invocation["native"]
++            if native["output_count"] and "extract_costs" in native:
++                try:
++                    original = materialize.replace_once(
++                        raw.read_text(),
++                        '(include "src/base.egg")',
++                        (source / "src/base.egg").read_text(),
++                        "base prelude",
++                    )
++                    # The old prelude declares lookup tables as functions without
++                    # merge clauses. Exclude these declarations from constructor
++                    # comparison only when they are never applied in this session.
++                    lookups = {tokens[2] for _, _, tokens in egglog_forms(modern) if tokens[1] == "function"}
++                    original_forms = egglog_forms(original)
++                    if any(
++                        left == "(" and right in lookups
++                        for _, _, tokens in original_forms
++                        for left, right in zip(tokens, tokens[1:], strict=False)
++                    ):
++                        raise ValueError("active historical lookup functions lack a verified static constructor model")
++                    for start, end, tokens in reversed(original_forms):
++                        if tokens[1] == "function" and tokens[2] in lookups:
++                            original = original[:start] + original[end:]
++                    if static_extract_model(original, native["output_terms"]) != static_extract_model(
++                        modern, native["output_terms"]
++                    ):
++                        raise ValueError("native and modernized typed static cost models differ")
++                    modern, contract = materialize_static_native_contract(
++                        modern, native["output_terms"], native["extract_costs"]
++                    )
++                    invocation["output_contract"] = contract
++                except ValueError as error:
++                    # Unsupported costs/containers keep exact-output admission;
++                    # they never acquire the equal-cost representative exemption.
++                    invocation["static_tie_ineligible"] = str(error)
++            replay.write_text(modern)
++            invocation["standalone"] = str(replay)
++            invocation["standalone_sha256"] = hashlib.sha256(replay.read_bytes()).hexdigest()
+             row["materialization"]["materialized_sessions"] += 1
+         row["materialization"]["complete"] = True
+         row["status"] = "ordinary-validation-pending"
+         for invocation, raw in zip(row["invocations"], raw_calls, strict=True):
+             replay = Path(invocation["standalone"])
+             modern = replay.read_text()
++            contract = invocation["output_contract"]
+             command = [str(args.egglog.resolve()), str(replay)]
++            if contract["kind"] == "ordinary-best-static-native":
++                command = ["env", "RUST_LOG=egglog::extract=debug", *command]
+             check = run_complete_command(command, case_dir, raw.with_suffix(".replay"), args.timeout_sec)
+             invocation["ordinary"] = {"command": command, **asdict(check)}
+             invocation["output_matches_native"] = False
++            invocation["output_contract_passed"] = False
+             if check.status == "success":
+                 try:
+                     outputs = validate_extract_output(modern, check.stdout_path.read_text())
+-                    if outputs != invocation["native"]["output_terms"]:
++                    invocation["output_matches_native"] = outputs == invocation["native"]["output_terms"]
++                    if contract["kind"] == "ordinary-best-static-native":
++                        invocation["cost_validation"] = validate_static_native_output(
++                            modern, contract, check.stdout_path.read_text(), check.stderr_path.read_text()
++                        )
++                    elif not invocation["output_matches_native"]:
+                         raise ValueError("ordinary replay extraction differs from the native engine response")
+-                    invocation["output_matches_native"] = True
++                    invocation["output_contract_passed"] = True
+                 except ValueError as error:
+                     invocation["reason"] = str(error)
+             save_manifest(case_dir / "manifest.json", row)
+             if check.status in STOP_STATUSES:
+                 report["operational_stop"] = asdict(check)
+                 break
+-        row["ordinary_compatible"] = all(v.get("output_matches_native") for v in row["invocations"])
++        row["ordinary_compatible"] = all(v.get("output_contract_passed") for v in row["invocations"])
+         if row["ordinary_compatible"]:
+             row["status"] = "reproduced"
+             row["workloads"] = [v["standalone"] for v in row["invocations"]]
+--- a/scripts/suite_capture_dialegg_speq.py
++++ b/scripts/suite_capture_dialegg_speq.py
+@@ -744,6 +744,12 @@
+     parser.add_argument("--output", type=Path, help="Fresh complete-mode evidence directory")
+     parser.add_argument("--dialegg-source", type=Path, default=STORAGE / "sources/dialegg")
+     parser.add_argument("--native-egglog", type=Path, help="DialEgg's original cost-action backend executable")
++    parser.add_argument(
++        "--speq-frontend-flag",
++        action="append",
++        default=[],
++        help="Explicit complete-mode original-C compiler flag (repeat; use --speq-frontend-flag=-DNAME)",
++    )
+     parser.add_argument("--speq-lleq", type=Path, default=STORAGE / "sources/speq/lleq")
+     parser.add_argument("--speq-rev-plugin", type=Path, help="Optional already-built pinned REV analysis plugin")
+     parser.add_argument(
+@@ -773,8 +779,8 @@
+         if args.family in ("all", "speq") and args.speq_artifact is None:
+             parser.error("complete SpEQ requires --speq-artifact; preparation/downloads are a separate stage")
+         return complete_capture(args)
+-    if args.case or args.output or args.native_egglog:
+-        parser.error("--case, --output and --native-egglog require --complete")
++    if args.case or args.output or args.native_egglog or args.speq_frontend_flag:
++        parser.error("--case, --output, --native-egglog and --speq-frontend-flag require --complete")
+     if args.artifact_byte_limit is not None and args.artifact_byte_limit <= 0:
+         parser.error("--artifact-byte-limit must be positive")
+     if args.index_artifact_only:
+--- a/scripts/reproduction_validation.py
++++ b/scripts/reproduction_validation.py
+@@ -4,9 +4,10 @@
+ 
+ import hashlib
+ import json
++import re
+ from dataclasses import asdict
+ from pathlib import Path
+-from typing import Any
++from typing import Any, cast
+ 
+ from benchmarking.targets import sha256_file
+ from scripts.dialegg_speq_complete import run_complete_command, validate_extract_output
+@@ -45,6 +46,136 @@
+         "checks": records,
+         "check_sha256": hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest(),
+         "claims_optimality": False,
++    }
++
++
++def _sexpr(tokens: list[str]) -> list[Any]:
++    """Parse already-tokenized closed forms for typed constructor accounting."""
++    stack: list[list[Any]] = [[]]
++    for token in tokens:
++        if token == "(":
++            child: list[Any] = []
++            stack[-1].append(child)
++            stack.append(child)
++        elif token == ")":
++            stack.pop()
++        else:
++            stack[-1].append(token)
++    return cast(list[Any], stack[0][0])
++
++
++def static_extract_model(source: str, terms: list[list[str]]) -> dict[str, Any]:
++    """Account only for closed, typed constructor trees with static additive costs.
++
++    Containers, scoped declarations, dynamic costs and unknown primitive terms
++    deliberately do not qualify. Counts are tree counts, including repeated
++    children, and remain below both backends' integer-overflow boundaries.
++    """
++    forms = [tokens for _, _, tokens in egglog_forms(source)]
++    unsupported = {"set-cost", "unstable-cost", "with-dynamic-cost", "push", "pop", ":unextractable"}
++    if any(unsupported.intersection(tokens) for tokens in forms):
++        raise ValueError("unsupported dynamic, scoped or unextractable cost model")
++    trees = [_sexpr(tokens) for tokens in forms]
++    eq_sorts = {tree[1] for tree in trees if tree[0] == "datatype" or (tree[0] == "sort" and len(tree) == 2)}
++    constructors: dict[str, dict[str, Any]] = {}
++    for tree in trees:
++        declarations = []
++        if tree[0] == "datatype":
++            for variant in tree[2:]:
++                if not isinstance(variant, list):
++                    raise ValueError("unsupported datatype declaration")
++                tail = variant.index(":cost") if ":cost" in variant else len(variant)
++                declarations.append((variant[0], variant[1:tail], tree[1], variant[tail:]))
++        elif tree[0] in {"constructor", "function"} and tree[3] in eq_sorts:
++            # Historical functions with merge actions are not constructors.
++            if tree[0] == "function" and ":merge" in tree:
++                continue
++            declarations.append((tree[1], tree[2], tree[3], tree[4:]))
++        for name, inputs, output, options in declarations:
++            if options and (len(options) != 2 or options[0] != ":cost"):
++                raise ValueError("unsupported constructor cost options")
++            cost = int(options[1]) if options else 1
++            if cost < 0 or cost >= 2**63 or name in constructors or not all(isinstance(t, str) for t in inputs):
++                raise ValueError("ambiguous or unsupported constructor cost declaration")
++            constructors[name] = {"inputs": inputs, "output": output, "cost": cost}
++
++    def term_cost(term: Any, expected_sort: str | None = None) -> int:
++        if isinstance(term, str):
++            valid = (
++                (expected_sort == "String" and term.startswith('"') and term.endswith('"'))
++                or (expected_sort == "i64" and re.fullmatch(r"-?\d+", term) and -(2**63) <= int(term) < 2**63)
++                or (expected_sort == "f64" and re.fullmatch(r"-?(?:\d+\.\d*|\d*\.\d+)(?:[eE][+-]?\d+)?", term))
++            )
++            if not valid:
++                raise ValueError("unsupported or ill-typed primitive in static output")
++            return 1
++        if not term or term[0] not in constructors:
++            raise ValueError("output uses an unsupported constructor/container")
++        schema = constructors[term[0]]
++        if (expected_sort is not None and schema["output"] != expected_sort) or len(term) - 1 != len(schema["inputs"]):
++            raise ValueError("ill-typed constructor output")
++        cost = schema["cost"] + sum(term_cost(arg, sort) for arg, sort in zip(term[1:], schema["inputs"], strict=True))
++        if cost >= 2**63:
++            raise ValueError("static tree cost may overflow a historical backend")
++        return int(cost)
++
++    costs = [term_cost(_sexpr(tokens)) for tokens in terms]
++    return {
++        "semantics": "typed-static-additive-tree-v1",
++        "primitive_cost": 1,
++        "constructors": constructors,
++        "costs": costs,
++    }
++
++
++def static_native_contract(source: str, terms: list[list[str]], native_costs: list[int]) -> dict[str, Any]:
++    """Bind every unchanged best extract to its preceding native-membership query."""
++    validate_extract_output(source, "\n".join(" ".join(term) for term in terms))
++    model = static_extract_model(source, terms)
++    if not terms or model["costs"] != native_costs:
++        raise ValueError("native extractor cost logs disagree with the typed static model")
++    forms = [tokens for _, _, tokens in egglog_forms(source)]
++    extracts = [(i, tokens) for i, tokens in enumerate(forms) if tokens[1] == "extract"]
++    roots = []
++    checks = []
++    for (position, tokens), term, cost in zip(extracts, terms, native_costs, strict=True):
++        check = f"(check (= {tokens[2]} {' '.join(term)}))"
++        checks.append((position - 1, check))
++        roots.append({"extract_request": tokens, "native_term": term, "native_cost": cost})
++    return {
++        "kind": "ordinary-best-static-native",
++        "expected_terms": terms,
++        "native_costs": native_costs,
++        "cost_model": model,
++        "membership": native_check_contract(source, checks, roots),
++    }
++
++
++def materialize_static_native_contract(
++    source: str, terms: list[list[str]], native_costs: list[int]
++) -> tuple[str, dict[str, Any]]:
++    """Insert queries only; leave every original command and extraction option intact."""
++    validate_extract_output(source, "\n".join(" ".join(term) for term in terms))
++    extracts = [form for form in egglog_forms(source) if form[2][1] == "extract"]
++    for (start, _, tokens), term in reversed(list(zip(extracts, terms, strict=True))):
++        source = source[:start] + f"(check (= {tokens[2]} {' '.join(term)}))\n" + source[start:]
++    return source, static_native_contract(source, terms, native_costs)
++
++
++def validate_static_native_output(source: str, contract: dict[str, Any], stdout: str, stderr: str) -> dict[str, Any]:
++    """Require native membership plus both observed minimum costs, not pretty-print equivalence."""
++    expected = static_native_contract(source, contract["expected_terms"], contract["native_costs"])
++    if contract != expected:
++        raise ValueError("static native output contract or extraction boundary changed")
++    outputs = validate_extract_output(source, stdout)
++    model = static_extract_model(source, outputs)
++    logged = [int(cost) for cost in re.findall(r"Best cost for the extract root: (\d+)\b", stderr)]
++    if model["costs"] != logged or logged != contract["native_costs"]:
++        raise ValueError("replay extractor cost logs, typed tree costs and native minimum costs must agree")
++    return {
++        "native_costs": contract["native_costs"],
++        "replay_costs": logged,
++        "exact_terms": outputs == contract["expected_terms"],
+     }
+ 
+ 
+@@ -116,6 +247,7 @@
+                     raise ValueError("native selection contract changed or lost its extraction boundary")
+             if not contract or contract["kind"] not in {
+                 "ordinary-best-extract",
++                "ordinary-best-static-native",
+                 "query-only-native-output-equality",
+             }:
+                 raise ValueError("unknown or absent native output contract")
+@@ -128,7 +260,13 @@
+                 )
+                 if contract != expected:
+                     raise ValueError("native check hash, ordered checks, or preceding graph state changed")
++            if contract["kind"] == "ordinary-best-static-native":
++                expected = static_native_contract(source, contract["expected_terms"], contract["native_costs"])
++                if contract != expected:
++                    raise ValueError("static native output contract or extraction boundary changed")
+             command = [str(engine.resolve()), "-j", "1", str(replay.resolve())]
++            if contract["kind"] == "ordinary-best-static-native":
++                command = ["env", "RUST_LOG=egglog::extract=debug", *command]
+             process = run_complete_command(command, output, output / f"replay-{index:04}", timeout_sec)
+             row = {
+                 "replay": str(replay),
+@@ -145,6 +283,10 @@
+             outputs = validate_extract_output(source, process.stdout_path.read_text())
+             if contract and contract["kind"] == "ordinary-best-extract" and outputs != contract["expected_terms"]:
+                 raise ValueError("ordinary extraction differs from the native output contract")
++            if contract["kind"] == "ordinary-best-static-native":
++                row["cost_validation"] = validate_static_native_output(
++                    source, contract, process.stdout_path.read_text(), process.stderr_path.read_text()
++                )
+             if selections is not None and len(outputs) != len(selections):
+                 raise ValueError("ordinary output count differs from the recorded native roots")
+             row["output_contract_passed"] = True
+--- a/tests/test_dialegg_speq_complete.py
++++ b/tests/test_dialegg_speq_complete.py
+@@ -387,12 +387,15 @@
+ 
+ 
+ @pytest.mark.parametrize("mismatch", [False, True])
++@pytest.mark.parametrize("cost_logs", [False, True])
+ def test_completed_native_parent_requires_actual_replay_outputs_including_zero_root_helpers(
+-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: bool
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: bool, cost_logs: bool
+ ) -> None:
+     source = tmp_path / "source"
+     (source / "src").mkdir(parents=True)
+-    (source / "src/base.egg").write_text("(function type-of (Op) Type)\n(function dims (Type) IntVec)")
++    (source / "src/base.egg").write_text(
++        "(datatype Op (Real) (Wrong))\n(function type-of (Op) Type)\n(function dims (Type) IntVec)"
++    )
+     inputs = source / "bench/vector_norm"
+     inputs.mkdir(parents=True)
+     (inputs / "vector_norm.mlir").write_text("module {}")
+@@ -412,15 +415,16 @@
+         out, err = Path(str(prefix) + ".out"), Path(str(prefix) + ".err")
+         out.write_text("")
+         err.write_text("")
+-        if command[0] == "env":
++        if any(arg.startswith("DIALEGG_CAPTURE_DIR=") for arg in command):
+             calls = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("DIALEGG_CAPTURE_DIR=")))
+             for index, suffix in enumerate(("", "(extract root)\n")):
+                 raw = calls / f"invocation-{index}.egg"
+-                raw.write_text('(include "src/base.egg")\n(run 1)\n' + suffix)
++                raw.write_text('(include "src/base.egg")\n(let root (Real))\n(union root (Wrong))\n(run 1)\n' + suffix)
+                 raw.with_suffix(".json").write_text(
+                     json.dumps(
+                         {
+                             "status": "complete",
++                            **({"extract_costs": [1] if index else []} if cost_logs else {}),
+                             "output_count": index,
+                             "extract_requests": [["(", "extract", "root", ")"]] if index else [],
+                             "output_terms": [["(", "Real", ")"]] if index else [],
+@@ -432,9 +436,12 @@
+             Path(command[-1]).write_text("module { /* verified */ }")
+         else:
+             program = Path(command[-1]).read_text()
+-            assert "(check " not in program
++            assert ("(check " in program) == (cost_logs and "(extract " in program)
+             if "(extract " in program:
+                 out.write_text("(Wrong)\n" if mismatch else "(Real)\n")
++                if cost_logs:
++                    assert command[:2] == ["env", "RUST_LOG=egglog::extract=debug"]
++                    err.write_text("Best cost for the extract root: 1\n")
+         return PilotProcessResult("success", 0, 0.0, 0, out, err, None)
+ 
+     monkeypatch.setattr(complete, "run_bounded_command", run)
+@@ -449,11 +456,17 @@
+     row = complete.capture_complete_dialegg(args, [case], output)["cases"][case]
+     assert row["source_complete"]
+     assert row["source_completion"]["status"] == "complete"
+-    assert row["ordinary_compatible"] == (not mismatch)
+-    assert row["status"] == ("ordinary-validation-failed" if mismatch else "reproduced")
++    assert row["ordinary_compatible"] == (not mismatch or cost_logs)
++    assert row["status"] == ("ordinary-validation-failed" if mismatch and not cost_logs else "reproduced")
+     assert row["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
+-    assert len(row["workloads"]) == (0 if mismatch else 2)
++    assert len(row["workloads"]) == (0 if mismatch and not cost_logs else 2)
+     assert row["invocations"][0]["output_contract"]["zero_root_helper"]
++    if cost_logs:
++        assert row["invocations"][1]["cost_validation"] == {
++            "native_costs": [1],
++            "replay_costs": [1],
++            "exact_terms": not mismatch,
++        }
+     assert len(commands) == 4  # parent, native MLIR verifier, both independent replays
+ 
+ 
+@@ -468,3 +481,26 @@
+     assert result.status == "resource-stopped"
+     assert result.returncode is None
+     assert "disk guard refused" in result.stderr_path.read_text()
++
++
++@pytest.mark.parametrize("logged_term", ["(Chosen 2)", "(Chosen 999)"])
++def test_native_cost_logs_are_enabled_and_bound_to_the_exact_response(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, logged_term: str
++) -> None:
++    raw, backend = tmp_path / "invocation.egg", tmp_path / "backend"
++    raw.write_text("(extract root)")
++    backend.write_text("synthetic engine")
++
++    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
++        assert kwargs["env"]["RUST_LOG"] == "info"
++        kwargs["stdout"].write(b"(Chosen 2)\n")
++        kwargs["stderr"].write(f"[INFO ] extracted with cost 2: {logged_term}\n".encode())
++        return subprocess.CompletedProcess(command, 0)
++
++    monkeypatch.setattr(complete.subprocess, "run", run)
++    assert complete.delegate_backend(backend, raw, tmp_path / "stdout", tmp_path / "stderr") == 0
++    manifest = json.loads(raw.with_suffix(".json").read_text())
++    if logged_term == "(Chosen 2)":
++        assert manifest["extract_costs"] == [2]
++    else:
++        assert "extract_costs" not in manifest and "cost_evidence_unavailable" in manifest
+--- a/tests/test_suite_capture_dialegg_speq.py
++++ b/tests/test_suite_capture_dialegg_speq.py
+@@ -575,3 +575,38 @@
+     assert normalized.index("(run 3)") < normalized.index("(extract $speq-root-second")
+     assert "(check " not in normalized
+     assert "$__expr_" not in normalized
++
++
++def test_public_complete_cli_forwards_explicit_speq_frontend_flags(monkeypatch: pytest.MonkeyPatch) -> None:
++    from scripts import dialegg_speq_complete as complete
++
++    received = []
++
++    def complete_args(args: Any) -> int:
++        received.append(args)
++        return 0
++
++    monkeypatch.setattr(complete, "complete_capture", complete_args)
++    monkeypatch.setattr(
++        capture.sys,
++        "argv",
++        [
++            "capture",
++            "--complete",
++            "--family",
++            "speq",
++            "--output",
++            "/unused/fresh",
++            "--egglog",
++            "/unused/engine",
++            "--speq-artifact",
++            "/unused/artifact",
++            "--speq-frontend-flag=-D_FORTIFY_SOURCE=0",
++            "--speq-frontend-flag=-DPOLYBENCH_USE_C99_PROTO",
++        ],
++    )
++    assert capture.main() == 0
++    assert received[0].speq_frontend_flag == ["-D_FORTIFY_SOURCE=0", "-DPOLYBENCH_USE_C99_PROTO"]
++    monkeypatch.setattr(capture.sys, "argv", ["capture", "--speq-frontend-flag=-D_FORTIFY_SOURCE=0"])
++    with pytest.raises(SystemExit):
++        capture.main()
+--- a/tests/test_reproduction_validation.py
++++ b/tests/test_reproduction_validation.py
+@@ -196,3 +196,122 @@
+         capture_outcome(
+             {"status": "reproduced", "workloads": ["prefix.egg"], "source_completion": {"status": "failed"}}
+         )
++
++
++STATIC_SOURCE = """(datatype E (Value i64) (Add E E :cost 10))
++(let $a (Value 1))
++(let $b (Value 2))
++(let $root (Add $a $b))
++(rewrite (Add a b) (Add b a))
++(run 2)
++(extract $root 0)
++"""
++NATIVE_TERM = "(Add (Value 2) (Value 1))"
++REPLAY_TERM = "(Add (Value 1) (Value 2))"
++
++
++def test_static_tie_queries_preserve_every_original_command_and_request() -> None:
++    # Repeated roots at different states must retain distinct checks, not be deduplicated.
++    original = STATIC_SOURCE + "(run 1)\n(extract $root)\n"
++    terms = [egglog_forms(NATIVE_TERM)[0][2]] * 2
++    source, contract = validation.materialize_static_native_contract(original, terms, [14, 14])
++    retained = [tokens for _, _, tokens in egglog_forms(source) if tokens[1] != "check"]
++    assert retained == [tokens for _, _, tokens in egglog_forms(original)]
++    assert [root["extract_request"][-2] for root in contract["membership"]["roots"]] == ["0", "$root"]
++    assert len(contract["membership"]["checks"]) == 2
++    assert contract["cost_model"]["constructors"]["Add"] == {"inputs": ["E", "E"], "output": "E", "cost": 10}
++    observed = validation.validate_static_native_output(
++        source,
++        contract,
++        REPLAY_TERM + "\n" + NATIVE_TERM,
++        "Best cost for the extract root: 14\nBest cost for the extract root: 14\n",
++    )
++    assert observed == {"native_costs": [14, 14], "replay_costs": [14, 14], "exact_terms": False}
++
++
++@pytest.mark.parametrize(
++    "stderr", ["", "Best cost for the extract root: 13", "Best cost for the extract root: 14\n" * 2]
++)
++def test_static_tie_requires_all_numeric_replay_cost_logs(stderr: str) -> None:
++    source, contract = validation.materialize_static_native_contract(
++        STATIC_SOURCE, [egglog_forms(NATIVE_TERM)[0][2]], [14]
++    )
++    with pytest.raises(ValueError, match="cost logs"):
++        validation.validate_static_native_output(source, contract, REPLAY_TERM, stderr)
++
++
++@pytest.mark.parametrize(
++    "change",
++    [
++        lambda source: source.replace(":cost 10", ":cost 11"),
++        lambda source: source.replace("(run 2)", "(run 2)\n(unstable-cost (Add $a $b) 1)"),
++        lambda source: source.replace("(run 2)", "(run 2)\n(set-cost (Add $a $b) 1)"),
++        lambda source: "(push 1)\n" + source,
++        lambda source: source.replace("$root 0)", "$root 2)"),
++        lambda source: source.replace(":cost 10", ":cost -1"),
++    ],
++)
++def test_unsupported_or_changed_costs_and_variants_never_get_tie_exemption(change: Any) -> None:
++    with pytest.raises(ValueError):
++        validation.materialize_static_native_contract(change(STATIC_SOURCE), [egglog_forms(NATIVE_TERM)[0][2]], [14])
++
++
++@pytest.mark.parametrize("term", ['(Add (Value "wrong-sort") (Value 1))', "(Add (vec-of (Value 1)) (Value 2))"])
++def test_static_output_cost_is_typed_and_rejects_containers(term: str) -> None:
++    with pytest.raises(ValueError, match="primitive|container"):
++        validation.static_extract_model(STATIC_SOURCE, [egglog_forms(term)[0][2]])
++
++
++def test_static_contract_admission_uses_query_failure_not_term_rewriting(
++    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    capture, engine, _ = example
++    session = capture["invocations"][0]
++    replay = Path(session["replay"])
++    # Same static cost as the native term, but Value 999 was never inserted.
++    fabricated = NATIVE_TERM.replace("Value 2", "Value 999")
++    source, contract = validation.materialize_static_native_contract(
++        STATIC_SOURCE, [egglog_forms(fabricated)[0][2]], [14]
++    )
++    replay.write_text(source)
++    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
++    assert sum("999" in tokens for _, _, tokens in egglog_forms(source)) == 1
++    assert "999" not in STATIC_SOURCE
++
++    def run(command: list[str], cwd: Path, prefix: Path, timeout: float) -> PilotProcessResult:
++        assert command[:2] == ["env", "RUST_LOG=egglog::extract=debug"]
++        out, err = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
++        out.write_text("")
++        err.write_text("Check failed")
++        return PilotProcessResult("failure", 1, 0.0, 0, out, err, "Check failed")
++
++    monkeypatch.setattr(validation, "run_complete_command", run)
++    result = validation.validate_capture(capture, engine, tmp_path / "negative")
++    assert result["status"] == "failure" and not result["workloads"]
++    assert result["reason"] == "Check failed"
++
++
++def test_static_contract_cannot_move_native_check_past_an_action(example: tuple, tmp_path: Path) -> None:
++    capture, engine, launches = example
++    session = capture["invocations"][0]
++    source, contract = validation.materialize_static_native_contract(
++        STATIC_SOURCE, [egglog_forms(NATIVE_TERM)[0][2]], [14]
++    )
++    source = source.replace("(extract $root 0)", "(run 1)\n(extract $root 0)")
++    replay = Path(session["replay"])
++    replay.write_text(source)
++    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
++    result = validation.validate_capture(capture, engine, tmp_path / "moved")
++    assert result["status"] == "blocked" and not launches
++
++
++def test_static_model_binds_unselected_competing_constructor_costs() -> None:
++    source = "(datatype E (A :cost 1) (B :cost 2))\n(let $root (A))\n(union $root (B))\n(extract $root)"
++    terms = [egglog_forms("(A)")[0][2]]
++    changed = source.replace("B :cost 2", "B :cost 1")
++    assert validation.static_extract_model(source, terms) != validation.static_extract_model(changed, terms)
++    materialized, contract = validation.materialize_static_native_contract(source, terms, [1])
++    with pytest.raises(ValueError, match="contract"):
++        validation.validate_static_native_output(
++            materialized.replace("B :cost 2", "B :cost 1"), contract, "(B)", "Best cost for the extract root: 1"
++        )

@@ -1,0 +1,92 @@
+--- a/scripts/reproduction_prepare_misaal_hvx.py
++++ b/scripts/reproduction_prepare_misaal_hvx.py
+@@ -31,10 +31,20 @@
+ from scripts.reproduction_process import exclusive_job
+ 
+ ROOT = Path(__file__).resolve().parents[1]
++# Original 44ff/beb inputs newly consumed by HVX, outside the x86 request's file pins.
++HVX_SOURCE_SHA256 = {
++    "lib/sema/hexsemantics_new.py": "eef4d1fcb30db190dc1947a55040203c33aff16e7262d52b36e26fe1cc0c0b75",
++    "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py": (
++        "659d800eef85fa85877e8181d0b75e804b144a829245aed28604a5a1b8034494"
++    ),
++}
+ 
+ 
+ def inspect_hvx_inputs(checkout: Path, llvm: Path) -> dict[str, Any]:
+     """Bind actual frontend semantics and require every ordinary LLVM intrinsic."""
++    for relative, expected in HVX_SOURCE_SHA256.items():
++        if sha256_file(checkout / relative) != expected:
++            raise ValueError(f"pinned HVX source changed: {relative}")
+     codegen = checkout / "Hydride/codegen-generator"
+     low = codegen / "tools/low-level-codegen"
+     frontend = checkout / "lib/sema/hexsemantics_new.py"
+--- a/tests/test_reproduction_prepare_misaal_hvx.py
++++ b/tests/test_reproduction_prepare_misaal_hvx.py
+@@ -38,6 +38,11 @@
+     for path, text in files.items():
+         path.parent.mkdir(parents=True, exist_ok=True)
+         path.write_text(text)
++    monkeypatch.setattr(
++        preparation,
++        "HVX_SOURCE_SHA256",
++        {relative: preparation.sha256_file(checkout / relative) for relative in preparation.HVX_SOURCE_SHA256},
++    )
+     monkeypatch.setattr(
+         cases, "HVX_MAKEFILE_SHA256", preparation.sha256_file(checkout / "benchmarks/hexagon/halide/Makefile")
+     )
+@@ -196,12 +201,19 @@
+             preparation.verified_request(Path(row["request"]))
+ 
+ 
+-def test_matcher_width_limit_is_checked_before_generation(hvx_environment: dict[str, Any]) -> None:
++def test_matcher_width_limit_is_checked_before_generation(
++    hvx_environment: dict[str, Any], monkeypatch: pytest.MonkeyPatch
++) -> None:
+     state = hvx_environment
+     semantics = json.loads((FIXTURES / "concat-semantics.json").read_text())
+     name = "hexagon_V6_vasrh_128B"
+     semantics[name] = {"target_instructions": {name: {"args": [f"(bv #x{1 << 512:x} 1024)"], "arg_permute_map": [-1]}}}
+     (state["checkout"] / "lib/sema/hexsemantics_new.py").write_text(f"semantics = {semantics!r}\n")
++    monkeypatch.setitem(
++        preparation.HVX_SOURCE_SHA256,
++        "lib/sema/hexsemantics_new.py",
++        preparation.sha256_file(state["checkout"] / "lib/sema/hexsemantics_new.py"),
++    )
+     result = preparation.prepare_misaal_hvx(
+         state["output"],
+         state["template"],
+@@ -211,6 +223,33 @@
+     )
+     assert result["status"] == "blocked" and "int512_t" in result["reason"]
+     assert not state["commands"]
++
++
++@pytest.mark.parametrize("changed", ["ordinary-permutation", "generator-non-anchor"])
++def test_unlisted_hvx_source_changes_fail_before_generation(hvx_environment: dict[str, Any], changed: str) -> None:
++    state = hvx_environment
++    if changed == "ordinary-permutation":
++        relative = "lib/sema/hexsemantics_new.py"
++        before, after = "'arg_permute_map': [0]", "'arg_permute_map': [1]"
++    else:
++        relative = "Hydride/codegen-generator/tools/low-level-codegen/InstSelectors/hexagon/RoseHexLegalizerGen.py"
++        before, after = "InstNames = list()", "InstNames = ['unexpected']"
++    assert relative not in state["seed"]["source_hashes"]
++    source = state["checkout"] / relative
++    original = source.read_text()
++    assert before in original
++    source.write_text(original.replace(before, after, 1))
++    result = preparation.prepare_misaal_hvx(
++        state["output"],
++        state["template"],
++        compiler=state["compiler"],
++        cmake=state["cmake"],
++        boost_include=state["boost"],
++    )
++    assert result["status"] == "blocked" and f"pinned HVX source changed: {relative}" in result["reason"]
++    assert not state["commands"]
++    assert not (state["output"] / "selector-preparation.json").exists()
++    assert all(row["request"] is None for row in result["cases"].values())
+ 
+ 
+ def test_existing_wrapper_cannot_use_intrinsic_omission_contract(hvx_environment: dict[str, Any]) -> None:

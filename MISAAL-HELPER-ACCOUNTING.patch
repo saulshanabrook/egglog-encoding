@@ -1,0 +1,595 @@
+--- a/scripts/misaal_reproduction.py
++++ b/scripts/misaal_reproduction.py
+@@ -24,8 +24,11 @@
+ import threading
+ import time
+ import traceback
++from collections.abc import Iterator
++from contextlib import contextmanager
+ from dataclasses import asdict
+ from pathlib import Path
++from types import ModuleType
+ from typing import Any
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+@@ -71,26 +74,33 @@
+ 
+ def validate_llvm(path: Path, expected_functions: set[str], llvm_as: Path, evidence: Path) -> dict[str, Any]:
+     """Require real, well-formed LLVM defining every requested source function."""
++    from scripts.reproduction_misaal_legalizer import audit_simd_lowering
++
+     content = path.read_bytes()
+     if not content:
+         raise ValueError(f"Empty LLVM output: {path}")
++    text = content.decode()
+     definitions = {
+-        quoted or plain
+-        for quoted, plain in re.findall(r'^define\b[^@\n]*@(?:"([^"\n]+)"|([\w.$-]+))\(', content.decode(), re.M)
++        quoted or plain for quoted, plain in re.findall(r'^define\b[^@\n]*@(?:"([^"\n]+)"|([\w.$-]+))\(', text, re.M)
+     }
+-    if not definitions or expected_functions - definitions:
+-        raise ValueError(f"LLVM output is missing requested functions: {sorted(expected_functions - definitions)}")
+-    command = [str(llvm_as), str(path), "-o", os.devnull]
+-    with evidence.with_suffix(".stdout.log").open("wb") as out, evidence.with_suffix(".stderr.log").open("wb") as err:
+-        result = subprocess.run(command, stdout=out, stderr=err, timeout=120, check=False)
+-    receipt = {
++    receipt: dict[str, Any] = {
+         "path": str(path),
+         "sha256": hashlib.sha256(content).hexdigest(),
+         "functions": sorted(definitions),
+         "required_functions": sorted(expected_functions),
+-        "verify_command": command,
+-        "verify_returncode": result.returncode,
++        "verify_returncode": None,
+     }
++    if expected_functions:
++        receipt["lowering_audit"] = audit_simd_lowering(text, expected_functions)
++        if receipt["lowering_audit"]["status"] != "success":
++            save_receipt(evidence.with_suffix(".json"), receipt)
++            raise ValueError(f"Required SIMD lowering audit failed: {receipt['lowering_audit']}")
++    if not definitions:
++        raise ValueError("LLVM output defines no functions")
++    command = [str(llvm_as), str(path), "-o", os.devnull]
++    with evidence.with_suffix(".stdout.log").open("wb") as out, evidence.with_suffix(".stderr.log").open("wb") as err:
++        result = subprocess.run(command, stdout=out, stderr=err, timeout=120, check=False)
++    receipt.update(verify_command=command, verify_returncode=result.returncode)
+     save_receipt(evidence.with_suffix(".json"), receipt)
+     if result.returncode:
+         raise ValueError(f"LLVM verifier rejected {path}")
+@@ -140,6 +150,159 @@
+     finally:
+         os.system = original_system
+         sys.argv = original_argv
++
++
++@contextmanager
++def observe_pattern_helpers(
++    modules: list[ModuleType], request: dict[str, Any], directory: Path, record: dict[str, Any], lock: Any
++) -> Iterator[None]:
++    """Observe the two direct validation subprocesses without changing their Boolean results."""
++    sources = {
++        "compiler.EggLogCompiler": "lib/compiler/EggLogCompiler.py",
++        "patterns.PatternUtils": "lib/patterns/PatternUtils.py",
++    }
++    if {module.__name__ for module in modules} != set(sources):
++        raise ValueError("Pattern-helper observation requires both source modules")
++    if record.get("helper_observation", {}).get("status") in {"installing", "observing"}:
++        record["helper_observation"].update(status="failure", reason="Recursive pattern-helper observation refused")
++        raise ValueError(record["helper_observation"]["reason"])
++    callers = {}
++    originals = {}
++    observation: dict[str, Any] = {"status": "installing", "sources": {}, "scope": "pattern-validation-only"}
++    pending_deletions: dict[tuple[int, str], dict[str, Any]] = {}
++    for module in modules:
++        relative = sources[module.__name__]
++        source = Path(module.__file__ or "").resolve()
++        digest = hashlib.sha256(source.read_bytes()).hexdigest()
++        if (
++            source != (Path(request["checkout"]) / relative).resolve()
++            or request["source_hashes"].get(relative) != digest
++        ):
++            raise ValueError(f"Request must pin the observed pattern-helper source: {relative}")
++        if module.sb is not subprocess:
++            raise ValueError("Pattern-helper subprocess binding is already instrumented or unsupported")
++        callers[module.is_pattern_valid_egg.__code__] = module.__name__
++        originals[module] = module.sb
++        observation["sources"][str(source)] = digest
++    record["helper_observation"] = observation
++    record["helper_invocations"] = []
++
++    def capture_helper(command: Any, *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
++        # Only module-local aliases are replaced. This call and optimizer hooks
++        # continue to use the real subprocess module, preventing double capture.
++        with lock:
++            frame = inspect.currentframe()
++            caller = frame.f_back if frame is not None else None
++            entry: dict[str, Any] = {
++                "index": len(record["helper_invocations"]),
++                "status": "running",
++                "kind": "pattern-validation",
++                "source_command": str(command),
++                "caller": callers.get(caller.f_code) if caller else None,
++                "admitted_as_workload": False,
++            }
++            try:
++                if caller is None or caller.f_code not in callers or args or not isinstance(command, str):
++                    raise ValueError("Unexpected pattern-helper subprocess caller or arguments")
++                argv = shlex.split(command)
++                if (
++                    len(argv) != 2
++                    or command != " ".join(argv)
++                    or any(re.fullmatch(r"[A-Za-z0-9_./+-]+", value) is None for value in argv)
++                ):
++                    raise ValueError("Pattern-helper command must be exactly two literal shell arguments")
++                if (
++                    kwargs.get("shell") is not True
++                    or set(kwargs) - {"shell", "stdout", "stderr"}
++                    or any(kwargs.get(name) not in {None, subprocess.DEVNULL} for name in ("stdout", "stderr"))
++                ):
++                    raise ValueError("Unsupported pattern-helper subprocess options")
++                filename = Path(argv[1]).resolve()
++                deletion_key = (threading.get_ident(), str(filename))
++                if argv[0] == "rm":
++                    if kwargs != {"shell": True} or deletion_key not in pending_deletions:
++                        raise ValueError("Pattern-helper deletion has no observed backend input")
++                    previous = pending_deletions.pop(deletion_key)
++                    previous["cleanup"] = {"command": argv, "status": "running"}
++                    save_receipt(directory / "capture.json", record)
++                    result = subprocess.run(argv, check=False, timeout=120)
++                    previous["cleanup"].update(
++                        status="success" if result.returncode == 0 else "failure", returncode=result.returncode
++                    )
++                    save_receipt(Path(previous["raw"]).with_suffix(".result.json"), previous)
++                    save_receipt(directory / "capture.json", record)
++                    result.args = command
++                    return result
++                compiler = caller.f_locals.get("compiler")
++                if argv[0] != getattr(compiler, "egglog_bin", None) or filename.suffix != ".egg":
++                    raise ValueError("Pattern-helper command does not name its compiler backend and Egglog input")
++                raw = directory / f"helper-{entry['index']:04}.egg"
++                raw.write_bytes(filename.read_bytes())
++                entry.update(
++                    raw=str(raw),
++                    sha256=hashlib.sha256(raw.read_bytes()).hexdigest(),
++                    source_input=str(filename),
++                    source_backend=argv[0],
++                    command=[request["backend"], str(filename)],
++                    backend_sha256=request["backend_sha256"],
++                )
++                record["helper_invocations"].append(entry)
++                save_receipt(directory / "capture.json", record)
++                with raw.with_suffix(".stdout.log").open("wb") as out, raw.with_suffix(".stderr.log").open("wb") as err:
++                    result = subprocess.run(entry["command"], stdout=out, stderr=err, check=False, timeout=120)
++                for name, stream in (("stdout", sys.stdout), ("stderr", sys.stderr)):
++                    content = raw.with_suffix(f".{name}.log").read_bytes()
++                    if kwargs.get(name) != subprocess.DEVNULL:
++                        stream.flush()
++                        stream.buffer.write(content)
++                        stream.buffer.flush()
++                entry.update(status="success", returncode=result.returncode, accepted=result.returncode == 0)
++                pending_deletions[deletion_key] = entry
++                # Return the real process result with the original call's args
++                # metadata. A nonzero exit remains the source's normal False.
++                result.args = command
++                return result
++            except BaseException:
++                entry.update(status="failure", error=traceback.format_exc())
++                if entry not in record["helper_invocations"]:
++                    record["helper_invocations"].append(entry)
++                raise
++            finally:
++                if "raw" in entry:
++                    for name in ("stdout", "stderr"):
++                        path = Path(entry["raw"]).with_suffix(f".{name}.log")
++                        if path.is_file():
++                            entry[name + "_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
++                    save_receipt(Path(entry["raw"]).with_suffix(".result.json"), entry)
++                save_receipt(directory / "capture.json", record)
++
++    class ScopedSubprocess:
++        DEVNULL = subprocess.DEVNULL
++        run = staticmethod(capture_helper)
++
++        def __getattr__(self, name: str) -> Any:
++            observation.update(status="failure", reason=f"Unsupported helper subprocess operation: {name}")
++            save_receipt(directory / "capture.json", record)
++            raise ValueError(observation["reason"])
++
++    try:
++        for module in modules:
++            module.__dict__["sb"] = ScopedSubprocess()
++        observation["status"] = "observing"
++        save_receipt(directory / "capture.json", record)
++        yield
++        if observation["status"] == "failure" or any(
++            item["status"] != "success" for item in record["helper_invocations"]
++        ):
++            raise ValueError("Generated child swallowed an unobserved or incomplete pattern-helper call")
++        observation.update(status="success", completed_calls=len(record["helper_invocations"]))
++    except BaseException:
++        observation["status"] = "failure"
++        raise
++    finally:
++        for module, original in originals.items():
++            module.__dict__["sb"] = original
++        save_receipt(directory / "capture.json", record)
+ 
+ 
+ def observe_python(request_path: Path, attempt: Path, arguments: list[str]) -> int:
+@@ -266,9 +429,9 @@
+             if any(not p.is_file() or p.stat().st_size == 0 for p in artifacts):
+                 raise ValueError("Native LLVM legalization omitted an output")
+             legal = Path(str(prefix) + ".legalize.ll")
+-            entry["validation"] = validate_llvm(legal, functions, Path(request["llvm_as"]), evidence / "verify")
+             for artifact in artifacts:
+                 shutil.copyfile(artifact, evidence / artifact.name)
++            entry["validation"] = validate_llvm(legal, functions, Path(request["llvm_as"]), evidence / "verify")
+             # Same feedback operation as HydrideCompiler.run_llvm_legalizer: the
+             # still-running Halide generator reads this exact .ll after return.
+             shutil.copyfile(legal, Path(str(prefix) + ".ll"))
+@@ -281,12 +444,15 @@
+             save_receipt(directory / "capture.json", record)
+ 
+     try:
+-        egg_compiler = importlib.import_module("compiler.EggLogCompiler").EggLogCompiler
++        egg_module = importlib.import_module("compiler.EggLogCompiler")
++        pattern_module = importlib.import_module("patterns.PatternUtils")
++        egg_compiler = egg_module.EggLogCompiler
+         hydride_compiler = importlib.import_module("compiler.HydrideCompiler").HydrideCompiler
+         egg_compiler.execute_egglog_file = capture_backend
+         hydride_compiler.run_llvm_legalizer = checked_legalizer
+         sys.argv = [str(program)]
+-        runpy.run_path(str(program), run_name="__main__")
++        with observe_pattern_helpers([egg_module, pattern_module], request, directory, record, capture_lock):
++            runpy.run_path(str(program), run_name="__main__")
+         if not record["legalizations"] or any(item["status"] != "success" for item in record["legalizations"]):
+             raise ValueError("Generated child did not complete native LLVM feedback")
+         if any(item["status"] != "success" for item in record["invocations"]):
+@@ -454,6 +620,14 @@
+             "outputs": record["native_outputs"],
+             "children": record["children"],
+         }
++        helper_calls = [call for child in children for call in json.loads(child.read_text())["helper_invocations"]]
++        record["helper_accounting"] = {
++            "status": "success",
++            "calls": len(helper_calls),
++            "accepted": sum(call["accepted"] for call in helper_calls),
++            "rejected": sum(not call["accepted"] for call in helper_calls),
++            "admitted_workloads": 0,
++        }
+         materialize_invocations(children, attempt / "replays", record)
+         return 0
+     except BaseException:
+@@ -560,6 +734,8 @@
+             "capture_misaal",
+         )
+     ]
++    if "observe_pattern_helpers" in functions:
++        native.append(functions["observe_pattern_helpers"])
+     return ast.dump(ast.Module(body=native, type_ignores=[])), ast.dump(ast.Module(body=packaging, type_ignores=[]))
+ 
+ 
+--- a/tests/test_misaal_reproduction.py
++++ b/tests/test_misaal_reproduction.py
+@@ -8,8 +8,10 @@
+ import os
+ import subprocess
+ import sys
++import threading
+ from collections.abc import Iterator
+ from pathlib import Path
++from types import ModuleType
+ from typing import Any
+ 
+ import pytest
+@@ -23,7 +25,22 @@
+     compiler = checkout / "lib/compiler"
+     compiler.mkdir(parents=True)
+     (checkout / "lib/patterns").mkdir()
+-    (compiler / "EggLogCompiler.py").write_text("class EggLogCompiler: pass\n")
++    (compiler / "EggLogCompiler.py").write_text(
++        "import subprocess as sb\nfrom types import SimpleNamespace\nclass EggLogCompiler: pass\n"
++        "def is_pattern_valid_egg(filename, backend='original/configured/backend'):\n"
++        "    compiler = SimpleNamespace(egglog_bin=backend)\n"
++        "    result = sb.run(compiler.egglog_bin + ' ' + filename, shell=True)\n"
++        "    return result.returncode == 0\n"
++    )
++    pattern_utils = checkout / "lib/patterns/PatternUtils.py"
++    pattern_utils.write_text(
++        "import subprocess as sb\nfrom types import SimpleNamespace\n"
++        "def is_pattern_valid_egg(filename, backend='original/configured/backend'):\n"
++        "    compiler = SimpleNamespace(egglog_bin=backend)\n"
++        "    result = sb.run(compiler.egglog_bin + ' ' + filename, shell=True, stdout=sb.DEVNULL, stderr=sb.DEVNULL)\n"
++        "    sb.run('rm ' + filename, shell=True)\n"
++        "    return result.returncode == 0\n"
++    )
+     (compiler / "HydrideCompiler.py").write_text(
+         "from compiler.EggLogCompiler import EggLogCompiler\nclass HydrideCompiler(EggLogCompiler): pass\n"
+     )
+@@ -32,7 +49,7 @@
+     legalizer.write_text(
+         "import os, shlex, sys\nfrom pathlib import Path\n"
+         "prefix = sys.argv[5]\n"
+-        "Path(prefix + '.ll').write_text('define i32 @hydride_expr_0() { ret i32 0 }\\n')\n"
++        "Path(prefix + '.ll').write_text('define i32 @hydride_expr_0() {\\n ret i32 0\\n}\\n')\n"
+         "for suffix in ('.linked.bc', '.linked.ll', '.legalize.ll'):\n"
+         "    os.system(shlex.join([os.environ['PROTOCOL_LLVM_TOOL'], prefix + suffix]))\n"
+     )
+@@ -45,6 +62,14 @@
+ c.egglog_bin = "original/configured/backend"
+ raw = Path("temporary-backend.egg")
+ raw.write_text("(datatype E (Seed))\\n(let srcexpr (Seed))\\n" + "(run 5)\\n(extract srcexpr)\\n")
++if os.environ.get("PROTOCOL_HELPERS"):
++    from compiler.EggLogCompiler import is_pattern_valid_egg as compiler_helper
++    from patterns.PatternUtils import is_pattern_valid_egg as pattern_helper
++    for index, helper in enumerate((compiler_helper, pattern_helper)):
++        for accepted in (True, False):
++            helper_input = Path(f"helper-input-{index}-{accepted}.egg")
++            helper_input.write_text("accepted input" if accepted else "rejected input")
++            assert helper(str(helper_input)) is accepted
+ if os.environ.get("PROTOCOL_MULTI_ROOT"):
+     raw.write_text(raw.read_text() + "(extract srcexpr)\\n")
+ for _ in range(2):
+@@ -67,6 +92,8 @@
+     tools = {
+         "backend": (
+             "import os, sys\nprint('(Seed)')\n"
++            "from pathlib import Path\n"
++            "if Path(sys.argv[1]).read_text() == 'rejected input': sys.exit(9)\n"
+             "if os.environ.get('PROTOCOL_MULTI_ROOT'): print('(Seed)')\n"
+             "sys.exit(7 if os.environ.get('PROTOCOL_BACKEND_FAILURE') else 0)\n"
+         ),
+@@ -75,7 +102,8 @@
+             "import os, sys\nfrom pathlib import Path\n"
+             "if os.environ.get('PROTOCOL_LLVM_FAILURE'): sys.exit(42)\n"
+             "name = 'wrong_function' if os.environ.get('PROTOCOL_BAD_FUNCTION') else 'hydride_expr_0'\n"
+-            "Path(sys.argv[1]).write_text('define i32 @' + name + '() { ret i32 0 }\\n')\n"
++            "value = 'undef' if os.environ.get('PROTOCOL_UNDEFINED_RESULT') else '0'\n"
++            "Path(sys.argv[1]).write_text('define i32 @' + name + '() {\\n ret i32 ' + value + '\\n}\\n')\n"
+         ),
+         "generator": (
+             "import os, subprocess, sys\nfrom pathlib import Path\n"
+@@ -101,7 +129,7 @@
+         "checkout": str(checkout),
+         "source_hashes": {
+             str(path.relative_to(checkout)): hashlib.sha256(path.read_bytes()).hexdigest()
+-            for path in compiler.glob("*.py")
++            for path in [*compiler.glob("*.py"), pattern_utils]
+         },
+         "generator_command": [str(tmp_path / "generator"), "{output}"],
+         "expected_generator_outputs": ["generator.a", "generator.ll"],
+@@ -149,7 +177,9 @@
+     assert len(tools) == 3 and all(tool["returncode"] == 0 for tool in tools)
+ 
+ 
+-@pytest.mark.parametrize("failure", ("LLVM_FAILURE", "BAD_FUNCTION", "PARENT_FAILURE", "BACKEND_FAILURE"))
++@pytest.mark.parametrize(
++    "failure", ("LLVM_FAILURE", "BAD_FUNCTION", "UNDEFINED_RESULT", "PARENT_FAILURE", "BACKEND_FAILURE")
++)
+ def test_failed_native_boundary_cannot_admit_partial_work(protocol_request: Path, tmp_path: Path, failure: str) -> None:
+     request = json.loads(protocol_request.read_text())
+     request["environment"]["PROTOCOL_" + failure] = "1"
+@@ -165,6 +195,11 @@
+     assert record["source_completion"]["parent_returncode"] != 0
+     if failure != "PARENT_FAILURE":
+         assert not (attempt / "parent-consumed-feedback.txt").exists()
++    if failure == "UNDEFINED_RESULT":
++        evidence = attempt / "children/child-0000/legalize-0000"
++        assert "ret i32 undef" in next(evidence.glob("*.legalize.ll")).read_text()
++        audit = json.loads((evidence / "verify.json").read_text())["lowering_audit"]
++        assert audit["status"] == "failure" and audit["undefined_return_functions"] == ["hydride_expr_0"]
+ 
+ 
+ def test_request_rejects_changed_sources_and_reused_pattern_cache(protocol_request: Path, tmp_path: Path) -> None:
+@@ -205,7 +240,7 @@
+ 
+ def test_llvm_syntax_failure_is_not_hidden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+     llvm = tmp_path / "output.ll"
+-    llvm.write_text("define i32 @requested() { malformed }\n")
++    llvm.write_text("define i32 @requested() {\n malformed\n}\n")
+     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1))
+     with pytest.raises(ValueError, match="verifier rejected"):
+         misaal.validate_llvm(llvm, {"requested"}, Path("llvm-as"), tmp_path / "verify")
+@@ -441,3 +476,202 @@
+     )
+     assert result["status"] == "failure" and "evidence changed" in result["reason"]
+     assert result["workloads"] == []
++
++
++@pytest.fixture
++def helper_protocol(protocol_request: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple:
++    request = json.loads(protocol_request.read_text())
++    modules = []
++    for name, relative in (
++        ("compiler.EggLogCompiler", "lib/compiler/EggLogCompiler.py"),
++        ("patterns.PatternUtils", "lib/patterns/PatternUtils.py"),
++    ):
++        path = Path(request["checkout"]) / relative
++        module = ModuleType(name)
++        module.__file__ = str(path)
++        exec(compile(path.read_text(), str(path), "exec"), module.__dict__)
++        modules.append(module)
++    directory = tmp_path / "helpers"
++    directory.mkdir()
++    record: dict[str, Any] = {"invocations": []}
++    commands = []
++
++    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
++        commands.append(command)
++        assert isinstance(command, list) and "shell" not in kwargs
++        if command[0] == "rm":
++            Path(command[1]).unlink()
++            return subprocess.CompletedProcess(command, 0)
++        assert command[0] == request["backend"]
++        content = Path(command[1]).read_text()
++        kwargs["stdout"].write(b"actual helper stdout\n")
++        kwargs["stderr"].write(b"actual helper stderr\n")
++        return subprocess.CompletedProcess(command, 9 if content == "rejected input" else 0)
++
++    monkeypatch.setattr(subprocess, "run", run)
++    return modules, request, directory, record, commands
++
++
++def test_direct_helpers_keep_actual_boolean_rejections_and_preserve_deleted_inputs(
++    helper_protocol: tuple, tmp_path: Path, capsys: pytest.CaptureFixture
++) -> None:
++    modules, request, directory, record, commands = helper_protocol
++    # References imported before installation retain the observed module globals.
++    helpers = [module.is_pattern_valid_egg for module in modules]
++    with misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()):
++        for index, helper in enumerate(helpers):
++            for accepted in (True, False):
++                source = tmp_path / f"input-{index}-{accepted}.egg"
++                source.write_text("accepted input" if accepted else "rejected input")
++                assert helper(str(source)) is accepted
++                assert source.exists() is (index == 0)
++    assert len(commands) == 6  # Four backend calls and the two real source deletions.
++    assert record["invocations"] == []
++    calls = record["helper_invocations"]
++    assert len(calls) == 4 and all(call["status"] == "success" for call in calls)
++    assert [call["accepted"] for call in calls] == [True, False, True, False]
++    assert [call["returncode"] for call in calls] == [0, 9, 0, 9]
++    assert all(call["admitted_as_workload"] is False for call in calls)
++    assert record["helper_observation"]["completed_calls"] == 4
++    for call in calls:
++        raw = Path(call["raw"])
++        assert hashlib.sha256(raw.read_bytes()).hexdigest() == call["sha256"]
++        assert raw.read_text() == ("accepted input" if call["accepted"] else "rejected input")
++        for name in ("stdout", "stderr"):
++            assert hashlib.sha256(raw.with_suffix(f".{name}.log").read_bytes()).hexdigest() == call[name + "_sha256"]
++        assert json.loads(raw.with_suffix(".result.json").read_text()) == call
++    assert all(module.sb is subprocess for module in modules)
++    captured = capsys.readouterr()
++    assert captured.out == "actual helper stdout\n" * 2
++    assert captured.err == "actual helper stderr\n" * 2
++
++
++@pytest.mark.parametrize("fault", ["shell", "deletion", "caller", "operation", "recursive"])
++def test_swallowed_unexpected_helper_operation_cannot_complete(helper_protocol: tuple, fault: str) -> None:
++    modules, request, directory, record, commands = helper_protocol
++    with (
++        pytest.raises(ValueError, match="swallowed"),
++        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
++    ):
++        try:
++            if fault == "shell":
++                modules[1].is_pattern_valid_egg("input.egg;touch injected")
++            elif fault == "deletion":
++                modules[1].is_pattern_valid_egg("input.egg", backend="rm")
++            elif fault == "caller":
++                modules[1].sb.run("backend input.egg", shell=True)
++            elif fault == "operation":
++                modules[0].sb.Popen(["backend", "input.egg"], start_new_session=True)
++            else:
++                with misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()):
++                    pytest.fail("recursive observer must not install")
++        except ValueError:
++            pass
++    assert commands == [] and record["helper_observation"]["status"] == "failure"
++    assert all(module.sb is subprocess for module in modules)
++
++
++def test_direct_helper_source_must_be_pinned(helper_protocol: tuple) -> None:
++    modules, request, directory, record, commands = helper_protocol
++    del request["source_hashes"]["lib/patterns/PatternUtils.py"]
++    with (
++        pytest.raises(ValueError, match="pin the observed pattern-helper source"),
++        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
++    ):
++        pytest.fail("unpinned helper source must not run")
++    assert commands == [] and all(module.sb is subprocess for module in modules)
++
++
++def test_helpers_are_accounted_without_becoming_optimizer_workloads(protocol_request: Path, tmp_path: Path) -> None:
++    request = json.loads(protocol_request.read_text())
++    request["environment"]["PROTOCOL_HELPERS"] = "1"
++    protocol_request.write_text(json.dumps(request))
++    attempt = tmp_path / "attempt"
++    assert misaal.run_frontend(protocol_request, attempt) == 0
++    record = json.loads((attempt / "capture.json").read_text())
++    assert record["helper_accounting"] == {
++        "status": "success",
++        "calls": 4,
++        "accepted": 2,
++        "rejected": 2,
++        "admitted_workloads": 0,
++    }
++    assert record["source_capture_complete"] is True
++    assert record["materialization"] == {"complete": True, "expected_sessions": 2, "materialized_sessions": 2}
++    assert len(record["workloads"]) == len(record["invocations"]) == 2
++    assert all("helper-" not in path for path in record["workloads"])
++    child = json.loads(Path(record["children"][0]["path"]).read_text())
++    assert len(child["helper_invocations"]) == 4
++    assert child["helper_observation"]["status"] == "success"
++
++
++@pytest.mark.parametrize(
++    ("body", "failure"),
++    [
++        ("ret <32 x i16> undef", "undefined_return_functions"),
++        ("ret <32 x i16> poison", "undefined_return_functions"),
++        (
++            "%result = call <32 x i16> @llvm.hydride.unlowered()\n ret <32 x i16> %result",
++            "unlowered_hydride_call_functions",
++        ),
++    ],
++)
++def test_failed_simd_lowering_cannot_be_returned_to_parent(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, failure: str
++) -> None:
++    llvm = tmp_path / "undefined.ll"
++    llvm.write_text(f"define <32 x i16> @required() {{\nentry:\n  {body}\n}}\n")
++    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("invalid feedback must not advance"))
++    with pytest.raises(ValueError, match="SIMD lowering audit failed"):
++        misaal.validate_llvm(llvm, {"required"}, Path("llvm-as"), tmp_path / "verify")
++    receipt = json.loads((tmp_path / "verify.json").read_text())
++    assert receipt["lowering_audit"][failure] == ["required"]
++    assert receipt["lowering_audit"]["status"] == "failure" and receipt["verify_returncode"] is None
++
++
++def test_defined_llvm_result_and_unrelated_runtime_undef_are_not_rejected(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    llvm = tmp_path / "defined.ll"
++    llvm.write_text(
++        "define i32 @required() {\n %undef = add i32 1, 2\n ret i32 %undef\n}\n"
++        "define i32 @unrelated() { ret i32 undef }\n"
++    )
++    commands = []
++
++    def verify(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
++        commands.append(command)
++        return subprocess.CompletedProcess(command, 0)
++
++    monkeypatch.setattr(subprocess, "run", verify)
++    record = misaal.validate_llvm(llvm, {"required"}, Path("llvm-as"), tmp_path / "verify")
++    assert len(commands) == 1 and record["lowering_audit"]["status"] == "success"
++    assert record["verify_returncode"] == 0
++
++
++def test_helper_interruption_retains_partial_streams_without_deleting_source(
++    helper_protocol: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    modules, request, directory, record, _ = helper_protocol
++    source = tmp_path / "interrupted.egg"
++    source.write_text("real helper input")
++
++    def interrupted(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
++        kwargs["stdout"].write(b"partial stdout")
++        kwargs["stderr"].write(b"partial stderr")
++        raise subprocess.TimeoutExpired(command, 120)
++
++    monkeypatch.setattr(subprocess, "run", interrupted)
++    with (
++        pytest.raises(subprocess.TimeoutExpired),
++        misaal.observe_pattern_helpers(modules, request, directory, record, threading.Lock()),
++    ):
++        modules[1].is_pattern_valid_egg(str(source))
++    assert source.read_text() == "real helper input"
++    [call] = record["helper_invocations"]
++    assert call["status"] == record["helper_observation"]["status"] == "failure"
++    raw = Path(call["raw"])
++    assert raw.read_bytes() == source.read_bytes()
++    for name in ("stdout", "stderr"):
++        assert hashlib.sha256(raw.with_suffix(f".{name}.log").read_bytes()).hexdigest() == call[name + "_sha256"]
++    assert json.loads(raw.with_suffix(".result.json").read_text()) == call

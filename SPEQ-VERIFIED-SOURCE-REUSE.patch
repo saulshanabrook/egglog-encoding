@@ -1,0 +1,405 @@
+--- a/scripts/reproduction_prepare_speq.py
++++ b/scripts/reproduction_prepare_speq.py
+@@ -248,33 +248,78 @@
+             artifact_receipt = acquisition / "artifact-receipt.json"
+         artifact_source = artifact_source or ROOT / "benchmarks/local/sources/speq/artifact"
+         artifact_receipt = artifact_receipt or ROOT / "benchmarks/local/evidence/speq-artifact-index.json"
+-        archive_record = json.loads(artifact_receipt.read_text())
++        receipt_bytes = artifact_receipt.read_bytes()
++        archive_record = json.loads(receipt_bytes)
+         if (
+             archive_record.get("computed_archive_md5") != record_speq.SPEQ_ARCHIVE_MD5
+             or not archive_record.get("full_archive_index_examined")
+             or archive_record.get("compressed_bytes_read") != ARCHIVE_BYTES
+         ):
+             raise ValueError("artifact source requires a complete pinned archive verification receipt")
++        index_path = Path(archive_record.get("member_index", artifact_receipt.parent / "members.jsonl"))
++        if not index_path.is_file():
++            # The historical receipt retains its old temporary path. Its exact
++            # index was relocated alongside the receipt, under the same name.
++            index_path = artifact_receipt.parent / index_path.name
++        index_bytes = index_path.read_bytes()
++        index_digest = hashlib.sha256(index_bytes).hexdigest()
++        if index_digest != archive_record.get("member_index_sha256", "").removeprefix("sha256:"):
++            raise ValueError("artifact member index differs from the complete archive receipt")
++        member_count = 0
++        dockerfile_members = []
++        for line in index_bytes.splitlines():
++            member = json.loads(line)
++            member_count += 1
++            if member.get("name") == "lleq-artifact/Dockerfile":
++                dockerfile_members.append(member)
++        if member_count != archive_record.get("member_count"):
++            raise ValueError("artifact member count differs from the complete archive receipt")
++        if len(dockerfile_members) != 1 or any(
++            dockerfile_members[0].get(key) != value for key, value in {"size": DOCKERFILE_BYTES, "type": "0"}.items()
++        ):
++            raise ValueError("artifact index requires the original regular root Dockerfile")
+         member_hashes = {**archive_record.get("mapping_files", {}), **archive_record.get("selected", {})}
+-        if "Dockerfile" not in member_hashes or not (artifact_source / "Dockerfile").is_file():
+-            raise ValueError("verified root Dockerfile is missing; rerun a fresh preparation with --acquire-archive")
++        dockerfile = artifact_source / "Dockerfile"
++        retain_dockerfile = "Dockerfile" in member_hashes
++        if retain_dockerfile != (dockerfile.exists() or dockerfile.is_symlink()):
++            raise ValueError("retained root Dockerfile and archive receipt disagree")
++        (evidence / "artifact-receipt.json").write_bytes(receipt_bytes)
++        retained_index = evidence / index_path.name
++        retained_index.write_bytes(index_bytes)
++        record["artifact_provenance"] = {
++            "receipt": str(evidence / "artifact-receipt.json"),
++            "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
++            "member_index": str(retained_index),
++            "member_index_sha256": index_digest,
++            "dockerfile": {
++                "status": "retained" if retain_dockerfile else "not-retained",
++                "archive_member": "lleq-artifact/Dockerfile",
++                "size": DOCKERFILE_BYTES,
++                "sha256": member_hashes.get("Dockerfile"),
++                "used_by_native_preparation": False,
++                "reason": None if retain_dockerfile else "historical extraction omitted this unused provenance file",
++            },
++        }
+         sources = output / "sources"
+         artifact, lleq = sources / "artifact", sources / "lleq"
+         retained: dict[str, str] = {}
+-        for relative in [*ARTIFACT_HASHES, "Dockerfile"]:
++        for relative in [*ARTIFACT_HASHES, *(["Dockerfile"] if retain_dockerfile else [])]:
+             original = artifact_source / relative
+-            digest = sha256_file(original).removeprefix("sha256:")
++            with original.open("rb") as handle:
++                data = handle.read(1_000_001)
++            if len(data) > 1_000_000:
++                raise ValueError(f"oversized artifact source: {relative}")
++            digest = hashlib.sha256(data).hexdigest()
+             if digest != member_hashes.get(relative) or (
+                 relative in ARTIFACT_HASHES and digest != ARTIFACT_HASHES[relative]
+             ):
+                 raise ValueError(f"artifact source or receipt changed: {relative}")
+-            if relative == "Dockerfile" and original.stat().st_size != DOCKERFILE_BYTES:
++            if relative == "Dockerfile" and len(data) != DOCKERFILE_BYTES:
+                 raise ValueError("root Dockerfile has unexpected length")
+             target = artifact / relative
+             target.parent.mkdir(parents=True, exist_ok=True)
+-            shutil.copyfile(original, target)
++            target.write_bytes(data)
+             retained[relative] = digest
+-        shutil.copyfile(artifact_receipt, evidence / "artifact-receipt.json")
+         record["artifact_members"] = retained
+         lleq_source = lleq_source or ROOT / "benchmarks/local/sources/speq/lleq"
+         for relative, digest in REV_HASHES.items():
+--- a/tests/test_reproduction_prepare_speq.py
++++ b/tests/test_reproduction_prepare_speq.py
+@@ -107,6 +107,13 @@
+     (artifact / "Dockerfile").write_bytes(dockerfile)
+     monkeypatch.setattr(preparation, "DOCKERFILE_BYTES", len(dockerfile))
+     archive_receipt = tmp_path / "artifact-receipt.json"
++    member_index = tmp_path / "members.jsonl"
++    member_index.write_text(
++        "".join(
++            json.dumps({"name": "lleq-artifact/" + name, "size": (artifact / name).stat().st_size, "type": "0"}) + "\n"
++            for name in [*hashes, "Dockerfile"]
++        )
++    )
+     archive_receipt.write_text(
+         json.dumps(
+             {
+@@ -114,6 +121,8 @@
+                 "compressed_bytes_read": preparation.ARCHIVE_BYTES,
+                 "full_archive_index_examined": True,
+                 "selected": {**hashes, "Dockerfile": hashlib.sha256(dockerfile).hexdigest()},
++                "member_index_sha256": preparation.sha256_file(member_index),
++                "member_count": len(hashes) + 1,
+             }
+         )
+     )
+@@ -208,6 +217,59 @@
+     assert result["python_wheels"]["resolved.whl"]
+     assert (arguments["artifact_source"] / "parseIR.py").read_text() == "parseIR.py"
+     assert (arguments["output"] / "sources/artifact/requirements.txt").read_text() == "requirements.txt"
++    assert result["artifact_provenance"]["dockerfile"]["status"] == "retained"
++    assert (arguments["output"] / "sources/artifact/Dockerfile").read_bytes() == (
++        arguments["artifact_source"] / "Dockerfile"
++    ).read_bytes()
++
++
++def test_verified_historical_inputs_prepare_without_unretained_dockerfile(
++    pipeline: tuple, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    arguments, _, launches = pipeline
++    receipt_path = arguments["artifact_receipt"]
++    receipt = json.loads(receipt_path.read_text())
++    del receipt["selected"]["Dockerfile"]
++    receipt["mapping_files"] = receipt.pop("selected")
++    receipt["member_index"] = "/removed/acquisition/evidence/speq-artifact-members.jsonl"
++    receipt["member_index_sha256"] = receipt["member_index_sha256"].removeprefix("sha256:")
++    receipt_path.write_text(json.dumps(receipt))
++    original_receipt = receipt_path.read_bytes()
++    member_index = receipt_path.with_name("speq-artifact-members.jsonl")
++    receipt_path.with_name("members.jsonl").rename(member_index)
++    (arguments["artifact_source"] / "Dockerfile").unlink()
++    monkeypatch.setattr(
++        preparation.urllib.request, "urlopen", lambda *args, **kwargs: pytest.fail("unexpected network")
++    )
++
++    result = preparation.prepare_speq(**arguments)
++
++    assert result["status"] == "success", result["reason"]
++    assert len(result["artifact_members"]) == 20
++    assert set(result["artifact_members"]) == set(preparation.ARTIFACT_HASHES)
++    provenance = result["artifact_provenance"]
++    assert provenance["dockerfile"] == {
++        "status": "not-retained",
++        "archive_member": "lleq-artifact/Dockerfile",
++        "size": preparation.DOCKERFILE_BYTES,
++        "sha256": None,
++        "used_by_native_preparation": False,
++        "reason": "historical extraction omitted this unused provenance file",
++    }
++    assert Path(provenance["receipt"]).read_bytes() == receipt_path.read_bytes() == original_receipt
++    assert Path(provenance["member_index"]).read_bytes() == member_index.read_bytes()
++    assert Path(provenance["member_index"]).name == Path(receipt["member_index"]).name
++    assert provenance["member_index_sha256"] == hashlib.sha256(member_index.read_bytes()).hexdigest()
++    assert not (arguments["output"] / "sources/artifact/Dockerfile").exists()
++    assert not any(row["name"] in ("artifact-acquisition", "rev-source-MemorySSA.h") for row in launches)
++    assert any(row["name"] == "python-environment" for row in launches)
++    assert any(row["name"] == "rev-build" for row in launches)
++    assert len([row for row in launches if row["name"].startswith("reference-")]) == 4
++    # Changing the old cache afterwards cannot change this preparation's inputs.
++    (arguments["artifact_source"] / "parseIR.py").write_text("later cache edit")
++    assert (arguments["output"] / "sources/artifact/parseIR.py").read_text() == "parseIR.py"
++    settings = json.loads(Path(result["settings"]).read_text())["speq"]
++    assert str(arguments["artifact_source"]) not in str(settings)
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -234,7 +296,77 @@
+     result = preparation.prepare_speq(**arguments)
+     assert result["status"] == "blocked" and result["reason"]
+     if fault == "dockerfile":
+-        assert "--acquire-archive" in result["reason"]
++        assert "Dockerfile and archive receipt disagree" in result["reason"]
++    assert not (arguments["output"] / "settings.json").exists()
++
++
++@pytest.mark.parametrize(
++    "fault",
++    [
++        "archive-length",
++        "archive-md5",
++        "missing-index",
++        "changed-index",
++        "member-count",
++        "missing-dockerfile-index",
++        "duplicate-dockerfile-index",
++        "nonregular-dockerfile-index",
++        "dockerfile-unrecorded",
++        "dockerfile-hash",
++        "dockerfile-size",
++        "missing-source",
++        "oversized-source",
++        "repinned-source",
++    ],
++)
++def test_source_reuse_requires_complete_archive_evidence_and_independent_pins(pipeline: tuple, fault: str) -> None:
++    arguments, _, launches = pipeline
++    receipt_path = arguments["artifact_receipt"]
++    receipt = json.loads(receipt_path.read_text())
++    index = receipt_path.with_name("members.jsonl")
++    dockerfile = arguments["artifact_source"] / "Dockerfile"
++    if fault == "archive-length":
++        receipt["compressed_bytes_read"] -= 1
++    elif fault == "archive-md5":
++        receipt["computed_archive_md5"] = "0" * 32
++    elif fault == "missing-index":
++        index.unlink()
++    elif fault == "changed-index":
++        index.write_bytes(index.read_bytes().replace(b"Dockerfile", b"Other-file"))
++    elif fault == "member-count":
++        receipt["member_count"] -= 1
++    elif fault.endswith("-dockerfile-index"):
++        members = [json.loads(line) for line in index.read_text().splitlines()]
++        if fault == "missing-dockerfile-index":
++            members.pop()
++        elif fault == "duplicate-dockerfile-index":
++            members.append(members[-1])
++        else:
++            members[-1]["type"] = "2"
++        index.write_text("".join(json.dumps(member) + "\n" for member in members))
++        receipt["member_count"] = len(members)
++        receipt["member_index_sha256"] = preparation.sha256_file(index)
++    elif fault == "dockerfile-unrecorded":
++        del receipt["selected"]["Dockerfile"]
++    elif fault == "dockerfile-hash":
++        dockerfile.write_bytes(b"X" * preparation.DOCKERFILE_BYTES)
++    elif fault == "dockerfile-size":
++        dockerfile.write_bytes(b"FROM too short\nextra")
++        receipt["selected"]["Dockerfile"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
++    elif fault == "missing-source":
++        (arguments["artifact_source"] / "parseIR.py").unlink()
++    elif fault == "oversized-source":
++        (arguments["artifact_source"] / "parseIR.py").write_bytes(b"X" * 1_000_001)
++    else:
++        source = arguments["artifact_source"] / "parseIR.py"
++        source.write_text("changed source with a matching but untrusted receipt entry")
++        receipt["selected"]["parseIR.py"] = hashlib.sha256(source.read_bytes()).hexdigest()
++    receipt_path.write_text(json.dumps(receipt))
++
++    result = preparation.prepare_speq(**arguments)
++
++    assert result["status"] == "blocked" and result["reason"]
++    assert not any(row["name"] == "python-environment" for row in launches)
+     assert not (arguments["output"] / "settings.json").exists()
+ 
+ 
+--- a/benchmarks/reproduction/speq-preparation.md
++++ b/benchmarks/reproduction/speq-preparation.md
+@@ -1,9 +1,9 @@
+-# SpEQ prerequisite preparation (not executed)
++# SpEQ prerequisite preparation
+ 
+-New owned files are `scripts/reproduction_prepare_speq.py` and
+-`tests/test_reproduction_prepare_speq.py`. No shared adapter, recorder, source,
+-settings, catalog, cache or live implementation was edited. All native commands,
+-network artifact streams and package installs remain unrun in this slice.
++`scripts/reproduction_prepare_speq.py` prepares a fresh native environment from
++verified original inputs. The source-reuse change described here has only
++lightweight, mocked validation; no new native preparation, artifact stream or
++package installation was run for this change.
+ 
+ `prepare_speq(output, engine, *, llvm_config, artifact_source=None,
+ artifact_receipt=None, lleq_source=None, acquire_archive=False,
+@@ -20,8 +20,8 @@
+   `speq-artifact.tar.gz`, 6,259,975,347 compressed bytes, MD5
+   `813c94e4c12a3466909849f38b6ac1fe`.
+ - REV source: [avery-laird/lleq at 00bd6254b3832d94558b7c38a394ea03d01a2763](https://github.com/avery-laird/lleq/tree/00bd6254b3832d94558b7c38a394ea03d01a2763).
+-  This is an exact sparse export of `REVPass.cpp`, `REVPass.h`, and `REVTest.cpp`,
+-  each independently SHA-256 checked by the existing recorder constants. It is
++  This is an exact sparse export of `REVPass.cpp`, `REVPass.h`, the custom
++  `MemorySSA.h`, and `REVTest.cpp`, each independently SHA-256 checked by the existing recorder constants. It is
+   not represented as a complete LLVM checkout. Existing verified local copies
+   are copied; missing files can be acquired from those exact raw GitHub paths.
+ - Existing native LLVM 17.0.6 development installation is required. The module
+@@ -44,7 +44,9 @@
+ 
+ The copy includes all eight available application C files and both headers,
+ the four original reference `.ll` files, `parseIR.py`, `run_benchmark.py`,
+-`driver.py`, the table script and paper-name mapping, requirements and Dockerfile.
++`driver.py`, the table script and paper-name mapping, and requirements. A retained
++Dockerfile is copied only when its bytes match its full-archive receipt and original length;
++it is never executed or used to build the native environment.
+ Known member hashes are independently pinned. The new acquisition entry point
+ streams only the pinned archive into bounded buffers and extracts only these
+ small allowlisted regular files; duplicate members, unsafe names, wrong size,
+@@ -53,20 +55,45 @@
+ The original root Dockerfile must be 1,893 bytes and is hashed after the full
+ archive verifies; no Dockerfile command is executed.
+ 
+-## Why a new acquisition is currently necessary
++## Reusing the verified historical archive inputs
+ 
+-The existing `stream_speq_artifact` helper writes to a global shared storage path
+-and its complete-index mapping filter omits root `Dockerfile`. This module does
+-not alter that shared helper. The existing historical receipt/index proves the
+-root file exists, but its contents were not retained. The default source reuse
+-path therefore stops with an actionable missing-Dockerfile error, before any
+-Python environment or REV build is attempted. A fresh explicit `--acquire-archive`
+-run captures it without overwriting historical source or evidence.
++The retained historical receipt at
++`benchmarks/local/evidence/speq-artifact-index.json` records a complete
++6,259,975,347-byte stream with the pinned MD5, 73,109 members, and member-index
++SHA-256 `23acf74505c56b2e08479b8cfb82a52b4670ef5f95bd3fce36192649615ab136`.
++All 20 required artifact inputs currently match both their independent source
++pins and receipt entries; all four required REV source files also match their
++independent pins. The original extraction omitted the root Dockerfile, whose
++regular-file membership and 1,893-byte length remain in that complete index.
+ 
+-The earlier full stream took roughly 1,501 seconds in its saved receipt. The new
+-single-stream path is not performance-tested; allow at least 1,800 seconds per
+-step or choose a reviewed longer timeout. A network/time/resource failure retains
+-the partial attempt but never publishes settings. No full stream ran now.
++Preparation can reuse those inputs without another archive transfer. It requires
++the recorded full-stream length, MD5 and completion flag; rehashes the actual
++member index against its receipt; checks its member count and unique original
++Dockerfile entry; and independently verifies every required artifact input.
++When the receipt's old temporary index path is unavailable, the only relocation
++fallback is the same index basename beside the receipt. Both the receipt and
++verified index bytes are copied into the new attempt's evidence directory.
++Required source files are copied from the exact bytes hashed, so the published
++settings use the new durable copy rather than the historical mutable source cache.
++This reuses previously recorded full-stream verification; it does not claim to
++have recomputed the archive MD5 during preparation.
++
++The Dockerfile is the only optional retained member. If neither the historical
++receipt nor source directory contains it, `preparation.json` explicitly records
++`artifact_provenance.dockerfile.status = "not-retained"`, its indexed size, a null
++content hash and `used_by_native_preparation = false`. Its base image, commands
++and any external fetches remain unknown. A receipt that claims Dockerfile bytes
++must still have the file; a file without a matching receipt entry, changed bytes,
++or an unexpected length blocks preparation. No replacement Dockerfile is created.
++This exception does not make any C input, parser, rule, schedule, reference IR or
++REV source optional, nor does it change complete-parent or standalone admission.
++
++Fresh explicit `--acquire-archive` preparation still streams the full pinned
++archive, captures Dockerfile, and requires its size and the complete archive
++checksum before admitting it. This is optional provenance recovery, not a native
++build dependency. The earlier full stream took roughly 1,501 seconds; the new
++single-stream path remains untested. A network/time/resource failure preserves
++the failed attempt and never publishes settings.
+ 
+ ## Native gates and scope
+ 
+@@ -91,20 +118,27 @@
+ 
+ ## Commands after integration and a new heavy-slot grant
+ 
+-From the live root, for a fresh acquisition plus native preparation:
++From the live root, reuse the verified existing inputs to build a new durable
++environment (the output directory must not already exist):
+ 
+ ```sh
+-uv run --locked python -m scripts.reproduction_prepare_speq \
++PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m scripts.reproduction_prepare_speq \
+   --output benchmarks/local/reproduction/preparation/speq-attempt-0001 \
+   --egglog target/release/egglog-experimental \
+   --llvm-config /opt/homebrew/opt/llvm@17/bin/llvm-config \
+-  --acquire-archive --timeout-sec 1800
++  --artifact-source benchmarks/local/sources/speq/artifact \
++  --artifact-receipt benchmarks/local/evidence/speq-artifact-index.json \
++  --lleq-source benchmarks/local/sources/speq/lleq \
++  --timeout-sec 1800
+ ```
+ 
+-For later verified source reuse, choose a new output attempt and pass the earlier
+-`archive/artifact` and `archive/artifact-receipt.json` as `--artifact-source` and
+-`--artifact-receipt`. The exact source hashes are checked again. Never point output
+-at an old attempt and do not wrap this CLI in a second process-group guard.
++To recover Dockerfile provenance as well, choose another fresh output and replace
++`--artifact-source` and `--artifact-receipt` with `--acquire-archive`; a reviewed
++`--timeout-sec 3600` gives additional transfer margin. Later attempts can reuse its
++`archive/artifact` and `archive/artifact-receipt.json` without downloading again.
++Never point output at an old attempt or wrap this CLI in a second process-group
++guard. The CLI owns the shared heavy-job lock; wait for the active native slot to
++be released before launching it.
+ 
+ After actual preparation success, the existing public coordinator can run a first
+ available paper parent, for example:
+@@ -120,11 +154,11 @@
+ 
+ ## Lightweight validation
+ 
+-18 tests exercise complete stream/root Dockerfile retention, archive and source
+-mismatches, duplicate/symlink/unsafe members, absent inputs, native version and
+-reference FIR gates, resource-stop propagation, immutable output, exact settings
+-and guarded helper placement. Archive tests use tiny in-memory tarballs; native
+-commands are mocked. Ruff/mypy and CLI help pass. No runtime compatibility result
+-is inferred from these tests.
+-
+-Independent read-only review found no concrete blocker in archive admission, guarded helper descendants, reference gates or runtime identity closure. Native compatibility is still untested.
++35 focused tests cover historical source reuse with an explicitly absent Dockerfile,
++retained Dockerfile/hash/length consistency, full-stream evidence, member-index
++integrity, independent source pins, immutable source copies, native version and
++reference FIR gates, resource-stop propagation, settings and guarded helper
++placement. Acquisition tests use tiny in-memory archives and still require
++Dockerfile. Native commands are mocked; these tests establish no native runtime
++compatibility or full-parent result. Ruff and mypy pass for the two changed Python
++files. Native compatibility of the fresh preparation remains untested.

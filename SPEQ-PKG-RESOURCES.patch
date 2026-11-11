@@ -1,0 +1,184 @@
+--- a/scripts/reproduction_prepare_speq.py
++++ b/scripts/reproduction_prepare_speq.py
+@@ -29,6 +29,7 @@
+ ROOT = Path(__file__).resolve().parents[1]
+ LLVM_VERSION = "17.0.6"
+ PYTHON_VERSION = "3.11.11"
++SETUPTOOLS_VERSION = "80.9.0"  # z3-solver 4.12.2.0 imports the retired pkg_resources API.
+ ARCHIVE_BYTES = 6_259_975_347
+ DOCKERFILE_BYTES = 1893
+ ARTIFACT_HASHES = {
+@@ -48,7 +49,9 @@
+     "llvm/include/llvm/Analysis/MemorySSA.h": record_speq.REV_MEMORY_SSA_SHA256,
+     "llvm/unittests/Transforms/REV/REVTest.cpp": record_speq.REV_TESTS_SHA256,
+ }
+-PYTHON_REQUIREMENTS = f"egglog=={record_speq.EGGLOG_PYTHON_VERSION}\nlark==1.1.7\nz3-solver==4.12.2.0\n"
++PYTHON_REQUIREMENTS = (
++    f"egglog=={record_speq.EGGLOG_PYTHON_VERSION}\nlark==1.1.7\nz3-solver==4.12.2.0\nsetuptools=={SETUPTOOLS_VERSION}\n"
++)
+ 
+ 
+ def acquire_artifact(destination: Path) -> dict[str, Any]:
+@@ -171,6 +174,7 @@
+         "lleq_revision": record_speq.LLEQ_COMMIT,
+         "python_version": PYTHON_VERSION,
+         "egglog_python_version": record_speq.EGGLOG_PYTHON_VERSION,
++        "setuptools_version": SETUPTOOLS_VERSION,
+         "missing_paper_inputs": ["speq-tpal", "speq-tsvc2"],
+         "implementation_sha256": sha256_file(Path(__file__)),
+         "recorder_sha256": sha256_file(ROOT / "scripts/paper_benchmarks/record_speq.py"),
+@@ -412,11 +416,13 @@
+             [
+                 str(python),
+                 "-c",
+-                "import importlib.metadata as m,json,sys; "
++                "import importlib.metadata as m,json,sys,pkg_resources; "
+                 "from pathlib import Path; from scripts.paper_benchmarks import record_speq as r; "
++                f"assert m.version('setuptools') == {SETUPTOOLS_VERSION!r}; "
+                 "r.import_parse_ir(Path(sys.argv[1])); "
+                 "assert m.version('egglog') == r.EGGLOG_PYTHON_VERSION; "
+-                "print(json.dumps({'python':sys.version,'executable':sys.executable,'egglog':m.version('egglog')}))",
++                "print(json.dumps({'python':sys.version,'executable':sys.executable,'egglog':m.version('egglog'),"
++                "'setuptools':m.version('setuptools'),'pkg_resources':pkg_resources.__file__}))",
+                 str(adapted),
+             ],
+         )
+--- a/tests/test_reproduction_prepare_speq.py
++++ b/tests/test_reproduction_prepare_speq.py
+@@ -3,10 +3,13 @@
+ from __future__ import annotations
+ 
+ import hashlib
++import importlib.metadata
+ import io
+ import json
++import sys
+ import tarfile
+ from pathlib import Path
++from types import ModuleType
+ from typing import Any
+ 
+ import pytest
+@@ -223,6 +226,49 @@
+     ).read_bytes()
+ 
+ 
++@pytest.mark.parametrize("installed", ["80.9.0", "84.0.0", None])
++def test_pkg_resources_dependency_and_executed_import_contract(
++    pipeline: tuple, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], installed: str | None
++) -> None:
++    arguments, _, launches = pipeline
++    result = preparation.prepare_speq(**arguments)
++    assert result["status"] == "success"
++    assert result["setuptools_version"] == "80.9.0"
++    requirements = arguments["output"] / "evidence/requirements.in"
++    assert requirements.read_text().splitlines() == [
++        "egglog==13.2.0",
++        "lark==1.1.7",
++        "z3-solver==4.12.2.0",
++        "setuptools==80.9.0",
++    ]
++    commands = {row["name"]: row["command"] for row in launches}
++    lock = arguments["output"] / "evidence/requirements.lock"
++    assert commands["python-lock"][-3:] == [str(requirements), "--output-file", str(lock)]
++    assert commands["python-download"][-2:] == commands["python-install"][-2:] == ["-r", str(lock)]
++    assert "--require-hashes" in commands["python-download"] and "--require-hashes" in commands["python-install"]
++
++    # Execute the actual probe text with controlled imports, without loading Z3
++    # or any native tool. It must fail before parser import for a missing API or
++    # wrong provider version, even if egglog itself would import successfully.
++    resources = ModuleType("pkg_resources")
++    resources.__file__ = str(arguments["output"] / "python/lib/pkg_resources/__init__.py")
++    monkeypatch.setitem(sys.modules, "pkg_resources", resources if installed else None)
++    monkeypatch.setattr(importlib.metadata, "version", lambda name: installed if name == "setuptools" else "13.2.0")
++    imported: list[Path] = []
++    monkeypatch.setattr(preparation.record_speq, "import_parse_ir", imported.append)
++    probe = commands["python-import"]
++    monkeypatch.setattr(sys, "argv", ["-c", probe[-1]])
++    if installed != "80.9.0":
++        with pytest.raises(AssertionError if installed else ModuleNotFoundError):
++            exec(probe[-2], {})
++        assert not imported
++    else:
++        exec(probe[-2], {})
++        observed = json.loads(capsys.readouterr().out)
++        assert observed["setuptools"] == "80.9.0" and observed["pkg_resources"] == resources.__file__
++        assert imported == [Path(probe[-1])]
++
++
+ def test_verified_historical_inputs_prepare_without_unretained_dockerfile(
+     pipeline: tuple, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+--- a/benchmarks/reproduction/speq-preparation.md
++++ b/benchmarks/reproduction/speq-preparation.md
+@@ -1,7 +1,7 @@
+ # SpEQ prerequisite preparation
+ 
+ `scripts/reproduction_prepare_speq.py` prepares a fresh native environment from
+-verified original inputs. The source-reuse change described here has only
++verified original inputs. The runtime-dependency repair described here has only
+ lightweight, mocked validation; no new native preparation, artifact stream or
+ package installation was run for this change.
+ 
+@@ -28,11 +28,31 @@
+   verifies `llvm-config`, clang/clang++/opt and library files and records their
+   actual hashes. It does not build LLVM or assume an x86-only host. Native
+   macOS uses `otool`; Linux uses `ldd` for additional linked-library evidence.
+-- Private Python 3.11.11, egglog-python 13.2.0, Lark 1.1.7 and
+-  z3-solver 4.12.2.0. The recorder already defines the explicit 13.2 API port;
++- Private Python 3.11.11, egglog-python 13.2.0, Lark 1.1.7,
++  z3-solver 4.12.2.0 and setuptools 80.9.0. The recorder already defines the explicit 13.2 API port;
+   this preparation does not add a semantic port. Both egglog 13.2 and Z3's
+   selected version publish macOS ARM wheels. [egglog release metadata](https://pypi.org/pypi/egglog/13.2.0/json),
+   [Z3 release metadata](https://pypi.org/pypi/z3-solver/4.12.2.0/json).
++
++The first actual fresh preparation, retained at
++`benchmarks/local/reproduction/preparation/speq-attempt-0001`, passed archive and
++source verification, environment creation and locked wheel installation, then
++failed at `python-import`: Z3 4.12.2.0 imports `pkg_resources`, which the seeded
++setuptools 84.0.0 does not provide. Its failed receipt and logs remain unchanged.
++The historical working environment used Z3 4.15.3.0, so it did not validate this
++older Z3 dependency combination.
++
++Setuptools 80.9.0 explicitly packages `pkg_resources` in its
++[pinned package configuration](https://raw.githubusercontent.com/pypa/setuptools/v80.9.0/pyproject.toml)
++and retains the [required resource API](https://raw.githubusercontent.com/pypa/setuptools/v80.9.0/pkg_resources/__init__.py).
++Its [published universal wheel](https://pypi.org/pypi/setuptools/80.9.0/json)
++supports Python 3.9 and later. This exact runtime dependency now enters the same
++hashed requirements lock, wheel retention and offline installation as Z3; it is
++not left to whichever setuptools `uv --seed` supplies. The guarded import probe
++explicitly imports `pkg_resources`, requires setuptools 80.9.0, imports the
++adapted parser, and records the provider version and module path. No Z3, parser,
++rule or schedule changes are needed. The repaired fresh environment still needs
++an actual guarded preparation run.
+ 
+ The original artifact `requirements.txt` remains byte-for-byte retained, including
+ its historical egglog 1.0.0 requirement. It is not falsely reported as the
+@@ -123,7 +143,7 @@
+ 
+ ```sh
+ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m scripts.reproduction_prepare_speq \
+-  --output benchmarks/local/reproduction/preparation/speq-attempt-0001 \
++  --output benchmarks/local/reproduction/preparation/speq-attempt-0002 \
+   --egglog target/release/egglog-experimental \
+   --llvm-config /opt/homebrew/opt/llvm@17/bin/llvm-config \
+   --artifact-source benchmarks/local/sources/speq/artifact \
+@@ -145,7 +165,7 @@
+ 
+ ```sh
+ uv run --locked python -m scripts.suite_reproduction \
+-  --settings benchmarks/local/reproduction/preparation/speq-attempt-0001/settings.json \
++  --settings benchmarks/local/reproduction/preparation/speq-attempt-0002/settings.json \
+   --family speq --case speq-taco_spmv_csc --stage all
+ ```
+ 
+@@ -154,7 +174,8 @@
+ 
+ ## Lightweight validation
+ 
+-35 focused tests cover historical source reuse with an explicitly absent Dockerfile,
++38 focused tests cover the exact legacy resource dependency/import contract and
++historical source reuse with an explicitly absent Dockerfile,
+ retained Dockerfile/hash/length consistency, full-stream evidence, member-index
+ integrity, independent source pins, immutable source copies, native version and
+ reference FIR gates, resource-stop propagation, settings and guarded helper
