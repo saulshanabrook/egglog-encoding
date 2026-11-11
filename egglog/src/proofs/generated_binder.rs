@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use enum_map::EnumMap;
 use thiserror::Error;
+use web_time::{Duration, Instant};
 
 use crate::ast::{
     ContainerRebuildSpec, Expr, FunctionDecl, FunctionSubtype, GenericAction, GenericActions,
@@ -1278,6 +1279,22 @@ struct RuleFrontendEffects<'a> {
     synthetic: Option<&'a SyntheticGlobals>,
     query_context: Context,
     action_context: Context,
+}
+
+/// Keep the diagnostic leaf timer exclusive while allowing the causal
+/// ablation to bypass the complete compatibility replay from the same binary.
+fn measure_generated_frontend_effects(
+    enabled: bool,
+    elapsed: &mut Duration,
+    effects: impl FnOnce() -> Result<(), TypeError>,
+) -> Result<(), TypeError> {
+    if !enabled {
+        return Ok(());
+    }
+    let timer = Instant::now();
+    let result = effects();
+    *elapsed += timer.elapsed();
+    result
 }
 
 impl RuleFrontendEffects<'_> {
@@ -2587,6 +2604,8 @@ impl ExpressionBinder<'_> {
 struct GeneratedBinder<'a> {
     egraph: &'a mut EGraph,
     state: BindingState,
+    replay_frontend_effects: bool,
+    frontend_effects_time: Duration,
 }
 
 impl GeneratedBinder<'_> {
@@ -2731,6 +2750,8 @@ impl GeneratedBinder<'_> {
             });
         }
         let generated_merge = decl.merge;
+        let replay_frontend_effects = self.replay_frontend_effects;
+        let frontend_effects_time = &mut self.frontend_effects_time;
         let state = &mut self.state;
         let egraph = &mut *self.egraph;
         let symbol_gen = &mut egraph.parser.symbol_gen;
@@ -2756,13 +2777,19 @@ impl GeneratedBinder<'_> {
                         merge_bound_names.insert("old".to_owned());
                         merge_bound_names.insert("new".to_owned());
                     }
-                    replay_generated_actions_effects(
-                        type_info,
-                        symbol_gen,
-                        &generated_merge.actions,
-                        None,
-                        merge_bound_names.clone(),
-                        Context::Write,
+                    measure_generated_frontend_effects(
+                        replay_frontend_effects,
+                        frontend_effects_time,
+                        || {
+                            replay_generated_actions_effects(
+                                type_info,
+                                symbol_gen,
+                                &generated_merge.actions,
+                                None,
+                                merge_bound_names.clone(),
+                                Context::Write,
+                            )
+                        },
                     )?;
                     let mut binder = ExpressionBinder {
                         type_info,
@@ -2779,18 +2806,24 @@ impl GeneratedBinder<'_> {
 
                     let result = match &key.output {
                         ValueShape::Scalar(_) => {
-                            replay_generated_expr_effects(
-                                type_info,
-                                symbol_gen,
-                                &generated_merge.result,
-                                None,
-                                scope
-                                    .by_name
-                                    .keys()
-                                    .cloned()
-                                    .chain(merge_bound_names.iter().cloned())
-                                    .collect(),
-                                Context::Write,
+                            measure_generated_frontend_effects(
+                                replay_frontend_effects,
+                                frontend_effects_time,
+                                || {
+                                    replay_generated_expr_effects(
+                                        type_info,
+                                        symbol_gen,
+                                        &generated_merge.result,
+                                        None,
+                                        scope
+                                            .by_name
+                                            .keys()
+                                            .cloned()
+                                            .chain(merge_bound_names.iter().cloned())
+                                            .collect(),
+                                        Context::Write,
+                                    )
+                                },
                             )?;
                             binder.observe_merge_result_scope(
                                 &generated_merge.result,
@@ -2836,18 +2869,24 @@ impl GeneratedBinder<'_> {
                             );
                             let mut resolved_args = Vec::with_capacity(result_args.len());
                             for (arg, expected) in result_args.iter().zip(&outputs) {
-                                replay_generated_expr_effects(
-                                    type_info,
-                                    symbol_gen,
-                                    arg,
-                                    None,
-                                    scope
-                                        .by_name
-                                        .keys()
-                                        .cloned()
-                                        .chain(merge_bound_names.iter().cloned())
-                                        .collect(),
-                                    Context::Write,
+                                measure_generated_frontend_effects(
+                                    replay_frontend_effects,
+                                    frontend_effects_time,
+                                    || {
+                                        replay_generated_expr_effects(
+                                            type_info,
+                                            symbol_gen,
+                                            arg,
+                                            None,
+                                            scope
+                                                .by_name
+                                                .keys()
+                                                .cloned()
+                                                .chain(merge_bound_names.iter().cloned())
+                                                .collect(),
+                                            Context::Write,
+                                        )
+                                    },
                                 )?;
                                 binder.observe_merge_result_scope(arg, &key.output, &mut scope)?;
                                 let resolved =
@@ -3091,7 +3130,11 @@ impl GeneratedBinder<'_> {
         rule: GeneratedRule,
     ) -> Result<ResolvedNCommand, EgglogError> {
         let rule_span = rule.span.clone();
-        replay_direct_rule_frontend_effects(self.egraph, &rule)?;
+        measure_generated_frontend_effects(
+            self.replay_frontend_effects,
+            &mut self.frontend_effects_time,
+            || replay_direct_rule_frontend_effects(self.egraph, &rule),
+        )?;
         let direct = self.bind_direct_rule(rule)?;
         let ResolvedNCommand::NormRule { rule } = &direct else {
             return Err(GeneratedBindError::InternalInvariant {
@@ -3124,13 +3167,19 @@ impl GeneratedBinder<'_> {
                         scratch.value.clone(),
                     );
                     let generated_actions = GenericActions(vec![generated_action]);
-                    replay_generated_actions_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        &generated_actions,
-                        Some(&synthetic_globals),
-                        HashSet::default(),
-                        Context::Full,
+                    measure_generated_frontend_effects(
+                        self.replay_frontend_effects,
+                        &mut self.frontend_effects_time,
+                        || {
+                            replay_generated_actions_effects(
+                                &self.egraph.type_info,
+                                &mut self.egraph.parser.symbol_gen,
+                                &generated_actions,
+                                Some(&synthetic_globals),
+                                HashSet::default(),
+                                Context::Full,
+                            )
+                        },
                     )?;
 
                     if synthetic_globals.contains_key(&scratch.variable.id)
@@ -3223,13 +3272,19 @@ impl GeneratedBinder<'_> {
                 }
                 GeneratedExtractionStep::Action(action) => {
                     let generated_actions = GenericActions(vec![action.clone()]);
-                    replay_generated_actions_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        &generated_actions,
-                        Some(&synthetic_globals),
-                        HashSet::default(),
-                        Context::Full,
+                    measure_generated_frontend_effects(
+                        self.replay_frontend_effects,
+                        &mut self.frontend_effects_time,
+                        || {
+                            replay_generated_actions_effects(
+                                &self.egraph.type_info,
+                                &mut self.egraph.parser.symbol_gen,
+                                &generated_actions,
+                                Some(&synthetic_globals),
+                                HashSet::default(),
+                                Context::Full,
+                            )
+                        },
                     )?;
                     let action = {
                         let type_info = self.egraph.type_info();
@@ -3247,7 +3302,17 @@ impl GeneratedBinder<'_> {
             }
         }
 
-        replay_direct_schedule_frontend_effects(self.egraph, &rebuild, Some(&synthetic_globals))?;
+        measure_generated_frontend_effects(
+            self.replay_frontend_effects,
+            &mut self.frontend_effects_time,
+            || {
+                replay_direct_schedule_frontend_effects(
+                    self.egraph,
+                    &rebuild,
+                    Some(&synthetic_globals),
+                )
+            },
+        )?;
         let schedule = {
             let type_info = self.egraph.type_info();
             let mut binder = ExpressionBinder {
@@ -3271,13 +3336,19 @@ impl GeneratedBinder<'_> {
             return Err(TypeError::CannotExtractTupleOutput(function.name.clone(), span).into());
         }
 
-        replay_generated_expr_effects(
-            &self.egraph.type_info,
-            &mut self.egraph.parser.symbol_gen,
-            &expr,
-            Some(&synthetic_globals),
-            HashSet::default(),
-            Context::Full,
+        measure_generated_frontend_effects(
+            self.replay_frontend_effects,
+            &mut self.frontend_effects_time,
+            || {
+                replay_generated_expr_effects(
+                    &self.egraph.type_info,
+                    &mut self.egraph.parser.symbol_gen,
+                    &expr,
+                    Some(&synthetic_globals),
+                    HashSet::default(),
+                    Context::Full,
+                )
+            },
         )?;
         let expr = {
             let type_info = self.egraph.type_info();
@@ -3300,13 +3371,19 @@ impl GeneratedBinder<'_> {
             expr
         };
 
-        replay_generated_expr_effects(
-            &self.egraph.type_info,
-            &mut self.egraph.parser.symbol_gen,
-            &variants,
-            Some(&synthetic_globals),
-            HashSet::default(),
-            Context::Full,
+        measure_generated_frontend_effects(
+            self.replay_frontend_effects,
+            &mut self.frontend_effects_time,
+            || {
+                replay_generated_expr_effects(
+                    &self.egraph.type_info,
+                    &mut self.egraph.parser.symbol_gen,
+                    &variants,
+                    Some(&synthetic_globals),
+                    HashSet::default(),
+                    Context::Full,
+                )
+            },
         )?;
         let resolved_variants = {
             let type_info = self.egraph.type_info();
@@ -3370,13 +3447,19 @@ impl GeneratedBinder<'_> {
                     .map(|rule| vec![rule]);
             }
             GeneratedCommand::Actions(actions) => {
-                replay_generated_actions_effects(
-                    &self.egraph.type_info,
-                    &mut self.egraph.parser.symbol_gen,
-                    actions,
-                    None,
-                    HashSet::default(),
-                    Context::Full,
+                measure_generated_frontend_effects(
+                    self.replay_frontend_effects,
+                    &mut self.frontend_effects_time,
+                    || {
+                        replay_generated_actions_effects(
+                            &self.egraph.type_info,
+                            &mut self.egraph.parser.symbol_gen,
+                            actions,
+                            None,
+                            HashSet::default(),
+                            Context::Full,
+                        )
+                    },
                 )?;
             }
             GeneratedCommand::Sort(_)
@@ -3395,21 +3478,35 @@ impl GeneratedBinder<'_> {
                 unreachable!("extraction plans return before ordinary command binding")
             }
             GeneratedCommand::Schedule(schedule) => {
-                replay_direct_schedule_frontend_effects(self.egraph, schedule, None)?;
+                measure_generated_frontend_effects(
+                    self.replay_frontend_effects,
+                    &mut self.frontend_effects_time,
+                    || replay_direct_schedule_frontend_effects(self.egraph, schedule, None),
+                )?;
             }
             GeneratedCommand::Check(_, facts) => {
-                replay_direct_facts_frontend_effects(self.egraph, facts, None)?;
+                measure_generated_frontend_effects(
+                    self.replay_frontend_effects,
+                    &mut self.frontend_effects_time,
+                    || replay_direct_facts_frontend_effects(self.egraph, facts, None),
+                )?;
             }
             GeneratedCommand::Output { exprs, .. } => {
                 let checkpoint = self.egraph.parser.symbol_gen.checkpoint();
                 let result = exprs.iter().try_for_each(|expr| {
-                    replay_generated_expr_effects(
-                        &self.egraph.type_info,
-                        &mut self.egraph.parser.symbol_gen,
-                        expr,
-                        None,
-                        HashSet::default(),
-                        Context::Full,
+                    measure_generated_frontend_effects(
+                        self.replay_frontend_effects,
+                        &mut self.frontend_effects_time,
+                        || {
+                            replay_generated_expr_effects(
+                                &self.egraph.type_info,
+                                &mut self.egraph.parser.symbol_gen,
+                                expr,
+                                None,
+                                HashSet::default(),
+                                Context::Full,
+                            )
+                        },
                     )
                 });
                 if let Err(error) = result {
@@ -3495,11 +3592,18 @@ pub(crate) fn resolve_generated_batch(
     egraph: &mut EGraph,
     batch: GeneratedBatch,
 ) -> Result<Vec<ResolvedNCommand>, EgglogError> {
+    let replay_frontend_effects = !egraph.skip_generated_frontend_effects;
     let state = std::mem::take(egraph.extension_state_or_default::<BindingState>());
-    let mut binder = GeneratedBinder { egraph, state };
+    let mut binder = GeneratedBinder {
+        egraph,
+        state,
+        replay_frontend_effects,
+        frontend_effects_time: Duration::ZERO,
+    };
     let result = binder.typecheck_entries(batch.entries);
     let state = std::mem::take(&mut binder.state);
     *binder.egraph.extension_state_or_default::<BindingState>() = state;
+    binder.egraph.overall_report.generated_frontend_effects += binder.frontend_effects_time;
     result
 }
 

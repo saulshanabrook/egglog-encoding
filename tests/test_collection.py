@@ -583,10 +583,11 @@ def test_run_process_passes_treatment_flags(
         summary_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 4,
+                    "schema_version": 5,
                     "typecheck_ns": 1,
                     "frontend_parse_ns": 2,
                     "frontend_other_ns": 3,
+                    "generated_frontend_effects_ns": 0,
                     "frontend_install_ns": 4,
                     "commands_actions_ns": 5,
                     "commands_check_ns": 6,

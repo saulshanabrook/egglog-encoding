@@ -179,8 +179,9 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
         assert!(!bytes[..bytes.len() - 1].contains(&b'\n'));
 
         let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(summary.as_object().unwrap().len(), 10);
-        assert_eq!(summary["schema_version"], 4);
+        assert_eq!(summary.as_object().unwrap().len(), 11);
+        assert_eq!(summary["schema_version"], 5);
+        assert_eq!(summary["generated_frontend_effects_ns"], 0);
         assert_eq!(summary["commands_check_ns"], 0);
         for field in [
             "frontend_parse_ns",
@@ -322,7 +323,7 @@ fn stdin_program_writes_timing_summary() {
     let bytes = std::fs::read(&summary_path).unwrap();
     assert_eq!(bytes.last(), Some(&b'\n'));
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(summary["schema_version"], 4);
+    assert_eq!(summary["schema_version"], 5);
     assert!(summary["rulesets"].is_array());
     std::fs::remove_dir_all(directory).unwrap();
 }

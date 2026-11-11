@@ -330,6 +330,9 @@ pub struct EGraph {
     schedulers: DenseIdMap<SchedulerId, SchedulerRecord>,
     commands: IndexMap<String, Arc<dyn UserDefinedCommand>>,
     extension_state: HashMap<TypeId, Box<dyn ExtensionStateValue>>,
+    /// Diagnostic-only causal ablation for the generated compatibility
+    /// frontend; ordinary library construction always leaves it enabled.
+    skip_generated_frontend_effects: bool,
     strict_mode: bool,
     warned_about_global_prefix: bool,
     /// Registry for command-level macros
@@ -450,6 +453,7 @@ impl EGraph {
             schedulers: Default::default(),
             commands: Default::default(),
             extension_state: Default::default(),
+            skip_generated_frontend_effects: false,
             strict_mode: false,
             warned_about_global_prefix: false,
             command_macros: Default::default(),

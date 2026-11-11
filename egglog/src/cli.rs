@@ -84,6 +84,9 @@ struct Args {
     /// Extract proofs for all `check` statements without verifying them
     #[clap(long, conflicts_with_all = ["proofs", "proof_testing"])]
     proof_extraction: bool,
+    /// Diagnostic causal ablation for generated compatibility-frontend replay.
+    #[clap(long)]
+    skip_generated_frontend_effects: bool,
 }
 
 /// Start a command-line interface for the E-graph.
@@ -121,6 +124,8 @@ pub fn cli(mut egraph: EGraph) {
     if args.proof_extraction {
         egraph = egraph.with_proof_extraction();
     }
+
+    egraph.skip_generated_frontend_effects = args.skip_generated_frontend_effects;
 
     egraph.set_num_threads(args.threads);
     egraph.fact_directory.clone_from(&args.fact_directory);

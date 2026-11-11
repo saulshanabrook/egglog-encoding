@@ -11,6 +11,7 @@ type Treatment = Literal[
     "off",
     "term",
     "proofs",
+    "proofs-no-generated-frontend-effects",
     "proof-extraction",
     "proof-testing",
     "egg",
@@ -41,6 +42,9 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
     "off": TreatmentSpec("egglog", ()),
     "term": TreatmentSpec("egglog", ("--term-encoding",)),
     "proofs": TreatmentSpec("egglog", ("--proofs",)),
+    "proofs-no-generated-frontend-effects": TreatmentSpec(
+        "egglog", ("--proofs", "--skip-generated-frontend-effects")
+    ),
     "proof-extraction": TreatmentSpec("egglog", ("--proof-extraction",)),
     "proof-testing": TreatmentSpec("egglog", ("--proof-testing",)),
     "egg": TreatmentSpec("egg", ("--proof-mode", "off")),

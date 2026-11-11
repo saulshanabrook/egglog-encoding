@@ -392,6 +392,9 @@ pub struct OverallReport {
     pub typecheck: Duration,
     pub frontend_parse: Duration,
     pub frontend_other: Duration,
+    /// Exclusive diagnostic subcomponent of `frontend_other`; deliberately
+    /// omitted from `process_time` so nested accounting remains additive.
+    pub generated_frontend_effects: Duration,
     pub frontend_install: Duration,
     pub commands_actions: Duration,
     pub commands_check: Duration,
@@ -437,6 +440,7 @@ pub struct TimingSummary {
     pub typecheck_ns: u64,
     pub frontend_parse_ns: u64,
     pub frontend_other_ns: u64,
+    pub generated_frontend_effects_ns: u64,
     pub frontend_install_ns: u64,
     pub commands_actions_ns: u64,
     pub commands_check_ns: u64,
@@ -469,7 +473,7 @@ impl Display for TimingSummaryError {
 impl std::error::Error for TimingSummaryError {}
 
 impl TimingSummary {
-    pub const SCHEMA_VERSION: u32 = 4;
+    pub const SCHEMA_VERSION: u32 = 5;
 
     pub fn from_report(report: &OverallReport) -> Result<Self, TimingSummaryError> {
         let (timings, native_rebuild) = report.run.aggregate_timings();
@@ -510,6 +514,7 @@ impl TimingSummary {
             typecheck_ns: duration_ns(report.typecheck),
             frontend_parse_ns: duration_ns(report.frontend_parse),
             frontend_other_ns: duration_ns(report.frontend_other),
+            generated_frontend_effects_ns: duration_ns(report.generated_frontend_effects),
             frontend_install_ns: duration_ns(report.frontend_install),
             commands_actions_ns: duration_ns(report.commands_actions),
             commands_check_ns: duration_ns(report.commands_check),
@@ -642,7 +647,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&summary).unwrap(),
-            r#"{"schema_version":4,"typecheck_ns":2,"frontend_parse_ns":1,"frontend_other_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":6,"commands_other_ns":0,"native_rebuild_ns":13,"rulesets":[{"name":"","role":"program","assembly_ns":0,"search_ns":0,"apply_ns":0,"execution_ns":0,"merge_ns":0},{"name":"rules/λ","role":"program","assembly_ns":0,"search_ns":1000000234,"apply_ns":3,"execution_ns":4,"merge_ns":5},{"name":"@parent","role":"equality","assembly_ns":8,"search_ns":9,"apply_ns":10,"execution_ns":11,"merge_ns":12}]}"#
+            r#"{"schema_version":5,"typecheck_ns":2,"frontend_parse_ns":1,"frontend_other_ns":0,"generated_frontend_effects_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":6,"commands_other_ns":0,"native_rebuild_ns":13,"rulesets":[{"name":"","role":"program","assembly_ns":0,"search_ns":0,"apply_ns":0,"execution_ns":0,"merge_ns":0},{"name":"rules/λ","role":"program","assembly_ns":0,"search_ns":1000000234,"apply_ns":3,"execution_ns":4,"merge_ns":5},{"name":"@parent","role":"equality","assembly_ns":8,"search_ns":9,"apply_ns":10,"execution_ns":11,"merge_ns":12}]}"#
         );
     }
 
@@ -651,7 +656,7 @@ mod tests {
         let summary = TimingSummary::from_report(&OverallReport::default()).unwrap();
         assert_eq!(
             serde_json::to_string(&summary).unwrap(),
-            r#"{"schema_version":4,"typecheck_ns":0,"frontend_parse_ns":0,"frontend_other_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":0,"commands_other_ns":0,"native_rebuild_ns":0,"rulesets":[]}"#
+            r#"{"schema_version":5,"typecheck_ns":0,"frontend_parse_ns":0,"frontend_other_ns":0,"generated_frontend_effects_ns":0,"frontend_install_ns":0,"commands_actions_ns":0,"commands_check_ns":0,"commands_other_ns":0,"native_rebuild_ns":0,"rulesets":[]}"#
         );
     }
 
