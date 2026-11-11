@@ -229,6 +229,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cxxflags", default=backend.FLAGS)
     parser.add_argument("--cpu", type=int)
     args = parser.parse_args(argv)
+    if args.cpu is not None and not hasattr(os, "sched_setaffinity"):
+        parser.error("--cpu is not supported on this platform")
     if args.report == Path("-"):
         parser.error("--report requires a filesystem path, not '-'")
     if min(args.samples, args.rewrite_rounds, args.timeout, args.build_timeout, args.jobs, args.threads) < 1:
