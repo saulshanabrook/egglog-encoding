@@ -10,6 +10,7 @@ from scipy import stats
 from benchmarking.reports.analysis import _ratio_estimate, _sample_estimate
 
 from . import model
+from .optimizer import REPLAY_MODES
 
 
 def preparation_costs(plans: dict[str, Any], builds: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
@@ -54,7 +55,7 @@ def comparison_rows(report: dict[str, Any]) -> list[list[str]]:
     rows = []
     names = {
         "original": "LMFAO configured roots",
-        "paper": "LMFAO + paper root heuristic",
+        "paper": "LMFAO + root heuristic",
         "slotted": "Slotted egglog",
         "debruijn": "Ordinary egglog (de Bruijn)",
     }
@@ -78,14 +79,11 @@ def comparison_rows(report: dict[str, Any]) -> list[list[str]]:
                     "—",
                     "—",
                     "—",
-                    f"{optimization.get('completed_samples', 0)} completed, "
-                    f"{len(optimization.get('failures', []))} failed",
                 ]
             )
             continue
         preparation = report["accounted_pipeline"][label]
         executed = preparation["execution_label"]
-        samples = report["execution"][executed]["computation_seconds"]["samples"]
         rows.append(
             [
                 name,
@@ -94,7 +92,22 @@ def comparison_rows(report: dict[str, Any]) -> list[list[str]]:
                 f"{preparation['optimization_and_generation_seconds']:.3f}",
                 f"{preparation['compilation_seconds']:.3f}",
                 interval(ratios[executed]),
-                f"{optimization.get('completed_samples', '—')} egraph / {samples} execution",
+            ]
+        )
+    for mode, title in zip(REPLAY_MODES, ("proofs off", "checked proofs"), strict=True):
+        replay = report.get("proof_replay", {}).get(mode, {})
+        timing, memory = replay.get("process_seconds"), replay.get("peak_rss_mib")
+        failures = replay.get("failures", [])
+        reason = ", ".join(sorted({row["status"] for row in failures})) or replay.get("issue")
+        name = f"Slotted replay ({title})"
+        rows.append(
+            [
+                f"{name} ({reason})" if reason else name,
+                interval(timing["mean"]) if timing else "—",
+                interval(memory["mean"], 1) if memory else "—",
+                "—",
+                "—",
+                "—",
             ]
         )
     return rows
@@ -104,34 +117,38 @@ def comparison_caption(report: dict[str, Any]) -> str:
     limit = report["optimizer_memory_limit_bytes"]
     bound = f"{limit / 1024**3:g} GiB allocator/address-space cap" if limit is not None else "no memory cap"
     baseline = interval(report["execution"]["original"]["computation_seconds"]["mean"], 4)
+    samples = report["execution"]["original"]["computation_seconds"]["samples"]
     lines = [
-        "Favorita covariance batch (140 queries) on the public 2M-Sales-row sample, using the same pinned frontend "
-        "and corrected C++ backend. This replicates the workload, not the paper's full dataset (127M joined tuples). "
-        "The paper-root control uses our implementation of section 3.3's coverage heuristic; configured roots "
-        "are those shipped in the artifact.",
+        "Favorita covariance batch (140 queries), using the pinned frontend and corrected C++ backend. "
+        "This is the public 2M-Sales-row sample, not the paper's full dataset (127M joined tuples). "
+        "Configured roots are shipped in the artifact; the root heuristic control uses our implementation "
+        "of section 3.3's coverage heuristic.",
         "",
         f"Both egraph encodings use the same {report['rewrite_round_budget']}-round search and {bound}, "
-        "with proofs off. "
-        "Resource failures have no query-time ratio. Samples count completed egraph/query runs; "
-        "collection stops after a resource failure.",
+        f"with proofs off for optimization. Each repeated condition requests {samples} observations; "
+        "resource failures stop repetition and remain visible. Completed and failed counts are retained in JSON.",
         "",
-        "Rewrite time and peak RSS are process means with 95% Student-t intervals, excluding DAG extraction. "
-        "Plan + generate includes a rewrite run, extraction and C++ generation; do not add it to Rewrite. "
-        "Planning/generation and C++ compilation are single observations without intervals.",
+        "Egraph process time and peak RSS are means with 95% Student-t intervals. Optimization rows measure "
+        "parsing and rewriting. Full planning includes another rewrite run, DAG extraction and C++ generation; "
+        "do not add it to Egraph process time. Full planning and compilation are single observations.",
         "",
-        "Query time is mean warm computation time divided by the configured-roots LMFAO mean (lower is better), "
-        f"with independent 95% Fieller intervals. The baseline is {baseline} seconds. "
-        "Computation excludes loading, sorting and checking, as in the paper. "
-        "Undefined and single-sample intervals are omitted. Identical plans reuse checked execution observations.",
+        "Replay uses the same binary and selected-plan input in both modes, with the same memory cap and "
+        f"a {report.get('proof_replay_timeout_seconds', '—')}-second timeout (3x the optimization limit). "
+        "Both modes repeat rewriting and check the selected plan. Checked proofs adds reconstruction, "
+        "proof checking, simplification and formatting. Replay does not select or execute another plan.",
+        "",
+        "Query time is warm computation divided by configured-roots LMFAO (lower is better), with independent "
+        f"95% Fieller intervals; the baseline is {baseline} s. It excludes loading, sorting and checking. "
+        "Undefined and single-sample intervals are omitted. Identical plans reuse checked executions.",
     ]
     return "\n".join(lines) + "\n"
 
 
 def comparison_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "| Method | Rewrite (s) | Peak RSS (MiB) | Plan + generate (s) | "
-        "C++ compilation (s) | Query time / LMFAO | Samples |",
-        "|---|---:|---:|---:|---:|---:|---|",
+        "| Method | Egraph process (s) | Peak RSS (MiB) | Full planning (s) | "
+        "C++ compilation (s) | Query time / LMFAO |",
+        "|---|---:|---:|---:|---:|---:|",
         *("| " + " | ".join(row) + " |" for row in comparison_rows(report)),
         "",
         comparison_caption(report),
@@ -145,6 +162,15 @@ def paper_results(report: dict[str, Any]) -> dict[str, str]:
         item.get("pipeline_issue") for item in report["optimizer"].values()
     ):
         raise ValueError("LMFAO execution comparison is incomplete; no paper table replaced")
+    for mode in REPLAY_MODES:
+        replay = report.get("proof_replay", {}).get(mode, {})
+        failures = replay.get("failures", [])
+        if (
+            not replay
+            or (not failures and (replay.get("issue") or replay["completed_samples"] != replay["requested_samples"]))
+            or any(row["status"] not in ("timed-out", "memory-limited") for row in failures)
+        ):
+            raise ValueError("LMFAO proof replay is incomplete or invalid; no paper table replaced")
     escapes = {
         "\\": r"\textbackslash{}",
         "&": r"\&",
@@ -165,10 +191,10 @@ def paper_results(report: dict[str, Any]) -> dict[str, str]:
     table = [
         "% GENERATED: ./bench.py figures lmfao; provenance in lmfao.results.json",
         r"\begingroup\scriptsize\setlength{\tabcolsep}{3pt}",
-        r"\begin{tabular}{lrrrrrl}",
-        r"Method & \shortstack{Rewrite\\(s)} & \shortstack{Peak RSS\\(MiB)} & "
-        r"\shortstack{Plan +\\generate (s)} & \shortstack{C++ compile\\(s)} & "
-        r"\shortstack{Query time /\\LMFAO} & \shortstack{Samples\\egraph / exec.} \\",
+        r"\begin{tabular}{lrrrrr}",
+        r"Method & \shortstack{Egraph\\process (s)} & \shortstack{Peak RSS\\(MiB)} & "
+        r"\shortstack{Full\\planning (s)} & \shortstack{C++ compile\\(s)} & "
+        r"\shortstack{Query time /\\LMFAO} \\",
         r"\hline",
     ]
     for row in comparison_rows(report):
@@ -176,14 +202,18 @@ def paper_results(report: dict[str, Any]) -> dict[str, str]:
         for i in (1, 2, 5):
             cells[i] = r"\shortstack{" + cells[i].replace(" [", r"\\{}[") + "}"
         cells[0] = r"\shortstack[l]{" + tex(row[0]).replace(" (", r"\\(") + "}"
-        cells[-1] = (
-            r"\shortstack[l]{"
-            + tex(row[-1]).replace(" egraph", "").replace(" execution", "").replace(", ", r"\\")
-            + "}"
-        )
         table.append(" & ".join(cells) + r" \\")
     table += [r"\end{tabular}", r"\endgroup", ""]
+    samples = report["execution"]["original"]["computation_seconds"]["samples"]
+    numbers = (
+        "% GENERATED: ./bench.py figures lmfao; requested observations per repeated condition\n"
+        r"\providecommand{\EgglogFigureNumber}[1]{\ifcsname egglogfigure@#1\endcsname"
+        r"\csname egglogfigure@#1\endcsname\else\textnormal{unavailable}\fi}"
+        "\n"
+        r"\expandafter\def\csname egglogfigure@lmfao/rounds\endcsname{" + str(samples) + "}\n"
+    )
     return {
+        "lmfao.numbers.tex": numbers,
         "lmfao.table.tex": "\n".join(table),
         "lmfao.caption.tex": tex(" ".join(comparison_caption(report).split())) + "\n",
         "lmfao.md": comparison_markdown(report),

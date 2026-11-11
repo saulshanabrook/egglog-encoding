@@ -211,11 +211,13 @@ def test_lmfao_joins_the_paper_collection_and_reuses_its_store(tmp_path: Path, m
     def summarize(output: Path, store: ReportStore, *args: Any) -> Any:
         snapshots.append(store)
         assert store.row_count == 6  # Two repetitions of one figure input and both LMFAO encodings.
-        return {"slotted": {"treatment": "slotted"}}, {"optimizer": {"slotted": {"failures": []}}}
+        return optimizer.OptimizerCollection(
+            {"slotted": {"treatment": "slotted"}}, {"optimizer": {"slotted": {"failures": []}}}, store, args[0]
+        )
 
     def evaluate(args: Any, *, collected: Any) -> dict[str, Any]:
         evaluated.append(args)
-        assert collected[0] == {"slotted": {"treatment": "slotted"}}
+        assert collected.successful == {"slotted": {"treatment": "slotted"}}
         assert (args.samples, args.timeout, args.report) == (2, 120, path)
         return {"checked": True}
 
@@ -249,13 +251,61 @@ def test_lmfao_joins_the_paper_collection_and_reuses_its_store(tmp_path: Path, m
     assert len(launched) == 6 and loads == [path, path] and len(evaluated) == 2
     assert bench.main(["figures", *args, "runtime"]) == 0
     assert len(launched) == 6 and len(evaluated) == 2
+    cached = {
+        "binary_sha256": {"slotted": "sha256:bin"},
+        "optimizer_memory_limit_bytes": figures.DEFAULT_MEMORY_LIMIT_BYTES,
+        "optimizer_timeout_seconds": 120,
+        "optimizer": {
+            mode: {"requested_samples": 2, "input_sha256": file.sha256}
+            for mode, file in inputs(tmp_path / "out/lmfao", 192).items()
+        },
+    }
+    (tmp_path / "out/lmfao.results.json").write_text(json.dumps(cached))
+    assert bench.main(["figures", *args, "lmfao", "--no-runs"]) == 0
+    assert len(launched) == 6 and len(evaluated) == 2
+    assert bench.main(["figures", *args, "lmfao", "--no-runs", "--rounds", "3"]) == 2
     monkeypatch.setattr(
         optimizer,
         "optimizer_report",
-        lambda *_: ({"slotted": {}}, {"optimizer": {"debruijn": {"failures": [{"status": "failure"}]}}}),
+        lambda *_: optimizer.OptimizerCollection(
+            {"slotted": {}},
+            {"optimizer": {"debruijn": {"failures": [{"status": "failure"}]}}},
+            snapshots[0],
+            make_target(),
+        ),
     )
     assert bench.main(["figures", *args, "lmfao"]) == 2
     assert len(evaluated) == 2
+
+
+def test_lmfao_table_export_replays_without_running_or_preparing_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarking.lmfao import cli, report
+
+    exported = tmp_path / "exported"
+    exported.mkdir()
+    source = exported / "lmfao.results.json"
+    source.write_text('{"measured": true}')
+    monkeypatch.setattr(cli, "verify_backend", lambda *_: pytest.fail("replay prepared a backend"))
+    monkeypatch.setattr(cli, "run", lambda *_args, **_kw: pytest.fail("replay collected measurements"))
+    monkeypatch.setattr(report, "paper_results", lambda value: {"lmfao.table.tex": str(value["measured"])})
+    args = [
+        "figures",
+        "lmfao",
+        "--reuse-from",
+        str(exported),
+        "--no-runs",
+        "--output-dir",
+        str(tmp_path / "out"),
+        "--report",
+        str(tmp_path / "cache.jsonl"),
+    ]
+    assert bench.main(args) == 0
+    assert (tmp_path / "out/lmfao.table.tex").read_text() == "True"
+    assert not (tmp_path / "cache.jsonl").exists()
+    assert source.read_text() == '{"measured": true}'
+    assert bench.main([*args, "--rounds", "3"]) == 2
 
 
 def test_importing_figures_does_not_import_scipy() -> None:

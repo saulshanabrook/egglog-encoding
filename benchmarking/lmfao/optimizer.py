@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,68 @@ from benchmarking.workloads import resolve_files
 
 ROOT = Path(__file__).resolve().parents[2]
 MODES: dict[str, Treatment] = {"slotted": "slotted", "debruijn": "off"}
+REPLAY_MODES: tuple[Treatment, ...] = ("slotted", "slotted-proof-testing")
+
+
+@dataclass
+class OptimizerCollection:
+    successful: dict[str, Any]
+    report: dict[str, Any]
+    store: ReportStore
+    target: ResolvedTarget
+
+
+def measured_result(
+    store: ReportStore,
+    target: ResolvedTarget,
+    file: FileSpec,
+    treatment: Treatment,
+    samples: int,
+    timeout: int,
+    memory_limit_bytes: int | None,
+    rewrite_rounds: int,
+) -> dict[str, Any]:
+    endpoint = BenchmarkEndpoint(
+        target.row, target.binary_sha256_for(treatment), treatment, memory_limit_bytes=memory_limit_bytes
+    )
+    selection = select_observations(store, endpoint, file, samples, timeout)
+    rows = [row.record for row in selection.rows]
+    result = summarize_optimizer(rows, rewrite_rounds, samples, selection.issue)
+    result.update(
+        input_sha256=file.sha256,
+        binary_sha256=endpoint.binary_sha256,
+        source_revisions=sorted({row["target_git_sha"] for row in rows}),
+        peak_rss_mib=seconds_summary(
+            row["max_rss_bytes"] / 1024**2
+            for row in rows
+            if row["status"] == "success" and row["max_rss_bytes"] is not None
+        ),
+    )
+    return result
+
+
+def collect_replays(
+    collection: OptimizerCollection,
+    source: Path,
+    samples: int,
+    timeout: int,
+    memory_limit_bytes: int | None,
+    rewrite_rounds: int,
+) -> dict[str, Any]:
+    """Compare checked proofs with ordinary checks on the same selected-plan input."""
+    file = resolve_files([str(source)], ROOT)[0]
+    target, store = collection.target, collection.store
+    requests = tuple(
+        BenchmarkRequest(EndpointRequest(target.request, mode, memory_limit_bytes=memory_limit_bytes), (file,))
+        for mode in REPLAY_MODES
+    )
+    targets = {target.request: target}
+    pending = plan_collection(store, requests, targets, samples, timeout, False)
+    collect(store, pending, requests, targets, timeout, Console(stderr=True))
+    return {
+        mode: measured_result(store, target, file, mode, samples, timeout, memory_limit_bytes, rewrite_rounds)
+        for mode in REPLAY_MODES
+    }
 
 
 def extractor_path(profile: str) -> Path:
@@ -95,7 +158,7 @@ def collect_optimizers(
     memory_limit_bytes: int | None,
     *,
     rewrite_rounds: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> OptimizerCollection:
     """Measure LMFAO rewriting through the shared benchmark collector."""
     request = parse_target(str(ROOT))
     files = optimizer_inputs(output, rewrite_rounds)
@@ -119,7 +182,7 @@ def optimizer_report(
     timeout: int,
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> OptimizerCollection:
     """Read the shared collection and build the extractor for plan generation."""
     subprocess.run(
         ["cargo", "build", "--locked", "--release", "-p", "lmfao-extract"],
@@ -135,24 +198,16 @@ def optimizer_report(
         "binary_paths": {t: str(target.binary_path_for(t)) for t in MODES.values()},
         "binary_sha256": {t: target.binary_sha256_for(t) for t in MODES.values()},
         "optimizer_report": str(store.path),
+        "optimizer_timeout_seconds": timeout,
         "optimizer_memory_limit_bytes": memory_limit_bytes,
     }
     successful = {}
     for mode, treatment in MODES.items():
-        label = f"{mode}"
-        endpoint = BenchmarkEndpoint(
-            target.row, target.binary_sha256_for(treatment), treatment, memory_limit_bytes=memory_limit_bytes
+        result = measured_result(
+            store, target, files[mode], treatment, samples, timeout, memory_limit_bytes, rewrite_rounds
         )
-        selection = select_observations(store, endpoint, files[mode], samples, timeout)
-        rows = [row.record for row in selection.rows]
-        result = summarize_optimizer(rows, rewrite_rounds, samples, selection.issue)
-        memory = [r["max_rss_bytes"] for r in rows if r["status"] == "success" and r["max_rss_bytes"] is not None]
-        result.update(
-            input_sha256=files[mode].sha256,
-            peak_rss_mib=seconds_summary(v / 1024**2 for v in memory),
-        )
-        report["optimizer"][label] = result
-        if selection.issue is None and all(r["status"] == "success" for r in rows) and len(rows) == samples:
-            successful[label] = {"treatment": treatment}
+        report["optimizer"][mode] = result
+        if result["issue"] is None and not result["failures"] and result["completed_samples"] == samples:
+            successful[mode] = {"treatment": treatment}
     write_json(output / "optimizer-summary.json", report)
-    return successful, report
+    return OptimizerCollection(successful, report, store, target)

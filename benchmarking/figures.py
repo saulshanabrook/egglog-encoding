@@ -321,8 +321,9 @@ def prepare_lmfao(args: argparse.Namespace, config: FigureConfig) -> argparse.Na
     selected.memory_limit_bytes = config.memory_limit_bytes
     if args.lmfao_cxxflags is not None:
         selected.cxxflags = args.lmfao_cxxflags
-    verify_backend(selected.backend)
-    validate_inputs(selected.data)
+    if not args.no_runs:
+        verify_backend(selected.backend)
+        validate_inputs(selected.data)
     return selected
 
 
@@ -707,6 +708,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(f"no per-figure results found in {directory}")
             if any(Path(name).name != name for name in names):
                 raise ValueError("figure names must be filenames, not paths")
+            extra_outputs = {}
+            if "lmfao" in names:
+                from .lmfao.report import paper_results
+
+                if explicit & {
+                    "--rounds",
+                    "--timeout-sec",
+                    "--memory-limit",
+                    "--memory-limit-gib",
+                    "--no-memory-limit",
+                }:
+                    raise ValueError("LMFAO table replay retains recorded limits and samples; recollect to change them")
+                extra_outputs = paper_results(
+                    json.loads((directory / "lmfao.results.json").read_text(encoding="utf-8"))
+                )
+                names = [name for name in names if name != "lmfao"]
             data = [import_figure(name, directory) for name in names]
             if "--config" in explicit:
                 styles = {figure.name: figure.spec for figure in config.figures}
@@ -728,6 +745,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.output_dir.expanduser().resolve(),
                 console,
                 renderer=renderer_metadata(),
+                extra_outputs=extra_outputs,
             )
             return 0
         cwd = Path.cwd()
@@ -857,23 +875,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .lmfao.cli import run as run_lmfao
             from .lmfao.report import paper_results
 
-            observed = optimizer_report(
-                lmfao.output_dir,
-                store,
-                targets[target_request],
-                lmfao_files,
-                config.rounds,
-                config.timeout_sec,
-                config.memory_limit_bytes,
-                lmfao.rewrite_rounds,
-            )
-            if "slotted" not in observed[0] or any(
-                row["status"] not in ("timed-out", "memory-limited")
-                for result in observed[1]["optimizer"].values()
-                for row in result["failures"]
-            ):
-                raise ValueError("LMFAO requires successful slotted samples and no non-resource optimizer errors")
-            extra_outputs = paper_results(run_lmfao(lmfao, collected=observed))
+            if args.no_runs:
+                saved = json.loads((lmfao.output_dir.parent / "lmfao.results.json").read_text(encoding="utf-8"))
+                if (
+                    saved["binary_sha256"]["slotted"] != targets[target_request].binary_sha256_for("slotted")
+                    or saved["optimizer_memory_limit_bytes"] != config.memory_limit_bytes
+                    or saved["optimizer_timeout_seconds"] != config.timeout_sec
+                    or any(item["requested_samples"] != config.rounds for item in saved["optimizer"].values())
+                    or any(
+                        saved["optimizer"][mode]["input_sha256"] != file.sha256 for mode, file in lmfao_files.items()
+                    )
+                ):
+                    raise ValueError("LMFAO saved table does not match this selection; use --reuse-from or recollect")
+                extra_outputs = paper_results(saved)
+            else:
+                observed = optimizer_report(
+                    lmfao.output_dir,
+                    store,
+                    targets[target_request],
+                    lmfao_files,
+                    config.rounds,
+                    config.timeout_sec,
+                    config.memory_limit_bytes,
+                    lmfao.rewrite_rounds,
+                )
+                if "slotted" not in observed.successful or any(
+                    row["status"] not in ("timed-out", "memory-limited")
+                    for result in observed.report["optimizer"].values()
+                    for row in result["failures"]
+                ):
+                    raise ValueError("LMFAO requires successful slotted samples and no non-resource optimizer errors")
+                extra_outputs = paper_results(run_lmfao(lmfao, collected=observed))
         render_figures(
             figures,
             config,
