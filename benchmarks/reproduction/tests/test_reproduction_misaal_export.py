@@ -57,8 +57,15 @@ def preparation(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         path.write_text(name)
     llvm = tmp_path / "llvm12"
     (llvm / "bin").mkdir(parents=True)
-    (llvm / "bin/llvm-config").write_text("mock tool, never executed")
-    (llvm / "bin/llvm-config").chmod(0o755)
+    compilers = {Path("/usr/bin") / name: tmp_path / name for name in ("clang", "clang++")}
+    for tool in (llvm / "bin/llvm-config", *compilers.values()):
+        tool.write_text("mock tool, never executed")
+        tool.chmod(0o755)
+    actual_access, actual_hash = export.os.access, export.sha256_file
+    monkeypatch.setattr(
+        export.os, "access", lambda path, mode, **kwargs: actual_access(compilers.get(path, path), mode, **kwargs)
+    )
+    monkeypatch.setattr(export, "sha256_file", lambda path: actual_hash(compilers.get(path, path)))
     monkeypatch.setattr(export, "LLVM12", llvm)
     for relative in (
         "frontends/halide/tools/GenGen.cpp",
