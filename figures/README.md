@@ -29,12 +29,15 @@ The default catalog also includes the **LMFAO execution table**. Follow its
 [setup instructions](../benchmarks/lmfao/README.md#reproduce) before a full run.
 `./bench.py figures lmfao` selects only that experiment; other named subsets do
 not require LMFAO. Missing or mismatched external inputs fail before collection.
-Its outputs are `lmfao.table.tex`, `lmfao.caption.tex`, `lmfao.md` and
+Its outputs are `lmfao.table.tex`, `lmfao.caption.tex`, `lmfao.numbers.tex`, `lmfao.md` and
 `lmfao.results.json`; plans, generated C++ and checks are retained under `lmfao/`.
-`lmfao/slotted/proof.egg` replays the selected plan through the normal benchmark
-harness; see the [proof replay instructions](../benchmarks/lmfao/README.md#optional-proof-replay).
+The table includes paired replays of `lmfao/slotted/proof.egg` with proofs off
+and with proofs generated and checked, collected through the same benchmark
+harness; see the [proof replay instructions](../benchmarks/lmfao/README.md#proof-replay).
 Use `\input{figures/eval/lmfao.table.tex}` inside the manuscript's table and
 `\input{figures/eval/lmfao.caption.tex}` for its caption.
+Load `lmfao.numbers.tex` to refer to the requested repetition count with
+`\EgglogFigureNumber{lmfao/rounds}`. Completed and failed counts remain in JSON.
 
 After inspecting the outputs, copy the `eval` folder into the manuscript's
 `figures/` directory with the command above. This preserves existing
@@ -399,3 +402,6 @@ and whitespace. The stages are input, restricted-aliasing Slotted output, and
 public `ProofMode::Prove` followed by core congruence/proof lowering. Diagnostic
 `Check` counts do not replace the Proofs stage, and AST input/compiler identities
 must be compared separately with those of the timing figure.
+The Proofs stage supports the suite's beta-substitution rule. Counts cover
+emitted commands; they exclude retained source programs and Rust runtime code.
+Collecting sizes does not execute the workload or check a proof.

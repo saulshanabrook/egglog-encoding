@@ -134,18 +134,23 @@ reverse method order.
 
 | Column | What is measured |
 |---|---|
-| Rewrite time / peak RSS | Parsing and rewriting in separate processes; excludes DAG extraction. RSS is resident memory. |
-| Plan + generate | LMFAO query export, input validation, rewriting, extraction, and a second LMFAO invocation to import the plan and generate C++. Controls use one LMFAO invocation. |
+| Egraph process time / peak RSS | Parsing and rewriting in separate processes; replay rows also check the selected plan, with or without proofs. Excludes DAG extraction. RSS is resident memory. |
+| Full planning | LMFAO query export, input validation, rewriting, extraction, and a second LMFAO invocation to import the plan and generate C++. Controls use one LMFAO invocation. |
 | C++ compilation | One build per distinct generated program. |
 | Query time / LMFAO | Mean warm computation time divided by the shipped-roots LMFAO mean; lower is better. Excludes loading, sorting and checking, as in the paper. |
 
-**Plan + generate already includes a rewrite run; do not add the Rewrite column.**
+**Full planning already includes a rewrite run; do not add the Egraph process column.**
 Repeated time/RSS measurements have 95% Student-t intervals. Query-time ratios
 use independent Fieller intervals, as in the other paper reports. A single
 sample has no interval. Planning/generation and compilation each have one
 observation. Identical plans share compilation/execution observations, with that
 reuse recorded in the report. Absolute query times and whole-process execution
 times remain in the results JSON.
+
+Our ratio baseline is the artifact's configured-roots LMFAO program. The original
+paper's [Table 3](https://dept.stat.lsa.umich.edu/~xuanlong/Papers/soann-sigmod19.pdf#page=12)
+compares LMFAO with MonetDB and the commercial system DBX. Those competitors are
+not timed here; the independent SQL queries above check correctness only.
 
 The [paper output guide](../../figures/README.md) lists the generated table and
 caption files. Detailed `pipeline.json`, `comparison.md`, `execution.jsonl`,
@@ -194,11 +199,13 @@ that extraction needs hoisting, sharing needs fusion, small DAG choices match
 exhaustive search, and the adapter rejects mismatched files and cleans up after
 timeouts.
 
-## Optional proof replay
+## Proof replay
 
-The paper table reports optimization and execution with proofs off. Proof replay
-is a separate validation of the selected plan; its time is not included in that
-table.
+The generated table includes two replay rows for the selected slotted plan:
+proofs off and proofs generated and checked. Both use the same binary, input,
+repetition count and memory cap. Their timeout is three times the optimization
+timeout. They use the same benchmark collector and cache as the optimization
+rows; missing measurements are collected automatically by `./bench.py figures`.
 
 The `slotted-proof-testing` treatment passes `--slotted --proofs` to generate
 and check source proofs. Ordinary egglog's `proofs` treatment only records proof
@@ -206,7 +213,7 @@ information. A slotted input without equality checks does not certify a plan.
 
 The LMFAO run writes `slotted/proof.egg` beside the selected plan. This
 self-contained input asks whether the original query batch equals the selected
-computations. Run it through the harness:
+computations. To repeat just this comparison through the harness:
 
 ```sh
 ./bench.py figures/output/eval/lmfao/slotted/proof.egg --compare-treatment slotted \
@@ -222,6 +229,9 @@ claim avoids copying the proof context for each query. The run repeats rewriting
 with proofs enabled, reconstructs a source proof, checks it, simplifies it, and
 checks it again before formatting the result. A completed replay includes both
 checks and formatting. DAG extraction and C++ compilation are measured separately.
+Replay does not select or execute another plan, so its preparation and execution
+cells are blank. Proof failures prevent publication; resource failures remain
+visible with their completed/failed sample counts.
 
 These proofs cover logical query transformations. Backend code generation and
 physical sharing are checked separately by executing every output against

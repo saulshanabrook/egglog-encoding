@@ -130,6 +130,45 @@ def test_optimizer_report_keeps_failures_and_timing_scopes() -> None:
     assert result["failures"] == [failure] and result["issue"]
 
 
+def test_proof_replay_uses_the_shared_store_and_selected_plan_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarking import collection, processes
+    from benchmarking.lmfao.optimizer import OptimizerCollection, collect_replays
+    from benchmarking.reports.store import ReportStore
+    from benchmarking.targets import sha256_file
+    from benchmarking.tests.report_fixtures import make_target, make_timing_summary
+
+    store = ReportStore(tmp_path / "cache.jsonl")
+    target = make_target(binary_path=tmp_path / "engine")
+    selected = OptimizerCollection({}, {}, store, target)
+    source = tmp_path / "proof.egg"
+    source.write_text("(check (= 1 1))")
+    launched = []
+
+    def observe(*args: Any) -> Any:
+        launched.append(args)
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(wall_sec=2, max_rss_bytes=1024**2), None),
+            make_timing_summary(),
+        )
+
+    monkeypatch.setattr(collection, "preflight_collection", lambda *_: None)
+    monkeypatch.setattr(collection, "run_process", observe)
+    first = collect_replays(selected, source, 2, 900, 16 * 1024**3, 192)
+    assert len(launched) == store.row_count == 4
+    assert set(first) == {"slotted", "slotted-proof-testing"}
+    assert {r["input_sha256"] for r in first.values()} == {sha256_file(source)}
+    assert {r["binary_sha256"] for r in first.values()} == {target.binary_sha256}
+    assert all(r["completed_samples"] == 2 and not r["failures"] for r in first.values())
+    assert collect_replays(selected, source, 2, 900, 16 * 1024**3, 192) == first
+    assert len(launched) == store.row_count == 4
+    source.write_text("(check (= 2 2))")
+    second = collect_replays(selected, source, 2, 900, 16 * 1024**3, 192)
+    assert len(launched) == store.row_count == 8
+    assert second["slotted"]["input_sha256"] != first["slotted"]["input_sha256"]
+
+
 @pytest.mark.parametrize("missing", ["export", "import"])
 def test_backend_rejects_missing_export_or_import(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
@@ -279,15 +318,35 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
     monkeypatch.setattr(cli, "time", SimpleNamespace(perf_counter=lambda: now))
     documents: dict[str, Any] = {"slotted": {"treatment": "slotted"}, "debruijn": {"treatment": "off"}}
 
-    def collect(output: Path, *args: Any, **kwargs: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    def collect(output: Path, *args: Any, **kwargs: Any) -> cli.OptimizerCollection:
+        from benchmarking.reports.store import ReportStore
+        from benchmarking.tests.report_fixtures import make_target
+
         spend(999)
-        return documents, {
+        report = {
             "optimizer": {
                 label: {"process_seconds": seconds_summary([999, 999]), "completed_samples": 2} for label in documents
             },
             "rewrite_round_budget": 192,
             "optimizer_memory_limit_bytes": 16 * 1024**3,
             "extractor_path": "/lmfao-extract",
+        }
+        return cli.OptimizerCollection(documents, report, ReportStore(tmp_path / "cache.jsonl"), make_target())
+
+    def collect_replays(collection: Any, source: Path, samples: int, timeout: int, *args: Any) -> dict[str, Any]:
+        assert source.read_text().endswith("(check (= input selected_batch))\n")
+        assert samples == 2 and timeout == 3 * cli.DEFAULT_TIMEOUT_SEC
+        spend(5000)
+        return {
+            mode: {
+                "requested_samples": 2,
+                "completed_samples": 2,
+                "issue": None,
+                "failures": [],
+                "process_seconds": seconds_summary([seconds, seconds + 2]),
+                "peak_rss_mib": seconds_summary([1024, 1026]),
+            }
+            for mode, seconds in [("slotted", 100), ("slotted-proof-testing", 400)]
         }
 
     class Database:
@@ -333,6 +392,7 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
 
     monkeypatch.setattr(cli, "collect_optimizers", collect)
     monkeypatch.setattr(cli, "verify_backend", lambda _: {"lmfao_commit": model.COMMIT})
+    monkeypatch.setattr(cli, "collect_replays", collect_replays)
     monkeypatch.setattr(cli, "load_data", load)
     monkeypatch.setattr(cli, "reference_results", oracle)
     monkeypatch.setattr(cli.backend, "generate", generate)
@@ -380,15 +440,33 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
     comparison = (output / "comparison.md").read_text()
     assert "Slotted egglog" in comparison and "Ordinary egglog (de Bruijn)" in comparison
     assert "27.000 | 40.000 | 0.524 [" in comparison
-    assert "2 egraph / 2 execution" in comparison
+    assert "Samples" not in comparison and "Full planning (s)" in comparison
+    assert "requests 2 observations" in comparison
+    assert len([line for line in comparison.splitlines() if line.startswith("| Method")]) == 1
+    assert all(line.count("|") == 7 for line in comparison.splitlines() if line.startswith("|"))
+    assert "Slotted replay (checked proofs) | 401.000 [" in comparison
+    assert "Slotted replay (proofs off) | 101.000 [" in comparison
     from benchmarking.lmfao.report import paper_results
 
     published = paper_results(report)
-    assert len(published) == 4
+    assert len(published) == 5
+    assert r"\csname egglogfigure@lmfao/rounds\endcsname{2}" in published["lmfao.numbers.tex"]
     assert json.loads(published["lmfao.results.json"]) == report
     table = published["lmfao.table.tex"]
+    assert "Samples" not in table and r"\begin{tabular}{lrrrrr}" in table
     assert r"27.000 & 40.000 & \shortstack{0.524" in table
     assert published["lmfao.md"] == comparison
+    checked = report["proof_replay"]["slotted-proof-testing"]
+    checked["failures"] = [{"status": "failure"}]
+    with pytest.raises(ValueError, match="proof replay"):
+        paper_results(report)
+    checked.update(
+        completed_samples=0, process_seconds=None, peak_rss_mib=None, failures=[{"status": "memory-limited"}]
+    )
+    assert "checked proofs) (memory-limited)" in paper_results(report)["lmfao.md"]
+    del report["proof_replay"]["slotted-proof-testing"]
+    with pytest.raises(ValueError, match="proof replay"):
+        paper_results(report)
     # A failed extraction must stop before publishing any paper artifacts.
     report["optimizer"]["slotted"]["pipeline_issue"] = "extractor failed"
     with pytest.raises(ValueError, match="incomplete"):
@@ -419,7 +497,7 @@ def test_report_distinguishes_replication_and_resource_failures() -> None:
         }
     )
     assert "LMFAO configured roots" in result
-    assert "LMFAO + paper root heuristic" in result
+    assert "LMFAO + root heuristic" in result
     assert "Ordinary egglog (de Bruijn) (memory-limit)" in result
     assert "not the paper's full dataset (127M joined tuples)" in result
     assert "our implementation" in result and "allocator/address-space cap" in result

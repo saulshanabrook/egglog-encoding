@@ -20,7 +20,7 @@ from benchmarks.reproduction.lmfao.prepare import verify_backend
 
 from . import backend, model
 from .data import load_data, reference_results
-from .optimizer import collect_optimizers, seconds_summary, write_json
+from .optimizer import OptimizerCollection, collect_optimizers, collect_replays, seconds_summary, write_json
 from .program import DEFAULT_ROUNDS, benchmark_input, plan_checks
 from .report import comparison_markdown, plan_text, preparation_costs
 
@@ -29,19 +29,20 @@ def status(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def run(args: argparse.Namespace, *, collected: tuple[dict[str, Any], dict[str, Any]] | None = None) -> dict[str, Any]:
+def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = None) -> dict[str, Any]:
     provenance = verify_backend(args.backend)
     if args.cpu is not None:
         os.sched_setaffinity(0, {args.cpu})
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
-    documents, optimizer = (
+    collected = (
         collected
         if collected is not None
         else collect_optimizers(
             out, args.samples, args.timeout, args.report, args.memory_limit_bytes, rewrite_rounds=args.rewrite_rounds
         )
     )
+    documents, optimizer = collected.successful, collected.report
     metadata: dict[str, Any] = {
         "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "backend_sha256": sha256_file(args.backend),
@@ -113,6 +114,17 @@ def run(args: argparse.Namespace, *, collected: tuple[dict[str, Any], dict[str, 
             signatures[signature] = label
             canonical.append(label)
     write_json(out / "identical-plans.json", aliases)
+    replays = {}
+    if "slotted" in plans:
+        status("Replaying the selected plan with proofs off and with checked proofs")
+        replays = collect_replays(
+            collected,
+            out / "slotted/proof.egg",
+            args.samples,
+            3 * args.timeout,
+            args.memory_limit_bytes,
+            args.rewrite_rounds,
+        )
     status("Computing independent decimal answers outside pipeline timing")
     start = time.perf_counter()
     db, data_metadata = load_data(args.data)
@@ -151,6 +163,8 @@ def run(args: argparse.Namespace, *, collected: tuple[dict[str, Any], dict[str, 
                 status(f"  {label}: {row['process_seconds']:.3f}s")
     report = {
         **optimizer,
+        "proof_replay": replays,
+        "proof_replay_timeout_seconds": 3 * args.timeout,
         "metadata": metadata,
         "plans": plans,
         "plan_summaries": plan_summaries,
