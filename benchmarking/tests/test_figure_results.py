@@ -94,7 +94,12 @@ def test_intro_speedups_use_full_precision_absolute_means(name: str, treatments:
         for index, delta in zip(item["selected_row_indices"], (-0.0001, 0, 0.0001), strict=True):
             next(row for row in group["samples"] if row["row_index"] == index)["wall_sec"] = mean + delta
     grouped = GroupedReport(
-        {"groups": fixture["groups"], "exclusions": {}, "grouped_schema_version": 7, "report_schema_version": 9},
+        {
+            "groups": fixture["groups"],
+            "exclusions": {},
+            "grouped_schema_version": 7,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+        },
         "fixture",
     )
     result = figure_results(name, fixture["inputs"], grouped, 3, 4.302652729749462)
@@ -134,7 +139,7 @@ def test_slotted_absolute_tables_sort_by_ratio_and_retain_mean_intervals(name: s
             "groups": fixture["groups"] + extra["groups"],
             "exclusions": {},
             "grouped_schema_version": 7,
-            "report_schema_version": 9,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
         },
         "fixture",
     )
