@@ -43,11 +43,13 @@ fn main() {
         }
     }
     if slotted {
-        let mut compiler =
-            egglog_experimental::slotted::Compiler::new(egglog_experimental::slotted::Options {
+        let mut compiler = egglog_experimental::slotted::Compiler::for_egraph(
+            egglog_experimental::slotted::Options {
                 no_aliasing,
                 proof_mode: slotted_proofs,
-            });
+            },
+            &egraph,
+        );
         egglog::cli_with_preprocessor(egraph, args, move |filename, source| {
             compiler
                 .compile_program(filename, source)
