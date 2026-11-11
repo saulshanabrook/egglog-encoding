@@ -24,8 +24,8 @@ from ..models import (
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[9]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 9
+type ReportSchemaVersion = Literal[10]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 10
 
 type GroupedSchemaVersion = Literal[7]
 GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 7

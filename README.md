@@ -46,6 +46,11 @@ regeneration live under [`benchmarks/reproduction/`](benchmarks/reproduction/).
 The [source language guide](egglog-experimental/src/slotted/LANGUAGE.md) is also
 included in the Rust documentation for `egglog_experimental::slotted`.
 
+The [LMFAO case study](benchmarks/lmfao/README.md) optimizes 140 related aggregate
+queries together and executes the selected plan through LMFAO's C++ backend.
+Follow its setup guide, then run `./bench.py figures lmfao` for the comparison
+with LMFAO and ordinary egglog. The full `./bench.py figures` run includes it.
+
 The reusable Rust checker accepts `egraph-serialize` JSON from either engine,
 with optional annotations for slotted graphs:
 
@@ -125,6 +130,7 @@ Treatments map directly to engine modes:
 | `egg-proof-testing` | current egg with extraction and explanation checking |
 | `egg-de`, `egg-ee`, `egg-nee`, `egg-oee` | original parameter-analysis drivers with the named encoding, without proofs |
 | `slotted`, `slotted-no-aliasing` | encoded slotted e-graphs with multipattern or nested compatibility matching |
+| `slotted-proof-testing` | generate, translate and check proofs of ground slotted equality claims |
 | `slotted-ref-multi`, `slotted-ref-nested-snapshot` | native slotted driver with matched snapshot substitution policies |
 | `slotted-ref-nested` | native slotted driver with syntactic substitution for the SDQL timing baseline |
 
@@ -337,11 +343,14 @@ The [paper figures](figures/README.md) use the checked-in
 `benchmarks/corpus/manifest.json` rather than the default workload list.
 Run `./bench.py figures` from this checkout to build the required release engines,
 reuse compatible observations, collect missing runs, and render all seven paper
-figures into the ignored `figures/output/eval/` folder. Each figure has seven
-companions: PDF, SVG, PNG, bound specification, results JSON, numeric TeX macros,
-and a TeX table. Setup requires the Python environment above, the
+figures and the LMFAO table into the ignored `figures/output/eval/` folder.
+Each figure has seven companions: PDF, SVG, PNG, bound specification, results JSON, numeric TeX macros,
+and a TeX table. See the [output guide](figures/README.md) for the LMFAO files.
+Setup requires the Python environment above, the
 pinned Rust toolchain, and Node.js/npm (`npx`); renderer packages are pinned in
-the command. Generate, inspect, then copy the output folder into the manuscript:
+the command. The [LMFAO setup](benchmarks/lmfao/README.md#reproduce) prepares its
+external backend; missing setup fails before collection. Generate, inspect, then
+copy the output folder into the manuscript:
 
 ```sh
 ./bench.py figures

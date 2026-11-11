@@ -1,0 +1,1332 @@
+{
+    "root": "0",
+    "attributes": [
+        {
+            "name": "date",
+            "type": "int"
+        },
+        {
+            "name": "store",
+            "type": "int"
+        },
+        {
+            "name": "item",
+            "type": "int"
+        },
+        {
+            "name": "unit_sales",
+            "type": "double"
+        },
+        {
+            "name": "onpromotion",
+            "type": "int"
+        },
+        {
+            "name": "oilprize",
+            "type": "double"
+        },
+        {
+            "name": "holiday_type",
+            "type": "int"
+        },
+        {
+            "name": "locale",
+            "type": "int"
+        },
+        {
+            "name": "locale_id",
+            "type": "int"
+        },
+        {
+            "name": "transferred",
+            "type": "int"
+        },
+        {
+            "name": "transactions",
+            "type": "int"
+        },
+        {
+            "name": "city",
+            "type": "int"
+        },
+        {
+            "name": "state",
+            "type": "int"
+        },
+        {
+            "name": "store_type",
+            "type": "int"
+        },
+        {
+            "name": "cluster",
+            "type": "int"
+        },
+        {
+            "name": "family",
+            "type": "int"
+        },
+        {
+            "name": "itemclass",
+            "type": "int"
+        },
+        {
+            "name": "perishable",
+            "type": "int"
+        }
+    ],
+    "relations": [
+        {
+            "name": "Sales",
+            "attributes": [
+                "0",
+                "1",
+                "2",
+                "3",
+                "4"
+            ],
+            "neighbors": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+            ]
+        },
+        {
+            "name": "Oil",
+            "attributes": [
+                "0",
+                "5"
+            ],
+            "neighbors": [
+                "0"
+            ]
+        },
+        {
+            "name": "Holiday",
+            "attributes": [
+                "0",
+                "6",
+                "7",
+                "8",
+                "9"
+            ],
+            "neighbors": [
+                "0"
+            ]
+        },
+        {
+            "name": "Transactions",
+            "attributes": [
+                "0",
+                "1",
+                "10"
+            ],
+            "neighbors": [
+                "0"
+            ]
+        },
+        {
+            "name": "Stores",
+            "attributes": [
+                "1",
+                "11",
+                "12",
+                "13",
+                "14"
+            ],
+            "neighbors": [
+                "0"
+            ]
+        },
+        {
+            "name": "Items",
+            "attributes": [
+                "2",
+                "15",
+                "16",
+                "17"
+            ],
+            "neighbors": [
+                "0"
+            ]
+        }
+    ],
+    "functions": [
+        {
+            "attributes": [
+                "3"
+            ],
+            "power": "1"
+        },
+        {
+            "attributes": [
+                "5"
+            ],
+            "power": "1"
+        },
+        {
+            "attributes": [
+                "10"
+            ],
+            "power": "1"
+        },
+        {
+            "attributes": [
+                "3"
+            ],
+            "power": "2"
+        },
+        {
+            "attributes": [
+                "5"
+            ],
+            "power": "2"
+        },
+        {
+            "attributes": [
+                "10"
+            ],
+            "power": "2"
+        }
+    ],
+    "queries": [
+        {
+            "functions": "",
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": "",
+            "root": "0",
+            "keys": [
+                "1"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "0",
+            "keys": [
+                "1"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "0",
+            "keys": [
+                "1",
+                "4"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "0",
+            "keys": [
+                "1"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "1",
+                "6"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "1",
+                "7"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "1",
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "1",
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "0",
+            "keys": [
+                "1"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "1",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "1",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "1",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "1",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "1",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "1",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "1",
+                "17"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "3"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "0",
+            "keys": [
+                "4"
+            ]
+        },
+        {
+            "functions": [
+                "0",
+                "1"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "2",
+            "keys": [
+                "6"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "2",
+            "keys": [
+                "7"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "2",
+            "keys": [
+                "8"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "2",
+            "keys": [
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "0",
+                "2"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "4",
+            "keys": [
+                "11"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "4",
+            "keys": [
+                "12"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "4",
+            "keys": [
+                "13"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "4",
+            "keys": [
+                "14"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "5",
+            "keys": [
+                "15"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "5",
+            "keys": [
+                "16"
+            ]
+        },
+        {
+            "functions": [
+                "0"
+            ],
+            "root": "5",
+            "keys": [
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "0",
+            "keys": [
+                "4"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "0",
+            "keys": [
+                "4"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "4",
+                "6"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "4",
+                "7"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "4",
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "4",
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "0",
+            "keys": [
+                "4"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "4",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "4",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "4",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "4",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "4",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "4",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "4",
+                "17"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "4"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "2",
+            "keys": [
+                "6"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "2",
+            "keys": [
+                "7"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "2",
+            "keys": [
+                "8"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "2",
+            "keys": [
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "1",
+                "2"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "4",
+            "keys": [
+                "11"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "4",
+            "keys": [
+                "12"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "4",
+            "keys": [
+                "13"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "4",
+            "keys": [
+                "14"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "5",
+            "keys": [
+                "15"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "5",
+            "keys": [
+                "16"
+            ]
+        },
+        {
+            "functions": [
+                "1"
+            ],
+            "root": "5",
+            "keys": [
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "6"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "6",
+                "7"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "6",
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "6",
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "2",
+            "keys": [
+                "6"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "6",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "6",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "6",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "6",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "6",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "6",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "6",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "7"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "7",
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "7",
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "2",
+            "keys": [
+                "7"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "7",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "7",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "7",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "7",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "7",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "7",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "7",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "8",
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "2",
+            "keys": [
+                "8"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "8",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "8",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "8",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "8",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "8",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "8",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "8",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "2",
+            "keys": [
+                "9"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "2",
+            "keys": [
+                "9"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "9",
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "9",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "9",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "9",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "9",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "9",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "9",
+                "17"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "5"
+            ],
+            "root": "0",
+            "keys": ""
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "4",
+            "keys": [
+                "11"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "4",
+            "keys": [
+                "12"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "4",
+            "keys": [
+                "13"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "4",
+            "keys": [
+                "14"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "5",
+            "keys": [
+                "15"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "5",
+            "keys": [
+                "16"
+            ]
+        },
+        {
+            "functions": [
+                "2"
+            ],
+            "root": "5",
+            "keys": [
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "11"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "11",
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "11",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "11",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "11",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "11",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "11",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "12"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "12",
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "12",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "12",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "12",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "12",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "13"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "13",
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "13",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "13",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "13",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "4",
+            "keys": [
+                "14"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "14",
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "14",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "14",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "15"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "15",
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "15",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "16"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "16",
+                "17"
+            ]
+        },
+        {
+            "functions": "",
+            "root": "5",
+            "keys": [
+                "17"
+            ]
+        }
+    ]
+}

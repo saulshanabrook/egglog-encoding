@@ -61,12 +61,19 @@ class Figure:
 
 
 @dataclass(frozen=True)
+class LmfaoConfig:
+    data: Path
+    backend: Path
+
+
+@dataclass(frozen=True)
 class FigureConfig:
     path: Path
     rounds: int
     timeout_sec: int
     figures: tuple[Figure, ...]
     memory_limit_bytes: int | None = DEFAULT_MEMORY_LIMIT_BYTES
+    lmfao: LmfaoConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -153,17 +160,29 @@ def load_config(path: Path) -> FigureConfig:
     if (
         not isinstance(data, dict)
         or not {"rounds", "figures"} <= set(data)
-        or set(data) - {"rounds", "timeout_sec", "figures"}
+        or set(data) - {"rounds", "timeout_sec", "figures", "lmfao"}
     ):
-        raise ValueError("figure config requires rounds and figures, with optional timeout_sec")
+        raise ValueError("figure config requires rounds and figures, with optional timeout_sec and lmfao")
     data.setdefault("timeout_sec", DEFAULT_TIMEOUT_SEC)
     for key in ("rounds", "timeout_sec"):
         if type(data[key]) is not int or data[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
-    if not isinstance(data["figures"], dict) or not data["figures"]:
+    lmfao = None
+    if "lmfao" in data:
+        item = data["lmfao"]
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"data", "backend"}
+            or any(not isinstance(value, str) or not value for value in item.values())
+        ):
+            raise ValueError("lmfao requires data and backend paths")
+        lmfao = LmfaoConfig((path.parent / item["data"]).resolve(), (path.parent / item["backend"]).resolve())
+    if not isinstance(data["figures"], dict) or (not data["figures"] and lmfao is None):
         raise ValueError("figures must be a nonempty object of named figures")
     figures = []
     for name, item in data["figures"].items():
+        if name == "lmfao":
+            raise ValueError("lmfao is a table configured by the top-level lmfao entry")
         if not name or Path(name).name != name or name in (".", ".."):
             raise ValueError(f"invalid figure name: {name!r}")
         if (
@@ -198,7 +217,7 @@ def load_config(path: Path) -> FigureConfig:
                 tuple(checks),
             )
         )
-    return FigureConfig(path, data["rounds"], data["timeout_sec"], tuple(figures))
+    return FigureConfig(path, data["rounds"], data["timeout_sec"], tuple(figures), lmfao=lmfao)
 
 
 def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
@@ -218,11 +237,13 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
         preliminary.error(str(error))
     parser = argparse.ArgumentParser(
         prog="./bench.py figures",
-        description="Collect missing cached observations once, then render selected figures.",
-        epilog="Configured figures:\n" + "\n".join(f"  {f.name}: {f.spec}" for f in config.figures),
+        description="Collect paper experiments, then render selected figures and tables.",
+        epilog="Configured outputs:\n"
+        + "\n".join(f"  {f.name}: {f.spec}" for f in config.figures)
+        + ("\n  lmfao: covariance execution and optimization table" if config.lmfao else ""),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("names", nargs="*", help="configured figure names (default: all)")
+    parser.add_argument("names", nargs="*", help="configured figure/table names (default: all)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="flat figure JSON catalog")
     parser.add_argument("-v", "--verbose", action="store_true", help="show phase timings and per-attempt starts")
     parser.add_argument(
@@ -246,6 +267,9 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
         help="output directory (default: this checkout's figures/output/eval)",
     )
     parser.add_argument("--timeout-sec", type=int, default=config.timeout_sec, help="per-process resource guard")
+    parser.add_argument("--lmfao-data", type=Path, help="override the catalog's prepared LMFAO dataset")
+    parser.add_argument("--lmfao-backend", type=Path, help="override the catalog's prepared LMFAO executable")
+    parser.add_argument("--lmfao-cxxflags", help="C++ flags for LMFAO generated programs, including any Boost path")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
     if args.rounds < 1 or args.timeout_sec < 1:
@@ -254,12 +278,52 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
         parser.error("--report requires a file path; '-' streaming is not supported")
     if len(args.names) != len(set(args.names)):
         parser.error("duplicate figure name")
-    unknown = set(args.names) - {figure.name for figure in config.figures}
+    known_names = {figure.name for figure in config.figures} | ({"lmfao"} if config.lmfao else set())
+    unknown = set(args.names) - known_names
     if unknown and args.reuse_from is None:
         parser.error("unknown figure names: " + ", ".join(sorted(unknown)) + "; select a JSON catalog with --config")
+    if config.lmfao:
+        config = replace(
+            config,
+            lmfao=LmfaoConfig(
+                args.lmfao_data.expanduser().resolve() if args.lmfao_data else config.lmfao.data,
+                args.lmfao_backend.expanduser().resolve() if args.lmfao_backend else config.lmfao.backend,
+            ),
+        )
     return args, replace(
         config, rounds=args.rounds, timeout_sec=args.timeout_sec, memory_limit_bytes=args.memory_limit_bytes
     )
+
+
+def prepare_lmfao(args: argparse.Namespace, config: FigureConfig) -> argparse.Namespace | None:
+    """Check external prerequisites before any paper collection or build."""
+    if config.lmfao is None or (args.names and "lmfao" not in args.names):
+        return None
+    from .lmfao.cli import parse_args as lmfao_args
+    from .lmfao.cli import verify_backend
+    from .lmfao.data import validate_inputs
+
+    source = parse_target(args.target).source
+    if not source or Path(source).expanduser().resolve() != ROOT:
+        raise ValueError("LMFAO requires --target to name this checkout; select other figures for another target")
+    selected = lmfao_args(
+        [
+            "--data",
+            str(config.lmfao.data),
+            "--backend",
+            str(config.lmfao.backend),
+            "--output-dir",
+            str(args.output_dir.expanduser().resolve() / "lmfao"),
+        ]
+    )
+    selected.samples, selected.timeout = config.rounds, config.timeout_sec
+    selected.report = args.report.expanduser().resolve()
+    selected.memory_limit_bytes = config.memory_limit_bytes
+    if args.lmfao_cxxflags is not None:
+        selected.cxxflags = args.lmfao_cxxflags
+    verify_backend(selected.backend)
+    validate_inputs(selected.data)
+    return selected
 
 
 def resolve_figures(config: FigureConfig, names: Sequence[str], invocation_cwd: Path) -> tuple[ResolvedFigure, ...]:
@@ -353,6 +417,7 @@ def render_figures(
     console: Console,
     inventory: FigureInventory,
     ast_records: Sequence[dict[str, Any]] = (),
+    extra_outputs: dict[str, str] | None = None,
 ) -> tuple[Path, ...]:
     """Bind shared sample selections and render Vega through temporary files."""
     from scipy import stats
@@ -461,7 +526,7 @@ def render_figures(
             "view_domains": results.get("view_domains"),
         }
         prepared.append(FigureData(figure.name, spec, grouped, results["provenance"], tuple(ast_records)))
-    return render_figure_data(prepared, output_dir or DEFAULT_OUTPUT_DIR, console)
+    return render_figure_data(prepared, output_dir or DEFAULT_OUTPUT_DIR, console, extra_outputs=extra_outputs)
 
 
 def renderer_metadata() -> dict[str, Any]:
@@ -480,6 +545,7 @@ def render_figure_data(
     console: Console,
     *,
     images: bool = True,
+    extra_outputs: dict[str, str] | None = None,
     renderer: dict[str, Any] | None = None,
 ) -> tuple[Path, ...]:
     """Validate and atomically publish snapshots; images=False skips only drawing."""
@@ -602,6 +668,9 @@ def render_figure_data(
                     raise ValueError("slotted-runtime requires a persisted AST measurement snapshot")
                 outputs.extend(export_slotted_ast(item.ast_records, Path(temporary)))
             rendered.extend(destination / path.name for path in outputs)
+        for name, content in (extra_outputs or {}).items():
+            (Path(temporary) / name).write_text(content, encoding="utf-8")
+            rendered.append(destination / name)
         for output in rendered:
             os.replace(Path(temporary) / output.name, output)
     for output in rendered:
@@ -662,14 +731,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         cwd = Path.cwd()
-        figure_count = len(args.names) or len(config.figures)
+        lmfao = prepare_lmfao(args, config)
+        figure_count = len(args.names) or (len(config.figures) + int(lmfao is not None))
         console.print(
-            f"Resolving inputs for {figure_count} figure{'s' if figure_count != 1 else ''} · "
+            f"Resolving inputs for {figure_count} paper output{'s' if figure_count != 1 else ''} · "
             f"{config.rounds} sample{'s' if config.rounds != 1 else ''}/condition"
         )
         started = perf_counter()
         figures = resolve_figures(config, args.names, cwd)
-        all_files = tuple(dict.fromkeys(file for figure in figures for file in figure.files))
+        lmfao_files = {}
+        if lmfao is not None:
+            from .lmfao.optimizer import optimizer_inputs, optimizer_report, optimizer_requests
+
+            lmfao_files = optimizer_inputs(lmfao.output_dir, lmfao.rewrite_rounds)
+        all_files = tuple(
+            dict.fromkeys([*(file for figure in figures for file in figure.files), *lmfao_files.values()])
+        )
         imports = []
         if args.reuse_from is not None:
             from .figure_reuse import import_figure
@@ -709,6 +786,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             for figure in figures
             for treatment in figure.figure.treatments
         )
+        if lmfao is not None:
+            requests += optimizer_requests(lmfao_files, target_request, config.memory_limit_bytes)
         status = 0
         if args.no_runs:
             binaries = []
@@ -773,6 +852,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ast_records = slotted_ast_records(
                     resolved.files, args.ast_cache.expanduser().resolve(), collect=not args.no_runs
                 )
+        extra_outputs = {}
+        if lmfao is not None:
+            from .lmfao.cli import run as run_lmfao
+            from .lmfao.report import paper_results
+
+            observed = optimizer_report(
+                lmfao.output_dir,
+                store,
+                targets[target_request],
+                lmfao_files,
+                config.rounds,
+                config.timeout_sec,
+                config.memory_limit_bytes,
+                lmfao.rewrite_rounds,
+            )
+            if "slotted" not in observed[0] or any(
+                row["status"] not in ("timed-out", "memory-limited")
+                for result in observed[1]["optimizer"].values()
+                for row in result["failures"]
+            ):
+                raise ValueError("LMFAO requires successful slotted samples and no non-resource optimizer errors")
+            extra_outputs = paper_results(run_lmfao(lmfao, collected=observed))
         render_figures(
             figures,
             config,
@@ -783,8 +884,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             console,
             inventory,
             ast_records,
+            **({"extra_outputs": extra_outputs} if extra_outputs else {}),
         )
         return status
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         console.print(f"error: {error}")
         return 2

@@ -225,6 +225,15 @@ def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     assert args.detail == "rulesets"
 
 
+def test_slotted_proof_treatment_checks_source_proofs() -> None:
+    from benchmarking.engines import TREATMENT_SPECS
+
+    args = benchmark.parse_benchmark_args(["--compare-treatment", "slotted", "--treatment", "slotted-proof-testing"])
+    baseline, candidate = benchmark.endpoint_requests(args)
+    assert baseline.treatment == "slotted" and candidate.treatment == "slotted-proof-testing"
+    assert TREATMENT_SPECS[candidate.treatment].flags == ("--slotted", "--proofs")
+
+
 def test_pair_cli_accepts_egg_treatments() -> None:
     args = benchmark.parse_benchmark_args(["--treatment", "egg-proof-testing"])
     _baseline, candidate = benchmark.endpoint_requests(args)

@@ -1,0 +1,42 @@
+--- a/src/compiler/QueryCompiler.cpp
++++ b/src/compiler/QueryCompiler.cpp
+@@ -15,6 +15,7 @@
+ #include <boost/dynamic_bitset.hpp>
+ 
+ #include <QueryCompiler.h>
++#include "OptimizerBridge.hpp"
+ 
+ using namespace std;
+ using namespace multifaq::params;
+@@ -43,6 +44,22 @@
+  */
+ void QueryCompiler::compile()
+ {
++    const char* input = std::getenv("LMFAO_WORKLOAD_FILE");
++    const char* output = std::getenv("LMFAO_PLAN_FILE");
++    if (input) lmfao_bridge::exportWorkload(input, _td, _queryList, _functionList);
++    if (std::getenv("LMFAO_EXPORT_ONLY")) {
++        lmfao_bridge::require(input);
++        std::exit(0);
++    }
++    if (const char* plan = std::getenv("LMFAO_IMPORT_PLAN")) {
++        lmfao_bridge::importPlan(plan, _td, _queryList, _viewList, _functionList);
++        return;
++    }
++    if (const char* policy = std::getenv("LMFAO_ROOT_POLICY")) {
++        lmfao_bridge::require(std::string(policy) == "paper");
++        lmfao_bridge::coverageRoots(_td, _queryList);
++    }
++
+     DINFO("Compiling the queries into views - number of queries: " + 
+           to_string(_queryList.size())+"\n");
+ 
+@@ -95,6 +112,8 @@
+                 );
+         }
+     }
++
++    if (output) lmfao_bridge::exportPlan(output, _queryList, _viewList);
+ 
+ #ifdef PRINT_OUT_COMPILER  /* PRINT OUT */
+     printf("Print list of views to be computed: \n");

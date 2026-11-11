@@ -1,0 +1,14 @@
+[package]
+name = "lmfao-extract"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+benchmark-memory = { path = "../../benchmark-memory" }
+egglog = { workspace = true }
+egglog-experimental = { path = "../../egglog-experimental" }
+highs = "=2.4.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
