@@ -467,9 +467,13 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         counter_note,
     ]
     sources = [
-        r"\begin{tabular}{llrlrrr}",
-        r"Project & Acquisition & Replays & Input LOC median [range] & "
-        r"Baseline (s) & Proof production (s) & Validated \\",
+        r"\begin{tabular}{@{}lp{0.32\linewidth}rr@{}}",
+        r"Project & Acquisition & Replays & \shortstack{Input LOC\\median [range]} \\",
+        r"\hline",
+    ]
+    source_runtime = [
+        r"\begin{tabular}{@{}llrlr@{}}",
+        r"Project & Configuration & Timed & \shortstack{Runtime (s)\\median [range]} & Checked \\",
         r"\hline",
     ]
     conditions = [condition_estimates(c, snapshot["rounds"]) for c in snapshot["conditions"]]
@@ -490,28 +494,30 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
             for c in conditions
             if c["project"] == project and c["treatment"] == "proof-extraction"
         )
-        description = "unavailable" if not locs else f"{statistics.median(locs):g} [{min(locs)}, {max(locs)}]"
-        runtimes = []
+        description = "unavailable" if not locs else f"{statistics.median(locs):,g} [{min(locs):,}, {max(locs):,}]"
+        project_link = r"\href{" + info["source"] + "}{" + tex_escape(info["label"]) + "}"
+        sources.append(f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description} " + r"\\")
         for treatment in ("off", "proof-extraction"):
             timing_values = times[treatment]
-            runtimes.append(
-                f"{statistics.median(timing_values):.4g} [{min(timing_values):.4g}, {max(timing_values):.4g}]; "
-                f"{len(timing_values)}/{len(inputs)}"
+            runtime = (
+                f"{statistics.median(timing_values):.4g} [{min(timing_values):.4g}, {max(timing_values):.4g}]"
                 if timing_values
                 else "unavailable"
             )
-        project_link = r"\href{" + info["source"] + "}{" + tex_escape(info["label"]) + "}"
-        sources.append(
-            f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description} "
-            f"& {' & '.join(runtimes)} & {validated}/{len(inputs)} " + r"\\"
-        )
+            label = "Ordinary egglog" if treatment == "off" else "Proof production"
+            checked = "N/A" if treatment == "off" else f"{validated}/{len(inputs)}"
+            source_runtime.append(
+                f"{project_link} & {label} & {len(timing_values)}/{len(inputs)} & {runtime} & {checked} " + r"\\"
+            )
     sources.append(r"\end{tabular}")
+    source_runtime.append(r"\end{tabular}")
     return {
         "experiment-coverage.table.tex": "\n".join(headers) + "\n",
         "composition-coverage.table.tex": "\n".join(composition) + "\n",
         "experiment-coverage-details.table.tex": "\n".join(details) + "\n",
         "composition-coverage-details.table.tex": "\n".join(composition_details) + "\n",
         "corpus-sources.table.tex": "\n".join(sources) + "\n",
+        "corpus-runtime-details.table.tex": "\n".join(source_runtime) + "\n",
     }
 
 
