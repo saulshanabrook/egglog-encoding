@@ -102,7 +102,7 @@ def test_fixed_workload_is_original_covariance_configuration() -> None:
     assert len(model.WORKLOAD.relations) == 6
 
 
-def test_cli_limits(tmp_path: Path) -> None:
+def test_cli_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     argv = ["--data", str(tmp_path), "--backend", str(tmp_path / "multifaq"), "--output-dir", str(tmp_path / "out")]
     args = cli.parse_args([*argv, "--rounds", "1", "--dag-timeout", "2"])
     assert args.samples == 1 and args.dag_timeout == 2
@@ -114,6 +114,10 @@ def test_cli_limits(tmp_path: Path) -> None:
             cli.main([*argv, option, "0"])
     with pytest.raises(SystemExit):
         cli.main([*argv, "--report", "-"])
+    monkeypatch.delattr(os, "sched_setaffinity", raising=False)
+    with pytest.raises(SystemExit):
+        cli.main([*argv, "--cpu", "0"])
+    assert "--cpu is not supported on this platform" in capsys.readouterr().err
     assert seconds_summary([]) is None
 
 
@@ -309,6 +313,7 @@ def test_backend_timeout_stops_optimizer_and_compiler_children(tmp_path: Path, n
 def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
     now = 0.0
 
     def spend(seconds: float) -> None:
@@ -420,6 +425,7 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
         == 0
     )
     report = json.loads(capsys.readouterr().out)
+    assert report["metadata"]["cpu_affinity"] is None
     assert report == json.loads((output / "pipeline.json").read_text())
     replay = (output / "slotted" / "proof.egg").read_text()
     assert replay.startswith((model.FIXTURES / "inputs/slotted.egg").read_text())

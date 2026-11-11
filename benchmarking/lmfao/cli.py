@@ -31,7 +31,7 @@ def status(message: str) -> None:
 
 def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = None) -> dict[str, Any]:
     provenance = verify_backend(args.backend)
-    if args.cpu is not None:
+    if args.cpu is not None and hasattr(os, "sched_setaffinity"):
         os.sched_setaffinity(0, {args.cpu})
     out = args.output_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
     )
     documents, optimizer = collected.successful, collected.report
     metadata: dict[str, Any] = {
-        "cpu_affinity": sorted(os.sched_getaffinity(0)),
+        "cpu_affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
         "backend_sha256": sha256_file(args.backend),
         "backend_provenance": provenance,
         "cxx_version": subprocess.check_output(["g++", "--version"], text=True).splitlines()[0],
@@ -216,6 +216,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cxxflags", default=backend.FLAGS)
     parser.add_argument("--cpu", type=int)
     args = parser.parse_args(argv)
+    if args.cpu is not None and not hasattr(os, "sched_setaffinity"):
+        parser.error("--cpu is not supported on this platform")
     if args.report == Path("-"):
         parser.error("--report requires a filesystem path, not '-'")
     if min(args.samples, args.rewrite_rounds, args.timeout, args.build_timeout, args.jobs) < 1:
