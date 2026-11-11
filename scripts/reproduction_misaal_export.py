@@ -14,7 +14,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from process_guard import GROUP_LIMIT_BYTES
 from scripts.reproduction_prepare_misaal import LLVM12, MISAAL_REVISION
 from scripts.reproduction_process import exclusive_job
 from scripts.source_tools import Preparation, sha256_file, write_json
@@ -198,7 +197,7 @@ def prepare_export_frontend(output: Path, template_request: Path, *, timeout_sec
 
 
 def verified_frontend(receipt: Path) -> dict[str, Any]:
-    """Verify the exact patched source and guarded build producing this library."""
+    """Verify the exact patched source and successful build producing this library."""
     if receipt.is_symlink() or receipt.name != "frontend.json":
         raise ValueError("export frontend requires its original frontend.json receipt")
     receipt = receipt.resolve()
@@ -260,13 +259,8 @@ def verified_frontend(receipt: Path) -> dict[str, Any]:
             raise ValueError("export build evidence is incomplete")
         result = json.loads((directory / (prefix + ".result.json")).read_text())
         request = json.loads((directory / (prefix + ".request.json")).read_text())
-        if (
-            result.get("status") != "success"
-            or result.get("returncode") != 0
-            or request.get("require_guard") is not True
-            or request.get("memory_limit_bytes") != GROUP_LIMIT_BYTES
-        ):
-            raise ValueError("export build did not complete under the required guard")
+        if result.get("status") != "success" or result.get("returncode") != 0:
+            raise ValueError("export build did not complete successfully")
         if request["command"] != identity["commands"][name]:
             raise ValueError("export build command differs from its prepared recipe")
     return record
@@ -321,14 +315,9 @@ def verify_export_request(request: dict[str, Any]) -> None:
             record["evidence"]
         ):
             raise ValueError("export generator evidence is incomplete")
-        step_request, result = json.loads(step.read_text()), json.loads(result_path.read_text())
-        if (
-            result.get("status") != "success"
-            or result.get("returncode") != 0
-            or step_request.get("require_guard") is not True
-            or step_request.get("memory_limit_bytes") != GROUP_LIMIT_BYTES
-        ):
-            raise ValueError("export generator build was not guarded and successful")
+        result = json.loads(result_path.read_text())
+        if result.get("status") != "success" or result.get("returncode") != 0:
+            raise ValueError("export generator build did not complete successfully")
     link = json.loads(steps[-1].read_text())["command"]
     if link != record["link_command"] or frontend["library"] not in link or link[-2:] != ["-o", request["generator"]]:
         raise ValueError("export generator was not linked to the recorded frontend library")

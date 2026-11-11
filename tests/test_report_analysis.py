@@ -297,11 +297,12 @@ def test_validation_failure_preserves_means_but_excludes_ratios_and_timing(tmp_p
 
 @pytest.mark.parametrize("status,label", [("failure", "failure"), ("timed-out", "timeout")])
 @pytest.mark.parametrize("failed_endpoint", ["baseline", "candidate"])
+@pytest.mark.parametrize("rounds", [1, 30])
 def test_terminal_observation_precedes_missing_rounds(
-    tmp_path: Path, status: models.Status, label: str, failed_endpoint: str
+    tmp_path: Path, status: models.Status, label: str, failed_endpoint: str, rounds: int
 ) -> None:
     report = tmp_path / "report.jsonl"
-    comparison = _comparison(tmp_path, rounds=30)
+    comparison = _comparison(tmp_path, rounds=rounds)
     failed = make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256=f"sha256:{failed_endpoint}", status=status)
     failed["error_message"] = "specific error\nfull diagnostic in cache"
     write_report(report, failed)
@@ -310,8 +311,9 @@ def test_terminal_observation_precedes_missing_rounds(
     ordinary = analyze_pair(store.grouped_report(), comparison, "files")
     suite = analyze_pair(store.grouped_report(), replace(comparison, suite_mode=True), "files")
 
-    assert ordinary.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
-    assert suite.summary[0].ratio.issue == f"{label} row selected (1/30 attempts): specific error"
+    attempts = f" (1/{rounds} attempts)" if rounds > 1 else ""
+    assert ordinary.summary[0].ratio.issue == f"{label} row selected{attempts}: specific error"
+    assert suite.summary[0].ratio.issue == f"{label} row selected (1/{rounds} attempts): specific error"
     assert suite.summary[0].ratio.estimate.point is None
     assert suite.files[0].baseline.point is None
 

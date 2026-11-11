@@ -100,26 +100,15 @@ def test_any_selected_failure_prevents_automatic_topup(
     assert plan.runs[0].cached_statuses == ("timed-out", "success")
 
 
-def test_suite_build_is_guarded_and_single_job(
+def test_suite_build_preserves_single_job_and_cleanup_without_monitoring(
     prepared_environment: tuple[Path, models.ResolvedTarget],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dataclasses import replace
 
-    from process_guard import MemoryGuard
-
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     root, target = prepared_environment
     events: list[Any] = []
-
-    class Guard:
-        reason = None
-
-        def start(self, pid: int) -> None:
-            events.append(("guard", pid))
-
-        def close(self) -> None:
-            events.append("close")
 
     class Process:
         pid = 123
@@ -136,12 +125,11 @@ def test_suite_build_is_guarded_and_single_job(
         return Process()
 
     monkeypatch.setenv("EGGLOG_BENCH_MEMORY_GUARD", "1")
-    monkeypatch.setattr(MemoryGuard, "from_environment", lambda: Guard())
     monkeypatch.setattr(targets.subprocess, "Popen", build)
     monkeypatch.setattr(targets, "terminate_process_group", lambda _process: events.append("cleanup"))
     path, identity = targets.build_target(replace(target.row, path=str(root)), Console(file=io.StringIO()))
     assert path == target.binary_path and identity == target.binary_sha256
-    assert events == ["build", ("guard", 123), "wait", "close", "cleanup"]
+    assert events == ["build", "wait", "cleanup"]
 
 
 def test_cached_suite_label_keeps_exact_validation_error_without_building_or_screening(

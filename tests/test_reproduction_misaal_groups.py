@@ -21,12 +21,12 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fi
     identities = iter([(201, "test-birth-201"), (202, "test-birth-202")])
     monkeypatch.setattr(groups, "peer_identity", lambda _connection: next(identities))
     state = {
-        100: {"parent": 1, "group": 100, "rss": 10, "state": "S"},
-        201: {"parent": 100, "group": 100, "rss": 20, "state": "S"},
-        202: {"parent": 201, "group": 202, "rss": 30, "state": "S"},
-        203: {"parent": 202, "group": 202, "rss": 40, "state": "S"},
-        204: {"parent": 203, "group": 202, "rss": 50, "state": "S"},
-        900: {"parent": 1, "group": 900, "rss": 999, "state": "S"},
+        100: {"parent": 1, "group": 100, "state": "S"},
+        201: {"parent": 100, "group": 100, "state": "S"},
+        202: {"parent": 201, "group": 202, "state": "S"},
+        203: {"parent": 202, "group": 202, "state": "S"},
+        204: {"parent": 203, "group": 202, "state": "S"},
+        900: {"parent": 1, "group": 900, "state": "S"},
     }
     monkeypatch.setattr(groups, "process_snapshot", lambda: state)
     guard = groups.RacketGroups(tmp_path / "groups")
@@ -45,7 +45,7 @@ def registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.Fi
     control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     control.connect(str(guard.endpoint))
     control.sendall(b'{"kind":"reserve"}\n')
-    assert guard.sample(100) == 30
+    guard.monitor(100)
     nonce = control.recv(128).decode().strip()
     control.sendall(b'{"kind":"spawned","pid":202}\n')
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -75,12 +75,12 @@ def test_registration_waits_for_guard_and_counts_both_groups_once(registry: tupl
     client.setblocking(False)
     with pytest.raises(BlockingIOError):
         client.recv(64)
-    assert guard.sample(100) == 150
+    guard.monitor(100)
     assert client.recv(64) == b"go\n"
     assert guard.record["groups"][0]["identity"] == "test-birth-202"
 
 
-def test_immediate_root_exit_refuses_reservation_before_first_sample(
+def test_immediate_root_exit_refuses_reservation_before_first_monitor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(groups, "peer_identity", lambda _: (201, "birth"))
@@ -98,12 +98,12 @@ def test_immediate_root_exit_refuses_reservation_before_first_sample(
 
 def test_source_local_timeout_with_empty_group_preserves_source_failure(registry: tuple) -> None:
     guard, client, state = registry
-    guard.sample(100)
+    guard.monitor(100)
     assert client.recv(64) == b"go\n"
     client.close()
     for pid in (202, 203, 204):
         del state[pid]
-    assert guard.sample(100) == 30
+    guard.monitor(100)
     assert guard.record["groups"][0]["status"] == "drained"
 
 
@@ -112,19 +112,19 @@ def test_lost_lease_with_residual_or_reused_pid_never_signals_other_groups(
     registry: tuple, monkeypatch: pytest.MonkeyPatch, replacement: bool
 ) -> None:
     guard, client, state = registry
-    guard.sample(100)
+    guard.monitor(100)
     client.recv(64)
     client.close()
     state.pop(202)
     if replacement:
-        state[202] = {"parent": 1, "group": 202, "rss": 17, "state": "S"}
+        state[202] = {"parent": 1, "group": 202, "state": "S"}
     monkeypatch.setattr(groups.os, "killpg", lambda *_: pytest.fail("must not signal an ambiguous/reused group"))
-    guard.sample(100)
+    guard.monitor(100)
     assert guard.record["groups"][0]["status"] == "draining"
     deadline = guard.record["groups"][0]["drain_deadline"]
     monkeypatch.setattr(groups.time, "monotonic", lambda: deadline + 1)
     with pytest.raises(ValueError, match="residual or ambiguous"):
-        guard.sample(100)
+        guard.monitor(100)
     assert guard.record["status"] == "monitoring-failed"
 
 
@@ -136,7 +136,7 @@ def test_unrelated_reservation_is_not_acknowledged(tmp_path: Path, monkeypatch: 
     client.connect(str(guard.endpoint))
     client.sendall(b'{"kind":"reserve"}\n')
     with pytest.raises(ValueError, match="outside the guarded"):
-        guard.sample(100)
+        guard.monitor(100)
     client.setblocking(False)
     with pytest.raises(BlockingIOError):
         client.recv(64)
@@ -146,23 +146,23 @@ def test_unrelated_reservation_is_not_acknowledged(tmp_path: Path, monkeypatch: 
 
 def test_racket_result_releases_only_a_drained_group(registry: tuple) -> None:
     guard, client, state = registry
-    guard.sample(100)
+    guard.monitor(100)
     client.recv(64)
     state.pop(203)
     state.pop(204)
     client.sendall(b'{"kind":"done","returncode":7}\n')
-    guard.sample(100)
+    guard.monitor(100)
     assert client.recv(64) == b"release\n"
     assert guard.record["groups"][0]["returncode"] == 7
 
 
 def test_racket_success_with_residual_processes_fails_closed(registry: tuple) -> None:
     guard, client, _ = registry
-    guard.sample(100)
+    guard.monitor(100)
     client.recv(64)
     client.sendall(b'{"kind":"done","returncode":0}\n')
     with pytest.raises(ValueError, match="unexpected residual"):
-        guard.sample(100)
+        guard.monitor(100)
 
 
 def test_monitoring_failure_is_retained_and_pending_leases_are_closed(
@@ -171,7 +171,7 @@ def test_monitoring_failure_is_retained_and_pending_leases_are_closed(
     guard, client, state = registry
     monkeypatch.setattr(groups, "process_snapshot", lambda: (_ for _ in ()).throw(OSError("monitor failed")))
     with pytest.raises(OSError, match="monitor failed"):
-        guard.sample(100)
+        guard.monitor(100)
     with pytest.raises(ValueError, match="Terminal process monitoring failed"):
         guard.close()
     assert client.recv(64) == b""
@@ -226,32 +226,36 @@ def test_malformed_process_monitoring_is_failure(monkeypatch: pytest.MonkeyPatch
         groups.process_snapshot()
 
 
-def test_retired_group_number_is_not_counted_after_pid_reuse(registry: tuple) -> None:
+def test_retired_group_number_is_not_reactivated_after_pid_reuse(registry: tuple) -> None:
     guard, client, state = registry
-    guard.sample(100)
+    guard.monitor(100)
     client.recv(64)
     client.close()
     for pid in (202, 203, 204):
         del state[pid]
-    assert guard.sample(100) == 30
-    state[202] = {"parent": 1, "group": 202, "rss": 9999, "state": "S"}
-    assert guard.sample(100) == 30
+    guard.monitor(100)
+    assert guard.record["groups"][0]["retired"]
+    state[202] = {"parent": 1, "group": 202, "state": "S"}
+    guard.monitor(100)
+    assert len(guard.record["groups"]) == 1
+    assert guard.record["groups"][0]["status"] == "drained"
+    assert guard.record["groups"][0]["retired"]
 
 
 def test_registration_before_parent_pid_report_stays_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     identities = iter([(201, "source-birth"), (202, "supervisor-birth")])
     monkeypatch.setattr(groups, "peer_identity", lambda _: next(identities))
     state = {
-        100: {"group": 100, "rss": 1, "state": "S"},
-        201: {"group": 100, "rss": 2, "state": "S"},
-        202: {"group": 202, "rss": 3, "state": "S"},
+        100: {"group": 100, "state": "S"},
+        201: {"group": 100, "state": "S"},
+        202: {"group": 202, "state": "S"},
     }
     monkeypatch.setattr(groups, "process_snapshot", lambda: state)
     guard = groups.RacketGroups(tmp_path / "groups")
     control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     control.connect(str(guard.endpoint))
     control.sendall(b'{"kind":"reserve"}\n')
-    guard.sample(100)
+    guard.monitor(100)
     nonce = control.recv(128).decode().strip()
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.connect(str(guard.endpoint))
@@ -268,13 +272,13 @@ def test_registration_before_parent_pid_report_stays_pending(tmp_path: Path, mon
         ).encode()
         + b"\n"
     )
-    assert guard.sample(100) == 6
+    guard.monitor(100)
     client.setblocking(False)
     with pytest.raises(BlockingIOError):
         client.recv(64)
     assert guard.record["groups"][0]["status"] == "pending"
     control.sendall(b'{"kind":"spawned","pid":202}\n')
-    guard.sample(100)
+    guard.monitor(100)
     assert control.recv(64) == b"recorded\n"
     assert client.recv(64) == b"go\n"
     state.clear()
@@ -293,7 +297,7 @@ def test_interrupted_reservation_is_cleanup_failure_not_success(
     control = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     control.connect(str(guard.endpoint))
     control.sendall(b'{"kind":"reserve"}\n')
-    guard.sample(100)
+    guard.monitor(100)
     assert len(control.recv(128).strip()) == 48
     control.close()
     state.clear()
@@ -347,15 +351,15 @@ def test_launch_reserves_before_fork_and_reports_pid_before_return(
 
 def test_source_local_timeout_allows_transient_signal_drain(registry: tuple) -> None:
     guard, client, state = registry
-    guard.sample(100)
+    guard.monitor(100)
     client.recv(64)
     client.close()
     state.pop(202)
-    assert guard.sample(100) == 120
+    guard.monitor(100)
     assert guard.record["groups"][0]["status"] == "draining"
     state.pop(203)
     state.pop(204)
-    assert guard.sample(100) == 30
+    guard.monitor(100)
     assert guard.record["groups"][0]["status"] == "drained"
     assert guard.record["status"] == "monitoring"
 
@@ -398,3 +402,15 @@ def test_native_source_sigterm_reaches_self_group_kill_before_socket_close(
         groups.supervise(tmp_path / "socket", ["racket", str(script)], "a" * 48)
     assert stopped.value.code == 128 + signal.SIGTERM
     assert events == [("work", ["racket", str(script)]), ("kill", 202, signal.SIGKILL), "closed"]
+
+
+def test_process_snapshot_requests_identity_and_state_without_rss(monkeypatch: pytest.MonkeyPatch) -> None:
+    def snapshot(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert command == ["ps", "-axo", "pid=,ppid=,pgid=,stat="]
+        return subprocess.CompletedProcess(command, 0, "100 1 100 S\n101 100 100 Z\n")
+
+    monkeypatch.setattr(groups.subprocess, "run", snapshot)
+    assert groups.process_snapshot() == {
+        100: {"parent": 1, "group": 100, "state": "S"},
+        101: {"parent": 100, "group": 100, "state": "Z"},
+    }

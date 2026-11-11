@@ -320,23 +320,3 @@ def test_completed_process_with_budget_keeps_normal_result() -> None:
         processes.COLLECTION_DEADLINE.reset(token)
     assert result.status == "success"
     assert result.timing.wall_sec is not None
-
-
-def test_resource_stop_takes_precedence_over_simultaneous_budget_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
-    guard = process_guard.MemoryGuard()
-    monkeypatch.setattr(process_guard.MemoryGuard, "from_environment", lambda: guard)
-    monkeypatch.setattr(guard, "start", lambda _pid: None)
-
-    def expire(process: subprocess.Popen[str], timeout: float) -> tuple[int, resource.struct_rusage]:
-        guard.reason = "host memory pressure"
-        raise subprocess.TimeoutExpired(process.args, timeout)
-
-    monkeypatch.setattr(processes, "wait4_process", expire)
-    token = processes.COLLECTION_DEADLINE.set(time.monotonic() + 10)
-    try:
-        result = processes.run_command([sys.executable, "-c", "import time; time.sleep(60)"], ROOT, 120)
-    finally:
-        processes.COLLECTION_DEADLINE.reset(token)
-    assert result.status == "failure"
-    assert result.resource_stopped
-    assert result.error is not None and "host memory pressure" in result.error.message

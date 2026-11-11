@@ -53,14 +53,9 @@ def verified_request(path: Path) -> dict[str, Any]:
         raise ValueError("MISAAL preparation supports only Egglog export; no native code-generation request")
     if any(key in request for key in ("terminal_empty_child", "acquisition_tail", "hvx_link_contract")):
         raise ValueError("obsolete native-lowering request")
-    from process_guard import GROUP_LIMIT_BYTES
-
     timeout = request.get("source_timeout_sec", 900)
-    memory = request.get("source_memory_limit_bytes", GROUP_LIMIT_BYTES)
     if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("source timeout must be finite and positive")
-    if not isinstance(memory, int) or not 0 < memory <= GROUP_LIMIT_BYTES:
-        raise ValueError("source memory limit exceeds the guarded policy")
     if any(key.startswith("MISAAL_EXPORT_") for key in request["environment"]):
         raise ValueError("export activation belongs to the guarded frontend")
     verify_export_request(request)
@@ -976,7 +971,7 @@ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
 
     Call directly from a coordinator, not from another session-creating guard.
     Backend children inherit the root group; pinned detached Racket groups
-    require the outer guard's live launch lease and aggregate RSS accounting.
+    require the outer supervisor's live launch lease and process identity checks.
     """
     from scripts.reproduction_process import run_bounded_command
 
@@ -1010,9 +1005,7 @@ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
             ROOT,
             output / "process",
             timeout_sec=request.get("source_timeout_sec", 900),
-            memory_limit_bytes=request.get("source_memory_limit_bytes", 10 * 1024**3),
-            require_guard=True,
-            sample_rss=groups.sample,
+            monitor_processes=groups.monitor,
             cleanup_descendants=groups.close,
         )
     finally:
@@ -1034,7 +1027,6 @@ def capture_misaal(request_path: Path, output: Path) -> dict[str, Any]:
     record.update(source_kind=EXPORT_SOURCE_KIND, native_codegen="not_requested")
     record["process"] = asdict(process)
     record["source_timeout_sec"] = request.get("source_timeout_sec", 900)
-    record["source_memory_limit_bytes"] = request.get("source_memory_limit_bytes", 10 * 1024**3)
     record["process_accounting"] = {
         "contract": groups.record["contract"],
         "scope": groups.record["scope"],

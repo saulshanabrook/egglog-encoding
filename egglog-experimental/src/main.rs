@@ -2,14 +2,15 @@ use egglog_experimental::DisequalityEncoding;
 use std::ffi::OsString;
 
 fn main() {
-    let (encoding, args) = extension_args(std::env::args_os()).unwrap_or_else(|error| {
+    let args = benchmark_memory::configure(std::env::args_os());
+    let (encoding, args) = extension_args(args).unwrap_or_else(|error| {
         eprintln!("error: {error}");
         std::process::exit(2);
     });
     let options: Vec<_> = args.iter().skip(1).take_while(|arg| *arg != "--").collect();
     if options.iter().any(|arg| *arg == "--help" || *arg == "-h") {
         println!(
-            "Experimental options:\n  --disequality-encoding <nee|ee>  Disequality encoding [default: nee]\n"
+            "Experimental options:\n  --memory-limit-bytes <N>       Bound native address space (max 10 GiB)\n  --disequality-encoding <nee|ee>  Disequality encoding [default: nee]\n"
         );
     }
     let proof_mode = options.iter().any(|arg| {

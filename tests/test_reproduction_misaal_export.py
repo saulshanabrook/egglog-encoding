@@ -120,8 +120,6 @@ def preparation(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             prefix.with_suffix(".request.json"),
             {
                 "command": command,
-                "require_guard": True,
-                "memory_limit_bytes": 10 * 1024**3,
                 **kwargs,
             },
         )
@@ -192,7 +190,7 @@ def test_success_without_library_fails(preparation: dict[str, Any]) -> None:
     assert "omitted" in result["reason"]
 
 
-@pytest.mark.parametrize("change", ["source", "library", "generator", "link", "guard", "request", "receipt"])
+@pytest.mark.parametrize("change", ["source", "library", "generator", "link", "request", "receipt"])
 def test_admission_rejects_tampering(preparation: dict[str, Any], change: str) -> None:
     state = preparation
     export.prepare_export_frontend(state["frontend"], state["template"])
@@ -203,13 +201,10 @@ def test_admission_rejects_tampering(preparation: dict[str, Any], change: str) -
         Path(request[change]).write_text("changed binary")
     elif change == "source":
         (Path(request["checkout"]) / "frontends/halide/src/Module.cpp").write_text("changed source")
-    elif change in ("guard", "link"):
+    elif change == "link":
         step = sorted((state["generator"] / "steps").glob("*.request.json"))[-1]
         data = json.loads(step.read_text())
-        if change == "guard":
-            data["require_guard"] = False
-        else:
-            data["command"].remove(request["library"])
+        data["command"].remove(request["library"])
         step.write_text(json.dumps(data))
     elif change == "request":
         request["generator_command"].append("changed-source-option")

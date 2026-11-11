@@ -10,13 +10,19 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from process_guard import GROUP_LIMIT_BYTES, MemoryGuard, group_rss_bytes
+from process_guard import (
+    NATIVE_ALLOCATION_FAILURE,
+    NATIVE_LIMIT_BYTES,
+    native_allocation_failure,
+    native_memory_command,
+    native_resource_failure,
+)
 
 OUTPUT_LIMIT_BYTES = 256 * 1024**2
 
@@ -41,7 +47,6 @@ class PilotProcessResult:
     status: Literal["success", "failure", "timed-out", "memory-limit", "output-limit", "resource-stopped"]
     returncode: int | None
     wall_sec: float
-    peak_rss_bytes: int
     stdout_path: Path
     stderr_path: Path
     message: str | None
@@ -86,37 +91,37 @@ def run_bounded_command(
     output_prefix: Path,
     *,
     timeout_sec: float = 120,
-    memory_limit_bytes: int = GROUP_LIMIT_BYTES,
     output_limit_bytes: int = OUTPUT_LIMIT_BYTES,
-    require_guard: bool = False,
-    sample_rss: Callable[[int], int] | None = None,
+    native_limit: bool = False,
+    env_overrides: Mapping[str, str] | None = None,
+    monitor_processes: Callable[[int], None] | None = None,
     cleanup_descendants: Callable[[], None] | None = None,
 ) -> PilotProcessResult:
-    """Monitor an isolated process group's aggregate RSS and bounded disk logs.
+    """Supervise an isolated process group and retain bounded disk logs.
 
-    RSS is sampled every 50 ms. A pipe spooler retains at most the combined
+    A pipe spooler retains at most the combined
     stdout/stderr byte limit, even for a single oversized write. Group members
     are killed when the parent exits, a limit is crossed, or the caller is interrupted.
     """
 
-    if timeout_sec <= 0 or memory_limit_bytes <= 0 or output_limit_bytes <= 0:
-        raise ValueError("bounded process timeout, memory limit and output limit must be positive")
+    if timeout_sec <= 0 or output_limit_bytes <= 0:
+        raise ValueError("bounded process timeout and output limit must be positive")
     if cleanup_descendants is not None and not all(
         hasattr(os, name) for name in ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT")
     ):
         raise ValueError("descendant cleanup requires non-consuming root exit observation (waitid/WNOWAIT)")
-    guard = MemoryGuard() if require_guard else MemoryGuard.from_environment()
-    if guard is not None and (reason := guard.check(0)):
-        raise ValueError(f"resource guard refused to launch a workload: {reason}")
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     stdout_path = Path(str(output_prefix) + ".stdout.log")
     stderr_path = Path(str(output_prefix) + ".stderr.log")
     start = time.monotonic()
-    peak_rss = 0
     status: Literal["success", "failure", "timed-out", "memory-limit", "output-limit", "resource-stopped"] = "success"
     message: str | None = None
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
+    if env_overrides is not None:
+        env.update(env_overrides)
+    if native_limit:
+        command, env = native_memory_command(command, env, NATIVE_LIMIT_BYTES)
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr, ExitStack() as pipes:
         streams = []
         for destination in (stdout, stderr):
@@ -190,27 +195,13 @@ def run_bounded_command(
                         break
                     if exited is not None and exited.si_pid == process.pid:
                         break
-                # Both macOS and Linux expose RSS in KiB through ps. Monitoring
-                # the session's group includes descendants spawned by a driver.
-                try:
-                    rss = (sample_rss or group_rss_bytes)(process.pid)
-                except Exception as error:
-                    if sample_rss is None and (
-                        guard is None or not isinstance(error, (OSError, ValueError, subprocess.SubprocessError))
-                    ):
-                        raise
-                    status = "resource-stopped"
-                    message = f"memory monitoring failed: {error}"
-                    break
-                peak_rss = max(peak_rss, rss)
-                if guard is not None and (reason := guard.check(rss)) is not None:
-                    status = "resource-stopped"
-                    message = reason
-                    break
-                if rss > memory_limit_bytes:
-                    status = "memory-limit"
-                    message = f"process-group RSS exceeded {memory_limit_bytes} bytes"
-                    break
+                if monitor_processes is not None:
+                    try:
+                        monitor_processes(process.pid)
+                    except Exception as error:
+                        status = "resource-stopped"
+                        message = f"process monitoring failed: {error}"
+                        break
                 if time.monotonic() - start >= timeout_sec:
                     status = "timed-out"
                     message = f"timed out after {timeout_sec:g} seconds"
@@ -261,9 +252,13 @@ def run_bounded_command(
             log.seek(max(0, stderr_path.stat().st_size - 4000))
             message = log.read().decode("utf-8", errors="replace").strip()
         message = message or f"process exited with status {process.returncode}"
-        if guard is not None and process.returncode == -signal.SIGKILL:
+        with stderr_path.open(errors="replace") as native_log:
+            if native_limit and native_allocation_failure(process.returncode, native_log):
+                status = "memory-limit"
+                message = NATIVE_ALLOCATION_FAILURE
+            elif native_resource_failure(process.returncode, native_log, native_limit):
+                status = "resource-stopped"
+        if process.returncode == -signal.SIGKILL:
             status = "resource-stopped"
             message = f"resource guard halted diagnostic after unexpected SIGKILL (cause unknown): {message}"
-    return PilotProcessResult(
-        status, process.returncode, time.monotonic() - start, peak_rss, stdout_path, stderr_path, message
-    )
+    return PilotProcessResult(status, process.returncode, time.monotonic() - start, stdout_path, stderr_path, message)

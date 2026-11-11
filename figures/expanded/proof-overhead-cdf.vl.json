@@ -6,12 +6,13 @@
     "quantile": "For p = 0.5 and 0.9, a measured threshold exists only when at least ceil(p * selected cohort size) valid nonnegative ratios exist. Use that ordered valid ratio; incomplete proof outcomes remain in the denominator. Labels describe measured coverage, not exact quantiles of an eventually completed cohort.",
     "ratio": "Arithmetic mean with the named proof treatment / arithmetic mean with proofs off. Each metric requires a nonempty wholly successful finite sample and no matching strict-validation failure.",
     "uncertainty": "The CDF describes measured replay mean ratios; it is not a population confidence interval.",
-    "selection": "All proofs-off observations for the selected exact identity; wholly successful finite wall times and strictly 0.1 < mean seconds < 30. Memory and proof outcomes do not select membership."
+    "selection": "All proofs-off observations for the selected exact identity; wholly successful finite wall times and strictly 0.1 < mean seconds < 30. Memory and proof outcomes do not select membership.",
+    "zoom": "Zoom clips the full-cohort curve to 0 through zoom_max_ratio; it never reranks or renormalizes the visible ratios. The same range is shaded in the complete overview."
   },
   "title": {
     "text": "How much overhead do Egglog proofs add?",
     "subtitle": {
-      "expr": "['Proofs-off mean: ' + min_wall_sec + '–' + max_wall_sec + ' seconds; all observations for the latest figures identities.', 'Each dot is one replay; colors identify families. Both proof modes use the same cohort.', '50%/90% labels show measured coverage; missing and failed ratios stay in the denominator.']"
+      "expr": "['Proofs-off mean: ' + min_wall_sec + '–' + max_wall_sec + ' seconds; all observations for the latest figures identities.', 'Each dot is one replay; colors identify families. Shading marks the zoom region.', '50%/90% labels use the shared cohort; missing and failed ratios stay in the denominator.']"
     }
   },
   "data": {"url": "../../.reports-grouped.json", "format": {"type": "json"}},
@@ -160,14 +161,19 @@
   ],
   "vconcat": [
     {
+      "transform": [
+        {"calculate": "['Zoom', 'Full range']", "as": "views"},
+        {"flatten": ["views"], "as": ["view"]},
+        {"calculate": "datum.metric + ' · ' + datum.view", "as": "panel"}
+      ],
       "facet": {
         "row": {
-          "field": "metric",
+          "field": "panel",
           "type": "nominal",
-          "sort": ["Time", "Memory"],
+          "sort": ["Time · Zoom", "Time · Full range", "Memory · Zoom", "Memory · Full range"],
           "header": {
             "title": null,
-            "labelExpr": "datum.value === 'Time' ? 'Runtime overhead' : 'Peak memory overhead'",
+            "labelExpr": "(indexof(datum.value, 'Time') === 0 ? 'Runtime overhead' : 'Peak memory overhead') + (indexof(datum.value, 'Zoom') >= 0 ? ' · 0–' + zoom_max_ratio + '× zoom' : ' · full range')",
             "labelOrient": "top",
             "labelAnchor": "start",
             "labelAngle": 0,
@@ -184,8 +190,17 @@
       },
       "spec": {
         "width": 300,
-        "height": 185,
+        "height": 150,
         "layer": [
+          {
+            "name": "zoom_region",
+            "transform": [
+              {"aggregate": [{"op": "count", "as": "entries"}], "groupby": ["view"]},
+              {"filter": "datum.view === 'Full range'"}
+            ],
+            "mark": {"type": "rect", "color": "#e9eff5", "clip": true},
+            "encoding": {"x": {"datum": 0}, "x2": {"datum": {"expr": "zoom_max_ratio"}}, "y": {"datum": 0}, "y2": {"datum": 1}}
+          },
           {
             "mark": {"type": "rule", "color": "#999", "strokeWidth": 1},
             "encoding": {
@@ -249,7 +264,7 @@
               },
               {"flatten": ["curve_ratios", "curve_cdf"], "as": ["curve_ratio", "curve_fraction"]}
             ],
-            "mark": {"type": "line", "interpolate": "step-after", "color": "#555", "strokeWidth": 1.4},
+            "mark": {"type": "line", "interpolate": "step-after", "color": "#555", "strokeWidth": 1.4, "clip": true},
             "encoding": {
               "x": {
                 "field": "curve_ratio",
@@ -257,7 +272,7 @@
                 "scale": {
                   "type": "linear",
                   "nice": false,
-                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                  "domain": {"expr": "indexof(parent.panel, 'Zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
                 },
                 "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
               },
@@ -297,9 +312,10 @@
               },
               {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
               {"calculate": "0", "as": "domain_min"},
-              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"}
+              {"calculate": "datum.view === 'Zoom' ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {"filter": "datum.view !== 'Zoom' || datum.ratio <= zoom_max_ratio"}
             ],
-            "mark": {"type": "point", "filled": true, "size": 17, "opacity": 0.75, "stroke": "white", "strokeWidth": 0.3},
+            "mark": {"type": "point", "filled": true, "size": 27, "opacity": 0.85, "stroke": "white", "strokeWidth": 0.3, "clip": true},
             "encoding": {
               "color": {
                 "field": "family",
@@ -322,7 +338,7 @@
                 "scale": {
                   "type": "linear",
                   "nice": false,
-                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                  "domain": {"expr": "indexof(parent.panel, 'Zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
                 },
                 "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
               },
@@ -361,10 +377,10 @@
               },
               {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
               {"calculate": "0", "as": "domain_min"},
-              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {"calculate": "datum.view === 'Zoom' ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
               {"calculate": "[0.5, 0.9]", "as": "percentiles"},
               {"flatten": ["percentiles"], "as": ["percentile"]},
-              {"filter": "datum.rank === ceil(datum.percentile * datum.n)"}
+              {"filter": "datum.rank === ceil(datum.percentile * datum.n) && (datum.view !== 'Zoom' || datum.ratio <= zoom_max_ratio)"}
             ],
             "mark": {"type": "rule", "color": "#444", "strokeDash": [3, 3]},
             "encoding": {
@@ -376,7 +392,7 @@
                 "scale": {
                   "type": "linear",
                   "nice": false,
-                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                  "domain": {"expr": "indexof(parent.panel, 'Zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
                 },
                 "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
               }
@@ -403,18 +419,19 @@
               },
               {"calculate": "datum.cumulative_count / datum.n", "as": "cdf"},
               {"calculate": "0", "as": "domain_min"},
-              {"calculate": "datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
+              {"calculate": "datum.view === 'Zoom' ? zoom_max_ratio : datum.metric === 'Time' ? time_extent[1] * 1.15 : memory_extent[1] * 1.15", "as": "domain_max"},
               {"calculate": "[0.5, 0.9]", "as": "percentiles"},
               {"flatten": ["percentiles"], "as": ["percentile"]},
               {"filter": "datum.rank === ceil(datum.percentile * datum.n)"},
-              {"calculate": "format(datum.percentile, '.0%') + ' ≤ ' + format(datum.ratio, '.3g') + '×'", "as": "threshold_label"}
+              {"calculate": "min(datum.ratio, datum.domain_max)", "as": "label_ratio"},
+              {"calculate": "format(datum.percentile, '.0%') + (datum.ratio > datum.domain_max ? ' outside zoom' : ' ≤ ' + format(datum.ratio, '.3g') + '×')", "as": "threshold_label"}
             ],
             "mark": {
               "type": "text",
               "align": {"expr": "datum.ratio > (datum.domain_min + datum.domain_max) / 2 ? 'right' : 'left'"},
               "baseline": "bottom",
               "dx": {"expr": "datum.ratio > (datum.domain_min + datum.domain_max) / 2 ? -5 : 5"},
-              "dy": -8,
+              "dy": -1,
               "fontSize": 12,
               "fontWeight": "bold",
               "color": "#333"
@@ -423,12 +440,12 @@
               "y": {"field": "percentile", "type": "quantitative"},
               "text": {"field": "threshold_label"},
               "x": {
-                "field": "ratio",
+                "field": "label_ratio",
                 "type": "quantitative",
                 "scale": {
                   "type": "linear",
                   "nice": false,
-                  "domain": {"expr": "parent.metric === 'Time' ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
+                  "domain": {"expr": "indexof(parent.panel, 'Zoom') >= 0 ? [0, zoom_max_ratio] : indexof(parent.panel, 'Time') === 0 ? [0, time_extent[1] * 1.15] : [0, memory_extent[1] * 1.15]"}
                 },
                 "axis": {"title": "On / off", "labelExpr": "format(datum.value, ',') + '×'", "grid": false, "labelOverlap": "greedy", "tickCount": 5}
               }
@@ -436,10 +453,22 @@
             "name": "percentile_labels"
           },
           {
+            "name": "unavailable_percentiles",
+            "transform": [
+              {"aggregate": [{"op": "max", "field": "n", "as": "n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}]},
+              {"calculate": "[0.5, 0.9]", "as": "percentiles"},
+              {"flatten": ["percentiles"], "as": ["percentile"]},
+              {"filter": "!datum.n || datum.measured_n < ceil(datum.percentile * datum.n)"},
+              {"calculate": "format(datum.percentile, '.0%') + ' not established'", "as": "threshold_label"}
+            ],
+            "mark": {"type": "text", "align": "right", "baseline": "bottom", "dy": -1, "fontSize": 11, "color": "#666"},
+            "encoding": {"x": {"value": 295}, "y": {"field": "percentile", "type": "quantitative"}, "text": {"field": "threshold_label"}}
+          },
+          {
             "transform": [
               {"aggregate": [{"op": "max", "field": "n", "as": "n"}, {"op": "max", "field": "measured_n", "as": "measured_n"}]},
               {
-                "calculate": "!datum.n ? 'No selected replays yet' : datum.measured_n + '/' + datum.n + ' valid' + (datum.measured_n < ceil(0.9 * datum.n) ? '; 90% not established' : '')",
+                "calculate": "!datum.n ? 'No selected replays yet' : datum.measured_n + '/' + datum.n + ' valid'",
                 "as": "count_label"
               }
             ],
@@ -490,7 +519,7 @@
           "title": {
             "text": "Coverage by family",
             "subtitle": {
-              "expr": "['Time / Memory: valid ratios, Record / Record + extract. Selected is shared.', 'Too fast: ≤' + min_wall_sec + ' s; too slow: ≥' + max_wall_sec + ' s. Unresolved: incomplete or failed baseline.']"
+              "expr": "['Time / Memory: valid ratios, Record / Record + extract. Selected is shared.', 'Too fast: ≤' + min_wall_sec + ' s; too slow: ≥' + max_wall_sec + ' s. Unresolved: incomplete or failed baseline.', 'No replay counts source cases; all other columns count deduplicated replays.']"
             },
             "anchor": "start",
             "fontSize": 13,
@@ -594,6 +623,7 @@
   "params": [
     {"name": "min_wall_sec", "value": 0.1},
     {"name": "max_wall_sec", "value": 30},
+    {"name": "zoom_max_ratio", "value": 5},
     {"name": "target_label", "value": "figures"},
     {
       "name": "endpoints",

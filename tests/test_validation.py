@@ -30,13 +30,13 @@ def test_strict_outcomes_are_separate_and_safety_stops_halt_before_next_workload
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> processes.PilotProcessResult:
         commands.append(command)
-        assert kwargs == {"timeout_sec": 300, "require_guard": True}
-        return processes.PilotProcessResult(status, 0, 0.5, 100, prefix, prefix, "diagnostic result")  # type: ignore[arg-type]
+        assert kwargs == {"timeout_sec": 300, "native_limit": True}
+        return processes.PilotProcessResult(status, 0, 0.5, prefix, prefix, "diagnostic result")  # type: ignore[arg-type]
 
     monkeypatch.setattr(validation, "run_bounded_command", run)
     code = validation.main(["--binary", str(binary), "--disequality-encoding", "ee"])
     assert code == (0 if status == "success" else 1)
-    safety = status in ("resource-stopped", "memory-limit")
+    safety = status == "resource-stopped"
     assert len(commands) == (1 if safety else 2)
     assert all("--proof-testing" in command and "--disequality-encoding" in command for command in commands)
     assert path.read_bytes() == original and path.stat().st_mtime_ns == before
@@ -76,7 +76,7 @@ def test_mutation_during_validation_cannot_record_success(tmp_path: Path, monkey
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> processes.PilotProcessResult:
         Path(command[-1]).write_text("changed")
-        return processes.PilotProcessResult("success", 0, 0.1, 100, prefix, prefix, None)
+        return processes.PilotProcessResult("success", 0, 0.1, prefix, prefix, None)
 
     monkeypatch.setattr(validation, "run_bounded_command", run)
     assert validation.main(["--binary", str(binary)]) == 2

@@ -476,3 +476,74 @@ def test_suite_collects_outside_time_window_and_continues_other_endpoint_after_f
     assert benchmark.main([*args, "--force-run"]) == 0
     assert len(calls) == 10
     assert ReportStore(report).row_count == 20
+
+
+def test_preparation_memory_exclusion_preserves_other_endpoint_and_final_report_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dataclasses import replace
+
+    from benchmarking import processes, suites
+    from process_guard import NATIVE_ALLOCATION_FAILURE, NATIVE_LIMIT_BYTES
+
+    from .corpus_fixtures import prepare_corpus
+    from .report_fixtures import make_timing_summary
+
+    prepare_corpus(tmp_path)
+    suite = suites.resolve_suite("expanded", tmp_path)
+    binary = tmp_path / "engine"
+    binary.write_text("mocked engine")
+    target = make_target(target_label="limited", binary_path=binary, binary_sha256=targets.sha256_file(binary))
+    outcome: suites.CorpusOutcome = {
+        "file_sha256": suite.files[0].sha256,
+        "fact_directory_sha256": "",
+        "binary_sha256": target.binary_sha256,
+        "timeout_sec": 300,
+        "disequality_encoding": "nee",
+        "kind": "safety",
+        "policy": f"native-memory-limit-v1:{NATIVE_LIMIT_BYTES}",
+        "status": "deferred",
+        "reason": NATIVE_ALLOCATION_FAILURE,
+    }
+    suite = replace(suite, manifest=replace(suite.manifest, outcomes=(outcome,)))
+    monkeypatch.setattr(benchmark, "resolve_suite", lambda *_: suite)
+    monkeypatch.setattr(benchmark, "resolve_targets", lambda groups, *_: {request: target for request, _ in groups})
+    monkeypatch.setattr(benchmark, "preflight_collection", lambda *_: None)
+    encodings = []
+
+    def measured(*args: Any) -> collection.ProcessObservation:
+        encodings.append(args[-1])
+        return collection.ProcessObservation(
+            processes.TimingResult("success", processes.TimingRow(0.1, 1000), None), make_timing_summary()
+        )
+
+    monkeypatch.setattr(collection, "run_process", measured)
+    report = tmp_path / "temporary.jsonl"
+    assert (
+        benchmark.main(
+            [
+                "--suite",
+                "expanded",
+                "--report",
+                str(report),
+                "--rounds",
+                "1",
+                "--timeout-sec",
+                "300",
+                "--compare-treatment",
+                "proofs",
+                "--treatment",
+                "proofs",
+                "--compare-disequality-encoding",
+                "nee",
+                "--disequality-encoding",
+                "ee",
+                "--format",
+                "markdown",
+            ]
+        )
+        == 0
+    )
+    assert encodings == ["ee"] and ReportStore(report).row_count == 1
+    output = capsys.readouterr()
+    assert "limited proofs/nee" in output.out and NATIVE_ALLOCATION_FAILURE in output.out

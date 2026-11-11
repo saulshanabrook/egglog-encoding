@@ -25,7 +25,7 @@ from scripts.reproduction_inventory import FAMILIES, ROOT, expected_cases, selec
 from scripts.reproduction_process import exclusive_job
 from scripts.source_tools import Preparation, acquire_source, sha256_file
 
-STOP_STATUSES = {"resource-stopped", "memory-limit", "cancelled", "interrupted"}
+STOP_STATUSES = {"resource-stopped", "cancelled", "interrupted"}
 
 
 def generation_identity(family: str, recipe: dict[str, Any]) -> str:
@@ -327,6 +327,39 @@ def capture_case(
     return capture_misaal(request, directory)
 
 
+def record_memory_outcome(
+    directory: Path,
+    manifest: dict[str, Any],
+    workload: dict[str, Any],
+    identity: dict[str, Any],
+    status: str,
+    reason: str | None,
+) -> None:
+    """Retain exact per-file exclusions, and supersede them after a successful retry."""
+    from scripts.validate_benchmarks import record_outcome
+
+    if status not in {"memory-limit", "success"}:
+        return
+    outcome: CorpusOutcome = {
+        "file_sha256": workload["sha256"],
+        "fact_directory_sha256": workload.get("facts_sha256", ""),
+        "binary_sha256": f"sha256:{identity['engine_sha256']}",
+        "timeout_sec": int(identity["timeout_sec"]),
+        "disequality_encoding": "nee",
+        "kind": "safety",
+        "policy": f"native-memory-limit-v1:{identity['native_limit_bytes']}",
+        "status": "success" if status == "success" else "deferred",
+        "reason": reason,
+    }
+    if status == "success" and not any(
+        all(previous[key] == value for key, value in outcome.items() if key not in {"status", "reason"})
+        for previous in manifest["outcomes"]
+    ):
+        return
+    record_outcome(directory / "manifest.json", outcome)
+    manifest["outcomes"] = json.loads((directory / ".local/outcomes.json").read_text())
+
+
 def reproduce(
     directory: Path, families: list[str], names: list[str], engine: Path, *, timeout_sec: float = 300
 ) -> dict[str, Any]:
@@ -362,6 +395,8 @@ def reproduce(
         "engine_sha256": sha256_file(engine),
         "timeout_sec": timeout_sec,
         "validation_sha256": sha256_file(Path(reproduction_validation.__file__)),
+        "native_limit_bytes": reproduction_validation.NATIVE_LIMIT_BYTES,
+        "allocator_environment": reproduction_validation.NATIVE_ALLOCATOR_ENV,
     }
     manifest: dict[str, Any] = {
         "sources": sources,
@@ -392,8 +427,13 @@ def reproduce(
     for case in manifest["cases"]:
         if case["id"] not in selected_ids:
             continue
-        if case["workloads"] and case.get("validation") == validation_identity:
-            if case.get("revalidation", {}).get("status", "success") != "success":
+        if (
+            case["workloads"]
+            and case.get("validation") == validation_identity
+            and not case.get("memory_limited")
+            and not case.get("memory_limits")
+        ):
+            if case.get("revalidation", {}).get("status", "success") not in {"success", "memory-limit"}:
                 case.pop("revalidation")
                 write_manifest(directory, manifest)
             continue
@@ -402,27 +442,63 @@ def reproduce(
         family = case["family"]
         attempt = job_root / "cases" / case["id"]
         attempt.mkdir(parents=True)
-        if case["workloads"] and (
-            not case.get("capture")
-            or case.get("validation", {}).get("validation_sha256") == validation_identity["validation_sha256"]
+        if (
+            case["workloads"]
+            and not case.get("memory_limited")
+            and (
+                not case.get("capture")
+                or case.get("validation", {}).get("validation_sha256") == validation_identity["validation_sha256"]
+            )
         ):
             # Frozen programs are the portable source of truth. Revalidation must
             # not require author compilers or change their published provenance.
             case["evidence"] = str(attempt.relative_to(ROOT))
+            limited = False
             for order, name in enumerate(case["workloads"]):
+                if case.get("validation") == validation_identity and name not in case.get("memory_limits", {}):
+                    continue
+                workload = next(row for row in manifest["workloads"] if row["file"] == name)
+                command = [str(engine), str(directory / name)]
+                identity = {
+                    **validation_identity,
+                    "replay_sha256": sha256_file(directory / name),
+                    "facts_sha256": workload.get("facts_sha256", ""),
+                }
+                saved = case.get("memory_limits", {}).get(name)
                 try:
-                    process = run_complete_command(
-                        [str(engine), str(directory / name)], ROOT, attempt / f"ordinary-{order}", timeout_sec
-                    )
-                    status, reason = process.status, process.message
+                    if reproduction_validation.retained_memory_limit(saved, command, identity):
+                        status, reason = "memory-limit", saved["message"]
+                    else:
+                        process = run_complete_command(
+                            command,
+                            ROOT,
+                            attempt / f"ordinary-{order}",
+                            timeout_sec,
+                            native_limit=True,
+                        )
+                        status, reason = process.status, process.message
+                        if status == "memory-limit":
+                            case.setdefault("memory_limits", {})[name] = (
+                                reproduction_validation.native_validation_receipt(
+                                    process,
+                                    command,
+                                    identity,
+                                )
+                            )
+                        else:
+                            case.get("memory_limits", {}).pop(name, None)
                 except (OSError, ValueError, RuntimeError) as error:
                     status = "resource-stopped" if "guard refused" in str(error) else "failure"
                     reason = str(error)
                 case["revalidation"] = {"status": status, "reason": reason}
                 if status == "output-limit":
                     case["output_limit"] = validation_identity
+                record_memory_outcome(directory, manifest, workload, validation_identity, status, reason)
+                if status == "memory-limit":
+                    limited = True
+                    write_manifest(directory, manifest)
+                    continue
                 if status in STOP_STATUSES:
-                    workload = next(row for row in manifest["workloads"] if row["file"] == name)
                     outcome: CorpusOutcome = {
                         "file_sha256": workload["sha256"],
                         "fact_directory_sha256": workload.get("facts_sha256", ""),
@@ -445,6 +521,11 @@ def reproduce(
                     break
             else:
                 case["validation"] = validation_identity
+                if limited:
+                    case["revalidation"] = {
+                        "status": "memory-limit",
+                        "reason": "native allocation limit; see per-file evidence",
+                    }
             write_manifest(directory, manifest)
             print(f"{case['id']}: ordinary revalidation {case['revalidation']['status']}", flush=True)
             continue
@@ -467,9 +548,18 @@ def reproduce(
                 capture_path = attempt / "capture.json"
                 capture_path.write_text(json.dumps(captured, indent=2) + "\n")
                 case.update(capture=str(capture_path.relative_to(ROOT)), capture_sha256=sha256_file(capture_path))
-                process = run_complete_command(
-                    [str(engine), str(replay.resolve())], ROOT, attempt / "ordinary", timeout_sec
-                )
+                command = [str(engine), str(replay.resolve())]
+                identity = {**validation_identity, "replay_sha256": sha256_file(replay), "facts_sha256": ""}
+                saved = case.get("memory_limit")
+                if reproduction_validation.retained_memory_limit(saved, command, identity):
+                    case.update(reason="ordinary replay: memory-limit", portable_reason="ordinary replay: memory-limit")
+                    write_manifest(directory, manifest)
+                    continue
+                process = run_complete_command(command, ROOT, attempt / "ordinary", timeout_sec, native_limit=True)
+                if process.status == "memory-limit":
+                    case["memory_limit"] = reproduction_validation.native_validation_receipt(process, command, identity)
+                else:
+                    case.pop("memory_limit", None)
                 if process.status == "output-limit":
                     case["output_limit"] = validation_identity
                 if process.status != "success":
@@ -588,6 +678,27 @@ def reproduce(
                                 validation_receipt=str(receipt.relative_to(ROOT)),
                                 validation_receipt_sha256=sha256_file(receipt),
                             )
+                        for row in validation.get("validations", []):
+                            published = next(
+                                (
+                                    workload
+                                    for workload in manifest["workloads"]
+                                    if workload["sha256"] == row.get("replay_sha256")
+                                ),
+                                None,
+                            )
+                            if published is not None:
+                                record_memory_outcome(
+                                    directory,
+                                    manifest,
+                                    published,
+                                    validation_identity,
+                                    row["status"],
+                                    row.get("message"),
+                                )
+                        case["memory_limited"] = any(
+                            row["status"] == "memory-limit" for row in validation.get("validations", [])
+                        )
                         reason = validation.get("reason")
                         public_reason = (
                             (
@@ -680,7 +791,8 @@ def main() -> int:
         print((args.output / "manifest.json").resolve())
         return int(
             any(
-                case["status"] == "pending" or case.get("revalidation", {}).get("status", "success") != "success"
+                case["status"] == "pending"
+                or case.get("revalidation", {}).get("status", "success") not in {"success", "memory-limit"}
                 for case in select_cases(manifest["cases"], args.family or list(FAMILIES), args.case)
             )
         )

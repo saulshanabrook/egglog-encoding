@@ -16,7 +16,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from process_guard import GROUP_LIMIT_BYTES
 from scripts.source_tools import Preparation, acquire_source, sha256_file, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +28,6 @@ EGGLOG_LOCK_SHA256 = "50da3a4e74386cfed4667df1e76748407b3b76f5e36282700dfa39373c
 BOOST_SHA256 = "71feeed900fbccca04a3b4f2f84a7c217186f28a940ed8b7ed4725986baf99fa"
 LLVM12 = Path("/opt/homebrew/opt/llvm@12")
 
-MEMORY_BYTES = GROUP_LIMIT_BYTES
 OPTIMIZED_BACKEND = "optimized-dev-assertions-v1"
 BACKEND_PROFILE = {
     "name": "dev",
@@ -129,7 +127,7 @@ def optimized_backend_command(directory: Path, toolchain: dict[str, str], unset:
 
 
 def verified_backend_receipt(receipt: Path) -> Path:
-    """Accept only this source-verified, guarded optimized build, never an arbitrary binary."""
+    """Accept only this source-verified, supervised optimized build, never an arbitrary binary."""
     if receipt.is_symlink() or receipt.name != "backend.json":
         raise ValueError("optimized backend requires its original backend.json receipt")
     receipt = receipt.resolve()
@@ -196,13 +194,11 @@ def verified_backend_receipt(receipt: Path) -> Path:
             "command": command,
             "cwd": str(directory / f"egglog-{EGGLOG_REVISION}"),
             "timeout_sec": 600,
-            "memory_limit_bytes": MEMORY_BYTES,
-            "require_guard": True,
         }
         or result.get("status") != "success"
         or result.get("returncode") != 0
     ):
-        raise ValueError("optimized backend lacks the exact successful guarded build")
+        raise ValueError("optimized backend lacks the exact successful build")
     rust_outputs = list((directory / "steps").glob("*-backend-rust.stdout.log"))
     if (
         len(rust_outputs) != 1
@@ -458,7 +454,6 @@ def prepare_exports(
         seed = {
             "revision": MISAAL_REVISION,
             "source_timeout_sec": timeout_sec,
-            "source_memory_limit_bytes": GROUP_LIMIT_BYTES,
             "hydride_revision": HYDRIDE_REVISION,
             "egglog_revision": EGGLOG_REVISION,
             "checkout": str(checkout),

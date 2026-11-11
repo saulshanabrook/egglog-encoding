@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +36,13 @@ def example(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, 
     }
     launches: list[list[str]] = []
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
+        assert kwargs["native_limit"]
         launches.append(command)
         stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
         stdout.write_text("(A)\n")
         stderr.write_text("")
-        return PilotProcessResult("success", 0, 0.01, 1024, stdout, stderr, None)
+        return PilotProcessResult("success", 0, 0.01, stdout, stderr, None)
 
     monkeypatch.setattr(validation, "run_complete_command", run)
     return capture, engine, launches
@@ -69,10 +71,11 @@ def test_resume_reuses_completed_diagnostics_and_retries_interrupted_and_unattem
         replay.write_text(Path(first["replay"]).read_text() + f"; call {index}\n")
         capture["invocations"].append({**first, "replay": str(replay), "replay_sha256": sha256_file(replay)})
     capture["materialization"].update(expected_sessions=4, materialized_sessions=4)
-    statuses = iter(["success", terminal_status, "memory-limit", "success", "success"])
+    statuses = iter(["success", terminal_status, "resource-stopped", "success", "success"])
     reason = "ordinary extraction failed" if terminal_status == "failure" else "diagnostic output exceeded limit"
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
+        assert kwargs["native_limit"]
         launches.append(command)
         stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
         stdout.write_text("(A)\n")
@@ -82,7 +85,6 @@ def test_resume_reuses_completed_diagnostics_and_retries_interrupted_and_unattem
             status,  # type: ignore[arg-type]
             0,
             0.01,
-            1024,
             stdout,
             stderr,
             reason if status == terminal_status else None,
@@ -90,7 +92,7 @@ def test_resume_reuses_completed_diagnostics_and_retries_interrupted_and_unattem
 
     monkeypatch.setattr(validation, "run_complete_command", run)
     interrupted = validation.validate_capture(capture, engine, tmp_path / "interrupted")
-    assert interrupted["status"] == "memory-limit" and len(launches) == 3
+    assert interrupted["status"] == "resource-stopped" and len(launches) == 3
     resumed = validation.validate_capture(capture, engine, tmp_path / "resumed", previous=interrupted)
     assert len(launches) == 5
     assert [Path(command[-1]).name for command in launches] == [
@@ -205,12 +207,13 @@ def circuit_example(
     )
     outputs = ["(A)\n(B)\n"]
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
+        assert kwargs["native_limit"]
         launches.append(command)
         stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
         stdout.write_text(outputs[0])
         stderr.write_text("")
-        return PilotProcessResult("success", 0, 0.01, 1024, stdout, stderr, None)
+        return PilotProcessResult("success", 0, 0.01, stdout, stderr, None)
 
     monkeypatch.setattr(validation, "run_complete_command", run)
     return capture, engine, launches, outputs
@@ -446,20 +449,46 @@ def test_static_tie_queries_preserve_every_original_command_and_request() -> Non
         source,
         contract,
         REPLAY_TERM + "\n" + NATIVE_TERM,
-        "Best cost for the extract root: 14\nBest cost for the extract root: 14\n",
     )
     assert observed == {"native_costs": [14, 14], "replay_costs": [14, 14], "exact_terms": False}
 
 
-@pytest.mark.parametrize(
-    "stderr", ["", "Best cost for the extract root: 13", "Best cost for the extract root: 14\n" * 2]
-)
-def test_static_tie_requires_all_numeric_replay_cost_logs(stderr: str) -> None:
+@pytest.mark.parametrize("stderr", ["", "unrelated diagnostic\n"])
+def test_static_tie_admission_does_not_require_debug_cost_logs(
+    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    capture, engine, _ = example
+    session = capture["invocations"][0]
+    replay = Path(session["replay"])
     source, contract = validation.materialize_static_native_contract(
         STATIC_SOURCE, [egglog_forms(NATIVE_TERM)[0][2]], [14]
     )
-    with pytest.raises(ValueError, match="cost logs"):
-        validation.validate_static_native_output(source, contract, REPLAY_TERM, stderr)
+    replay.write_text(source)
+    session.update(replay_sha256=sha256_file(replay), output_contract=contract)
+
+    def run(command: list[str], cwd: Path, prefix: Path, timeout: float, **kwargs: Any) -> PilotProcessResult:
+        assert kwargs["native_limit"]
+        out, err = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
+        out.write_text(REPLAY_TERM)
+        err.write_text(stderr)
+        return PilotProcessResult("success", 0, 0.0, out, err, None)
+
+    monkeypatch.setattr(validation, "run_complete_command", run)
+    result = validation.validate_capture(capture, engine, tmp_path / "without-cost-logs")
+    assert result["status"] == "success" and result["workloads"] == [str(replay)]
+    assert result["validations"][0]["cost_validation"] == {
+        "native_costs": [14],
+        "replay_costs": [14],
+        "exact_terms": False,
+    }
+
+
+def test_static_tie_rejects_actual_output_with_a_different_cost() -> None:
+    source, contract = validation.materialize_static_native_contract(
+        STATIC_SOURCE, [egglog_forms(NATIVE_TERM)[0][2]], [14]
+    )
+    with pytest.raises(ValueError, match="tree costs"):
+        validation.validate_static_native_output(source, contract, "(Value 1)")
 
 
 @pytest.mark.parametrize(
@@ -500,12 +529,12 @@ def test_static_contract_admission_uses_query_failure_not_term_rewriting(
     assert sum("999" in tokens for _, _, tokens in egglog_forms(source)) == 1
     assert "999" not in STATIC_SOURCE
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout: float) -> PilotProcessResult:
-        assert command[:2] == ["env", "RUST_LOG=egglog::extract=debug"]
+    def run(command: list[str], cwd: Path, prefix: Path, timeout: float, **kwargs: Any) -> PilotProcessResult:
+        assert kwargs["native_limit"]
         out, err = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
         out.write_text("")
         err.write_text("Check failed")
-        return PilotProcessResult("failure", 1, 0.0, 0, out, err, "Check failed")
+        return PilotProcessResult("failure", 1, 0.0, out, err, "Check failed")
 
     monkeypatch.setattr(validation, "run_complete_command", run)
     result = validation.validate_capture(capture, engine, tmp_path / "negative")
@@ -534,9 +563,7 @@ def test_static_model_binds_unselected_competing_constructor_costs() -> None:
     assert validation.static_extract_model(source, terms) != validation.static_extract_model(changed, terms)
     materialized, contract = validation.materialize_static_native_contract(source, terms, [1])
     with pytest.raises(ValueError, match="contract"):
-        validation.validate_static_native_output(
-            materialized.replace("B :cost 2", "B :cost 1"), contract, "(B)", "Best cost for the extract root: 1"
-        )
+        validation.validate_static_native_output(materialized.replace("B :cost 2", "B :cost 1"), contract, "(B)")
 
 
 @pytest.mark.parametrize("failed_index", [0, 1])
@@ -556,3 +583,113 @@ def test_independent_successes_survive_another_calls_output_failure(
     assert result["status"] == "blocked" and "differs" in result["reason"]
     assert result["workloads"] == [capture["invocations"][1 - failed_index]["replay"]]
     assert len(launches) == 2
+
+
+def test_native_allocation_failure_flows_through_real_replay_supervisor(
+    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from process_guard import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES
+    from scripts.dialegg_capture import run_complete_command
+
+    capture, engine, _ = example
+    engine.write_text(
+        f"#!{sys.executable}\n"
+        "import os,sys\n"
+        f"assert sys.argv[1] == '--memory-limit-bytes={NATIVE_LIMIT_BYTES}'\n"
+        f"assert all(os.environ[k] == v for k,v in {NATIVE_ALLOCATOR_ENV!r}.items())\n"
+        "print('native memory limit: allocation failed under limit; stopping workload',file=sys.stderr)\n"
+        "sys.exit(86)\n"
+    )
+    engine.chmod(0o755)
+    monkeypatch.setattr(validation, "run_complete_command", run_complete_command)
+    result = validation.validate_capture(capture, engine, tmp_path / "native-refusal")
+    assert result["status"] == "memory-limit"
+    assert result["workloads"] == []
+    row = result["validations"][0]
+    assert row["returncode"] == 86
+    assert row["command"][1] == f"--memory-limit-bytes={NATIVE_LIMIT_BYTES}"
+    assert all(row["environment"][key] == value for key, value in NATIVE_ALLOCATOR_ENV.items())
+
+
+@pytest.mark.parametrize("old_status", ["memory-limit", "resource-stopped"])
+@pytest.mark.parametrize(
+    "changed", [None, "validator", "engine", "replay", "contract", "timeout", "cap", "environment", "stderr", "cleanup"]
+)
+def test_memory_failure_resume_requires_execution_identity_and_intact_evidence(
+    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old_status: str, changed: str | None
+) -> None:
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+
+    capture, engine, launches = example
+    success_run = validation.run_complete_command
+
+    def exhausted(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
+        result = success_run(command, cwd, prefix, timeout_sec, **kwargs)
+        result.stderr_path.write_text(NATIVE_ALLOCATION_FAILURE + "\n")
+        return PilotProcessResult(
+            "memory-limit", 86, 0.01, result.stdout_path, result.stderr_path, NATIVE_ALLOCATION_FAILURE
+        )
+
+    monkeypatch.setattr(validation, "run_complete_command", exhausted)
+    previous = validation.validate_capture(capture, engine, tmp_path / "first")
+    saved = previous["validations"][0]
+    saved["status"] = old_status
+    timeout = 300
+    if changed == "validator":
+        saved["identity"]["validation_sha256"] = "old validator"
+    elif changed == "engine":
+        engine.write_text("new engine")
+    elif changed == "replay":
+        replay = Path(capture["invocations"][0]["replay"])
+        replay.write_text(replay.read_text() + "; new input\n")
+        capture["invocations"][0]["replay_sha256"] = sha256_file(replay)
+    elif changed == "contract":
+        capture["invocations"][0]["output_contract"]["expected_terms"] = [egglog_forms("(B)")[0][2]]
+    elif changed == "timeout":
+        timeout = 301
+    elif changed == "cap":
+        monkeypatch.setattr(validation, "NATIVE_LIMIT_BYTES", validation.NATIVE_LIMIT_BYTES // 2)
+    elif changed == "environment":
+        saved["environment"]["MIMALLOC_ARENA_RESERVE"] = "1"
+    elif changed == "stderr":
+        Path(saved["stderr_path"]).write_text("modified evidence")
+    elif changed == "cleanup":
+        saved["message"] += "; descendant cleanup failed"
+    original = copy.deepcopy(saved)
+    monkeypatch.setattr(validation, "run_complete_command", success_run)
+    resumed = validation.validate_capture(capture, engine, tmp_path / "second", timeout_sec=timeout, previous=previous)
+    reuse = changed in {None, "validator"}
+    assert len(launches) == (1 if reuse else 2)
+    assert saved == original  # Retained evidence and validator provenance are never rewritten.
+    if reuse:
+        assert resumed["status"] == "memory-limit" and resumed["workloads"] == []
+        assert resumed["validations"][0] == {**saved, "status": "memory-limit"}
+
+
+def test_memory_failure_continues_independent_calls_and_reuses_both_results(
+    example: tuple, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+
+    capture, engine, launches = example
+    first = capture["invocations"][0]
+    second = tmp_path / "second.egg"
+    second.write_text(Path(first["replay"]).read_text() + "; independent call\n")
+    capture["invocations"].append({**first, "replay": str(second), "replay_sha256": sha256_file(second)})
+    capture["materialization"].update(expected_sessions=2, materialized_sessions=2)
+    success_run = validation.run_complete_command
+
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
+        result = success_run(command, cwd, prefix, timeout_sec, **kwargs)
+        if command[-1] == first["replay"]:
+            result.stderr_path.write_text(NATIVE_ALLOCATION_FAILURE + "\n")
+            return PilotProcessResult(
+                "memory-limit", 86, 0.01, result.stdout_path, result.stderr_path, NATIVE_ALLOCATION_FAILURE
+            )
+        return result
+
+    monkeypatch.setattr(validation, "run_complete_command", run)
+    previous = validation.validate_capture(capture, engine, tmp_path / "first")
+    assert previous["status"] == "memory-limit" and previous["workloads"] == [str(second)]
+    resumed = validation.validate_capture(capture, engine, tmp_path / "second", previous=previous)
+    assert resumed["workloads"] == [str(second)] and len(launches) == 2

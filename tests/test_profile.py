@@ -679,7 +679,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "success", processes.TimingRow(wall_sec=2.0), None
         ),
     )
@@ -698,7 +698,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "timed-out", processes.TimingRow(), processes.ErrorRow("timed out")
         ),
     )
@@ -716,7 +716,7 @@ def test_profile_auto_iteration_cap_prints_warning(
     monkeypatch.setattr(
         profile_runner,
         "run_command",
-        lambda command, checkout_path, timeout_sec: processes.TimingResult(
+        lambda command, checkout_path, timeout_sec, **kwargs: processes.TimingResult(
             "success", processes.TimingRow(wall_sec=0.001), None
         ),
     )

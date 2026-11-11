@@ -20,23 +20,21 @@ def test_raw_hash_matches_capture_protocol(tmp_path: Path) -> None:
     assert preparation.sha256_file(source) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
 
-def test_guarded_failure_retains_request_and_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_failure_retains_request_and_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(command: list[str], cwd: Path, prefix: Path, **kwargs: object) -> PilotProcessResult:
         assert command == ["a-compiler"]
         assert cwd == tmp_path
         assert kwargs == {
             "timeout_sec": 1800,
-            "memory_limit_bytes": 10 * 1024**3,
-            "require_guard": True,
         }
-        return PilotProcessResult("memory-limit", -9, 1.0, 6 * 1024**3, prefix, prefix, "over cap")
+        return PilotProcessResult("resource-stopped", -9, 1.0, prefix, prefix, "unexpected SIGKILL")
 
     monkeypatch.setattr(source_tools, "run_bounded_command", fail)
     attempt = preparation.Preparation(tmp_path)
-    with pytest.raises(RuntimeError, match="memory-limit"):
+    with pytest.raises(RuntimeError, match="resource-stopped"):
         attempt.step("build", ["a-compiler"], timeout=1800)
     assert (tmp_path / "steps/001-build.request.json").is_file()
-    assert '"status": "memory-limit"' in (tmp_path / "steps/001-build.result.json").read_text()
+    assert '"status": "resource-stopped"' in (tmp_path / "steps/001-build.result.json").read_text()
 
 
 def test_receipt_cannot_replace_previous_evidence(tmp_path: Path) -> None:
@@ -99,7 +97,7 @@ def optimized_backend_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
             pytest.fail(f"backend-only preparation reached unrelated work: {name}")
         stdout.write_text(text)
         stderr.write_text("")
-        return PilotProcessResult("success", 0, 0.1, 1024, stdout, stderr, None)
+        return PilotProcessResult("success", 0, 0.1, stdout, stderr, None)
 
     monkeypatch.setattr(source_tools, "run_bounded_command", run)
     return commands, tools
@@ -151,8 +149,7 @@ def test_optimized_backend_fixed_profile_and_verified_receipt(
     for key in record["environment_unset"]:
         assert ["-u", key] in [command[i : i + 2] for i in range(len(command) - 1)]
     assert "must-not-leak" not in " ".join(command)
-    assert guard["timeout_sec"] == 600 and guard["memory_limit_bytes"] == 10 * 1024**3
-    assert guard["require_guard"] is True
+    assert guard["timeout_sec"] == 600
     assert set(record["guard_sources"]) == set(preparation.BACKEND_GUARD_SOURCES)
     assert not (directory / "sources/MISAAL").exists()
     assert not (directory / "halide-build").exists()
@@ -278,7 +275,7 @@ def test_optimized_backend_rejects_changes_during_build(
 
 
 @pytest.mark.parametrize(
-    "mutation", ["unsafe-guard", "failed-result", "wrong-toolchain", "wrong-rust", "unbound-log", "guard-code"]
+    "mutation", ["wrong-timeout", "failed-result", "wrong-toolchain", "wrong-rust", "unbound-log", "guard-code"]
 )
 def test_optimized_backend_verifies_receipt_contract_beyond_file_hashes(
     tmp_path: Path, optimized_backend_build: BackendFixture, mutation: str
@@ -288,8 +285,8 @@ def test_optimized_backend_verifies_receipt_contract_beyond_file_hashes(
     preparation.build_backend(preparation.Preparation(directory))
     receipt = directory / "backend.json"
     record = json.loads(receipt.read_text())
-    if mutation in {"unsafe-guard", "failed-result", "unbound-log", "wrong-toolchain", "wrong-rust"}:
-        if mutation == "unsafe-guard":
+    if mutation in {"wrong-timeout", "failed-result", "unbound-log", "wrong-toolchain", "wrong-rust"}:
+        if mutation == "wrong-timeout":
             path = directory / record["build_request"]
         elif mutation == "wrong-toolchain":
             (path,) = (directory / "steps").glob("*-backend-rustc-path.request.json")
@@ -298,8 +295,8 @@ def test_optimized_backend_verifies_receipt_contract_beyond_file_hashes(
         else:
             path = directory / record["build_result"]
         payload = json.loads(path.read_text())
-        if mutation == "unsafe-guard":
-            payload["require_guard"] = False
+        if mutation == "wrong-timeout":
+            payload["timeout_sec"] = 1
         elif mutation == "failed-result":
             payload["returncode"] = 1
         elif mutation in {"wrong-toolchain", "wrong-rust"}:
@@ -358,7 +355,7 @@ def test_versioned_patch_applies_exact_bytes_and_rejects_drift_and_external_sour
         with out.open("wb") as stdout, err.open("wb") as stderr:
             result = subprocess.run(command, cwd=cwd, stdout=stdout, stderr=stderr, check=False)
         return PilotProcessResult(
-            "success" if result.returncode == 0 else "failure", result.returncode, 0, 0, out, err, None
+            "success" if result.returncode == 0 else "failure", result.returncode, 0, out, err, None
         )
 
     monkeypatch.setattr(source_tools, "run_bounded_command", execute)

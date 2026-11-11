@@ -99,6 +99,7 @@ def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytes
         force_run: bool,
         _suite_mode: bool,
         _blocked_files: tuple[models.FileSpec, ...],
+        _native_exclusions: object,
     ) -> collection.CollectionPlan:
         observed.append((target, endpoints, force_run))
         return sentinel
@@ -139,6 +140,7 @@ def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
         _force_run: bool,
         _suite_mode: bool,
         _blocked_files: tuple[models.FileSpec, ...],
+        _native_exclusions: object,
     ) -> collection.CollectionPlan:
         observed.append(target)
         return cast(collection.CollectionPlan, object())
@@ -642,6 +644,8 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(
@@ -672,7 +676,9 @@ def test_run_process_passes_treatment_flags(
     commands: list[list[str]] = []
     file_spec = stable_file_spec(tmp_path)
 
-    def fake_run_command(command: list[str], checkout_path: Path, timeout_sec: int) -> processes.TimingResult:
+    def fake_run_command(
+        command: list[str], checkout_path: Path, timeout_sec: int, *, native_limit: bool
+    ) -> processes.TimingResult:
         commands.append(command)
         assert checkout_path == ROOT
         assert timeout_sec == 120
@@ -747,7 +753,7 @@ def test_run_process_rejects_success_without_timing_summary(
     monkeypatch.setattr(
         collection,
         "run_command",
-        lambda *_args: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
+        lambda *_args, **_kwargs: processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None),
     )
 
     with pytest.raises(ValueError, match="did not produce --timing-summary"):
@@ -760,7 +766,7 @@ def test_run_process_does_not_require_summary_after_failure(
 ) -> None:
     file_spec = stable_file_spec(tmp_path)
     failure = processes.TimingResult("failure", processes.TimingRow(wall_sec=1.0), processes.ErrorRow("failed"))
-    monkeypatch.setattr(collection, "run_command", lambda *_args: failure)
+    monkeypatch.setattr(collection, "run_command", lambda *_args, **_kwargs: failure)
 
     observation = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "off", 120)
 
@@ -795,6 +801,8 @@ def test_collect_rows_rejects_mutated_workload_before_append(
         command: list[str],
         _checkout_path: Path,
         _timeout_sec: int,
+        *,
+        native_limit: bool,
     ) -> processes.TimingResult:
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(json.dumps(make_timing_summary()), encoding="utf-8")
@@ -854,7 +862,8 @@ def test_redirected_collection_logs_each_run_and_one_status_summary(
     assert stream.getvalue().splitlines() == [
         "abc123: ETA pending (remaining executable time)",
         "  [1/3] file.egg · off · 1/3: succeeded after 0.250s · ETA ~0:00:01",
-        "  [2/3] file.egg · off · 2/3: failed after 0.500s: bad rule more context · ETA ~0:00:00",
+        "  [2/2] file.egg · off · 2/3: failed after 0.500s: bad rule more context"
+        " · skipping 1 remaining run · ETA ~0:00:00",
         "abc123: collected 2 fresh runs · 1 successful, 1 failed",
     ]
     assert store.row_count == 2
@@ -970,7 +979,7 @@ def test_resource_guard_failure_is_retained_before_collection_halts(
             processes.TimingResult(
                 "failure",
                 processes.TimingRow(),
-                processes.ErrorRow("resource guard stopped workload: host memory pressure"),
+                processes.ErrorRow("native memory limit: allocation failed under limit", exit_code=86),
                 resource_stopped=True,
             ),
             None,
@@ -984,7 +993,7 @@ def test_resource_guard_failure_is_retained_before_collection_halts(
     record = store.records[0]
     assert record["status"] == "failure"
     assert record["wall_sec"] is None
-    assert "host memory pressure" in str(record["error_message"])
+    assert "native memory limit: allocation failed" in str(record["error_message"])
     resumed = collection.build_collection_plan(
         store, executable_target, (endpoint(executable_target),), (run.file,), 30, 120, False
     )
@@ -1041,8 +1050,14 @@ def test_suite_cached_failure_only_stops_matching_endpoint(tmp_path: Path, statu
     assert deferred.total_missing_observations == 0
 
 
-def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable_target: models.ResolvedTarget
+@pytest.mark.parametrize("suite_mode", [False, True])
+@pytest.mark.parametrize("failure_status", ["failure", "timed-out"])
+def test_fresh_failure_only_stops_its_workload_treatment_and_encoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    executable_target: models.ResolvedTarget,
+    suite_mode: bool,
+    failure_status: models.Status,
 ) -> None:
     target = executable_target
     files = (FILE_SPEC, replace(FILE_SPEC, sha256="sha256:other"))
@@ -1053,7 +1068,7 @@ def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
         models.BenchmarkEndpoint(target, "proof-extraction", "ee"),
     )
     store = ReportStore(tmp_path / "report.jsonl")
-    plan = collection.build_collection_plan(store, target, endpoints, files, 3, 120, False, True)
+    plan = collection.build_collection_plan(store, target, endpoints, files, 3, 120, False, suite_mode)
 
     def measured(
         _binary: Path,
@@ -1066,7 +1081,7 @@ def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
         failed = file == FILE_SPEC and treatment == "proof-extraction" and encoding == "nee"
         return collection.ProcessObservation(
             processes.TimingResult(
-                "failure" if failed else "success",
+                failure_status if failed else "success",
                 processes.TimingRow(0.2, 1000),
                 processes.ErrorRow("extraction failed", exit_code=1) if failed else None,
             ),
@@ -1087,12 +1102,12 @@ def test_suite_fresh_failure_only_stops_its_workload_treatment_and_encoding(
     ]
     assert (
         collection.build_collection_plan(
-            store, target, endpoints, files, 3, 120, False, True
+            store, target, endpoints, files, 3, 120, False, suite_mode
         ).total_missing_observations
         == 0
     )
     requests = tuple(models.EndpointRequest(target.request, e.treatment, e.disequality_encoding) for e in endpoints)
-    assert collection.label_has_enough_rows(store, target, requests, files, 3, 120, True)
+    assert collection.label_has_enough_rows(store, target, requests, files, 3, 120, suite_mode)
 
 
 def test_ordinary_failed_selection_blocks_retries_until_forced_successes_replace_it(tmp_path: Path) -> None:

@@ -384,7 +384,7 @@ def test_capture_complete_retains_calls_after_parent_failure_but_halts_on_safety
     launches: list[str] = []
 
     def run(command: list[str], _cwd: Path, prefix: Path, **options: Any) -> PilotProcessResult:
-        assert options == {"timeout_sec": 7, "require_guard": True}
+        assert options == {"timeout_sec": 7}
         launches.append(prefix.name)
         stdout, stderr = prefix.with_suffix(".stdout"), prefix.with_suffix(".stderr")
         stdout.write_text("")
@@ -408,7 +408,7 @@ def test_capture_complete_retains_calls_after_parent_failure_but_halts_on_safety
             status = materialization_status
         # Include cancellation statuses understood by the capture coordinator.
         return PilotProcessResult(
-            cast(Any, status), 0 if status == "success" else 1, 0.1, 1024, stdout, stderr, "parent outcome"
+            cast(Any, status), 0 if status == "success" else 1, 0.1, stdout, stderr, "parent outcome"
         )
 
     monkeypatch.setattr(capture, "run_bounded_command", run)

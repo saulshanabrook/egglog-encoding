@@ -22,7 +22,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from process_guard import MemoryGuard, terminate_process_group
+from process_guard import (
+    NATIVE_ALLOCATION_FAILURE,
+    NATIVE_LIMIT_BYTES,
+    native_allocation_failure,
+    native_limit_enabled,
+    native_memory_command,
+    native_resource_failure,
+    terminate_process_group,
+)
 
 from .models import Status
 
@@ -68,15 +76,19 @@ def run_command(
     timeout_sec: int,
     env_overrides: Mapping[str, str] | None = None,
     required_output: str | Sequence[str] | None = None,
+    *,
+    native_limit: bool = False,
 ) -> TimingResult:
     deadline = COLLECTION_DEADLINE.get()
     if deadline is not None and time.monotonic() >= deadline:
         raise BudgetExpired("nightly collection budget exhausted")
-    guard = MemoryGuard.from_environment()
+    enabled = native_limit_enabled()
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     if env_overrides is not None:
         env.update(env_overrides)
+    if native_limit:
+        command, env = native_memory_command(command, env, NATIVE_LIMIT_BYTES if enabled else None)
     start = time.perf_counter()
     with (
         tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stdout_file,
@@ -93,40 +105,15 @@ def run_command(
         )
         timed_out = False
         try:
-            if guard is not None:
-                guard.start(process.pid)
             remaining = timeout_sec if deadline is None else deadline - time.monotonic()
             budget_limited = remaining < timeout_sec
             return_code, usage = wait4_process(process, max(0, min(timeout_sec, remaining)))
             wall_sec = time.perf_counter() - start
         except subprocess.TimeoutExpired:
             timed_out = True
-        except BaseException:
-            terminate_process_group(process)
-            raise
         finally:
-            if guard is not None:
-                try:
-                    guard.close()
-                finally:
-                    # A child may leave descendants behind even after wait4 returns.
-                    terminate_process_group(process)
-        post_exit_peak: int | None = None
-        if guard is not None and not timed_out and guard.reason is None:
-            peak = ru_maxrss_to_bytes(usage.ru_maxrss)
-            if guard.check(peak or 0) is not None:
-                post_exit_peak = peak
-        if guard is not None and guard.reason is not None:
-            action = "detected after workload exit" if post_exit_peak is not None else "stopped workload"
-            return TimingResult(
-                status="failure",
-                timing=TimingRow(max_rss_bytes=post_exit_peak),
-                error=ErrorRow(
-                    message=f"resource guard {action}: {guard.reason}",
-                    signal=-process.returncode if process.returncode is not None and process.returncode < 0 else None,
-                ),
-                resource_stopped=True,
-            )
+            # Retain the isolated-group cleanup independently of memory policy.
+            terminate_process_group(process)
         if timed_out:
             if budget_limited:
                 raise BudgetExpired("nightly collection budget exhausted during workload")
@@ -148,16 +135,21 @@ def run_command(
                     )
             return TimingResult(status="success", timing=timing, error=None)
         message = read_error_tail(stderr_file) or read_error_tail(stdout_file) or "process exited with non-zero status"
+        if native_limit and enabled and native_allocation_failure(return_code, stderr_file):
+            message = NATIVE_ALLOCATION_FAILURE
+            native_stopped = False
+        else:
+            native_stopped = native_resource_failure(return_code, stderr_file, native_limit and enabled)
     exit_code = return_code if return_code >= 0 else None
     signal_number = -return_code if return_code < 0 else None
-    unexpected_kill = guard is not None and signal_number == signal.SIGKILL
+    unexpected_kill = enabled and signal_number == signal.SIGKILL
     if unexpected_kill:
         message = f"resource guard halted collection after unexpected SIGKILL (cause unknown): {message[-850:]}"
     return TimingResult(
         status="failure",
         timing=timing,
         error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
-        resource_stopped=unexpected_kill,
+        resource_stopped=unexpected_kill or native_stopped,
     )
 
 

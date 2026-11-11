@@ -57,7 +57,7 @@ def pipeline(
         stdout.write_text("")
         stderr.write_text("")
         if name == state.get("stop"):
-            return PilotProcessResult("memory-limit", None, 0, 0, stdout, stderr, "cap")
+            return PilotProcessResult("resource-stopped", -9, 0, stdout, stderr, "unexpected SIGKILL")
         if name == "llvm-version":
             stdout.write_text("18.1.8")
         elif name == "rust-version":
@@ -71,7 +71,7 @@ def pipeline(
                 tiger = cwd / "target/debug/tiger"
                 tiger.parent.mkdir(parents=True)
                 tiger.write_bytes(b"native Tiger")
-        return PilotProcessResult("success", 0, 0, 0, stdout, stderr, None)
+        return PilotProcessResult("success", 0, 0, stdout, stderr, None)
 
     monkeypatch.setattr(preparation, "acquire_source", acquire)
     monkeypatch.setattr(preparation.Preparation, "apply_patch", patch)
@@ -95,7 +95,7 @@ def test_prepares_original_compiler_and_tiger_with_checked_patches_and_normal_ca
         ("eggcc", "eggcc-capture.diff"),
     ]
     jobs = [row for row in launches if "command" in row]
-    assert all(row["options"]["require_guard"] for row in jobs)
+    assert all("require_guard" not in row["options"] for row in jobs)
     assert not any(arg.startswith("CARGO_HOME=") for row in jobs for arg in row["command"])
     assert jobs[-2]["name"] == "core-regression" and jobs[-1]["name"] == "build"
     settings = json.loads(Path(result["settings"]).read_text())["eggcc"]
@@ -121,11 +121,11 @@ def test_preparation_never_publishes_incomplete_products(pipeline: tuple, fault:
     assert not (output / "settings.json").exists()
 
 
-def test_memory_stop_retains_evidence_and_does_not_build(pipeline: tuple) -> None:
+def test_resource_stop_retains_evidence_and_does_not_build(pipeline: tuple) -> None:
     output, engine, build, state, launches = pipeline
     state["stop"] = "core-regression"
     result = preparation.prepare_eggcc(output, engine, build_root=build)
-    assert result["status"] == "memory-limit"
+    assert result["status"] == "resource-stopped"
     assert launches[-1]["name"] == "core-regression"
     assert not (output / "settings.json").exists()
 

@@ -28,7 +28,10 @@ enum ProofMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(about = "Run the fixed PLDI 2023 Math workload with current egg")]
+#[command(
+    about = "Run the fixed PLDI 2023 Math workload with current egg",
+    after_help = "Native memory option: --memory-limit-bytes <N> (max 10 GiB)"
+)]
 struct Args {
     #[arg(long, value_enum, default_value_t)]
     proof_mode: ProofMode,
@@ -46,7 +49,7 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse_from(benchmark_memory::configure(std::env::args_os()));
     let (timing, _) = run_math(&args)?;
     if let Some(path) = args.timing_summary {
         write_timing_summary(&path, &timing)?;

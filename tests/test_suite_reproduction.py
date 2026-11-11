@@ -15,6 +15,7 @@ import pytest
 from benchmarking import suites
 from scripts import dialegg_capture
 from scripts import suite_reproduction as reproduction
+from scripts.dialegg_capture import run_complete_command
 from scripts.reproduction_inventory import expected_cases, select_cases
 from scripts.reproduction_process import PilotProcessResult
 
@@ -59,6 +60,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
         "cases": cases,
         "captures": [],
         "runs": [],
+        "native_limits": [],
         "status": "success",
     }
     monkeypatch.setattr(reproduction, "ROOT", tmp_path)
@@ -71,13 +73,14 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
         path.write_text("(datatype E (A))\n(let root (A))\n(extract root)\n")
         return path, ["original source query"]
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
         state["runs"].append(command)
+        state["native_limits"].append(kwargs.get("native_limit", False))
         stdout, stderr = prefix.with_suffix(".out"), prefix.with_suffix(".err")
         stdout.write_text("(A)\n")
         stderr.write_text("")
         return PilotProcessResult(
-            state["status"], 0, 0.1, 10, stdout, stderr, "observed failure" if state["status"] != "success" else None
+            state["status"], 0, 0.1, stdout, stderr, "observed failure" if state["status"] != "success" else None
         )
 
     monkeypatch.setattr(reproduction, "capture_source_file", capture)
@@ -94,6 +97,7 @@ def test_publish_deduplicates_aliases_and_unchanged_regeneration_launches_nothin
     second = reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
     assert first == second
     assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 2
+    assert repository["native_limits"] == [True, True]
     assert (output / "manifest.json").stat().st_mtime_ns == before
 
 
@@ -162,8 +166,9 @@ def test_native_capture_revalidates_without_regenerating_and_retains_parent_outc
     assert len(repository["runs"]) == 2
 
 
+@pytest.mark.parametrize("stop", [True, False])
 def test_partial_native_capture_resumes_remaining_calls_without_losing_failed_evidence(
-    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, stop: bool
 ) -> None:
     from scripts import reproduction_validation
     from scripts.hardboiled_replay import egglog_forms
@@ -195,29 +200,56 @@ def test_partial_native_capture_resumes_remaining_calls_without_losing_failed_ev
             "sessions": sessions,
         }
 
-    statuses = iter(["success", "failure", "memory-limit", "success"])
+    from process_guard import NATIVE_ALLOCATION_FAILURE
 
-    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+    statuses = iter(
+        ["success", "failure", "resource-stopped", "success"]
+        if stop
+        else ["success", "memory-limit", "success", "memory-limit", "success", "success"]
+    )
+
+    def run(command: list[str], cwd: Path, prefix: Path, timeout_sec: float, **kwargs: Any) -> PilotProcessResult:
         events.append(Path(command[-1]).name)
         stdout, stderr = prefix.with_suffix(".out"), prefix.with_suffix(".err")
         stdout.write_text("(A)\n")
         stderr.write_text("")
         status = next(statuses)
+        if status == "memory-limit":
+            stderr.write_text(NATIVE_ALLOCATION_FAILURE + "\n")
         return PilotProcessResult(
             status,  # type: ignore[arg-type]
-            0,
+            86 if status == "memory-limit" else 0,
             0.1,
-            10,
             stdout,
             stderr,
-            "retained ordinary failure" if status == "failure" else "RSS limit" if status == "memory-limit" else None,
+            {
+                "failure": "retained ordinary failure",
+                "resource-stopped": "process cleanup failed",
+                "memory-limit": NATIVE_ALLOCATION_FAILURE,
+            }.get(status),
         )
 
     monkeypatch.setattr(reproduction, "prepare_family", lambda *a, **k: {"status": "success", "settings": {}})
     monkeypatch.setattr(reproduction, "capture_case", capture)
     monkeypatch.setattr(reproduction_validation, "run_complete_command", run)
     output = root / "corpus"
-    with pytest.raises(RuntimeError, match="RSS limit"):
+    if not stop:
+        first = reproduction.reproduce(output, ["eggcc"], [], engine)
+        assert len(first["cases"][0]["workloads"]) == 2
+        assert first["cases"][0]["memory_limited"]
+        reproduction.reproduce(output, ["eggcc"], [], engine)
+        assert events == ["capture", "call-0.egg", "call-1.egg", "call-2.egg"]
+        engine.write_text("new binary")
+        changed = reproduction.reproduce(output, ["eggcc"], [], engine)
+        assert events == ["capture", "call-0.egg", "call-1.egg", "call-2.egg", "call-0.egg", "call-1.egg", "call-2.egg"]
+        assert len(changed["cases"][0]["workloads"]) == 3  # Preserve previously published bytes.
+        assert len(changed["outcomes"]) == 1  # Failed revalidation excludes just the old published call.
+        assert changed["outcomes"][0]["status"] == "deferred"
+        assert changed["outcomes"][0]["binary_sha256"] == "sha256:" + sha256_file(engine)
+        reproduction.reproduce(output, ["eggcc"], [], engine)
+        assert len(events) == 7
+        return
+    with pytest.raises(RuntimeError, match="process cleanup failed"):
         reproduction.reproduce(output, ["eggcc"], [], engine)
     state = json.loads((output / ".local/preparation.json").read_text())["manifest"]
     assert len(state["cases"][0]["workloads"]) == 1 and "validation" not in state["cases"][0]
@@ -348,12 +380,12 @@ def test_failed_ordinary_replay_can_be_revalidated_without_source_generation(rep
 
 
 def test_safety_stop_retains_reason_and_leaves_later_cases_pending(repository: dict[str, Any]) -> None:
-    repository["status"] = "memory-limit"
+    repository["status"] = "resource-stopped"
     output = repository["root"] / "corpus"
     with pytest.raises(RuntimeError, match="later cases remain pending"):
         reproduction.reproduce(output, ["hardboiled"], [], repository["engine"])
     saved = json.loads((output / "manifest.json").read_text())
-    assert saved["cases"][0]["status"] == "blocked" and "memory-limit" in saved["cases"][0]["reason"]
+    assert saved["cases"][0]["status"] == "blocked" and "resource-stopped" in saved["cases"][0]["reason"]
     assert "evidence" not in saved["cases"][0]
     local = json.loads((output / ".local/preparation.json").read_text())["manifest"]
     assert local["cases"][0]["evidence"]
@@ -561,6 +593,7 @@ def test_fresh_clone_resolves_and_revalidates_frozen_programs_without_author_sou
     assert repository["captures"] == ["a", "b"] and len(repository["runs"]) == 4
     assert all(case["revalidation"]["status"] == "success" for case in checked["cases"])
     assert all(str(cloned_output) in command[-1] for command in repository["runs"][-2:])
+    assert repository["native_limits"][-2:] == [True, True]
     assert checked["cases"][0]["status"] == ("blocked" if blocker else "ready")
     reproduction.reproduce(cloned_output, ["hardboiled"], [], clone / "engine")
     assert len(repository["runs"]) == 4
@@ -619,7 +652,7 @@ def test_frozen_revalidation_safety_stop_preserves_inputs_and_halts_later_cases(
     path = output / "manifest.json"
     original, before = path.read_bytes(), path.stat().st_mtime_ns
     engine.write_text("new engine")
-    repository["status"] = "memory-limit"
+    repository["status"] = "resource-stopped"
     if refuse:
 
         def refused(*_: Any, **__: Any) -> Any:
@@ -653,3 +686,106 @@ def test_frozen_revalidation_safety_stop_preserves_inputs_and_halts_later_cases(
 )
 def test_portable_reasons_preserve_blockers_without_diagnostic_paths(reason: str, expected: str) -> None:
     assert reproduction.portable_reason(reason, "fallback") == expected
+
+
+def test_preparation_cli_skips_native_exhaustion_continues_and_resumes_without_retry(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+
+    root, engine = repository["root"], repository["engine"]
+    output = root / "corpus"
+    log = root / "launches"
+    engine.write_text(
+        f"#!{sys.executable}\nimport pathlib,sys\n"
+        f"with pathlib.Path({str(log)!r}).open('a') as f: f.write(sys.argv[-1] + '\\n')\n"
+        "if pathlib.Path(sys.argv[-1]).parent.name == 'a':\n"
+        f" print({NATIVE_ALLOCATION_FAILURE!r},file=sys.stderr)\n sys.exit(86)\n"
+        "print('(A)')\n"
+    )
+    engine.chmod(0o755)
+    monkeypatch.setattr(dialegg_capture, "run_complete_command", run_complete_command)
+    monkeypatch.setattr(
+        sys, "argv", ["suite_reproduction", "--family", "hardboiled", "--engine", str(engine), "--output", str(output)]
+    )
+    assert reproduction.main() == 0
+    manifest = json.loads((output / ".local/preparation.json").read_text())["manifest"]
+    assert [case["status"] for case in manifest["cases"]] == ["blocked", "ready"]
+    assert manifest["workloads"][0]["aliases"] == [{"case": "b", "order": 0}]
+    assert manifest["cases"][0]["memory_limit"]["returncode"] == 86
+    assert reproduction.main() == 0
+    assert len(log.read_text().splitlines()) == 2
+
+
+@pytest.mark.parametrize("changed", ["engine", "input", "cap"])
+def test_preparation_memory_failure_retries_changed_execution_identity(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+    from scripts import reproduction_validation
+
+    root, engine = repository["root"], repository["engine"]
+    output = root / "corpus"
+    original = dialegg_capture.run_complete_command
+
+    def exhausted(*args: Any, **kwargs: Any) -> PilotProcessResult:
+        result = original(*args, **kwargs)
+        result.stderr_path.write_text(NATIVE_ALLOCATION_FAILURE)
+        return PilotProcessResult(
+            "memory-limit", 86, 0.1, result.stdout_path, result.stderr_path, NATIVE_ALLOCATION_FAILURE
+        )
+
+    monkeypatch.setattr(dialegg_capture, "run_complete_command", exhausted)
+    reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    assert len(repository["runs"]) == 1
+    if changed == "engine":
+        engine.write_text("new engine")
+    elif changed == "input":
+        # A changed source recipe permits a new capture, preserving the old evidence.
+        (root / "benchmarks/sources.json").write_text(json.dumps({"hardboiled": {"revision": "new"}}))
+    else:
+        monkeypatch.setattr(
+            reproduction_validation, "NATIVE_LIMIT_BYTES", reproduction_validation.NATIVE_LIMIT_BYTES // 2
+        )
+    reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    assert len(repository["runs"]) == 2
+
+
+def test_frozen_memory_exclusions_are_per_file_and_resume_preserves_siblings(
+    repository: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+
+    root, engine = repository["root"], repository["engine"]
+    output = root / suites.MANIFEST_RELATIVE_PATH.parent
+    manifest = reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    second = root / "second.egg"
+    second.write_text("(datatype E (B))\n(extract (B))\n")
+    case = manifest["cases"][0]
+    reproduction.publish_workload(output, manifest, case, second, 1, [])
+    reproduction.write_manifest(output, manifest)
+    names = list(case["workloads"])
+    engine.write_text("new engine")
+    original = dialegg_capture.run_complete_command
+
+    def run(command: list[str], *args: Any, **kwargs: Any) -> PilotProcessResult:
+        result = original(command, *args, **kwargs)
+        if Path(command[-1]).name == names[0]:
+            result.stderr_path.write_text(NATIVE_ALLOCATION_FAILURE)
+            return PilotProcessResult(
+                "memory-limit", 86, 0.1, result.stdout_path, result.stderr_path, NATIVE_ALLOCATION_FAILURE
+            )
+        return result
+
+    monkeypatch.setattr(dialegg_capture, "run_complete_command", run)
+    frozen = reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    assert frozen["cases"][0]["revalidation"]["status"] == "memory-limit"
+    assert len(repository["runs"]) == 3
+    assert all((output / name).is_file() for name in names)
+    outcomes = suites.load_manifest(root).outcomes
+    assert len(outcomes) == 1 and outcomes[0]["file_sha256"] == "sha256:" + Path(names[0]).stem
+    reproduction.reproduce(output, ["hardboiled"], ["a"], engine)
+    assert len(repository["runs"]) == 3

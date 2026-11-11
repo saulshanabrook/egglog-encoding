@@ -584,7 +584,7 @@ def test_timed_out_file_has_missing_phase_cells_and_ruleset_status(tmp_path: Pat
         for block in ruleset_section.blocks
         if isinstance(block, ReportMessage) and block.title == "Ruleset drivers — file.egg"
     )
-    assert status.text == "Status: timeout row selected"
+    assert status.text == "Status: timeout row selected: timed out"
     summary_section = next(section for section in catalog.sections if section.id == "summary")
     summary_table = next(block for block in summary_section.blocks if isinstance(block, ReportTable))
     invalid = next(row for row in summary_table.rows if row.cells[4].raw == "invalid")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import tempfile
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from math import ceil, isfinite
@@ -82,7 +83,6 @@ class CollectionPlan:
 
     target: ResolvedTarget
     runs: tuple[BenchmarkRunPlan, ...]
-    stop_on_failure: bool = True
 
     @property
     def total_missing_observations(self) -> int:
@@ -122,6 +122,7 @@ def build_collection_plan(
     force_run: bool,
     suite_mode: bool = False,
     blocked_files: tuple[FileSpec, ...] = (),
+    native_exclusions: Mapping[CacheKey, str] | None = None,
 ) -> CollectionPlan:
     """Select cached observations for the exact endpoints using this binary."""
 
@@ -146,7 +147,9 @@ def build_collection_plan(
     runs: list[BenchmarkRunPlan] = []
     for file_spec, treatment, cache_key in requests:
         cached = selected[cache_key]
-        skip_reason = known_failure_reason(file_spec, treatment, cache_key.disequality_encoding)
+        skip_reason = known_failure_reason(file_spec, treatment, cache_key.disequality_encoding) or (
+            native_exclusions or {}
+        ).get(cache_key)
         stopped = (
             skip_reason is not None
             or file_spec in blocked_files
@@ -335,6 +338,7 @@ def label_has_enough_rows(
     timeout_sec: int,
     suite_mode: bool = False,
     blocked_files: tuple[FileSpec, ...] = (),
+    native_exclusions: Mapping[CacheKey, str] | None = None,
 ) -> bool:
     """Return whether every exact endpoint/file result has enough cached rows."""
 
@@ -363,6 +367,7 @@ def label_has_enough_rows(
     }
     return all(
         key in excluded
+        or key in (native_exclusions or {})
         or (key.file_sha256, key.fact_directory_sha256) in stopped
         or any(status != "success" for status in selected[key])
         or len(selected[key]) >= rounds
@@ -388,7 +393,7 @@ def run_process(
             require_workload_unchanged(file_spec)
             return ProcessObservation(result=result, timing_summary=None)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
-        result = run_command(command, checkout_path, timeout_sec)
+        result = run_command(command, checkout_path, timeout_sec, native_limit=True)
         require_workload_unchanged(file_spec)
         if result.status != "success":
             return ProcessObservation(result=result, timing_summary=None)
@@ -417,6 +422,7 @@ def run_preflight(
         checkout_path,
         timeout_sec,
         required_output=required_outputs,
+        native_limit=True,
     )
 
 
@@ -696,12 +702,16 @@ def collect_rows(
                 completed_observations += 1
                 remaining[run] -= 1
                 result_counts[observation.result.status] += 1
-                if plan.stop_on_failure and observation.result.status != "success":
+                skipped = 0
+                if observation.result.status != "success":
+                    skipped = remaining[run]
+                    total_observations -= skipped
                     remaining[run] = 0
                 eta = _collection_eta(store, plan, timeout_sec, remaining)
                 progress.update(
                     process_task,
                     advance=1,
+                    total=total_observations,
                     current=label,
                     eta=eta,
                 )
@@ -709,7 +719,9 @@ def collect_rows(
                     progress.console.print(
                         Text(
                             f"  [{observation_number}/{total_observations}] {label}: "
-                            f"{format_timing_result(observation.result)} · {eta}"
+                            f"{format_timing_result(observation.result)}"
+                            + (f" · skipping {skipped} remaining run{'s' if skipped != 1 else ''}" if skipped else "")
+                            + f" · {eta}"
                         )
                     )
     console.print(

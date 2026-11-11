@@ -21,7 +21,7 @@ from typing import Literal
 from rich.console import Console
 from rich.text import Text
 
-from process_guard import MemoryGuard, ResourceStopped, terminate_process_group
+from process_guard import ResourceStopped, native_limit_enabled, terminate_process_group
 
 from .engines import TREATMENT_SPECS, Engine, Treatment, validate_engine_workload
 from .models import EngineBinary, FileSpec, ResolvedTarget, TargetRequest, TargetRow
@@ -265,31 +265,23 @@ def build_target(
     deadline = COLLECTION_DEADLINE.get()
     if deadline is not None and time.monotonic() >= deadline:
         raise BudgetExpired("nightly collection budget exhausted before build")
-    if os.environ.get("EGGLOG_BENCH_MEMORY_GUARD") == "1" or deadline is not None:
-        guard = MemoryGuard.from_environment()
-        if guard is not None:
+    enabled = native_limit_enabled()
+    if enabled or deadline is not None:
+        if enabled:
             build_args.extend(("--jobs", "1"))
         process = subprocess.Popen(
             build_args, cwd=checkout_path, stdout=sys.stderr, stderr=sys.stderr, start_new_session=True
         )
         timed_out = False
         try:
-            if guard is not None:
-                guard.start(process.pid)
             return_code = process.wait(timeout=None if deadline is None else max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             timed_out = True
         finally:
-            try:
-                if guard is not None:
-                    guard.close()
-            finally:
-                terminate_process_group(process)
-        if guard is not None and guard.reason is not None:
-            raise ResourceStopped(f"resource guard stopped build: {guard.reason}")
+            terminate_process_group(process)
         if timed_out:
             raise BudgetExpired("nightly collection budget exhausted during build")
-        if guard is not None and return_code == -signal.SIGKILL:
+        if enabled and return_code == -signal.SIGKILL:
             raise ResourceStopped("resource guard halted collection after build SIGKILL (cause unknown)")
         if return_code != 0:
             raise subprocess.CalledProcessError(return_code, build_args)

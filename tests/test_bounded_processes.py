@@ -16,7 +16,7 @@ import pytest
 from scripts import reproduction_process as processes
 
 
-@pytest.mark.parametrize("mode", ["default", "sample-error", "cleanup-error", "immediate-exit", "cleanup-interrupt"])
+@pytest.mark.parametrize("mode", ["default", "monitor-error", "cleanup-error", "immediate-exit", "cleanup-interrupt"])
 def test_optional_descendant_hooks_always_preserve_root_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
@@ -26,21 +26,14 @@ def test_optional_descendant_hooks_always_preserve_root_cleanup(
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_args, **_kwargs: process)
     exits = iter([SimpleNamespace(si_pid=123)] if mode == "immediate-exit" else [None, SimpleNamespace(si_pid=123)])
     monkeypatch.setattr(processes.os, "waitid", lambda *_: next(exits), raising=False)
-    monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
 
-    def default_sample(pid: int) -> int:
-        events.append(("default-rss", pid))
-        return 5
-
-    monkeypatch.setattr(processes, "group_rss_bytes", default_sample)
     monkeypatch.setattr(processes.os, "killpg", lambda *args: events.append(("killpg", *args)))
     monkeypatch.setattr(processes.time, "sleep", lambda _: None)
 
-    def sample(pid: int) -> int:
-        events.append(("custom-rss", pid))
-        if mode == "sample-error":
+    def monitor(pid: int) -> None:
+        events.append(("process-monitor", pid))
+        if mode == "monitor-error":
             raise RuntimeError("custom monitor failed")
-        return 7
 
     def cleanup() -> None:
         events.append("descendant-cleanup")
@@ -49,23 +42,23 @@ def test_optional_descendant_hooks_always_preserve_root_cleanup(
         if mode == "cleanup-interrupt":
             raise KeyboardInterrupt
 
-    kwargs: dict[str, Any] = {} if mode == "default" else {"sample_rss": sample, "cleanup_descendants": cleanup}
+    kwargs: dict[str, Any] = {} if mode == "default" else {"monitor_processes": monitor, "cleanup_descendants": cleanup}
     if mode == "cleanup-interrupt":
         with pytest.raises(KeyboardInterrupt):
             processes.run_bounded_command(["never-executed"], tmp_path, tmp_path / "output", **kwargs)
     else:
         result = processes.run_bounded_command(["never-executed"], tmp_path, tmp_path / "output", **kwargs)
-        if mode in {"sample-error", "cleanup-error"}:
+        if mode in {"monitor-error", "cleanup-error"}:
             assert result.status == "resource-stopped" and "failed" in str(result.message)
         else:
             assert result.status == "success"
     assert events[-2:] == [("killpg", 123, signal.SIGKILL), "wait"]
     if mode == "default":
-        assert events[0] == ("default-rss", 123) and "descendant-cleanup" not in events
+        assert "descendant-cleanup" not in events
     else:
         assert "descendant-cleanup" in events
     if mode == "immediate-exit":
-        assert not any(isinstance(event, tuple) and event[0] == "custom-rss" for event in events)
+        assert not any(isinstance(event, tuple) and event[0] == "process-monitor" for event in events)
 
 
 @pytest.mark.parametrize("failure", [None, "waitid", "cleanup", "interrupt"])
@@ -84,7 +77,6 @@ def test_scoped_cleanup_retains_root_identity_and_stops_root_before_drain(
 
     process.wait = wait
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: process)
-    monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
     monkeypatch.setattr(processes.os, "killpg", lambda *args: events.append(("kill", *args)))
 
     def waitid(kind: int, pid: int, flags: int) -> Any:
@@ -120,24 +112,6 @@ def test_scoped_cleanup_requires_wnowait_before_spawning(tmp_path: Path, monkeyp
     )
     with pytest.raises(ValueError, match="non-consuming root exit"):
         processes.run_bounded_command(["fake"], tmp_path, tmp_path / "run", cleanup_descendants=lambda: None)
-
-
-def test_default_runner_still_propagates_unexpected_monitor_bug(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    events = []
-    process = SimpleNamespace(pid=123, returncode=None, poll=lambda: None, wait=lambda: events.append("wait"))
-    monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_kw: process)
-    monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: SimpleNamespace(check=lambda _: None))
-    monkeypatch.setattr(processes.os, "killpg", lambda *_: events.append("kill"))
-
-    def broken(_pid: int) -> int:
-        raise RuntimeError("unexpected implementation bug")
-
-    monkeypatch.setattr(processes, "group_rss_bytes", broken)
-    with pytest.raises(RuntimeError, match="unexpected implementation bug"):
-        processes.run_bounded_command(["fake"], tmp_path, tmp_path / "run")
-    assert events == ["kill", "wait"]
 
 
 @pytest.mark.parametrize(
@@ -212,7 +186,6 @@ def test_signal_failures_cannot_skip_callback_or_wait_and_remain_failures(
 
     process.wait = wait
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: process)
-    monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
     monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123), raising=False)
     count = 0
 
@@ -245,7 +218,6 @@ def test_signal_interruption_still_runs_callback_and_final_wait(
     events: list[str] = []
     process = SimpleNamespace(pid=123, returncode=0, wait=lambda: events.append("wait"))
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: process)
-    monkeypatch.setattr(processes.MemoryGuard, "from_environment", lambda **_: None)
     monkeypatch.setattr(processes.os, "waitid", lambda *_: SimpleNamespace(si_pid=123), raising=False)
     count = 0
 
@@ -287,19 +259,6 @@ def test_bounded_process_timeout_kills_descendants_and_retains_logs(tmp_path: Pa
     else:
         os.kill(pid, 9)
         pytest.fail("bounded timeout left a descendant alive")
-
-
-def test_bounded_process_enforces_small_rss_threshold(tmp_path: Path) -> None:
-    result = processes.run_bounded_command(
-        [sys.executable, "-c", "import time; data=bytearray(4*1024*1024); time.sleep(30)"],
-        tmp_path,
-        tmp_path / "memory",
-        timeout_sec=5,
-        memory_limit_bytes=1024,
-    )
-    assert result.status == "memory-limit"
-    assert result.peak_rss_bytes > 1024
-    assert result.wall_sec < 5
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr", "combined"])
@@ -455,3 +414,22 @@ def test_nonpositive_output_limit_is_rejected_before_launch(
     monkeypatch.setattr(processes.subprocess, "Popen", lambda *_a, **_k: pytest.fail("must not launch"))
     with pytest.raises(ValueError, match="output limit must be positive"):
         processes.run_bounded_command(["fake"], tmp_path, tmp_path / "output", output_limit_bytes=output_limit)
+
+
+def test_allocation_marker_cannot_mask_descendant_cleanup_failure(tmp_path: Path) -> None:
+    from process_guard import NATIVE_ALLOCATION_FAILURE
+
+    script = tmp_path / "engine"
+    script.write_text(
+        f"#!{sys.executable}\nimport sys\nprint({NATIVE_ALLOCATION_FAILURE!r}, file=sys.stderr)\nsys.exit(86)\n"
+    )
+    script.chmod(0o755)
+
+    def cleanup() -> None:
+        raise RuntimeError("cleanup failed")
+
+    result = processes.run_bounded_command(
+        [str(script)], tmp_path, tmp_path / "run", timeout_sec=5, native_limit=True, cleanup_descendants=cleanup
+    )
+    assert result.returncode == 86
+    assert result.status == "resource-stopped" and "cleanup failed" in str(result.message)

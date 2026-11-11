@@ -44,15 +44,16 @@ async function evaluate(chart, workloads, groups, parameters = {}) {
     const marks = [];
     function collect(item) {
       if (item.mark?.role === 'mark') marks.push({name: item.mark.name, datum: {...item.datum},
-        x: item.x, y: item.y, text: item.text});
+        x: item.x, y: item.y, text: item.text, fill: item.fill, bounds: {...item.bounds}});
       for (const child of item.items ?? []) collect(child);
     }
     collect(view.scenegraph().root);
     return {marks, svg};
   } finally { view.finalize(); }
 }
-function points(marks, mode = 'Record + extract', metric = 'Time') {
-  return marks.filter(m => m.name === 'pooled_points_marks' && m.datum.candidate_mode === mode && m.datum.metric === metric);
+function points(marks, mode = 'Record + extract', metric = 'Time', view = 'Full range') {
+  return marks.filter(m => m.name === 'pooled_points_marks' && m.datum.candidate_mode === mode
+    && m.datum.metric === metric && m.datum.view === view);
 }
 
 test('Math uses all samples, current manifest hashes and latest label membership', async () => {
@@ -149,9 +150,46 @@ test('Ties share the cumulative rank and thresholds use the complete selected de
     group(input.id, 'proof-extraction', [index < 2 ? 2 : index === 2 ? 4 : 1000])]);
   const {marks} = await evaluate('proof-overhead-cdf', inputs, groups);
   assert.deepEqual(points(marks).map(m => [m.datum.ratio, m.datum.cdf]), [[2, .5], [2, .5], [4, .75], [1000, 1]]);
-  const labels = marks.filter(m => m.name === 'percentile_labels_marks' && m.datum.metric === 'Time');
+  const labels = marks.filter(m => m.name === 'percentile_labels_marks' && m.datum.metric === 'Time'
+    && m.datum.view === 'Full range');
   assert.deepEqual(labels.map(m => [m.datum.percentile, m.datum.ratio]), [[.5, 2], [.9, 1000]]);
-  assert.ok(labels.every(m => m.x >= 0 && m.x <= 300 && m.y >= 0 && m.y <= 185));
+  assert.ok(labels.every(m => m.x >= 0 && m.x <= 300 && m.y >= 0 && m.y <= 150));
+  assert.ok(labels.every(m => m.bounds.x1 >= 0 && m.bounds.x2 <= 300 && m.bounds.y1 >= 0 && m.bounds.y2 <= 150));
+});
+
+test('Zoom preserves full-cohort shares and family colors while the overview retains every tail point', async () => {
+  const inputs = ['math-growth', 'luminal', 'hardboiled'].map(family => workload(family, family));
+  const groups = inputs.flatMap((input, index) => [group(input.id, 'off', [1]),
+    group(input.id, 'proof-extraction', [[1, 4, 1000][index]])]);
+  const {marks, svg} = await evaluate('proof-overhead-cdf', inputs, groups);
+  const full = points(marks);
+  const zoom = points(marks, 'Record + extract', 'Time', 'Zoom');
+  assert.deepEqual(full.map(m => [m.datum.ratio, m.datum.cdf, m.fill]),
+    [[1, 1 / 3, '#4e79a7'], [4, 2 / 3, '#e15759'], [1000, 1, '#59a14f']]);
+  assert.deepEqual(zoom.map(m => [m.datum.ratio, m.datum.cdf, m.fill]),
+    full.slice(0, 2).map(m => [m.datum.ratio, m.datum.cdf, m.fill]));
+  assert.equal(zoom[1].x, 240);
+  assert.ok(full.at(-1).x < 300);
+  const zoomLabels = marks.filter(m => m.name === 'percentile_labels_marks' && m.datum.view === 'Zoom');
+  assert.ok(zoomLabels.every(m => m.x >= 0 && m.x <= 300));
+  assert.deepEqual(new Set(zoomLabels.map(m => m.text)), new Set(['50% ≤ 4.00×', '90% outside zoom']));
+  const zoomCurve = marks.filter(m => m.name === 'pooled_cdf_marks' && m.datum.view === 'Zoom'
+    && m.datum.candidate_mode === 'Record + extract' && m.datum.metric === 'Time');
+  assert.ok(zoomCurve.filter(m => m.datum.curve_fraction === 1).every(m => m.datum.curve_ratio >= 1000));
+  assert.match(svg, /0–5× zoom/);
+  assert.match(svg, /full range/);
+});
+
+test('Coverage below half labels both unavailable thresholds without inventing ratios', async () => {
+  const inputs = ['a', 'b', 'c'].map(id => workload(id));
+  const groups = inputs.map(input => group(input.id, 'off', [1]));
+  groups.push(group('a', 'proof-extraction', [2]), group('b', 'proof-extraction', [2], {status: 'failure'}));
+  const {marks, svg} = await evaluate('proof-overhead-cdf', inputs, groups);
+  assert.equal(marks.filter(m => m.name === 'percentile_labels_marks').length, 0);
+  assert.deepEqual(new Set(marks.filter(m => m.name === 'unavailable_percentiles_marks').map(m => m.text)),
+    new Set(['50% not established', '90% not established']));
+  for (const view of ['Full range', 'Zoom']) assert.equal(points(marks, 'Record + extract', 'Time', view)[0].datum.cdf, 1 / 3);
+  assert.match(svg, /1\/3 valid/);
 });
 
 test('Vega alone selects the cohort from all matching samples and preserves dropped counts', async () => {

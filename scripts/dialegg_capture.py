@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,15 @@ def save_manifest(path: Path, manifest: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def run_complete_command(command: list[str], cwd: Path, prefix: Path, timeout_sec: float) -> PilotProcessResult:
+def run_complete_command(
+    command: list[str],
+    cwd: Path,
+    prefix: Path,
+    timeout_sec: float,
+    *,
+    native_limit: bool = False,
+    env_overrides: Mapping[str, str] | None = None,
+) -> PilotProcessResult:
     """Retain preflight refusals as safety stops, using the same policy at every stage."""
     try:
         return run_bounded_command(
@@ -47,7 +56,8 @@ def run_complete_command(command: list[str], cwd: Path, prefix: Path, timeout_se
             cwd,
             prefix,
             timeout_sec=timeout_sec,
-            require_guard=True,
+            native_limit=native_limit,
+            env_overrides=env_overrides,
         )
     except ValueError as error:
         if "guard refused" not in str(error):
@@ -56,7 +66,7 @@ def run_complete_command(command: list[str], cwd: Path, prefix: Path, timeout_se
         stdout, stderr = Path(str(prefix) + ".stdout.log"), Path(str(prefix) + ".stderr.log")
         stdout.write_text("")
         stderr.write_text(str(error) + "\n")
-        return PilotProcessResult("resource-stopped", None, 0, 0, stdout, stderr, str(error))
+        return PilotProcessResult("resource-stopped", None, 0, stdout, stderr, str(error))
 
 
 def validate_extract_output(source: str, stdout: str, *, line_protocol: bool = False) -> list[list[str]]:
@@ -359,9 +369,13 @@ def capture_complete_dialegg(args: argparse.Namespace, cases: list[str], output:
             modern = replay.read_text()
             contract = invocation["output_contract"]
             command = [str(args.egglog.resolve()), str(replay)]
-            if contract["kind"] == "ordinary-best-static-native":
-                command = ["env", "RUST_LOG=egglog::extract=debug", *command]
-            check = run_complete_command(command, case_dir, raw.with_suffix(".replay"), args.timeout_sec)
+            check = run_complete_command(
+                command,
+                case_dir,
+                raw.with_suffix(".replay"),
+                args.timeout_sec,
+                native_limit=True,
+            )
             invocation["ordinary"] = {"command": command, **asdict(check)}
             invocation["output_matches_native"] = False
             invocation["output_contract_passed"] = False
@@ -371,7 +385,7 @@ def capture_complete_dialegg(args: argparse.Namespace, cases: list[str], output:
                     invocation["output_matches_native"] = outputs == invocation["native"]["output_terms"]
                     if contract["kind"] == "ordinary-best-static-native":
                         invocation["cost_validation"] = validate_static_native_output(
-                            modern, contract, check.stdout_path.read_text(), check.stderr_path.read_text()
+                            modern, contract, check.stdout_path.read_text()
                         )
                     elif not invocation["output_matches_native"]:
                         raise ValueError("ordinary replay extraction differs from the native engine response")
@@ -379,7 +393,7 @@ def capture_complete_dialegg(args: argparse.Namespace, cases: list[str], output:
                 except ValueError as error:
                     invocation["reason"] = str(error)
             save_manifest(case_dir / "manifest.json", row)
-            if check.status in STOP_STATUSES:
+            if check.status in STOP_STATUSES - {"memory-limit"}:
                 report["operational_stop"] = asdict(check)
                 break
         row["ordinary_compatible"] = all(v.get("output_contract_passed") for v in row["invocations"])

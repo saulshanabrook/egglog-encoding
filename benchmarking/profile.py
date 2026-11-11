@@ -22,7 +22,7 @@ from typing import Any, Literal, cast
 from rich.console import Console
 from rich.text import Text
 
-from process_guard import terminate_process_group
+from process_guard import NATIVE_LIMIT_BYTES, native_limit_enabled, native_memory_command, terminate_process_group
 
 from . import samply_analysis
 from .engines import TREATMENT_SPECS, TREATMENTS, Treatment, validate_engine_workload
@@ -263,14 +263,18 @@ def run_samply_record(
     workload: Sequence[str],
     checkout_path: Path,
     timeout_sec: int,
+    native_limit: bool = False,
 ) -> dict[str, Any]:
     temp_artifact = profile_temp_path(artifact)
     temp_artifact.parent.mkdir(parents=True, exist_ok=True)
     with suppress(FileNotFoundError):
         temp_artifact.unlink()
-    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
+    if native_limit:
+        limit = NATIVE_LIMIT_BYTES if native_limit_enabled() else None
+        workload, env = native_memory_command(workload, env, limit)
+    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
     try:
         process = subprocess.Popen(
             command,
@@ -383,7 +387,12 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
                     f" {request.treatment} for {request.mode.profile_seconds}s",
                 )
             )
-            calibration = run_command(workload, checkout_path, request.timeout_sec)
+            calibration = run_command(
+                workload,
+                checkout_path,
+                request.timeout_sec,
+                native_limit=TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg"),
+            )
             if calibration.status != "success" or calibration.timing.wall_sec is None:
                 detail = calibration.error.message if calibration.error is not None else calibration.status
                 raise ValueError(f"profile calibration failed: {detail}")
@@ -417,6 +426,7 @@ def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path
             workload=workload,
             checkout_path=checkout_path,
             timeout_sec=request.timeout_sec,
+            native_limit=TREATMENT_SPECS[request.treatment].engine in ("egglog", "egg"),
         )
         console.print(Text.assemble(("Profile written", "bold"), " ", str(artifact)))
 

@@ -114,9 +114,7 @@ def prepare_runtime(output: Path, checkout: Path) -> Path:
     from scripts.reproduction_process import run_bounded_command
 
     for name, program in programs["programs"].items():
-        result = run_bounded_command(
-            [*command, str(racket), program["path"]], output, output / name, timeout_sec=300, require_guard=True
-        )
+        result = run_bounded_command([*command, str(racket), program["path"]], output, output / name, timeout_sec=300)
         (output / (name + ".result.json")).write_text(json.dumps(asdict(result), indent=2, default=str) + "\n")
         if result.status in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
             raise RuntimeError(f"MISAAL parameter ABI gate stopped: {result.status}")

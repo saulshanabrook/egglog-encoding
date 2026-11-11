@@ -77,7 +77,6 @@ def test_completed_native_parent_requires_actual_replay_outputs_including_zero_r
     commands: list[list[str]] = []
 
     def run(command: list[str], cwd: Path, prefix: Path, **kwargs: Any) -> PilotProcessResult:
-        assert kwargs["require_guard"]
         commands.append(command)
         out, err = Path(str(prefix) + ".out"), Path(str(prefix) + ".err")
         out.write_text("")
@@ -107,9 +106,8 @@ def test_completed_native_parent_requires_actual_replay_outputs_including_zero_r
             if "(extract " in program:
                 out.write_text("(Wrong)\n" if mismatch else "(Real)\n")
                 if cost_logs:
-                    assert command[:2] == ["env", "RUST_LOG=egglog::extract=debug"]
-                    err.write_text("Best cost for the extract root: 1\n")
-        return PilotProcessResult("success", 0, 0.0, 0, out, err, None)
+                    assert kwargs["native_limit"]
+        return PilotProcessResult("success", 0, 0.0, out, err, None)
 
     monkeypatch.setattr(complete, "run_bounded_command", run)
     args = argparse.Namespace(

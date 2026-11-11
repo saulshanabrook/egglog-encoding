@@ -12,7 +12,7 @@ import argparse
 import os
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -43,10 +43,11 @@ from .reports.grouped import grouped_report_path, write_grouped_report
 from .reports.interactive import interactive_report_path, open_interactive_report, write_interactive_report
 from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
-from .reports.store import ReportStore
+from .reports.store import CacheKey, ReportStore
 from .suites import (
     SUITE_NAMES,
     build_coverage,
+    native_memory_exclusions,
     render_coverage_markdown,
     resolve_suite,
     suite_outcomes,
@@ -204,6 +205,7 @@ def collection_plans(
     comparison: ComparisonSpec,
     force_run: bool,
     blocked_files: tuple[FileSpec, ...] = (),
+    native_exclusions: Mapping[CacheKey, str] | None = None,
 ) -> tuple[CollectionPlan, ...]:
     """Group exact endpoints by resolved target so each target is preflighted once."""
 
@@ -221,6 +223,7 @@ def collection_plans(
             force_run,
             comparison.suite_mode,
             blocked_files,
+            native_exclusions,
         )
         for target, endpoints in endpoints_by_target.items()
     )
@@ -276,20 +279,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             validation_issues: tuple[tuple[FileSpec, str], ...] = ()
             deferred: tuple[tuple[FileSpec, str], ...] = ()
+            native_exclusions: dict[CacheKey, str] = {}
             if suite is not None:
                 while True:
                     # A new binary can invalidate cached failures and change
                     # which observations still need collection.
-                    validation_issues, deferred = suite_outcomes(
-                        suite,
-                        tuple(
-                            BenchmarkEndpoint(
-                                resolved_targets[request.target], request.treatment, request.disequality_encoding
-                            )
-                            for request in (baseline_request, candidate_request)
-                        ),
-                        int(args.timeout_sec),
+                    endpoints = tuple(
+                        BenchmarkEndpoint(
+                            resolved_targets[request.target], request.treatment, request.disequality_encoding
+                        )
+                        for request in (baseline_request, candidate_request)
                     )
+                    validation_issues, deferred = suite_outcomes(suite, endpoints, int(args.timeout_sec))
+                    native_exclusions = native_memory_exclusions(suite, endpoints, int(args.timeout_sec))
                     incomplete_labels = tuple(
                         (request, endpoints)
                         for request, endpoints in request_groups
@@ -305,6 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 int(args.timeout_sec),
                                 True,
                                 tuple(file for file, _reason in deferred),
+                                native_exclusions,
                             )
                         )
                     )
@@ -329,6 +332,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                         console.print(
                             Text(f"{case.id}: {suite.capture_errors.get(case.id) or case.reason or case.status}")
                         )
+                for file in files:
+                    limited = []
+                    for resolved_endpoint in endpoints:
+                        key = CacheKey.for_endpoint(resolved_endpoint, file, int(args.timeout_sec))
+                        if reason := native_exclusions.get(key):
+                            limited.append(
+                                f"{resolved_endpoint.target.display_label} {resolved_endpoint.treatment}/"
+                                f"{resolved_endpoint.disequality_encoding}: {reason}"
+                            )
+                    if limited:
+                        reason = "preparation memory limit: " + "; ".join(limited)
+                        validation_issues = (*validation_issues, (file, reason))
+                        console.print(Text(f"{file.display_path}: {reason}"))
                 for file, reason in deferred:
                     console.print(Text(f"{file.display_path}: safety-deferred; {reason}"))
             comparison = ComparisonSpec(
@@ -350,7 +366,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             # Preflight every fresh target before any measured observation can be
             # appended, then execute the already-validated plans in order.
-            plans = collection_plans(store, comparison, bool(args.force_run), tuple(file for file, _ in deferred))
+            plans = collection_plans(
+                store, comparison, bool(args.force_run), tuple(file for file, _ in deferred), native_exclusions
+            )
             for plan in plans:
                 preflight_collection(plan, comparison.timeout_sec)
             for plan in plans:

@@ -125,16 +125,61 @@ source generation, and strict proof verification are outside timing. The
 `proof-extraction` also materializes and simplifies proofs of those results.
 Both compare against the same proofs-off observations.
 
-Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
-guard. Host memory pressure, host headroom, and free-disk reserve checks do not
-stop runs. Source diagnostics retain a 256 MiB combined stdout/stderr limit. An
+Expanded Make targets use a 300-second timeout. With
+`EGGLOG_BENCH_MEMORY_GUARD=1`, the controlled `egglog-experimental` and
+`egg-math-benchmark` executables install a native 6 GiB address-space allowance
+before loading a workload. Ordinary corpus replay validation and explicit strict
+validation always request it. On macOS the allowance is additional VM above the
+startup mappings (which include very large fixed reservations); on Linux it is
+total VM. Existing mappings can become resident without growing VM, so this is
+not a 6 GiB RSS guarantee or a process-group hard cap. RSS is not polled or
+limited. Benchmark peak process RSS is still measured by `wait4` and retained in
+the reports. Builds and third-party author generators/drivers have no memory cap;
+timeouts, output limits, process identity checks, and descendant cleanup remain.
+Host memory pressure, host headroom, and free-disk reserve checks do not stop
+runs. Source diagnostics retain a 256 MiB combined stdout/stderr limit. An
 output-limit outcome is retained as an unavailable call and is not repeatedly
 retried during preparation; this limit does not change timed measurements.
 A workload failure stops the failed treatment's remaining repetitions; other
 treatments still collect their samples. A safety stop preserves the observation
-and stops the invocation. Historical host-pressure and disk-reserve diagnostics remain recorded
-but no longer defer future runs. Timed failures stay in the append-only cache.
+and stops the invocation. Historical RSS-polling, host-pressure, and disk-reserve
+diagnostics remain recorded but no longer defer future runs. Timed failures stay in the append-only cache.
 Timeout limits are never substituted for measured runtimes.
+
+Both controlled Rust executables use mimalloc. Their benchmark and validation
+launchers set `MIMALLOC_ARENA_RESERVE=0`, `MIMALLOC_DISALLOW_ARENA_ALLOC=1`,
+`MIMALLOC_RESERVE_OS_MEMORY=0`, and `MIMALLOC_RESERVE_HUGE_OS_PAGES=0` before exec,
+including unguarded benchmark runs. This keeps allocator behavior consistent for
+the same binary identity. Memory-guard policy is not a cache identity dimension;
+collection uses the fixed allowance rather than exposing a per-run override.
+
+For a small standalone probe, set the same environment and pass
+`--memory-limit-bytes=N` (positive integer, at most 10 GiB). Missing environment,
+unsupported platforms, and limit setup errors fail before workload execution.
+The limit is installed inside the executable after loader startup, never in a
+Python preexec hook. A null Rust allocation under an active limit exits with
+status 86; it reports an allocation failure under the limit without claiming
+that the cap was necessarily its cause. Setup failures also use status 86.
+Timed collection retains the known allocation failure as a failed observation,
+skips that workload/treatment's remaining repetitions, and continues other work,
+as it does for ordinary errors and timeouts. Cached failures are not retried
+unless `--force-run` is supplied. Setup failures, unsupported old-binary option errors,
+and stacker's specific stack-mapping failure remain resource stops. Unexpected SIGKILL
+also stops collection with its cause left unknown. Other native libraries may
+have different failure paths.
+
+Preparation treats the known native allocation diagnostic with exit 86 as an
+unavailable call and continues independent calls and cases, publishing only
+successful workloads. Its retained receipt binds the engine, input and output
+contract, timeout, native allowance, allocator settings, and intact diagnostic
+logs. Identical retries reuse that failure; changes to those inputs allow another
+attempt. A change only to the validator source does not retry allocation failures,
+while successful validation still requires the complete validator identity.
+Already published files remain intact; exclusions apply only to the affected
+file and execution identity. Handled memory-limit outcomes let preparation exit
+successfully so figure generation can continue. Strict validation also continues
+with later files, but returns nonzero when any check remains unavailable. Setup
+errors, unknown kills, interrupts, and process cleanup failures still halt.
 
 ## Correctness and Math configuration
 

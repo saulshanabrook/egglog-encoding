@@ -33,7 +33,7 @@ SOURCE_SHA256 = "e385eaa17a81bbcb8106ad33cbbe1ac2ed4307879b0f366f3b72219744b43bd
 def process_snapshot() -> dict[int, dict[str, int | str]]:
     """Read one coherent process table; malformed monitoring data is a stop."""
     result = subprocess.run(
-        ["ps", "-axo", "pid=,ppid=,pgid=,rss=,stat="],
+        ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
         check=True,
         capture_output=True,
         text=True,
@@ -42,12 +42,12 @@ def process_snapshot() -> dict[int, dict[str, int | str]]:
     rows: dict[int, dict[str, int | str]] = {}
     for line in result.stdout.splitlines():
         values = line.split()
-        if len(values) != 5:
+        if len(values) != 4:
             raise ValueError("Malformed process-group monitoring snapshot")
-        pid, parent, group, rss = map(int, values[:4])
-        if pid in rows or pid <= 0 or rss < 0:
+        pid, parent, group = map(int, values[:3])
+        if pid in rows or pid <= 0 or parent < 0 or group < 0:
             raise ValueError("Inconsistent process-group monitoring snapshot")
-        rows[pid] = {"parent": parent, "group": group, "rss": rss * 1024, "state": values[4]}
+        rows[pid] = {"parent": parent, "group": group, "state": values[3]}
     return rows
 
 
@@ -67,7 +67,7 @@ def peer_identity(connection: socket.socket) -> tuple[int, str]:
 
 
 class RacketGroups:
-    """Own launch reservations, acknowledgments, sampling and group drain."""
+    """Own launch reservations, acknowledgments, process monitoring and group drain."""
 
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=False)
@@ -111,7 +111,7 @@ class RacketGroups:
             except BaseException:
                 connection.close()
                 raise
-        # Read messages before taking the one RSS snapshot. A completion message
+        # Read messages before taking the one process snapshot. A completion message
         # means Racket has already been reaped, so its stale pre-message row must
         # not be mistaken for a residual descendant.
         for connection, peer in self.connections.items():
@@ -252,24 +252,14 @@ class RacketGroups:
         self._persist()
         return rows
 
-    def sample(self, root: int) -> int:
+    def monitor(self, root: int) -> None:
         try:
             if self.closed or self.root not in {None, root}:
                 raise ValueError("Known-launch guard root changed or already closed")
             self.root = root
-            rows = self._exchange(stopping=False)
-            owned = {root} | {
-                item["pid"]
-                for item in self.record["launches"].values()
-                if "pid" in item and item["status"] != "drained"
-            }
-            measured = [int(row["rss"]) for row in rows.values() if row["group"] in owned]
-            rss = sum(measured)
-            self.record.update(
-                status="monitoring", last_sample={"rss_bytes": rss, "max_process_rss_bytes": max(measured, default=0)}
-            )
+            self._exchange(stopping=False)
+            self.record.update(status="monitoring")
             self._persist()
-            return rss
         except BaseException as error:
             self.record.update(status="monitoring-failed", reason=f"{type(error).__name__}: {error}")
             self._persist()

@@ -10,8 +10,16 @@ from pathlib import Path
 from typing import Any, cast
 
 from benchmarking.targets import sha256_file
+from process_guard import (
+    NATIVE_ALLOCATION_FAILURE,
+    NATIVE_ALLOCATOR_ENV,
+    NATIVE_LIMIT_BYTES,
+    native_allocation_failure,
+    native_memory_command,
+)
 from scripts.dialegg_capture import run_complete_command, validate_extract_output
 from scripts.hardboiled_replay import egglog_forms, native_check_contract
+from scripts.reproduction_process import PilotProcessResult
 
 CHURCHROAD_PLACEHOLDERS = ("Wire", "PrimitiveInterfaceDSP", "PrimitiveInterfaceDSP3")
 
@@ -238,21 +246,82 @@ def materialize_static_native_contract(
     return source, static_native_contract(source, terms, native_costs)
 
 
-def validate_static_native_output(source: str, contract: dict[str, Any], stdout: str, stderr: str) -> dict[str, Any]:
-    """Require native membership plus both observed minimum costs, not pretty-print equivalence."""
+def validate_static_native_output(source: str, contract: dict[str, Any], stdout: str) -> dict[str, Any]:
+    """Compare recorded native costs with costs computed from the replay's extracted terms."""
     expected = static_native_contract(source, contract["expected_terms"], contract["native_costs"])
     if contract != expected:
         raise ValueError("static native output contract or extraction boundary changed")
     outputs = validate_extract_output(source, stdout)
     model = static_extract_model(source, outputs)
-    logged = [int(cost) for cost in re.findall(r"Best cost for the extract root: (\d+)\b", stderr)]
-    if model["costs"] != logged or logged != contract["native_costs"]:
-        raise ValueError("replay extractor cost logs, typed tree costs and native minimum costs must agree")
+    # The unchanged static model determines these costs; extractor debug logging
+    # is not an output protocol and newer engines omit it entirely.
+    if model["costs"] != contract["native_costs"]:
+        raise ValueError("replay typed tree costs and native minimum costs must agree")
     return {
         "native_costs": contract["native_costs"],
-        "replay_costs": logged,
+        "replay_costs": model["costs"],
         "exact_terms": outputs == contract["expected_terms"],
     }
+
+
+def native_validation_receipt(
+    process: PilotProcessResult,
+    command: list[str],
+    identity: dict[str, Any],
+    environment: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Bind native validation outcomes to their exact command, allocator and logs."""
+    executed, _ = native_memory_command(command, {}, NATIVE_LIMIT_BYTES)
+    return {
+        "identity": identity,
+        "command": executed,
+        "environment": {"RUST_LOG": "error", **NATIVE_ALLOCATOR_ENV, **(environment or {})},
+        **asdict(process),
+        "stdout_path": str(process.stdout_path),
+        "stderr_path": str(process.stderr_path),
+        "stdout_sha256": sha256_file(process.stdout_path),
+        "stderr_sha256": sha256_file(process.stderr_path),
+    }
+
+
+def retained_memory_limit(
+    saved: dict[str, Any] | None,
+    command: list[str],
+    identity: dict[str, Any],
+    environment: dict[str, str] | None = None,
+) -> bool:
+    """Reuse only proven native exhaustion, preserving the original validator identity.
+
+    Allocation failures do not establish correctness, so a validator-only change
+    does not warrant retrying them. Successful validations keep full identities.
+    Old resource stops qualify only with the allocator's sole failure reason;
+    mixed cleanup or process-control errors must remain stops.
+    """
+    if not saved or saved.get("status") not in {"memory-limit", "resource-stopped"}:
+        return False
+    if saved.get("returncode") != 86 or saved.get("message") != NATIVE_ALLOCATION_FAILURE:
+        return False
+    expected_command, _ = native_memory_command(command, {}, NATIVE_LIMIT_BYTES)
+    if saved.get("command") != expected_command or saved.get("environment") != {
+        "RUST_LOG": "error",
+        **NATIVE_ALLOCATOR_ENV,
+        **(environment or {}),
+    }:
+        return False
+    previous_identity = saved.get("identity", {})
+    if {key: value for key, value in previous_identity.items() if key != "validation_sha256"} != {
+        key: value for key, value in identity.items() if key != "validation_sha256"
+    }:
+        return False
+    try:
+        for stream in ("stdout", "stderr"):
+            path = Path(saved[f"{stream}_path"])
+            if sha256_file(path) != saved.get(f"{stream}_sha256"):
+                return False
+        with Path(saved["stderr_path"]).open(errors="replace") as log:
+            return native_allocation_failure(saved["returncode"], log)
+    except (OSError, KeyError, TypeError):
+        return False
 
 
 def validate_capture(
@@ -362,8 +431,6 @@ def validate_capture(
                     if contract != expected:
                         raise ValueError("static native output contract or extraction boundary changed")
                 command = [str(engine.resolve()), "-j", "1", str(replay.resolve())]
-                if contract["kind"] == "ordinary-best-static-native":
-                    command = ["env", "RUST_LOG=egglog::extract=debug", *command]
                 identity = {
                     "engine_sha256": result["engine_sha256"],
                     "validation_sha256": result["validation_sha256"],
@@ -372,7 +439,10 @@ def validate_capture(
                     "contract_sha256": hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest(),
                 }
                 saved = retained.get(index)
-                if (
+                if retained_memory_limit(saved, command, identity):
+                    assert saved is not None
+                    row = {**saved, "status": "memory-limit"}
+                elif (
                     saved
                     and saved.get("identity") == identity
                     and saved["status"] in {"success", "failure", "timed-out", "output-limit", "blocked"}
@@ -384,18 +454,18 @@ def validate_capture(
                 ):
                     row = dict(saved)
                 else:
-                    process = run_complete_command(command, output, output / f"replay-{index:04}", timeout_sec)
+                    process = run_complete_command(
+                        command,
+                        output,
+                        output / f"replay-{index:04}",
+                        timeout_sec,
+                        native_limit=True,
+                    )
                     row = {
                         "session": index,
-                        "identity": identity,
                         "replay": str(replay),
                         "replay_sha256": identity["replay_sha256"],
-                        "command": command,
-                        **asdict(process),
-                        "stdout_path": str(process.stdout_path),
-                        "stderr_path": str(process.stderr_path),
-                        "stdout_sha256": sha256_file(process.stdout_path),
-                        "stderr_sha256": sha256_file(process.stderr_path),
+                        **native_validation_receipt(process, command, identity),
                     }
                 result["validations"].append(row)
                 if row["status"] != "success":
@@ -403,10 +473,10 @@ def validate_capture(
                         status=row["status"],
                         reason=row.get("reason") or row.get("message") or f"ordinary replay failed: {replay}",
                     )
-                    if row["status"] in {"resource-stopped", "memory-limit", "cancelled", "interrupted"}:
+                    if row["status"] in {"resource-stopped", "cancelled", "interrupted"}:
                         break
                     continue
-                stdout, stderr = Path(row["stdout_path"]), Path(row["stderr_path"])
+                stdout = Path(row["stdout_path"])
                 outputs = validate_extract_output(source, stdout.read_text())
                 if contract["kind"] == "churchroad-circuit-extract":
                     if any(
@@ -421,9 +491,7 @@ def validate_capture(
                 if contract and contract["kind"] == "ordinary-best-extract" and outputs != contract["expected_terms"]:
                     raise ValueError("ordinary extraction differs from the native output contract")
                 if contract["kind"] == "ordinary-best-static-native":
-                    row["cost_validation"] = validate_static_native_output(
-                        source, contract, stdout.read_text(), stderr.read_text()
-                    )
+                    row["cost_validation"] = validate_static_native_output(source, contract, stdout.read_text())
                 if selections is not None and len(outputs) != len(selections):
                     raise ValueError("ordinary output count differs from the recorded native roots")
                 row["output_contract_passed"] = True

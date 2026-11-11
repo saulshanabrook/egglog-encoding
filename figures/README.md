@@ -71,6 +71,12 @@ Each dot represents one deduplicated replay, with source aliases retained in
 metadata. Families are not weighted equally. Failed/missing proof ratios stay
 in the selected denominator: a 90% threshold is shown only when at least 90%
 of selected replays have valid ratios. No timeout limit is treated as a runtime.
+The 0–5× zoom keeps the full cohort's ranks and shares; the full-range view
+retains every valid tail ratio. `zoom_max_ratio` changes only the viewing window.
+Coverage thresholds outside that window are labeled and remain numeric in the
+full-range view. If valid ratios do not reach 50% or 90%, the corresponding
+guide says “not established.” Coverage-table “No replay” counts source cases;
+the other columns count deduplicated replays.
 
 Ratios divide arithmetic proof-mode means by arithmetic proofs-off means.
 The CDF describes measured replay ratios, not a population confidence interval.

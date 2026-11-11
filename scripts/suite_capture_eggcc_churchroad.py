@@ -252,9 +252,7 @@ def capture_complete(
                 "--out-filepath",
                 str(attempt / "native-output.v"),
             ]
-        process = run_bounded_command(
-            command, checkout, attempt / "native", timeout_sec=timeout_sec, require_guard=True
-        )
+        process = run_bounded_command(command, checkout, attempt / "native", timeout_sec=timeout_sec)
         record = {
             "id": case["id"],
             "family": family,
@@ -278,7 +276,6 @@ def capture_complete(
                 ROOT,
                 attempt / "materialize",
                 timeout_sec=timeout_sec,
-                require_guard=True,
             )
             result = attempt / "materialized.json"
             if materialization.status != "success" or not result.is_file():

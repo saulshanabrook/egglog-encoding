@@ -1,4 +1,4 @@
-"""Guarded source preparation with pinned inputs and local command evidence."""
+"""Supervised source preparation with pinned inputs and local command evidence."""
 
 from __future__ import annotations
 
@@ -8,10 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from process_guard import GROUP_LIMIT_BYTES
 from scripts.reproduction_process import run_bounded_command
-
-MEMORY_BYTES = GROUP_LIMIT_BYTES
 
 
 def sha256_file(path: Path) -> str:
@@ -31,7 +28,7 @@ def write_json(path: Path, value: Any) -> None:
 
 
 class Preparation:
-    """Own sequential guarded steps and immutable command/result evidence."""
+    """Own sequential supervised steps and immutable command/result evidence."""
 
     def __init__(self, directory: Path, *, continuation: bool = False):
         self.directory = directory.resolve()
@@ -47,8 +44,6 @@ class Preparation:
             "command": command,
             "cwd": str(workdir),
             "timeout_sec": timeout,
-            "memory_limit_bytes": MEMORY_BYTES,
-            "require_guard": True,
         }
         write_json(prefix.with_suffix(".request.json"), request)
         print(f"START {self.count:03} {name}", flush=True)
@@ -58,8 +53,6 @@ class Preparation:
                 workdir,
                 prefix,
                 timeout_sec=timeout,
-                memory_limit_bytes=MEMORY_BYTES,
-                require_guard=True,
             )
         except (OSError, ValueError) as error:
             write_json(prefix.with_suffix(".result.json"), {"status": "launch-refused", "reason": str(error)})

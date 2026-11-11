@@ -133,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     root,
                     prefix,
                     timeout_sec=args.timeout_sec,
-                    require_guard=True,
+                    native_limit=True,
                 )
             except ValueError as error:
                 if not str(error).startswith("resource guard refused to launch"):
@@ -145,7 +145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_workload_unchanged(file)
             if sha256_file(binary) != binary_hash:
                 raise ValueError("validation executable changed during execution; no outcome recorded")
-            if result.status in ("memory-limit", "resource-stopped"):
+            if result.status == "resource-stopped":
                 outcome.update(
                     {"kind": "safety", "policy": SAFETY_POLICY, "status": "deferred", "reason": result.message}
                 )

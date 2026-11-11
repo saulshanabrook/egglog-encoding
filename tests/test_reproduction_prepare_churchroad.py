@@ -45,7 +45,7 @@ def pipeline(
         stdout.write_text("")
         stderr.write_text("")
         if name == state.get("stop"):
-            return PilotProcessResult("memory-limit", None, 0, 0, stdout, stderr, "cap")
+            return PilotProcessResult("resource-stopped", -9, 0, stdout, stderr, "unexpected SIGKILL")
         if name == "yosys-install":
             (output / "prefix/bin").mkdir(parents=True)
             for tool in ("yosys", "yosys-config"):
@@ -62,7 +62,7 @@ def pipeline(
             binary.write_text("compiler")
             if state.get("lock_changed"):
                 (cwd / "Cargo.lock").write_text("drift")
-        return PilotProcessResult("success", 0, 0, 0, stdout, stderr, None)
+        return PilotProcessResult("success", 0, 0, stdout, stderr, None)
 
     monkeypatch.setattr(preparation, "acquire_source", acquire)
     monkeypatch.setattr(preparation.Preparation, "apply_patch", apply)
@@ -83,7 +83,7 @@ def test_preparation_builds_only_frontend_and_mapping_dependencies(
     ]
     assert set(preparation.REVISIONS) == {"churchroad", "yosys"}
     jobs = {row["name"]: row for row in launches if "command" in row}
-    assert all(row["options"]["require_guard"] for row in jobs.values())
+    assert all("require_guard" not in row["options"] for row in jobs.values())
     assert jobs["yosys-configure"]["command"][-1] == ("config-clang" if system == "Darwin" else "config-gcc")
     assert jobs["yosys-passes"]["command"][-1] == "help write_churchroad; help read_verilog; help prep"
     assert not any(arg.startswith("CARGO_HOME=") for row in jobs.values() for arg in row["command"])
@@ -115,9 +115,9 @@ def test_resource_stop_preserves_receipt_and_stops_next_job(pipeline: tuple) -> 
     output, engine, state, launches = pipeline
     state["stop"] = "yosys-build"
     result = preparation.prepare_churchroad(output, engine)
-    assert result["status"] == "memory-limit"
+    assert result["status"] == "resource-stopped"
     assert launches[-1]["name"] == "yosys-build"
-    assert json.loads((output / "preparation.json").read_text())["status"] == "memory-limit"
+    assert json.loads((output / "preparation.json").read_text())["status"] == "resource-stopped"
     assert not (output / "settings.json").exists()
 
 

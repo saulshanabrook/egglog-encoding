@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
+from process_guard import NATIVE_ALLOCATION_FAILURE, NATIVE_LIMIT_BYTES
+
 from .models import BenchmarkEndpoint, DisequalityEncoding, FileSpec
 from .reports.store import CacheKey, ReportRecord, ReportStore
 from .workloads import resolve_files
@@ -35,10 +37,11 @@ class CorpusOutcome(TypedDict):
 
 
 def safety_outcome_applies(outcome: CorpusOutcome) -> bool:
-    """Retain past RSS stops, but retire deferrals from removed host/disk checks."""
+    """Retain native/resource failures, but retire deferrals from removed polling checks."""
     return (
         outcome["kind"] == "safety"
         and outcome["policy"] == SAFETY_POLICY
+        and outcome["reason"] != NATIVE_ALLOCATION_FAILURE
         and not all(
             any(
                 cause in part
@@ -48,6 +51,9 @@ def safety_outcome_applies(outcome: CorpusOutcome) -> bool:
                     "disk guard refused",
                     "free disk fell below",
                     "disk monitoring failed",
+                    "memory monitoring failed",
+                    "workload process-group RSS",
+                    "process-group RSS exceeded",
                 )
             )
             for part in (outcome["reason"] or "").split("; ")
@@ -222,6 +228,39 @@ def suite_outcomes(
         if safety is not None and safety["status"] != "success":
             deferred.append((file, safety["reason"] or "historically unsafe workload deferred"))
     return tuple(validation), tuple(deferred)
+
+
+def native_memory_exclusions(
+    selection: SuiteSelection, endpoints: Sequence[BenchmarkEndpoint], timeout_sec: int
+) -> dict[CacheKey, str]:
+    """Apply preparation exhaustion only to the matching executable and input."""
+    records = {
+        (
+            row["file_sha256"],
+            row["fact_directory_sha256"],
+            row["binary_sha256"],
+            row["timeout_sec"],
+            row["disequality_encoding"],
+        ): row
+        for row in selection.manifest.outcomes
+        if row["kind"] == "safety" and row["policy"] == f"native-memory-limit-v1:{NATIVE_LIMIT_BYTES}"
+    }
+    excluded = {}
+    for file in selection.files:
+        for endpoint in endpoints:
+            key = CacheKey.for_endpoint(endpoint, file, timeout_sec)
+            row = records.get(
+                (
+                    key.file_sha256,
+                    key.fact_directory_sha256,
+                    key.binary_sha256,
+                    key.timeout_sec,
+                    key.disequality_encoding,
+                )
+            )
+            if row is not None and row["status"] != "success":
+                excluded[key] = row["reason"] or "native allocation limit"
+    return excluded
 
 
 def build_coverage(

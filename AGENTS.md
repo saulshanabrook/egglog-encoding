@@ -124,9 +124,26 @@ or modify the JSONL.
   in Vega-Lite. Failures stop repetitions for the affected treatment, not other
   treatments of that workload. Ordinary positional/default comparisons retain
   requested newest-N selection.
-- Expanded Make targets use a 300-second timeout and a 10 GiB process-group RSS
-  guard. Host memory pressure and host headroom do not block or stop runs.
-  Preserve in-flight safety failures and halt before launching another workload.
+- Expanded Make targets use a 300-second timeout. Guarded Egglog/Egg Math
+  launches and ordinary/strict corpus validation also use a native 6 GiB VM
+  allowance: additional address space above startup on macOS, total address space
+  on Linux. This is not an RSS or process-group hard cap. RSS is measured by
+  `wait4` for benchmark results; no process polls or enforces an RSS limit.
+  Builds and third-party author generators/drivers have no memory cap.
+  Host memory pressure and host headroom do not block or stop runs. Native
+  allocation failures stop that workload/treatment's remaining repetitions and
+  stay cached; other workloads continue. During preparation, the known native
+  allocation-limit exit skips that call and
+  continues independent calls/cases; publish only successful calls. Reuse
+  identity-bound memory failures with intact logs for unchanged engine, input,
+  contract, timeout, native cap, and allocator settings. A validator-only change
+  does not retry allocation failures; successful validation keeps its full identity.
+  Frozen files remain published with per-file exclusions for the affected identity.
+  Setup failures, unknown kills, interrupts, and process cleanup failures still halt.
+- Controlled Egglog/Egg Math launches always use the fixed mimalloc environment
+  in `process_guard.py`, including unguarded runs, so allocator settings do not
+  split otherwise identical cache observations. Standalone native limits require
+  these settings before exec; never apply macOS RLIMIT_AS in Python preexec.
 - Source preparation keeps builds and captures under ignored `benchmarks/local/`;
   corpus resume state and strict validation evidence use ignored
   `benchmarks/corpus/.local/`. Neither is an implicit timed screening pass.
