@@ -23,8 +23,10 @@ test-python:
 
 test-rust:
 	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --bins
+	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
 	cargo test --locked --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
 	cargo test --locked --workspace --exclude paper-tests -- $(RUST_TEST_ARGS)
+	cargo build --locked -p slotted-reference-proofs --no-default-features
 	RUST_TEST_THREADS=$${RUST_TEST_THREADS:-2} cargo test --locked -p paper-tests -- $(RUST_TEST_ARGS)
 
 test-figures:
