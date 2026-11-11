@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl SlotLifter<'_> {
+impl SlotLifter<'_, NativeProofs<'_>> {
     pub(super) fn slot_map(&self, t: TermId) -> LiftResult<SlotMap> {
         renaming_from_term(self.egg(), t)
             .ok_or_else(|| format!("not a renaming: {}", self.egg_string(t)))
@@ -143,6 +143,25 @@ impl SlotLifter<'_> {
         Ok(self.out.term_dag.app(head.to_string(), children))
     }
 
+    /// Source column of a child update; its rule index excludes payload columns.
+    pub(super) fn updated_column(&self, rule: &str, row: TermId) -> LiftResult<usize> {
+        let slotted: usize = rule
+            .rsplit('/')
+            .next()
+            .and_then(|column| column.parse().ok())
+            .ok_or("child update lacks a column")?;
+        let (head, _) = self
+            .app(row)
+            .ok_or("child update lacks its constructor row")?;
+        self.program.constructors[head]
+            .encoded_columns()
+            .filter(|(_, kind, _)| !matches!(kind, ColumnKind::Payload(_)))
+            .nth(slotted)
+            .filter(|(_, kind, _)| **kind == ColumnKind::Child)
+            .map(|(column, _, _)| column)
+            .ok_or_else(|| format!("child update column {slotted} of {head} is not a child"))
+    }
+
     /// Surface column index of an encoded row's physical child index.
     pub(super) fn surface_column(&self, head: &str, physical: usize) -> LiftResult<usize> {
         let ctor = self
@@ -208,17 +227,25 @@ impl SlotLifter<'_> {
         }
     }
 
-    /// The occurrences of an encoded row: itself, and each slotted column's class.
+    /// The occurrences of a proved row, retaining each child's support source.
     pub(super) fn row_occurrences(
         &self,
-        row: TermId,
+        proof: ProofId,
+        rhs: bool,
     ) -> LiftResult<HashMap<Vec<usize>, Occurrence>> {
+        let statement = self.egg.get(proof);
+        let row = if rhs {
+            statement.rhs()
+        } else {
+            statement.lhs()
+        };
         let mut occ: HashMap<Vec<usize>, Occurrence> = HashMap::default();
         occ.insert(
             vec![],
             Occurrence {
                 cls: row,
                 row: None,
+                support: None,
             },
         );
         let (head, args) = self.app(row).ok_or("not a row")?;
@@ -232,6 +259,14 @@ impl SlotLifter<'_> {
                             Occurrence {
                                 cls: args[i + 1],
                                 row: None,
+                                support: Some(Support {
+                                    origin: SupportOrigin::Constructor {
+                                        proof,
+                                        column: j,
+                                        rhs,
+                                    },
+                                    transport: None,
+                                }),
                             },
                         );
                         i += 2;

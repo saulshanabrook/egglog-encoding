@@ -62,6 +62,19 @@ pub struct Constructor {
 }
 
 impl Constructor {
+    pub(super) fn encoded_columns(
+        &self,
+    ) -> impl Iterator<Item = (usize, &Column, std::ops::Range<usize>)> {
+        let mut physical = 0;
+        self.columns
+            .iter()
+            .enumerate()
+            .map(move |(source, column)| {
+                let start = physical;
+                physical += if *column == Column::Child { 2 } else { 1 };
+                (source, column, start..physical)
+            })
+    }
     /// The sort of an argument, or `None` for an out-of-range index.
     pub fn column_sort(&self, index: usize) -> Option<&str> {
         self.columns.get(index).map(|column| match column {
@@ -112,13 +125,13 @@ impl Constructor {
     ) -> String {
         let (mut k, mut p) = (0, 0);
         let mut args = Vec::new();
-        for col in &self.columns {
+        for (_, col, physical) in self.encoded_columns() {
             if matches!(col, Column::Payload(_)) {
                 args.push(pays[p].clone());
                 p += 1;
             } else {
                 args.push(edges[k].clone());
-                if *col == Column::Child {
+                if physical.len() == 2 {
                     args.push(kids[k].clone());
                 }
                 k += 1;

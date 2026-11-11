@@ -1,6 +1,6 @@
 //! An explicit slotted-source to ordinary-egglog pass. Evaluation stays in egglog.
-use super::compiled::{CompiledProgram, ProofRequests};
-use super::errors::{CompileError, UnsupportedProofFeature};
+use super::compiled::{CompiledProgram, ExtractRequest, ExtractRequests, ProofRequests};
+use super::errors::CompileError;
 use super::proofs::pipeline::{EncodingNames, ProofRequest, SlottedClaim};
 use super::proofs::resolve::Reader;
 use super::{
@@ -82,6 +82,7 @@ struct State {
     extracts: usize,
     reserved: BTreeSet<String>,
     declared: BTreeSet<String>,
+    substitutions: Vec<rewrite::SubstitutionRequest>,
 }
 
 impl Default for State {
@@ -108,6 +109,7 @@ impl Default for State {
             .map(String::from)
             .collect(),
             declared: BTreeSet::new(),
+            substitutions: Vec::new(),
         }
     }
 }
@@ -124,6 +126,8 @@ pub struct Compiler {
     next_check: usize,
     next_proof: usize,
     proof_requests: ProofRequests,
+    extract_requests: ExtractRequests,
+    substitution_phases: BTreeMap<usize, Arc<super::proofs::runtime_substitution::Phase>>,
 }
 
 impl Compiler {
@@ -149,6 +153,8 @@ impl Compiler {
     ) -> Result<String, CompileError> {
         let mut next = self.clone();
         let (text, _) = next.compile_inner(filename, source)?;
+        next.extract_requests.clear();
+        next.substitution_phases.clear();
         *self = next;
         Ok(text)
     }
@@ -168,7 +174,14 @@ impl Compiler {
             .parse_program(filename, &text)
             .map_err(|error| ParseError(egglog::span!(), error.to_string()))?;
         *self = next;
-        Ok(CompiledProgram { commands, proofs })
+        let extractions = std::mem::take(&mut self.extract_requests);
+        let substitutions = std::mem::take(&mut self.substitution_phases);
+        Ok(CompiledProgram {
+            commands,
+            proofs,
+            extractions,
+            substitutions,
+        })
     }
 
     fn compile_inner(
@@ -177,9 +190,6 @@ impl Compiler {
         source: &str,
     ) -> Result<(String, ProofRequests), CompileError> {
         let forms = read(filename, source, &mut BTreeSet::new())?;
-        if self.options.proof_mode == ProofMode::Prove {
-            UnsupportedProofFeature::check(&forms)?;
-        }
         let result = self.program(&forms)?;
         let proofs = std::mem::take(&mut self.proof_requests);
         Ok((result, proofs))
@@ -410,6 +420,24 @@ impl Compiler {
                     .atom()?
                     .parse::<usize>()
                     .map_err(|_| "run expects a nonnegative round count")?;
+                if n > 0 && !self.state.substitutions.is_empty() {
+                    let id = self.next_proof;
+                    self.next_proof += 1;
+                    self.substitution_phases.insert(
+                        id,
+                        Arc::new(super::proofs::runtime_substitution::Phase {
+                            substitutions: self.state.substitutions.clone(),
+                        }),
+                    );
+                    let mut commands = vec![maintenance::schedule(0, false)];
+                    for _ in 0..n {
+                        commands
+                            .push("(run-schedule (run) (saturate (run slotted-refine)))".into());
+                        commands.push(format!("(slotted-substitute {id})"));
+                        commands.push(maintenance::schedule(0, false));
+                    }
+                    return Ok(commands.join("\n"));
+                }
                 Ok(maintenance::schedule(n, self.state.rules > 0))
             }
             "push" => {
@@ -452,8 +480,36 @@ impl Compiler {
                     .map(|(name, id)| format!("(slot {id} {})", syntax::quote(name)))
                     .collect::<Vec<_>>()
                     .join(" ");
+                let command = if self.options.proof_mode == ProofMode::Prove {
+                    let id = self.next_proof;
+                    self.next_proof += 1;
+                    self.state
+                        .proofs
+                        .as_mut()
+                        .unwrap()
+                        .source
+                        .command(f, &egglog::span!())
+                        .map_err(|e| e.to_string())?;
+                    let mut compiler = self.clone();
+                    // The runtime certifies this extraction with one internal
+                    // check. Reserve its rule name before compiling later input.
+                    self.next_check += 1;
+                    compiler.proof_requests.clear();
+                    compiler.extract_requests.clear();
+                    compiler.substitution_phases.clear();
+                    self.extract_requests.insert(
+                        id,
+                        Arc::new(ExtractRequest {
+                            compiler,
+                            input: args[0].render(),
+                        }),
+                    );
+                    format!("slotted-prove-extract {id}")
+                } else {
+                    "slotted-extract".into()
+                };
                 Ok(format!(
-                    "(let $$slotted_extract{i} {})\n{}\n(slotted-extract $$slotted_extract{i} {} {names})",
+                    "(let $$slotted_extract{i} {})\n{}\n({command} $$slotted_extract{i} {} {names})",
                     self.state.lang.encode(&t),
                     maintenance::schedule(0, false),
                     self.state.lang.edge(&t),
@@ -515,9 +571,6 @@ impl Compiler {
             Form::List(_) => {
                 let (head, args) = f.call()?;
                 if head == "subst" {
-                    if self.options.proof_mode == ProofMode::Prove {
-                        return Err(UnsupportedProofFeature::Substitution.to_string());
-                    }
                     if ground || args.len() != 3 {
                         return Err(
                             "subst expects three arguments on a rewrite right-hand side".into()
@@ -855,17 +908,20 @@ impl Compiler {
             return Err(format!("rewrite root {root:?} is not bound by a pattern"));
         }
         self.global_terms(&mut p, &mut rhs, None);
+        // Proof reconstruction follows the source traversal. Matching may reorder
+        // these atoms for joins, but the flattened source rule keeps their order.
+        let source_atoms = p.atoms.clone();
         self.finish_pattern(&mut p)?;
         let mut flattened = flatten::rewrite(
             &self.state.lang,
             &root,
             &lhs,
             &rhs,
-            &p.atoms,
+            &source_atoms,
             &p.conditions,
             p.proof_names,
         );
-        let (encoded, names) = rewrite::compile(
+        let (mut encoded, names, substitution) = rewrite::compile(
             &self.state.lang,
             rewrite::Rewrite {
                 root: &root,
@@ -875,64 +931,103 @@ impl Compiler {
                 name: Some(&source.name),
                 ordinal: self.state.rules,
                 nested: self.options.no_aliasing,
+                proofs: self.options.proof_mode == ProofMode::Prove,
             },
             flattened.names,
         )?;
+        if let Some(substitution) = substitution {
+            if self.state.substitutions.is_empty() {
+                encoded.insert_str(0, "(ruleset slotted-subst-apply)\n");
+            }
+            self.state.substitutions.push(substitution);
+        }
         self.state.rules += 1;
         flattened.names = names;
         flattened.rule.name = source.name.clone();
         Ok((encoded, flattened))
     }
 
-    fn proof_claim(&mut self, fact: &Form) -> Result<Option<String>, String> {
-        fn ground(term: &Term) -> bool {
-            match term {
-                Term::Node(_, args) => args.iter().all(ground),
-                Term::Slot(_) | Term::Global(_) | Term::Payload(_) => true,
-                _ => false,
-            }
-        }
-        let (kind, terms) = fact.call()?;
-        if !matches!(kind, "=" | "renaming-=") || terms.len() != 2 {
+    fn proof_claim(&mut self, facts: &[Form]) -> Result<Option<String>, String> {
+        if facts.is_empty()
+            || facts.iter().any(|fact| {
+                !matches!(fact.call(), Ok(("=" | "renaming-=", terms)) if terms.len() == 2)
+                    && !fact
+                        .call()
+                        .is_ok_and(|(head, _)| self.state.lang.constructors.contains_key(head))
+            })
+        {
             return Ok(None);
         }
-        let ts = terms
-            .iter()
-            .map(|t| self.term(t, false, None))
-            .collect::<Result<Vec<_>, _>>()?;
-        if !ts.iter().all(ground) {
-            return Ok(None);
-        }
-        let mut slots = BTreeSet::new();
-        for term in &ts {
-            term.slot_literals(&mut slots);
-        }
-        for slot in slots {
-            self.state.lang.slot_names.intern(&slot)?;
-        }
-        let mut p = Pattern::new(std::slice::from_ref(fact));
-        let mut roots = Vec::new();
-        let mut patterns = Vec::new();
-        for term in ts {
-            let is_node = matches!(term, Term::Node(_, _));
-            roots.push(self.pattern_value(&mut p, term)?);
-            patterns.push(if is_node {
-                p.proof_names.patterns.last().unwrap().clone()
+        let mut p = Pattern::new(facts);
+        let mut claims = Vec::new();
+        for fact in facts {
+            let (head, arguments) = fact.call()?;
+            let existence;
+            let (kind, terms) = if self.state.lang.constructors.contains_key(head) {
+                existence = [fact.clone(), fact.clone()];
+                ("=", existence.as_slice())
             } else {
-                vec![]
+                (head, arguments)
+            };
+            let mut roots = Vec::new();
+            let mut patterns = Vec::new();
+            for term in terms {
+                let term = self.term(term, false, None)?;
+                let mut slots = BTreeSet::new();
+                term.slot_literals(&mut slots);
+                for slot in slots {
+                    self.state.lang.slot_names.intern(&slot)?;
+                }
+                let is_node = matches!(term, Term::Node(_, _));
+                roots.push(self.pattern_value(&mut p, term)?);
+                patterns.push(if is_node {
+                    p.proof_names.patterns.last().unwrap().clone()
+                } else {
+                    vec![]
+                });
+            }
+            p.conditions.comparisons.push((
+                query::Comparison::parse(kind).unwrap(),
+                roots[0].clone(),
+                roots[1].clone(),
+            ));
+            claims.push(SlottedClaim {
+                kind: kind.into(),
+                lhs: terms[0].expr()?,
+                rhs: terms[1].expr()?,
+                lhs_root: roots[0].clone(),
+                rhs_root: roots[1].clone(),
+                slot_names: BTreeMap::new(),
+                names: query::ProofNames {
+                    patterns,
+                    ..Default::default()
+                },
             });
         }
-        p.conditions.comparisons.push((
-            query::Comparison::parse(kind).unwrap(),
-            roots[0].clone(),
-            roots[1].clone(),
-        ));
         self.finish_pattern(&mut p)?;
         let q = self.compile_check(&p)?;
-        p.proof_names.patterns = patterns;
-        p.proof_names.classes = q.classes.iter().cloned().collect();
-        p.proof_names.readings = q.readings.clone();
-        p.proof_names.frame = q.frame.clone();
+        for claim in &mut claims {
+            claim.names.classes = q.classes.iter().cloned().collect();
+            claim.names.readings = q.readings.clone();
+            claim.names.atoms = q.atoms.clone();
+            claim.names.frame = q.frame.clone();
+            claim.slot_names = self
+                .state
+                .lang
+                .slot_names
+                .entries()
+                .map(|(name, id)| (name.to_owned(), id))
+                .collect();
+        }
+        let id = self.next_proof;
+        self.next_proof += 1;
+        self.proof_requests
+            .insert(id, Arc::new(self.proof_environment(claims)?));
+        let proof = format!("(slotted-prove {id} {})", q.body.join(" "));
+        Ok(Some(self.refine_check(&q, &proof)?))
+    }
+
+    fn proof_environment(&self, claims: Vec<SlottedClaim>) -> Result<ProofRequest, String> {
         let proofs = self.state.proofs.as_ref().expect("proof compilation state");
         let source = proofs.source.snapshot().map_err(|e| e.to_string())?;
         let mut flattened = source.clone();
@@ -941,34 +1036,12 @@ impl Compiler {
                 *rule = proofs.flattened[&rule.name].clone();
             }
         }
-        let claim = SlottedClaim {
-            kind: kind.into(),
-            lhs: terms[0].expr()?,
-            rhs: terms[1].expr()?,
-            lhs_root: roots[0].clone(),
-            rhs_root: roots[1].clone(),
-            slot_names: self
-                .state
-                .lang
-                .slot_names
-                .entries()
-                .map(|(name, id)| (name.to_owned(), id))
-                .collect(),
-            names: p.proof_names,
-        };
-        let id = self.next_proof;
-        self.next_proof += 1;
-        self.proof_requests.insert(
-            id,
-            Arc::new(ProofRequest {
-                source,
-                flattened,
-                names: proofs.names.clone(),
-                claim,
-            }),
-        );
-        let proof = format!("(slotted-prove {id} {})", q.body.join(" "));
-        Ok(Some(self.refine_check(&q, &proof)?))
+        Ok(ProofRequest {
+            source,
+            flattened,
+            names: proofs.names.clone(),
+            claims,
+        })
     }
 
     fn compile_check(&self, p: &Pattern) -> Result<query::Query, String> {
@@ -1010,8 +1083,7 @@ impl Compiler {
         }
         if !negated
             && self.options.proof_mode == ProofMode::Prove
-            && let [fact] = args
-            && let Some(proof) = self.proof_claim(fact)?
+            && let Some(proof) = self.proof_claim(args)?
         {
             return Ok(proof);
         }

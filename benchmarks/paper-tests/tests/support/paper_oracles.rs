@@ -63,6 +63,7 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
             (
                 &[
                     "slotted",
+                    "slotted-proof-testing",
                     "slotted-no-aliasing",
                     "slotted-ref-multi",
                     "slotted-ref-nested",

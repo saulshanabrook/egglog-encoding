@@ -1,12 +1,10 @@
 #[path = "support/proof_coverage.rs"]
 mod coverage;
 
-use egglog_experimental::slotted::{
-    CompileError, Compiler, Options, ProofMode, UnsupportedProofFeature,
-};
+use egglog_experimental::slotted::{CompileError, Compiler, Options, ProofMode};
 
 #[test]
-fn source_expectations_distinguish_proof_claims_from_ordinary_checks() {
+fn source_expectations_count_existential_and_multiple_fact_checks() {
     let source = r#"
         (datatype E (V Var) (N i64) (Pair E E))
         (let a (V $a))
@@ -22,7 +20,7 @@ fn source_expectations_distinguish_proof_claims_from_ordinary_checks() {
         (pop)
         (check (= b a))
     "#;
-    assert_eq!(coverage::expected_proofs(source).unwrap(), 3);
+    assert_eq!(coverage::expected_proofs(source).unwrap(), 6);
     assert_eq!(
         coverage::expected_proofs("(datatype E (N i64))").unwrap(),
         0
@@ -30,7 +28,7 @@ fn source_expectations_distinguish_proof_claims_from_ordinary_checks() {
 }
 
 #[test]
-fn unsupported_substitution_is_typed_and_does_not_commit_compiler_state() {
+fn malformed_substitution_does_not_commit_compiler_state() {
     let mut compiler = Compiler::new(Options {
         proof_mode: ProofMode::Prove,
         ..Default::default()
@@ -41,13 +39,7 @@ fn unsupported_substitution_is_typed_and_does_not_commit_compiler_state() {
             "(datatype E (V Var)) (rewrite (V $a) (subst (V $a) $a (V $b)))",
         )
         .unwrap_err();
-    assert!(matches!(
-        error,
-        CompileError::UnsupportedProofFeature {
-            feature: UnsupportedProofFeature::Substitution,
-            ..
-        }
-    ));
+    assert!(matches!(error, CompileError::Parse(_)));
     compiler.compile(None, "(datatype E (V Var))").unwrap();
     assert!(matches!(
         compiler.compile(None, "(let a (Missing))"),
@@ -76,7 +68,7 @@ fn source_expectations_follow_includes_and_nullary_existence_checks() {
     );
     let expected = coverage::expected_proofs(&source);
     std::fs::remove_file(path).unwrap();
-    assert_eq!(expected.unwrap(), 3);
+    assert_eq!(expected.unwrap(), 4);
 }
 
 #[test]
@@ -89,5 +81,5 @@ fn payload_variables_remain_local_even_when_their_names_are_globals() {
         (check (= (V n) (V n)))
         (datatype* ((E (V Var) (N i64))))
     "#;
-    assert_eq!(coverage::expected_proofs(source).unwrap(), 1);
+    assert_eq!(coverage::expected_proofs(source).unwrap(), 3);
 }

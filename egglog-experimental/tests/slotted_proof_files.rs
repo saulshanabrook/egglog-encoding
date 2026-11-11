@@ -1,7 +1,6 @@
 use egglog::{CommandOutput, Error};
 use egglog_experimental::slotted::{
-    CompileError, Compiler, Options, ProofMode, UnsupportedProofFeature, new_egraph,
-    new_egraph_with_proofs,
+    Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs,
 };
 use libtest_mimic::Trial;
 use std::path::Path;
@@ -46,11 +45,20 @@ struct Probes {
     probes: Vec<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct Ignore {
+    file: String,
+    treatments: Vec<String>,
+    reason: String,
+}
+
 fn main() {
     let args = libtest_mimic::Arguments::from_args();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     // Includes resolve from the invocation directory, as in the CLI.
     std::env::set_current_dir(root).unwrap();
+    let ignores: Vec<Ignore> =
+        serde_json::from_str(include_str!("../../benchmarks/ignore.json")).unwrap();
     let mut tests = Vec::new();
     for pattern in [
         "egglog-experimental/tests/slotted/**/*.egg",
@@ -60,6 +68,15 @@ fn main() {
     ] {
         for path in glob::glob(pattern).unwrap() {
             let path = path.unwrap();
+            let ignored = ignores.iter().find(|rule| {
+                rule.treatments.iter().any(|t| t == "slotted-proof-testing")
+                    && glob::Pattern::new(&format!("benchmarks/{}", rule.file))
+                        .unwrap()
+                        .matches_path(&path)
+            });
+            if let Some(rule) = ignored {
+                eprintln!("Deferred source proof {}: {}", path.display(), rule.reason);
+            }
             let source = std::fs::read_to_string(&path).unwrap();
             let no_aliasing = path.starts_with("egglog-experimental/tests/slotted/nested")
                 || path.starts_with("benchmarks/slotted/correctness/nested");
@@ -68,47 +85,36 @@ fn main() {
                 proof_mode: ProofMode::Prove,
             });
             let encoded = compiler.compile_program(Some(path.display().to_string()), &source);
-            // Keep unsupported fixtures visible; all other compilation errors fail.
-            let unsupported = matches!(
-                &encoded,
-                Err(CompileError::UnsupportedProofFeature {
-                    feature: UnsupportedProofFeature::Substitution,
-                    ..
-                })
-            );
             let name = path
                 .strip_prefix("egglog-experimental")
                 .unwrap_or(&path)
                 .display()
                 .to_string();
-            tests.push(
-                Trial::test(format!("proofs/slotted/{name}"), move || {
-                    // Match the CLI's stack allowance for the larger frozen proof DAGs.
-                    stacker::grow(8 * 1024 * 1024, || {
-                        let encoded = encoded?;
-                        let mut expected =
-                            coverage::expected_proofs(&source).map_err(|e| e.to_string())?;
-                        let mut graph = new_egraph_with_proofs();
-                        let mut outputs = encoded.run(&mut graph)?;
-                        if path.starts_with("benchmarks/slotted/correctness") {
-                            let probes: Probes = serde_json::from_str(&std::fs::read_to_string(
-                                path.with_extension("ref"),
-                            )?)?;
-                            let claims = probe_claims(&source, &probes.probes, no_aliasing)?;
-                            expected += probes.probes.len();
-                            outputs
-                                .extend(compiler.compile_program(None, &claims)?.run(&mut graph)?);
-                        }
-                        let proofs = outputs
-                            .iter()
-                            .filter(|output| matches!(output, CommandOutput::UserDefined(_)))
-                            .count();
-                        assert_eq!(proofs, expected, "every claim must produce a checked proof");
-                        Ok(())
-                    })
+            let test = Trial::test(format!("proofs/slotted/{name}"), move || {
+                // Match the CLI's stack allowance for the larger frozen proof DAGs.
+                stacker::grow(8 * 1024 * 1024, || {
+                    let encoded = encoded?;
+                    let mut expected =
+                        coverage::expected_proofs(&source).map_err(|e| e.to_string())?;
+                    let mut graph = new_egraph_with_proofs();
+                    let mut outputs = encoded.run(&mut graph)?;
+                    if path.starts_with("benchmarks/slotted/correctness") {
+                        let probes: Probes = serde_json::from_str(&std::fs::read_to_string(
+                            path.with_extension("ref"),
+                        )?)?;
+                        let claims = probe_claims(&source, &probes.probes, no_aliasing)?;
+                        expected += probes.probes.len();
+                        outputs.extend(compiler.compile_program(None, &claims)?.run(&mut graph)?);
+                    }
+                    let proofs = outputs
+                        .iter()
+                        .filter(|output| matches!(output, CommandOutput::UserDefined(_)))
+                        .count();
+                    assert_eq!(proofs, expected, "every claim must produce a checked proof");
+                    Ok(())
                 })
-                .with_ignored_flag(unsupported),
-            );
+            });
+            tests.push(test.with_ignored_flag(ignored.is_some()));
         }
     }
     assert!(!tests.is_empty(), "no slotted fixtures found");

@@ -14,6 +14,7 @@ mod proof_flat_table_tests;
 pub(crate) mod proof_format;
 pub(crate) mod proof_fresh;
 pub(crate) mod proof_head;
+pub(crate) mod proof_lifting;
 pub(crate) mod proof_normal_form;
 pub(crate) mod proof_simplification;
 #[cfg(test)]

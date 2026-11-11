@@ -1,6 +1,8 @@
 //! Leader migration, cache freshness, and deterministic substitution regressions.
 use egglog::ast::{Sexp, parse_sexps};
-use egglog_experimental::slotted::{Compiler, export::export, new_egraph};
+use egglog_experimental::slotted::{
+    Compiler, Options, ProofMode, export::export, new_egraph, new_egraph_with_proofs,
+};
 use egraph_isomorphism::{AnnotatedEGraph, Graph, Limits, Outcome, find_isomorphism, verify};
 use std::{fs, path::PathBuf, process::Command};
 
@@ -128,6 +130,40 @@ fn child_unions_preserve_fresh_shapes_and_cosets() {
             assert_eq!(graph.get_size("H"), 1, "{reverse}, {order:?}");
             assert_eq!(graph.get_size("StaleReadings"), 0, "{reverse}, {order:?}");
         }
+    }
+}
+
+#[test]
+fn shape_collisions_keep_the_selected_class_and_renaming_together() {
+    let base = Compiler::new(Options {
+        proof_mode: ProofMode::Prove,
+        ..Default::default()
+    })
+    .compile(None, "(datatype E (V Var) (A) (H E E))")
+    .unwrap();
+    // After a key collision, the two caches may retain rows in different
+    // orders. Keep the second row's back renaming before indexing the first.
+    let program = format!(
+        r#"{base}
+(let variable (V (map-of 0 0)))
+(let closed (A))
+(set (EclassGroup_0 variable) (set-of (map-of 0 0)))
+(set (EclassGroup_0 closed) (set-of (map-empty)))
+(let first (H (map-of 0 0) variable (map-empty) closed))
+(set (_shape_back_H (map-of 0 0) variable (map-empty) closed) (map-of 0 1))
+(run slotted-shape 1)
+(let second (H (map-of 0 1) variable (map-empty) closed))
+(run slotted-shape 2)
+(check (ShapeEqual_0 first (map-of 1 0) second))
+(ruleset observe)
+(relation BadShape ())
+(rule ((ShapeEqual_0 c m c) (!= m (map-domain m))) ((BadShape)) :ruleset observe)
+(run observe 1)
+(fail (check (BadShape)))
+"#
+    );
+    for mut graph in [new_egraph(), new_egraph_with_proofs()] {
+        graph.parse_and_run_program(None, &program).unwrap();
     }
 }
 

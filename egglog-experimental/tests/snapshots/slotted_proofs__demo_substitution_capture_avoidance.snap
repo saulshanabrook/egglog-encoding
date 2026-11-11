@@ -1,0 +1,123 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype E (V Var) (Lam Var E :binder 0) (Let E Var E :binder 1))
+(let input (Let (V $y) $x (Lam $y (V $x))))
+(rewrite (Let value $v body) (subst body $v value) :name "beta")
+(run 1)
+(check (= input (Lam $z (V $y))))
+
+Proof:
+(let t (Let (V $y) $x (Lam $v0 (V $x))))
+(let t_1 (Lam $v10 (V $v11)))
+(let t_2 (Let (V $x) $v11 t_1))
+(let t_3 (Lam $v17 (V $x)))
+(let t_4 (Lam $v12 (V $y)))
+(let t_5 (Let (V $y) $v11 t_1))
+(let t_6 (Let (V $y) $v7 (Lam $v8 (V $v7))))
+(let t_7 (Lam $v9 (V $y)))
+(let prop (= t_5 t_7))
+(let t_8 (Lam $v3 (V $y)))
+(let t_9 (Let (V $y) $v5 (Lam $v3 (V $v5))))
+(let t_10 (Lam $v2 (V $v1)))
+(let t_11 (Let (V $y) $v1 t_10))
+(let t_12 (Let (V $y) $x (Lam $y (V $x))))
+(let prf (Alpha (= t_12 t) (Fiat (= t_12 t_12))))
+(let prf_1
+  (Sym
+                (= t_7 t_5)
+                (Equivariance
+                  prop
+                  (Alpha
+                    (= t_6 t_7)
+                    (Sym
+                      (= t_6 t_8)
+                      (Alpha
+                        (= t_8 t_6)
+                        (Sym
+                          (= t_8 t_9)
+                          (Equivariance
+                            (= t_9 t_8)
+                            (Rule
+                              (= t_11 (Lam $v2 (V $y)))
+                              (name "beta")
+                              (premises
+                                (Equivariance
+                                  (= t_11 t_11)
+                                  (Trans (= t t) (Sym (= t t_12) prf) prf)
+                                  (renaming
+                                    ($x $v1)
+                                    ($v2 $v3)
+                                    ($v3 $v4)
+                                    ($v5 $v6)
+                                    ($v4 $v0)
+                                    ($v6 $x)
+                                    ($v0 $v2)
+                                    ($v1 $v5))))
+                              (substitution (value (V $y)) ($v $v1) (body t_10)))
+                            (renaming ($v2 $v3) ($v3 $v2) ($v5 $v1) ($v1 $v5)))))))
+                  (renaming ($v10 $v8) ($v11 $v7) ($v8 $v10) ($v7 $v11)))))
+(let t_13
+  (renaming
+                ($v10 $v8)
+                ($v11 $v7)
+                ($v9 $v12)
+                ($v12 $v9)
+                ($v8 $v10)
+                ($v7 $v11)))
+(let prf_2 (Equivariance (= t_4 t_6) prf_1 t_13))
+(let t_14 (Let (V $y) $v11 (Lam $v8 (V $v11))))
+(let t_15 (Let (V $y) $v11 (Lam $v14 (V $v11))))
+(let prf_3
+  (Trans
+                      (= t_5 t_5)
+                      (Equivariance prop (Sym (= t_6 t_4) prf_2) t_13)
+                      prf_1))
+(let prf_4 (Alpha (= t_5 t_15) prf_3))
+(let t_16 (Let (V $y) $v7 (Lam $v10 (V $v7))))
+(let t_17 (Let (V $y) $v13 (Lam $v10 (V $v13))))
+(let prf_5 (Alpha (= t_5 t_17) prf_3))
+(Claim
+  (= t (rename (renaming ($z $v17) ($v17 $z)) (Lam $z (V $y))))
+  (Equivariance
+    (= t (Lam $v17 (V $y)))
+    (Sym
+      (= t_2 t_3)
+      (Equivariance
+        (= t_3 t_2)
+        (Trans
+          (= t_4 t_5)
+          prf_2
+          (Equivariance
+            (= t_6 t_5)
+            (Trans
+              (= t_5 t_6)
+              (Trans
+                (= t_5 t_14)
+                prf_4
+                (Equivariance
+                  (= t_15 t_14)
+                  prf_4
+                  (renaming ($v14 $v8) ($v10 $v14) ($v8 $v10))))
+              (Equivariance
+                (= t_14 t_6)
+                (Trans
+                  (= t_5 t_16)
+                  prf_5
+                  (Equivariance
+                    (= t_17 t_16)
+                    prf_5
+                    (renaming ($v13 $v7) ($v11 $v13) ($v7 $v11))))
+                (renaming ($v10 $v8) ($v8 $v10))))
+            t_13))
+        (renaming
+          ($y $x)
+          ($x $v15)
+          ($v16 $v12)
+          ($v17 $v18)
+          ($v12 $v17)
+          ($v18 $v16)
+          ($v15 $y))))
+    (renaming ($y $v11) ($x $y) ($v10 $v0) ($v11 $x) ($v0 $v10))))

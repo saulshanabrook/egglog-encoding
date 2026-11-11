@@ -11,8 +11,19 @@ Source:
 (check (= input (V $a)))
 
 Proof:
-(Rule
-  (= (F (V $a)) (V $a))
-  (name "unwrap")
-  (premises (Fiat (= (F (V $a)) (F (V $a)))))
-  (substitution (v1 (V $a))))
+(let prop (= (F (V $a)) (V $a)))
+(Equivariance
+  prop
+  (Sym
+    (= (F (V $v0)) (V $v0))
+    (Equivariance
+      (= (V $v0) (F (V $v0)))
+      (Sym
+        (= (V $a) (F (V $a)))
+        (Rule
+          prop
+          (name "unwrap")
+          (premises (Fiat (= (F (V $a)) (F (V $a)))))
+          (substitution (v1 (V $a)))))
+      (renaming ($v0 $v3) ($a $v0) ($v3 $a))))
+  (renaming ($v0 $a) ($a $v0)))

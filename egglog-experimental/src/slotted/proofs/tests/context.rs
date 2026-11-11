@@ -180,6 +180,29 @@ fn free_slots_respect_binders() {
 }
 
 #[test]
+fn free_slots_preserve_scope_when_a_term_is_shared() {
+    let mut dag = TermDag::default();
+    let mut program = ProofContext::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
+    program.add_constructor("Lam", vec![ColumnKind::Binder, ColumnKind::Child]);
+    program.add_constructor("Pair", vec![ColumnKind::Child; 2]);
+    program.add_let(&mut dag, "shared", "(V $0)").unwrap();
+    let mut shared = program.lets["shared"];
+    for _ in 0..64 {
+        shared = dag.app("Pair".into(), vec![shared, shared]);
+    }
+    assert_eq!(program.free_slots(&dag, shared), BTreeSet::from([0]));
+    let slot = super::super::terms::slot_term(&mut dag, 0);
+    let bound = dag.app("Lam".into(), vec![slot, shared]);
+    let bound_then_free = dag.app("Pair".into(), vec![bound, shared]);
+    let free_then_bound = dag.app("Pair".into(), vec![shared, bound]);
+    assert_eq!(program.free_slots(&dag, bound), BTreeSet::new());
+    for parent in [bound_then_free, free_then_bound] {
+        assert_eq!(program.free_slots(&dag, parent), BTreeSet::from([0]));
+    }
+}
+
+#[test]
 fn alpha_matching_preserves_free_names_and_binding_scope() {
     let mut dag = TermDag::default();
     let mut program = ProofContext::default();
@@ -276,7 +299,7 @@ fn renaming_comparison_preserves_aliasing_payloads_and_binding() {
 }
 
 #[test]
-fn subst_is_refused() {
+fn subst_is_resolved_as_a_source_primitive() {
     let mut dag = TermDag::default();
     let mut program = ProofContext::default();
     program.add_constructor("V", vec![ColumnKind::Var]);
@@ -284,13 +307,13 @@ fn subst_is_refused() {
         "Let",
         vec![ColumnKind::Child, ColumnKind::Binder, ColumnKind::Child],
     );
-    let err = program
+    let name = program
         .add_rewrite(
             &mut dag,
             r#"(rewrite (Let t $x b) (subst b $x t) :name "beta")"#,
         )
-        .unwrap_err();
-    assert!(err.0.contains("subst"));
+        .unwrap();
+    assert_eq!(name, "beta");
 }
 
 impl ProofContext {

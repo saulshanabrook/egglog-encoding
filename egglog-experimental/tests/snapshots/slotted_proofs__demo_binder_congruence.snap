@@ -12,19 +12,35 @@ Source:
 Proof:
 (let t (Lam $a (F (V $a))))
 (let t_1 (Wrap t))
-(let t_2 (Lam $a (G (V $a))))
+(let t_2 (Lam $v1 (F (V $v1))))
+(let t_3 (Wrap t_2))
+(let t_4 (Lam $v1 (G (V $v1))))
+(let prf (Fiat (= t_1 t_1)))
+(let t_5 (renaming ($a $v1) ($v1 $a)))
+(let t_6 (Lam $v0 (F (V $v0))))
+(let prf_1 (Proj (= t t) prf 0))
+(let t_7 (renaming ($a $v0) ($v0 $a)))
 (Claim
   (= t_1 (rename (renaming ($a $b) ($b $a)) (Wrap (Lam $b (G (V $b))))))
-  (Congr
-    (= t_1 (Wrap t_2))
-    (Fiat (= t_1 t_1))
+  (Equivariance
+    (= t_1 (Wrap (Lam $a (G (V $a)))))
     (Congr
-      (= t t_2)
-      (Fiat (= t t))
-      (Rule
-        (= (F (V $a)) (G (V $a)))
-        (name "f-to-g")
-        (premises (Fiat (= (F (V $a)) (F (V $a)))))
-        (substitution (x (V $a))))
-      1)
-    0))
+      (= t_3 (Wrap t_4))
+      (Equivariance (= t_3 t_3) prf t_5)
+      (Equivariance
+        (= t_2 t_4)
+        (Congr
+          (= t_6 (Lam $v0 (G (V $v0))))
+          (Equivariance (= t_6 t_6) prf_1 t_7)
+          (Equivariance
+            (= (F (V $v0)) (G (V $v0)))
+            (Rule
+              (= (F (V $a)) (G (V $a)))
+              (name "f-to-g")
+              (premises (Proj (= (F (V $a)) (F (V $a))) prf_1 1))
+              (substitution (x (V $a))))
+            t_7)
+          1)
+        (renaming ($v1 $v0) ($v0 $v1)))
+      0)
+    t_5))

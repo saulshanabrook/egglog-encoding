@@ -23,7 +23,6 @@ pub(in crate::slotted) struct AppliedEquality {
 struct View {
     proposition: AppliedEquality,
     proof: ProofId,
-    chain: Option<(ViewId, ViewId)>,
 }
 
 pub(in crate::slotted) struct Coordinates {
@@ -55,12 +54,7 @@ impl Coordinates {
         }
     }
 
-    fn record(
-        &mut self,
-        view: AppliedEquality,
-        proof: ProofId,
-        chain: Option<(ViewId, ViewId)>,
-    ) -> ViewId {
+    fn record(&mut self, view: AppliedEquality, proof: ProofId) -> ViewId {
         let actual = self.store.proposition(proof).clone();
         debug_assert_eq!(actual.lhs, view.lhs);
         debug_assert_eq!(
@@ -70,7 +64,6 @@ impl Coordinates {
         let lifted = View {
             proposition: view,
             proof,
-            chain,
         };
         if let Some(&id) = self.index.get(&lifted) {
             return id;
@@ -90,7 +83,6 @@ impl Coordinates {
                 rhs: p.rhs,
             },
             proof,
-            None,
         )
     }
 
@@ -106,16 +98,11 @@ impl Coordinates {
                 renaming,
             },
             proof,
-            None,
         )
     }
 
     pub fn edge(&self, id: ViewId) -> &AppliedEquality {
         &self.views[id].proposition
-    }
-
-    pub fn chain(&self, id: ViewId) -> Option<(ViewId, ViewId)> {
-        self.views[id].chain
     }
 
     pub fn normalize(&self, p: AppliedEquality) -> AppliedEquality {
@@ -142,7 +129,6 @@ impl Coordinates {
                 rhs: p.lhs,
             },
             proof,
-            None,
         )
     }
 
@@ -165,7 +151,6 @@ impl Coordinates {
                 rhs: r.rhs,
             },
             proof,
-            Some((left, right)),
         ))
     }
 
@@ -184,7 +169,7 @@ impl Coordinates {
             .congr(self.views[id].proof, child_index, child_proof)?;
         let actual_rhs = self.store.proposition(proof).rhs;
         let rhs = rename(&mut self.term_dag, &p.renaming.inverse(), actual_rhs);
-        Ok(self.record(AppliedEquality { rhs, ..p }, proof, None))
+        Ok(self.record(AppliedEquality { rhs, ..p }, proof))
     }
 
     pub fn project(&mut self, id: ViewId, child_index: usize) -> Result<ViewId, MalformedStep> {
@@ -203,7 +188,7 @@ impl Coordinates {
             renaming: p.renaming.compose(&sigma.inverse()),
             ..p
         };
-        self.record(view, self.views[id].proof, None)
+        self.record(view, self.views[id].proof)
     }
 
     pub fn equivariance(&mut self, id: ViewId, sigma: &Renaming) -> ViewId {
@@ -217,7 +202,6 @@ impl Coordinates {
                 rhs: p.rhs,
             },
             proof,
-            None,
         )
     }
 
@@ -266,10 +250,6 @@ impl Coordinates {
             p.renaming,
             self.term_dag.to_string(p.rhs)
         )
-    }
-
-    pub fn proof_to_string(&self, id: ViewId) -> String {
-        self.store.proof_to_string(self.views[id].proof)
     }
 
     pub fn finish(self, id: ViewId) -> (SlottedProofStore, ProofId) {

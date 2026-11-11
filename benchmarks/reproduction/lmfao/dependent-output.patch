@@ -1,0 +1,19 @@
+diff --git a/src/codegen/CppGenerator.cpp b/src/codegen/CppGenerator.cpp
+index 37bc897..483ffe0 100644
+--- a/src/codegen/CppGenerator.cpp
++++ b/src/codegen/CppGenerator.cpp
+@@ -5221,9 +5221,12 @@ std::pair<size_t,size_t> CppGenerator::addDependentProductToLoop(
+             regTuple.viewAgg = regTupleView;
+             regTuple.singleViewAgg = singleViewAgg;
+             regTuple.postLoop = previousLoopComp;
+-            
++            regTuple.preLoopAgg =
++                (thisLoop.loopFactors & outViewLoop[view_id]) == thisLoop.loopFactors &&
++                previousLoopComp.first >= depListOfLoops.size();
++            regTuple.prevDepth = viewLevelRegister[view_id];
+             regTuple.previous = prevAgg;
+-            
++
+             auto regit = aggregateRegisterMap[thisLoopID].find(regTuple);
+             if (regit != aggregateRegisterMap[thisLoopID].end())
+             {

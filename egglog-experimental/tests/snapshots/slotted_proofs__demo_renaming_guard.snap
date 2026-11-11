@@ -13,6 +13,7 @@ Source:
 
 Proof:
 (let t (Pair (V $a) (V $b)))
+(let prf (Fiat (= (F (V $a)) (G (V $a)))))
 (Rule
   (= t (Hit))
   (name "guard")
@@ -20,6 +21,8 @@ Proof:
     (Fiat (= t t))
     (RenamingEq
       (renaming-= (F (V $a)) (G (V $b)))
-      (Fiat (= (F (V $a)) (G (V $a))))
-      (Fiat (= (G (V $b)) (G (V $b))))))
+      (Trans (= (F (V $a)) (F (V $a))) prf (Sym (= (G (V $a)) (F (V $a))) prf))
+      (Sym
+        (= (G (V $b)) (F (V $b)))
+        (Equivariance (= (F (V $b)) (G (V $b))) prf (renaming ($a $b) ($b $a))))))
   (substitution ($x $a) ($y $b)))

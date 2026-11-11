@@ -9,6 +9,22 @@ use std::sync::Arc;
 
 pub(super) type ProofRequests = BTreeMap<usize, Arc<ProofRequest>>;
 
+#[derive(Clone)]
+pub(super) struct ExtractRequest {
+    pub compiler: super::Compiler,
+    pub input: String,
+}
+
+impl fmt::Debug for ExtractRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtractRequest")
+            .field("input", &self.input)
+            .finish_non_exhaustive()
+    }
+}
+
+pub(super) type ExtractRequests = BTreeMap<usize, Arc<ExtractRequest>>;
+
 /// Lowered slotted commands with their original checking programs.
 /// Use [`Self::run`] to execute them, including source-level proof checking.
 /// Display serializes only the lowered commands; proof replay also needs this
@@ -17,6 +33,8 @@ pub(super) type ProofRequests = BTreeMap<usize, Arc<ProofRequest>>;
 pub struct CompiledProgram {
     pub(super) commands: Vec<Command>,
     pub(super) proofs: ProofRequests,
+    pub(super) extractions: ExtractRequests,
+    pub(super) substitutions: BTreeMap<usize, Arc<super::proofs::runtime_substitution::Phase>>,
 }
 
 impl Display for CompiledProgram {
@@ -53,6 +71,8 @@ impl CompiledProgram {
         Ok(Self {
             commands: graph.parse_program(filename, encoded)?,
             proofs: self.proofs.clone(),
+            extractions: self.extractions.clone(),
+            substitutions: self.substitutions.clone(),
         })
     }
 
@@ -64,6 +84,45 @@ impl CompiledProgram {
         let mut outputs = Vec::new();
         let mut pending = Vec::new();
         for command in commands {
+            if let Command::UserDefined(_, name, args) = &command
+                && name == "slotted-substitute"
+            {
+                outputs.extend(graph.run_program(std::mem::take(&mut pending))?);
+                let [Expr::Lit(_, Literal::Int(id))] = args.as_slice() else {
+                    return Err(error("expected (slotted-substitute phase-id)"));
+                };
+                let phase = usize::try_from(*id)
+                    .ok()
+                    .and_then(|id| self.substitutions.get(&id))
+                    .ok_or_else(|| error(format!("missing substitution phase {id}")))?;
+                outputs.extend(phase.run(graph)?);
+                continue;
+            }
+            if let Command::UserDefined(_, name, args) = &command
+                && name == "slotted-prove-extract"
+            {
+                outputs.extend(graph.run_program(std::mem::take(&mut pending))?);
+                let [Expr::Lit(_, Literal::Int(id)), args @ ..] = args.as_slice() else {
+                    return Err(error(
+                        "expected (slotted-prove-extract request-id term frame slots...)",
+                    ));
+                };
+                let request = usize::try_from(*id)
+                    .ok()
+                    .and_then(|id| self.extractions.get(&id))
+                    .ok_or_else(|| error(format!("missing extraction request {id}")))?;
+                use egglog::UserDefinedCommand;
+                let extracted = super::extract::ExtractCommand.update(graph, args)?;
+                let Some(CommandOutput::ExtractBest(dag, _, term)) = extracted.first() else {
+                    return Err(error("extraction returned no representative"));
+                };
+                let check = format!("(check (= {} {}))", request.input, dag.to_string(*term));
+                let mut compiler = request.compiler.clone();
+                let certificate = compiler.compile_program(None, &check)?.run(graph)?;
+                outputs.extend(extracted);
+                outputs.extend(certificate);
+                continue;
+            }
             if let Command::UserDefined(_, name, args) = &command
                 && name == "slotted-prove"
             {

@@ -1,0 +1,26 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+(datatype E (Num i64) (V Var) (Let E Var E :binder 1))
+(let input (Let (Num 7) $x (V $x)))
+(rewrite (Let value $v body) (subst body $v value) :name "beta")
+(run 1)
+(check (= input (Num 7)))
+
+Proof:
+(let t (Let (Num 7) $x (V $x)))
+(let t_1 (Let (Num 7) $v0 (V $v0)))
+(Equivariance
+  (= t (Num 7))
+  (Rule
+    (= t_1 (Num 7))
+    (name "beta")
+    (premises
+      (Equivariance
+        (= t_1 t_1)
+        (Fiat (= t t))
+        (renaming ($x $v0) ($v1 $x) ($v0 $v1))))
+    (substitution (value (Num 7)) ($v $v0) (body (V $v0))))
+  (renaming ($x $v2) ($v2 $v1) ($v1 $v0) ($v0 $x)))

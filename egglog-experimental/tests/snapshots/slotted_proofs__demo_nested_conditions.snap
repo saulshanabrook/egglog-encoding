@@ -11,11 +11,9 @@ Source:
 (check (= input side))
 
 Proof:
+(let prf (Fiat (= (F (G (A))) (F (G (A))))))
 (Rule
   (= (F (G (A))) (H (A)))
   (name "nested")
-  (premises
-    (Fiat (= (F (G (A))) (F (G (A)))))
-    (Fiat (= (G (A)) (G (A))))
-    (Fiat (= (H (A)) (H (A)))))
+  (premises prf (Proj (= (G (A)) (G (A))) prf 0) (Fiat (= (H (A)) (H (A)))))
   (substitution (x (A)) (y (G (A)))))

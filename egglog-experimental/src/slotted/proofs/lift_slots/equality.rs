@@ -2,7 +2,13 @@
 
 use super::*;
 
-impl SlotLifter<'_> {
+/// The first term or slot conflict in a structural match.
+pub(super) enum SlotMismatch {
+    Terms(TermId, TermId),
+    Conflict(i64, i64, i64),
+}
+
+impl SlotLifter<'_, NativeProofs<'_>> {
     /// Record that `proof` proves `lhs = …`, so `lhs`'s reflexivity is available.
     pub(super) fn note(&mut self, proof: ViewId) -> ViewId {
         let p = self.out.edge(proof).clone();
@@ -24,71 +30,27 @@ impl SlotLifter<'_> {
             let s = self.out.sym(p);
             return self.out.trans(p, s).map_err(|e| e.to_string());
         }
-        // a term the same as a built or known one up to a renaming of its slots:
-        // its reflexivity follows by equivariance of the known equality
-        let candidates: Vec<TermId> = self
-            .program
-            .built_terms(&self.out.term_dag)
-            .into_iter()
-            .chain(self.known.keys().copied())
-            .collect();
-        for other in candidates {
-            let mut pairs = BTreeMap::new();
-            if other == t || self.unify_slots(other, t, &mut pairs).is_err() {
-                continue;
-            }
-            let Some(sigma) = Renaming::completing(pairs.iter().map(|(k, v)| (*k, *v))) else {
-                continue;
-            };
-            let r = self.reflexive(other)?; // other = other
-            let reframed = self.out.reframe(r, sigma); // other = σ⁻¹·t
-            let s = self.out.sym(reframed); // t = σ·other
-            let back = self.out.trans(s, reframed).map_err(|e| e.to_string())?; // t = t
-            return Ok(self.note(back));
-        }
         Err(format!(
             "no proof establishes the term {}",
             self.out_string(t)
         ))
     }
 
-    /// Establish a class from the carrier equalities in a premise's derivation.
-    fn establish(&mut self, class: TermId, premise: ProofId) -> LiftResult<ViewId> {
-        let term = self.dec(class)?;
-        let mut pending = vec![premise];
-        let mut seen = HashSet::default();
-        while let Some(id) = pending.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            let proof = self.egg.get(id);
-            if (proof.lhs() == class || proof.rhs() == class)
-                && self.eq(id).is_ok()
-                && let Ok(proof) = self.reflexive(term)
-            {
-                return Ok(proof);
-            }
-            match proof.justification() {
-                Justification::Rule { premise_proofs, .. } => pending.extend(premise_proofs),
-                Justification::MergeFn {
-                    old_proof,
-                    new_proof,
-                    ..
-                } => pending.extend([*old_proof, *new_proof]),
-                Justification::Trans(a, b) => pending.extend([*a, *b]),
-                Justification::Congr {
-                    proof, child_proof, ..
-                } => pending.extend([*proof, *child_proof]),
-                Justification::Sym(proof)
-                | Justification::Proj { proof, .. }
-                | Justification::ContainerNormalize { proof } => pending.push(*proof),
-                Justification::Fiat | Justification::Eval => {}
-            }
+    /// Compose through an exact or alpha-equivalent middle term.
+    pub(super) fn trans(&mut self, mut p: ViewId, q: ViewId) -> LiftResult<ViewId> {
+        let left = self.out.edge(p).rhs;
+        let middle = self.out.edge(q).lhs;
+        if left != middle
+            && self.term_shapes.get(&self.out.term_dag, left)
+                == self.term_shapes.get(&self.out.term_dag, middle)
+            && self.program.alpha_eq(&mut self.out.term_dag, left, middle)
+        {
+            let renaming = self.out.edge(p).renaming.clone();
+            let actual = rename(&mut self.out.term_dag, &renaming, middle);
+            let proof = self.out.proof(p);
+            let proof = self.out.alpha(proof, actual);
+            p = self.out.view(proof, middle, renaming);
         }
-        self.reflexive(term)
-    }
-
-    pub(super) fn trans(&mut self, p: ViewId, q: ViewId) -> LiftResult<ViewId> {
         let r = self.out.trans(p, q).map_err(|e| e.to_string())?;
         Ok(self.note(r))
     }
@@ -143,40 +105,58 @@ impl SlotLifter<'_> {
         b: TermId,
         pairs: &mut BTreeMap<i64, i64>,
     ) -> LiftResult<()> {
-        let dag = &self.out.term_dag;
-        match (dag.get(a).clone(), dag.get(b).clone()) {
-            (Term::Var(x), Term::Var(y)) => {
-                let (sa, sb) = (
-                    super::super::terms::slot_of(dag, a),
-                    super::super::terms::slot_of(dag, b),
-                );
-                match (sa, sb) {
-                    (Some(sa), Some(sb)) => match pairs.get(&sa) {
-                        Some(&prev) if prev != sb => Err(format!(
-                            "slot ${sa} would have to be both ${prev} and ${sb}"
-                        )),
-                        _ => {
-                            pairs.insert(sa, sb);
-                            Ok(())
-                        }
-                    },
-                    _ if x == y => Ok(()),
-                    _ => Err(format!("cannot align {x} with {y}")),
-                }
-            }
-            (Term::Lit(x), Term::Lit(y)) if x == y => Ok(()),
-            (Term::App(h1, c1), Term::App(h2, c2)) if h1 == h2 && c1.len() == c2.len() => {
-                for (x, y) in c1.iter().zip(c2.iter()) {
-                    self.unify_slots(*x, *y, pairs)?;
-                }
-                Ok(())
-            }
-            _ => Err(format!(
+        self.match_slots(a, b, pairs).map_err(|error| match error {
+            SlotMismatch::Terms(a, b) => format!(
                 "cannot align {} with {}",
                 self.out_string(a),
                 self.out_string(b)
-            )),
+            ),
+            SlotMismatch::Conflict(sa, prev, sb) => {
+                format!("slot ${sa} would have to be both ${prev} and ${sb}")
+            }
+        })
+    }
+
+    pub(super) fn match_slots(
+        &self,
+        a: TermId,
+        b: TermId,
+        pairs: &mut BTreeMap<i64, i64>,
+    ) -> Result<(), SlotMismatch> {
+        let dag = &self.out.term_dag;
+        let mut pending = vec![(a, b)];
+        let mut seen = HashSet::default();
+        while let Some((a, b)) = pending.pop() {
+            if !seen.insert((a, b)) {
+                continue;
+            }
+            match (dag.get(a), dag.get(b)) {
+                (Term::Var(x), Term::Var(y)) => {
+                    let (sa, sb) = (
+                        super::super::terms::slot_of(dag, a),
+                        super::super::terms::slot_of(dag, b),
+                    );
+                    match (sa, sb) {
+                        (Some(sa), Some(sb)) => match pairs.get(&sa) {
+                            Some(&prev) if prev != sb => {
+                                return Err(SlotMismatch::Conflict(sa, prev, sb));
+                            }
+                            _ => {
+                                pairs.insert(sa, sb);
+                            }
+                        },
+                        _ if x == y => (),
+                        _ => return Err(SlotMismatch::Terms(a, b)),
+                    }
+                }
+                (Term::Lit(x), Term::Lit(y)) if x == y => (),
+                (Term::App(h1, c1), Term::App(h2, c2)) if h1 == h2 && c1.len() == c2.len() => {
+                    pending.extend(c1.iter().copied().zip(c2.iter().copied()).rev());
+                }
+                _ => return Err(SlotMismatch::Terms(a, b)),
+            }
         }
+        Ok(())
     }
 
     /// The slotted proof of the equality an egglog proof denotes: for a carrier
@@ -187,7 +167,9 @@ impl SlotLifter<'_> {
             return Ok(p);
         }
         let proof = self.egg.get(id).clone();
-        let result = if self.is_carrier_term(proof.lhs()) {
+        let result = if let Some(&source) = self.anchors.get(&id) {
+            self.anchored_proof(source, proof.lhs(), proof.rhs())?
+        } else if self.is_carrier_term(proof.lhs()) {
             self.eq_direct(id)?
         } else {
             self.row_eq(id, true)?
@@ -200,19 +182,21 @@ impl SlotLifter<'_> {
     pub(super) fn eq_direct(&mut self, id: ProofId) -> LiftResult<ViewId> {
         let proof = self.egg.get(id).clone();
         let (lhs, rhs) = (proof.lhs(), proof.rhs());
+        if self.is_carrier_term(lhs) {
+            if let Some(&proof) = self.eq_memo.get(&id) {
+                return Ok(proof);
+            }
+            if let Some(&source) = self.anchors.get(&id) {
+                return self.anchored_proof(source, lhs, rhs);
+            }
+        }
         let result = match proof.justification() {
             Justification::Fiat => {
-                if lhs == rhs {
-                    if self.is_carrier_term(lhs) {
-                        let t = self.dec(lhs)?;
-                        self.reflexive(t)?
-                    } else {
-                        self.row_fiat(lhs)?
-                    }
-                } else {
-                    let (l, r) = (self.dec(lhs)?, self.dec(rhs)?);
-                    self.source_union(l, &Renaming::identity(), r)?
-                }
+                let source = *self
+                    .anchors
+                    .get(&id)
+                    .ok_or_else(|| format!("proof {id} has no recorded source occurrence"))?;
+                return self.anchored_proof(source, lhs, rhs);
             }
             Justification::Sym(p) => {
                 let q = self.eq(*p)?;
@@ -228,35 +212,37 @@ impl SlotLifter<'_> {
                 child_index,
                 child_proof,
             } => self
-                .congr(*proof, *child_index, *child_proof, rhs)
+                .congr(id, *proof, *child_index, *child_proof)
                 .map_err(|e| format!("in a congruence at {child_index}: {e}"))?,
-            Justification::Proj { proof, .. } => {
-                // Reuse an established surface term, translating the parent if needed.
-                let term = self.dec(lhs)?;
-                self.reflexive(term).or_else(|_| {
-                    self.eq(*proof)?;
-                    self.reflexive(term)
-                })?
-            }
-            Justification::Rule {
-                name,
-                premise_proofs,
-                substitution,
-            } => {
-                let name = name.clone();
-                let prems = premise_proofs.clone();
-                let subst = substitution.clone();
-                if lhs == rhs
-                    && self.is_carrier_term(lhs)
-                    && let Ok(t) = self.dec(lhs)
-                    && let Ok(r) = self.reflexive(t)
-                {
-                    // a term the rule built that is already at hand
-                    return Ok(r);
+            Justification::Proj { proof, child_index } => {
+                let row = self.egg.get(*proof).rhs();
+                if self.is_carrier_term(row) {
+                    self.project(*proof, *child_index)?
+                } else {
+                    let term = self.dec(lhs)?;
+                    if !self.program.is_built(&self.out.term_dag, term)
+                        && !self.known.contains_key(&term)
+                    {
+                        self.eq(*proof)?;
+                    }
+                    self.reflexive(term)?
                 }
-                let r = self
-                    .rule(&name, &prems, &subst, lhs, rhs)
-                    .map_err(|e| format!("in rule {:?}: {e}", name.lines().next().unwrap_or("")))?;
+            }
+            Justification::Rule { name, .. } => {
+                if lhs == rhs && self.is_carrier_term(lhs) {
+                    let term = self.dec(lhs)?;
+                    if self.program.is_built(&self.out.term_dag, term)
+                        || self.known.contains_key(&term)
+                    {
+                        return self.reflexive(term);
+                    }
+                }
+                let r = self.rule(id).map_err(|e| {
+                    format!(
+                        "in rule {:?} at proof {id}: {e}",
+                        name.lines().next().unwrap_or("")
+                    )
+                })?;
                 if lhs == rhs && self.is_carrier_term(lhs) {
                     // the term the rule built equals itself
                     self.orient(r, lhs, rhs)?
@@ -277,75 +263,174 @@ impl SlotLifter<'_> {
         Ok(result)
     }
 
-    /// A row stated at the top level.
-    fn row_fiat(&mut self, row: TermId) -> LiftResult<ViewId> {
-        let (head, args) = self.app(row).ok_or("not a row")?;
-        match row_kind(head) {
-            RowKind::Edge => {
-                let (a, b) = (self.dec(args[0])?, self.dec(args[2])?);
-                let m = self.slot_map(args[1])?;
-                let completion = self.complete(&m, b);
-                if a == b && completion.is_identity() {
-                    self.reflexive(a)
-                } else {
-                    self.source_union(a, &completion, b)
-                }
+    pub(super) fn existence_from(
+        &mut self,
+        mut proof: ViewId,
+        target: TermId,
+    ) -> LiftResult<ViewId> {
+        proof = self.content_form(proof);
+        let actual = self.out.edge(proof).rhs;
+        if actual != target {
+            if self.term_shapes.get(&self.out.term_dag, actual)
+                != self.term_shapes.get(&self.out.term_dag, target)
+            {
+                return Err(format!(
+                    "recorded term {actual} and requested term {target} have different structures"
+                ));
             }
-            _ => Err(format!(
-                "top-level row {} denotes no equality",
-                self.egg_string(row)
-            )),
+            let renaming = term_renaming(&self.out.term_dag, &[(actual, target)])
+                .or_else(|| {
+                    self.program
+                        .renaming_between(&mut self.out.term_dag, actual, target)
+                })
+                .ok_or_else(|| {
+                    format!("recorded term {actual} is not a renaming of requested term {target}")
+                })?;
+            proof = self.rename_both(proof, &renaming);
         }
+        let mut ordinary = self.out.proof(proof);
+        if self.out.proposition(ordinary).rhs != target {
+            ordinary = self.out.alpha(ordinary, target);
+        }
+        proof = self.out.plain(ordinary);
+        if self.out.edge(proof).lhs == target {
+            return Ok(self.note(proof));
+        }
+        let back = self.out.sym(proof);
+        self.trans(back, proof)
     }
 
-    /// Decoding gives binders fresh names, independently of the source reader.
-    /// Only the recorded source union is Fiat; transport it to the decoded
-    /// spellings using the proof algebra, keeping the source's free slots fixed.
-    fn source_union(&mut self, lhs: TermId, m: &Renaming, rhs: TermId) -> LiftResult<ViewId> {
-        let target = rename(&mut self.out.term_dag, m, rhs);
-        for u in &self.program.unions {
-            for (a, b) in [(u.lhs, u.rhs), (u.rhs, u.lhs)] {
-                let mut left = BTreeMap::new();
-                let mut right = BTreeMap::new();
-                if self.unify_slots(a, lhs, &mut left).is_err()
-                    || self.unify_slots(b, target, &mut right).is_err()
-                    || self
-                        .program
-                        .free_slots(&self.out.term_dag, a)
-                        .iter()
-                        .any(|s| left.get(s) != Some(s))
-                    || self
-                        .program
-                        .free_slots(&self.out.term_dag, b)
-                        .iter()
-                        .any(|s| right.get(s) != Some(s))
-                {
-                    continue;
-                }
-                let Some(rho) = Renaming::completing(left) else {
-                    continue;
-                };
-                let p = self.out.fiat(a, b);
-                let p = self.rename_both(p, &rho);
-                return self.align(p, rhs);
-            }
+    fn anchored_proof(&mut self, source: ProofId, lhs: TermId, rhs: TermId) -> LiftResult<ViewId> {
+        let mut proof = self.out.plain(source);
+        if self.is_carrier_term(lhs) && lhs == rhs {
+            let target = self.dec(lhs)?;
+            return self.existence_from(proof, target);
         }
-        Err(format!(
-            "no source union establishes {} = {m}·{}",
-            self.out_string(lhs),
-            self.out_string(rhs)
-        ))
+        let (left, right, content, renaming) = if self.is_carrier_term(lhs) {
+            let (left, right) = (self.dec(lhs)?, self.dec(rhs)?);
+            (left, right, right, Renaming::identity())
+        } else {
+            let (a, mapping, b) = self.row_sides(rhs)?;
+            let (left, right) = (self.dec(a)?, self.dec(b)?);
+            let renaming = self.complete(&mapping, right);
+            let content = rename(&mut self.out.term_dag, &renaming, right);
+            (left, right, content, renaming)
+        };
+        let actual = self.out.edge(proof).clone();
+        let endpoints = [(actual.lhs, left), (actual.rhs, content)];
+        if endpoints.iter().any(|(actual, target)| actual != target) {
+            let coordinates = term_renaming(&self.out.term_dag, &endpoints)
+                .or_else(|| {
+                    let mut coordinates = BTreeMap::new();
+                    for (actual, target) in endpoints {
+                        let renaming = self.program.renaming_between(
+                            &mut self.out.term_dag,
+                            actual,
+                            target,
+                        )?;
+                        for slot in self.program.free_slots(&self.out.term_dag, actual) {
+                            let image = renaming.apply(slot);
+                            if coordinates
+                                .insert(slot, image)
+                                .is_some_and(|old| old != image)
+                            {
+                                return None;
+                            }
+                        }
+                    }
+                    Renaming::completing(coordinates)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "recorded equality has no common coordinates for endpoints {} and {}",
+                        left, content,
+                    )
+                })?;
+            proof = self.rename_both(proof, &coordinates);
+        }
+        let mut ordinary = self.out.proof(proof);
+        let proposition = self.out.proposition(ordinary).clone();
+        if !self
+            .program
+            .alpha_eq(&mut self.out.term_dag, proposition.lhs, left)
+            || !self
+                .program
+                .alpha_eq(&mut self.out.term_dag, proposition.rhs, content)
+        {
+            return Err(format!(
+                "recorded equality {} does not denote {} = {}",
+                self.prop_string(proof),
+                self.out_string(left),
+                self.out_string(content)
+            ));
+        }
+        if proposition.lhs != left {
+            let view = self.out.plain(ordinary);
+            let reversed = self.out.sym(view);
+            ordinary = self.out.proof(reversed);
+            ordinary = self.out.alpha(ordinary, left);
+            let view = self.out.plain(ordinary);
+            let reversed = self.out.sym(view);
+            ordinary = self.out.proof(reversed);
+        }
+        if self.out.proposition(ordinary).rhs != content {
+            ordinary = self.out.alpha(ordinary, content);
+        }
+        let proof = self.out.view(ordinary, right, renaming);
+        Ok(self.note(proof))
+    }
+
+    pub(super) fn project(&mut self, parent: ProofId, physical: usize) -> LiftResult<ViewId> {
+        self.project_side(parent, physical, true)
+    }
+
+    pub(super) fn project_side(
+        &mut self,
+        parent: ProofId,
+        physical: usize,
+        rhs: bool,
+    ) -> LiftResult<ViewId> {
+        let statement = self.egg.get(parent);
+        let row = if rhs {
+            statement.rhs()
+        } else {
+            statement.lhs()
+        };
+        let head = self
+            .app(row)
+            .ok_or("projection parent is not a constructor")?
+            .0;
+        let column = self.surface_column(head, physical)?;
+        let target = self.dec(row)?;
+        let mut parent = self.eq(parent)?;
+        if !rhs {
+            parent = self.out.sym(parent);
+        }
+        let parent = self.align(parent, target)?;
+        let projected = self
+            .out
+            .project(parent, column)
+            .map_err(|e| e.to_string())?;
+        let completion = self.edge_memo[&(row, column)].inverse();
+        Ok(self.rename_both(projected, &completion))
     }
 
     pub(super) fn congr(
         &mut self,
+        id: ProofId,
         proof: ProofId,
         child_index: usize,
         child_proof: ProofId,
-        conclusion_rhs: TermId,
     ) -> LiftResult<ViewId> {
+        let conclusion_rhs = self.egg.get(id).rhs();
         let base = self.egg.get(proof).clone();
         let base_rhs = base.rhs();
+        let child = self.egg.get(child_proof);
+        if child.lhs() == child.rhs() {
+            // Ground extraction retains congruences on literal and renaming
+            // operands too. A reflexive operand leaves the source step intact.
+            return self.eq(proof);
+        }
         if self.is_carrier_term(base_rhs) {
             // `t1 = F(.., c, ..)` and `c = c'`: congruence at the surface column.
             let p = self.eq(proof)?;
@@ -371,7 +456,7 @@ impl SlotLifter<'_> {
                 renamed = self.rename_both(renamed, &renaming);
             }
             let r = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
-            let occurrences = self.row_occurrences(conclusion_rhs)?;
+            let occurrences = self.row_occurrences(id, true)?;
             let aligned = self.fit(r, target, &occurrences)?;
             // A congruence whose base is reflexive may be read in either
             // direction later; both endpoints are now known.
@@ -424,14 +509,17 @@ impl SlotLifter<'_> {
     }
 
     /// The equality a rule firing concludes, by the rule.
-    pub(super) fn rule(
-        &mut self,
-        name: &str,
-        prems: &[ProofId],
-        subst: &IndexMap<String, TermId>,
-        lhs: TermId,
-        rhs: TermId,
-    ) -> LiftResult<ViewId> {
+    pub(super) fn rule(&mut self, id: ProofId) -> LiftResult<ViewId> {
+        let proof = self.egg.get(id).clone();
+        let (lhs, rhs) = (proof.lhs(), proof.rhs());
+        let Justification::Rule {
+            name,
+            premise_proofs: prems,
+            substitution: subst,
+        } = proof.justification()
+        else {
+            return Err("rule replay requires a rule proof".into());
+        };
         match rule_kind(self.program, name) {
             RuleKind::OrientMax => self.eq(prems[0]),
             RuleKind::OrientMin => {
@@ -439,11 +527,7 @@ impl SlotLifter<'_> {
                 let s = self.out.sym(p);
                 Ok(self.note(s))
             }
-            RuleKind::SeedIdentity => {
-                let c = self.sub(subst, "_c")?;
-                let t = self.dec(c)?;
-                self.reflexive(t).or_else(|_| self.establish(c, prems[0]))
-            }
+            RuleKind::SeedIdentity => self.support_class(prems[0], true),
             RuleKind::Transitivity => {
                 let (p, q) = (self.eq(prems[0])?, self.eq(prems[1])?);
                 self.trans(p, q)
@@ -461,7 +545,7 @@ impl SlotLifter<'_> {
                 // the names of its binders
                 let node = self.eq(prems[0])?; // node = row
                 let node_egg = self.sub(subst, "_node")?;
-                self.finish_union(node, lhs, rhs, node_egg)
+                self.finish_union(id, node, lhs, rhs, node_egg)
             }
             RuleKind::Invocation => {
                 // `a = m·c` and `name = m∘g`: `a = name·c` through the symmetry g.
@@ -472,19 +556,37 @@ impl SlotLifter<'_> {
                     self.slot_map(self.sub(subst, "_name")?)?,
                 );
                 let grp = self.group(self.sub(subst, "_grp")?)?;
-                let g = grp
-                    .iter()
-                    .find(|g| compose(&m, g) == name)
-                    .cloned()
-                    .ok_or("coset-min's element is not in the group")?;
-                if is_identity(&g) {
-                    return Ok(p);
+                let (index, least) = crate::slotted::runtime::group::coset_min_with_index(&m, &grp)
+                    .ok_or("coset-min has an empty group")?;
+                if least != *name {
+                    return Err("recorded coset-min differs from its primitive inputs".into());
                 }
-                let s = self.symmetry(c, &g, prems[1])?;
+                let g = &grp[index];
+                let s = self.symmetry(c, g, prems[1])?;
                 self.trans(p, s)
             }
             RuleKind::InvocationMerge => {
-                let (pa, pb) = (self.eq(prems[0])?, self.eq(prems[1])?);
+                let (mut pa, pb) = (self.eq(prems[0])?, self.eq(prems[1])?);
+                // Equal partial names may have different completions. Prove
+                // their difference irrelevant before identifying the classes.
+                let adjustment = self
+                    .out
+                    .edge(pa)
+                    .renaming
+                    .inverse()
+                    .compose(&self.out.edge(pb).renaming);
+                if !adjustment.is_identity() {
+                    let support = Support {
+                        origin: SupportOrigin::Row {
+                            proof: prems[0],
+                            column: Some(0),
+                        },
+                        transport: None,
+                    };
+                    let class = self.sub(subst, "_c")?;
+                    let certificate = self.support_permutation(support, class, &adjustment)?;
+                    pa = self.trans(pa, certificate)?;
+                }
                 let s = self.out.sym(pb);
                 let r = self.trans(pa, s)?;
                 self.orient(r, lhs, rhs)
@@ -494,7 +596,7 @@ impl SlotLifter<'_> {
                 Ok(r)
             }
             RuleKind::ShapeDedup => {
-                let r = self.shape_dedup(prems, subst)?;
+                let r = self.shape_dedup(name, prems, subst)?;
                 Ok(r)
             }
             RuleKind::Migration => {
@@ -503,18 +605,14 @@ impl SlotLifter<'_> {
                 let s = self.out.sym(edge); // e1 = m⁻¹·e2
                 let p = self.trans(s, row)?; // e1 = ·row
                 let e1 = self.sub(subst, "_e1")?;
-                self.finish_union(p, lhs, rhs, e1)
+                self.finish_union(id, p, lhs, rhs, e1)
             }
             RuleKind::ChildUpdate => {
                 let edge = self.eq(prems[0])?; // c = m·c'
                 let node = self.eq(prems[1])?; // node = row
-                let j: usize = name
-                    .rsplit('/')
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .ok_or("child-update without a column")?;
                 let row = self.out.edge(node).rhs;
                 let row_egg = self.egg.get(prems[1]).rhs();
+                let j = self.updated_column(name, row_egg)?;
                 let completion = self.edge_memo.get(&(row_egg, j)).cloned().ok_or_else(|| {
                     format!("no decoded edge for column {j} of {}", self.out_string(row))
                 })?;
@@ -525,9 +623,9 @@ impl SlotLifter<'_> {
                     .map_err(|e| e.to_string())?;
                 let r = self.note(r);
                 let node_egg = self.sub(subst, "_node")?;
-                self.finish_union(r, lhs, rhs, node_egg)
+                self.finish_union(id, r, lhs, rhs, node_egg)
             }
-            RuleKind::Apply(user) => self.apply_rule(user, prems, subst, lhs, rhs),
+            RuleKind::Apply(user) => self.apply_rule(id, user, prems, subst, lhs, rhs),
             _ => Err(format!("no translation for rule {name:?}")),
         }
     }
@@ -537,6 +635,7 @@ impl SlotLifter<'_> {
     /// built term's surface form and turn the proof the way the step states it.
     fn finish_union(
         &mut self,
+        id: ProofId,
         p: ViewId,
         lhs: TermId,
         rhs: TermId,
@@ -557,7 +656,7 @@ impl SlotLifter<'_> {
             ));
         };
         let target = self.dec(built)?;
-        let occ = self.row_occurrences(built)?;
+        let occ = self.row_occurrences(id, built == rhs)?;
         let p = self.fit(p, target, &occ)?;
         self.orient(p, lhs, rhs)
     }
@@ -567,7 +666,7 @@ impl SlotLifter<'_> {
     pub(super) fn orient(&mut self, p: ViewId, lhs: TermId, rhs: TermId) -> LiftResult<ViewId> {
         let (l, r) = (self.dec(lhs)?, self.dec(rhs)?);
         let prop = self.out.edge(p).clone();
-        if l == r {
+        if lhs == rhs {
             // the step's own conclusion: the term it built equals itself
             if prop.lhs == l {
                 let s = self.out.sym(p);

@@ -88,7 +88,7 @@ struct SubstSnapshot {
 }
 
 impl SubstSnapshot {
-    fn load(state: &FullState<'_, '_>, free_vars: String) -> Result<Self, String> {
+    fn load<'a, 'db: 'a>(state: &impl Read<'a, 'db>, free_vars: String) -> Result<Self, String> {
         let layouts = Layouts::load(state, &free_vars)?;
         let mut names: Vec<String> = layouts.constructors.keys().cloned().collect();
         names.sort();
@@ -99,6 +99,143 @@ impl SubstSnapshot {
             slots_used,
             results: HashMap::new(),
         })
+    }
+}
+
+/// The same round-local tree choices used by the native substitution primitive,
+/// exposed read-only so proof mode can certify them before building results.
+pub(in crate::slotted) struct Representatives {
+    snapshot: SubstSnapshot,
+    memo: HashMap<Value, TermId>,
+    payloads: HashMap<String, BTreeMap<usize, String>>,
+}
+
+impl Representatives {
+    pub(in crate::slotted) fn new(graph: &EGraph, free_vars: &str) -> Result<Self, String> {
+        let source = crate::slotted::layout::Layouts::load(graph)?;
+        let carrier = source
+            .carriers
+            .iter()
+            .find(|carrier| carrier.free_vars == free_vars)
+            .ok_or("unknown substitution carrier")?;
+        let mut layouts = Layouts::default();
+        for (name, op) in source
+            .constructors
+            .iter()
+            .filter(|(_, op)| op.sort == carrier.sort)
+        {
+            use crate::slotted::model::Column;
+            let mut layout = Layout {
+                arity: 0,
+                edges: Vec::new(),
+                slots: Vec::new(),
+                binders: Vec::new(),
+                payloads: BTreeMap::new(),
+            };
+            let mut markers = Vec::new();
+            let mut covered = None;
+            let mut logical = 0;
+            for column in &op.columns {
+                match column {
+                    Column::Payload(sort) => {
+                        layout.payloads.insert(layout.arity, sort.clone());
+                    }
+                    Column::Child => {
+                        if Some(logical) == op.covered() {
+                            covered = Some(layout.arity);
+                        }
+                        layout.edges.push(layout.arity);
+                        logical += 1;
+                    }
+                    Column::Var | Column::Binder => {
+                        layout.slots.push(layout.arity);
+                        if *column == Column::Binder {
+                            markers.push(layout.arity);
+                        }
+                        logical += 1;
+                    }
+                }
+                layout.arity += if *column == Column::Child { 2 } else { 1 };
+            }
+            if let Some(covered) = covered {
+                layout
+                    .binders
+                    .extend(markers.into_iter().map(|marker| BinderLayout {
+                        marker,
+                        covered,
+                        discriminator: None,
+                    }));
+            }
+            layouts.constructors.insert(name.clone(), layout);
+        }
+        let mut names: Vec<_> = layouts.constructors.keys().cloned().collect();
+        names.sort();
+        let (terms, slots_used) =
+            graph.read(|state| build_terms(&state, &layouts, free_vars, &names))?;
+        let snapshot = SubstSnapshot {
+            free_vars: free_vars.to_owned(),
+            terms,
+            slots_used,
+            results: HashMap::new(),
+        };
+        Ok(Self {
+            snapshot,
+            memo: HashMap::new(),
+            payloads: layouts
+                .constructors
+                .into_iter()
+                .map(|(name, layout)| (name, layout.payloads))
+                .collect(),
+        })
+    }
+
+    pub(in crate::slotted) fn term(
+        &mut self,
+        dag: &mut TermDag,
+        class: Value,
+    ) -> Result<TermId, String> {
+        if let Some(&term) = self.memo.get(&class) {
+            return Ok(term);
+        }
+        let index = self
+            .snapshot
+            .terms
+            .best
+            .get(&class)
+            .copied()
+            .ok_or("substitution input has no finite representative")?;
+        let node = self.snapshot.terms.nodes[&class][index].clone();
+        let mut arguments = Vec::new();
+        let mut column = 0;
+        while column < node.args.len() {
+            if let Some(edge) = node.edges.iter().find(|edge| edge.col == column) {
+                arguments.push(super::terms::renaming_to_term(dag, &edge.ren));
+                arguments.push(self.term(dag, edge.child)?);
+                column += 2;
+            } else if let Some(slot) = node.slots.get(&column) {
+                arguments.push(super::terms::renaming_to_term(
+                    dag,
+                    &BTreeMap::from([(0, *slot)]),
+                ));
+                column += 1;
+            } else {
+                let text = node.payload_text[column]
+                    .as_ref()
+                    .ok_or("missing substitution payload spelling")?;
+                let literal = match self.payloads[&node.ctor][&column].as_str() {
+                    "String" => egglog::ast::Literal::String(text.clone()),
+                    "i64" => egglog::ast::Literal::Int(
+                        text.parse().map_err(|_| "invalid integer payload")?,
+                    ),
+                    _ => return Err("unsupported substitution payload".into()),
+                };
+                arguments.push(dag.lit(literal));
+                column += 1;
+            }
+        }
+        let term = dag.app(node.ctor, arguments);
+        self.memo.insert(class, term);
+        Ok(term)
     }
 }
 
@@ -400,8 +537,8 @@ fn intern(state: &mut FullState<'_, '_>, ren: &Renaming) -> Value {
 
 /// Every class's parsed nodes and smallest-term choice in this execution's snapshot.
 /// Uses FreeVars for public slots and layout metadata for physical columns.
-fn build_terms(
-    state: &FullState<'_, '_>,
+fn build_terms<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
     layouts: &Layouts,
     free_vars: &str,
     names: &[String],
@@ -600,8 +737,8 @@ fn template(
 }
 
 /// Decode a constructor row from the compiler-emitted physical layout.
-fn parse_node(
-    state: &FullState<'_, '_>,
+fn parse_node<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
     layouts: &Layouts,
     ctor: &str,
     children: &[Value],
@@ -669,7 +806,10 @@ fn parse_node(
     })
 }
 
-fn decode_renaming(state: &FullState<'_, '_>, value: Value) -> Result<Renaming, String> {
+fn decode_renaming<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
+    value: Value,
+) -> Result<Renaming, String> {
     let map = state
         .value_to_container::<MapContainer>(value)
         .ok_or_else(|| format!("metadata marks {value:?} as a Renaming, but it is not a Map"))?;
@@ -701,7 +841,10 @@ struct LayoutSchema {
     schema: Vec<ColumnTy>,
 }
 
-fn live_schema(state: &FullState<'_, '_>, name: &str) -> Result<LayoutSchema, String> {
+fn live_schema<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
+    name: &str,
+) -> Result<LayoutSchema, String> {
     if state.table_size(name).is_none() {
         return Err(format!("required table {name} is not live"));
     }
@@ -733,8 +876,8 @@ fn live_schema(state: &FullState<'_, '_>, name: &str) -> Result<LayoutSchema, St
     })
 }
 
-fn metadata_rows(
-    state: &FullState<'_, '_>,
+fn metadata_rows<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
     name: &str,
     inputs: &[ColumnTy],
 ) -> Result<Vec<Vec<Value>>, String> {
@@ -765,8 +908,8 @@ fn index(value: i64, what: &str) -> Result<usize, String> {
     usize::try_from(value).map_err(|_| format!("{what} must be a nonnegative column index"))
 }
 
-fn free_vars_if_present(
-    state: &FullState<'_, '_>,
+fn free_vars_if_present<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
     free_vars: &str,
     class: Value,
 ) -> Result<Option<Renaming>, String> {
@@ -785,7 +928,10 @@ fn free_vars_if_present(
     Ok(Some(slots))
 }
 
-fn validate_free_vars(state: &FullState<'_, '_>, free_vars: &str) -> Result<(), String> {
+fn validate_free_vars<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
+    free_vars: &str,
+) -> Result<(), String> {
     let action = live_schema(state, free_vars)?;
     if action.kind != FunctionSubtype::Custom
         || action.input_arity != 1
@@ -805,8 +951,8 @@ fn validate_free_vars(state: &FullState<'_, '_>, free_vars: &str) -> Result<(), 
     Ok(())
 }
 
-fn validate_constructor_layout(
-    state: &FullState<'_, '_>,
+fn validate_constructor_layout<'a, 'db: 'a>(
+    state: &impl Read<'a, 'db>,
     ctor: &str,
     layout: &Layout,
     string: ColumnTy,
@@ -922,7 +1068,7 @@ fn validate_constructor_layout(
 }
 
 impl Layouts {
-    fn load(state: &FullState<'_, '_>, free_vars: &str) -> Result<Self, String> {
+    fn load<'a, 'db: 'a>(state: &impl Read<'a, 'db>, free_vars: &str) -> Result<Self, String> {
         let string = ColumnTy::Base(state.base_values().get_ty::<S>());
         let integer = ColumnTy::Base(state.base_values().get_ty::<i64>());
 
@@ -1056,8 +1202,8 @@ impl Layouts {
         Ok(layouts)
     }
 
-    fn load_binders(
-        state: &FullState<'_, '_>,
+    fn load_binders<'a, 'db: 'a>(
+        state: &impl Read<'a, 'db>,
         string: ColumnTy,
         integer: ColumnTy,
         layouts: &mut Self,

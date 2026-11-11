@@ -1,0 +1,276 @@
+;;; Aggregate queries, directional views, and shared aggregate columns.
+;;; Schema regions are query-independent orientations of a fixed join tree.
+(sort U)
+(constructor V (Var) U)
+(constructor Lambda (Var U) U :binder 0)
+(constructor Mult (U U) U)
+(constructor Get (U U) U)
+(constructor Symbol (String) U)
+(constructor Pair (U U) U)
+(constructor Output (U U) U)
+(constructor Program (U) U)
+(constructor AggregateQuery (U U U) U)
+(constructor TreeRoot (U U) U)
+;;; origin, destination, subtree attributes, subtree functions, local functions, children
+(constructor Region (U U U U U U) U)
+(constructor Neighbor (U U) U)
+(constructor Cons (U U) U)
+(constructor Nil () U)
+(constructor B0 () U)
+(constructor B1 () U)
+(constructor Mask (U U) U)
+(constructor Weights (U U) U)
+(constructor WeightOne () U)
+;;; A scalar's body is a closed function of one source row.
+(constructor Scalar (U U) U)
+(constructor MaskUnion (U U) U)
+(constructor MaskIntersect (U U) U)
+(constructor SelectWeights (U U) U)
+(constructor WeightsEqual (U U) U)
+(constructor BoolAnd (U U) U)
+;;; region, output keys, requested weights, local weights, incoming aggregates
+(constructor ComputeView (U U U U U) U)
+(constructor SharedView (U U) U)
+(constructor ViewColumn (U U U U) U)
+
+;;; Balanced schema masks and function vectors are evaluated inside the graph.
+(rewrite (MaskIntersect (B0) b) (B0) :name "logical-intersect-zero")
+(rewrite (MaskIntersect (B1) b) b :name "logical-intersect-one")
+(rewrite (MaskIntersect (Mask a b) (Mask c d))
+  (Mask (MaskIntersect a c) (MaskIntersect b d)) :name "logical-intersect")
+(rewrite (MaskUnion (B0) b) b :name "logical-union-zero")
+(rewrite (MaskUnion (B1) b) (B1) :name "logical-union-one")
+(rewrite (MaskUnion (Mask a b) (Mask c d))
+  (Mask (MaskUnion a c) (MaskUnion b d)) :name "logical-union")
+(rewrite (SelectWeights (B0) weight) (WeightOne) :name "logical-select-zero")
+(rewrite (SelectWeights (B1) weight) weight :name "logical-select-one")
+(rewrite (SelectWeights (Mask a b) (Weights c d))
+  (Weights (SelectWeights a c) (SelectWeights b d)) :name "logical-select")
+(rewrite (BoolAnd (B0) b) (B0) :name "logical-and-zero")
+(rewrite (BoolAnd (B1) b) b :name "logical-and-one")
+(rewrite (WeightsEqual (WeightOne) (WeightOne)) (B1) :name "logical-equal-unit")
+(rewrite (WeightsEqual (Scalar owner body) (Scalar owner body)) (B1) :name "logical-equal-scalar")
+(rewrite (WeightsEqual (Scalar owner body) (WeightOne)) (B0) :name "logical-different-left")
+(rewrite (WeightsEqual (WeightOne) (Scalar owner body)) (B0) :name "logical-different-right")
+(rewrite (WeightsEqual (Weights a b) (Weights c d))
+  (BoolAnd (WeightsEqual a c) (WeightsEqual b d)) :name "logical-equal")
+
+;;; Nested bag sums lower to directional views.
+;;; The generator supplies unoptimized join traversals, never selected views.
+(constructor Reduce (U Var U) U :binder 1)
+(constructor Scan (U) U)
+(constructor Lookup (U U U) U) ; region, separator, parent row
+(constructor Product (U U) U)
+(constructor One () U)
+(constructor GroupKey (U U) U) ; row, attribute
+(constructor FunctionValue (U U) U) ; row, frontend function ID
+(constructor Lowering (U U) U)
+(constructor ViewLookup (U U U) U) ; selected column, result keys, parent row
+(constructor Tuple (U U) U)
+(constructor First (U) U)
+(constructor Second (U) U)
+(constructor FusionCandidate (U U U) U)
+
+;;; Parts are closed backend metadata, derived by inspecting the bound body.
+(constructor Translate (U U U) U) ; region, bound row, body
+(constructor Parts (U U U U) U) ; keys, all functions, local functions, children
+(constructor PartsPair (U U) U)
+(constructor JoinParts (U U) U)
+(constructor PackParts (U U U U U) U)
+(constructor MetadataReady (U) U)
+(constructor JoinWeights (U U) U)
+(constructor NoChild () U)
+(constructor Child (U) U)
+(constructor Kids (U U) U)
+(constructor JoinKids (U U) U)
+(constructor PutChild (U U) U)
+(constructor PickChild (U U) U)
+(constructor Gather (U U) U)
+(constructor Ready (U) U)
+(constructor Here () U)
+(constructor Left (U) U)
+(constructor Right (U) U)
+(constructor RelationPosition (U U U) U) ; relation, one-hot mask, path
+(constructor AttributeInfo (U U U) U) ; relation, attribute, key mask
+(constructor FunctionInfo (U U U) U) ; relation, function ID, weight vector
+(constructor EmptyParts (U) U)
+(constructor ScopedBody (U U) U)
+(constructor BuildRoot (U Var U) U :binder 1)
+(constructor BuildChild (U U U Var U) U :binder 3)
+(constructor FinishRoot (U U U U U U) U)
+(constructor FinishChild (U U U U U U U U) U)
+(constructor ShareRoot (U U U U U U) U)
+(constructor ShareChild (U U U U U U U U) U)
+
+(rewrite query body :name "scoped-root"
+  :when ((= lowering (Lowering query body))))
+
+(rewrite total (Product factor (Reduce rows $x rest)) :name "scoped-hoist-left"
+  :when ((= total (Reduce rows $x body)) (= body (Product factor rest))
+         (not-free $x factor)))
+(rewrite total (Product (Reduce rows $x rest) factor) :name "scoped-hoist-right"
+  :when ((= total (Reduce rows $x body)) (= body (Product rest factor))
+         (not-free $x factor)))
+(rewrite total (Product body (Reduce rows $x (One))) :name "scoped-hoist-constant"
+  :when ((= total (Reduce rows $x body)) (not-free $x body)))
+(rewrite total (Reduce s $y (Reduce r $x body)) :name "scoped-interchange"
+  :when ((= total (Reduce r $x inner)) (= inner (Reduce s $y body))
+         (not-free $x s) (not-free $y r)))
+(rewrite (Product (One) a) a :name "scoped-unit-left")
+(rewrite (Product a (One)) a :name "scoped-unit-right")
+
+;;; Tuples are componentwise aggregate results. Projections retain the original
+;;; output identities when a batch acquires a fused implementation.
+(rewrite a (First pair) :name "scoped-project-left"
+  :when ((= pair (Tuple a b))))
+(rewrite b (Second pair) :name "scoped-project-right"
+  :when ((= pair (Tuple a b))))
+(rewrite pair (Reduce rows $row (Tuple a b)) :name "scoped-fuse"
+  :when ((= pair (Tuple left right))
+         (= left (Reduce rows $row a)) (= right (Reduce rows $row b))))
+
+;;; Offer compatible columns even when their queries are far apart in the
+;;; batch. These identities only construct tuples: fusion must still derive a
+;;; common reduction before either column can acquire a shared producer.
+(rewrite left (First (FusionCandidate (WeightsEqual wa wb) left right))
+  :name "scoped-offer-root-fusion"
+  :when ((= left (FinishRoot region keys wa la ca (B1)))
+         (= right (FinishRoot region keys wb lb cb (B1)))))
+(rewrite left (First (FusionCandidate (WeightsEqual wa wb) left right))
+  :name "scoped-offer-child-fusion"
+  :when ((= left (FinishChild region separator parent keys wa la ca (B1)))
+         (= right (FinishChild region separator parent keys wb lb cb (B1)))))
+(rewrite (FusionCandidate (B0) a b) (Tuple a b))
+
+;;; Translation has no case for an unlowered Reduce or a nonlocal row.
+;;; A parent therefore cannot become a view before child work is factored out.
+(rewrite (Translate region row (One)) empty
+  :when ((= metadata (EmptyParts empty))))
+(rewrite (Translate region row (GroupKey row attr)) (Parts key zero zero kids)
+  :when ((= region (Region origin destination attrs funcs local children))
+         (= info (AttributeInfo origin attr key))
+         (= metadata (EmptyParts (Parts none zero zero kids)))))
+(rewrite (Translate region row (FunctionValue row fid)) (Parts none weight weight kids)
+  :when ((= region (Region origin destination attrs funcs local children))
+         (= info (FunctionInfo origin fid weight))
+         (= metadata (EmptyParts (Parts none zero zero kids)))))
+(rewrite (Translate region row (Product a b))
+  (JoinParts (Translate region row a) (Translate region row b)))
+(rewrite (Translate region row (Tuple a b))
+  (PartsPair (Translate region row a) (Translate region row b)))
+(rewrite (Translate region row (ViewLookup view keys row))
+  (Parts keys weights zero (PutChild position view))
+  :when ((= view (ComputeView child childkeys weights local children))
+         (= child (Region origin destination attrs funcs owned neighbors))
+         (= location (RelationPosition origin position path))
+         (= metadata (EmptyParts (Parts none zero zero kids)))))
+(rewrite (Translate region row (ViewLookup view keys row))
+  (Parts keys weights zero (PutChild position view))
+  :when ((= view (ViewColumn (SharedView child childkeys) weights local children))
+         (= child (Region origin destination attrs funcs owned neighbors))
+         (= location (RelationPosition origin position path))
+         (= metadata (EmptyParts (Parts none zero zero kids)))))
+;;; Hoisting a constant tuple multiplies each component by a scalar count.
+(rewrite (JoinParts (PartsPair a b) (Parts k w l c))
+  (PartsPair (JoinParts a (Parts k w l c)) (JoinParts b (Parts k w l c))))
+(rewrite (JoinParts (Parts k w l c) (PartsPair a b))
+  (PartsPair (JoinParts (Parts k w l c) a) (JoinParts (Parts k w l c) b)))
+(rewrite (JoinParts (Parts ka wa la ca) (Parts kb wb lb cb))
+  (PackParts (MaskUnion ka kb) (JoinWeights wa wb) (JoinWeights la lb) (JoinKids ca cb)
+    (BoolAnd (MetadataReady (MaskUnion ka kb))
+      (BoolAnd (MetadataReady (JoinWeights wa wb))
+        (BoolAnd (MetadataReady (JoinWeights la lb)) (MetadataReady (JoinKids ca cb)))))))
+(rewrite (PackParts keys weights local kids (B1)) (Parts keys weights local kids))
+;;; Publish Parts only after its metadata is evaluated. Otherwise parent
+;;; matches combine a cross product of unfinished mask/vector computations.
+(rewrite (MetadataReady (B0)) (B1))
+(rewrite (MetadataReady (B1)) (B1))
+(rewrite (MetadataReady (WeightOne)) (B1))
+(rewrite (MetadataReady (Scalar origin body)) (B1))
+(rewrite (MetadataReady (NoChild)) (B1))
+(rewrite (MetadataReady (Child view)) (B1))
+(rewrite (MetadataReady (Mask a b)) (BoolAnd (MetadataReady a) (MetadataReady b)))
+(rewrite (MetadataReady (Weights a b)) (BoolAnd (MetadataReady a) (MetadataReady b)))
+(rewrite (MetadataReady (Kids a b)) (BoolAnd (MetadataReady a) (MetadataReady b)))
+(rewrite (JoinWeights (WeightOne) a) a)
+(rewrite (JoinWeights a (WeightOne)) a)
+(rewrite (JoinWeights (Weights a b) (Weights c d))
+  (Weights (JoinWeights a c) (JoinWeights b d)))
+(rewrite (JoinKids (NoChild) a) a)
+(rewrite (JoinKids a (NoChild)) a)
+(rewrite (JoinKids (Kids a b) (Kids c d)) (Kids (JoinKids a c) (JoinKids b d)))
+(rewrite (PutChild (B0) view) (NoChild))
+(rewrite (PutChild (B1) view) (Child view))
+(rewrite (PutChild (Mask a b) view) (Kids (PutChild a view) (PutChild b view)))
+(rewrite (PickChild (Here) (Child view)) view)
+(rewrite (PickChild (Left path) (Kids a b)) (PickChild path a))
+(rewrite (PickChild (Right path) (Kids a b)) (PickChild path b))
+(rewrite (Gather (Nil) kids) (Nil))
+(rewrite (Gather (Cons (Neighbor child separator) rest) kids)
+  (Cons (PickChild path kids) (Gather rest kids))
+  :when ((= child (Region origin destination attrs funcs owned neighbors))
+         (= location (RelationPosition origin position path))))
+(rewrite (Ready (Nil)) (B1))
+(rewrite (Ready (Cons view rest)) (Ready rest)
+  :when ((= view (ComputeView region keys weights local children))))
+(rewrite (Ready (Cons view rest)) (Ready rest)
+  :when ((= view (ViewColumn (SharedView region keys) weights local children))))
+
+;;; These rules are the only route from a query to an executable ComputeView.
+;;; The intermediate constructors retain the sum's meaning while requesting
+;;; translation and checking that every neighboring aggregate was derived.
+(rewrite (Reduce (Scan region) $row body)
+  (BuildRoot region $row (ScopedBody body (Translate region (V $row) body)))
+  :when ((free-names-are body $row)))
+(rewrite (Reduce (Scan region) $row body)
+  (BuildRoot region $row (ScopedBody body (Translate region (V $row) body)))
+  :when ((free-names-are body)))
+(rewrite (Reduce (Lookup region separator parent) $row body)
+  (BuildChild region separator parent $row (ScopedBody body (Translate region (V $row) body)))
+  :when ((free-names-are body $row)))
+(rewrite (Reduce (Lookup region separator parent) $row body)
+  (BuildChild region separator parent $row (ScopedBody body (Translate region (V $row) body)))
+  :when ((free-names-are body)))
+(rewrite (BuildRoot region $row (ScopedBody body (Parts keys weights local kids)))
+  (FinishRoot region keys weights local (Gather children kids) (Ready (Gather children kids)))
+  :when ((= region (Region origin destination attrs funcs owned children))))
+(rewrite (BuildChild region separator parent $row (ScopedBody body (Parts keys weights local kids)))
+  (FinishChild region separator parent keys weights local (Gather children kids) (Ready (Gather children kids)))
+  :when ((= region (Region origin destination attrs funcs owned children))))
+;;; Splitting a fused result keeps standalone alternatives available. Sharing is
+;;; exposed only by the fused-body rules below, never by matching ComputeViews.
+(rewrite (BuildRoot region $row (ScopedBody body (PartsPair a b)))
+  (Tuple (BuildRoot region $row (ScopedBody (First body) a))
+         (BuildRoot region $row (ScopedBody (Second body) b))))
+(rewrite (BuildChild region separator parent $row (ScopedBody body (PartsPair a b)))
+  (Tuple (BuildChild region separator parent $row (ScopedBody (First body) a))
+         (BuildChild region separator parent $row (ScopedBody (Second body) b))))
+(rewrite (BuildRoot region $row
+            (ScopedBody body (PartsPair (Parts keys wa la ca) (Parts keys wb lb cb))))
+  (Tuple
+    (ShareRoot region keys wa la (Gather children ca) (Ready (Gather children ca)))
+    (ShareRoot region keys wb lb (Gather children cb) (Ready (Gather children cb))))
+  :name "scoped-shared-root"
+  :when ((= region (Region origin destination attrs funcs owned children))))
+(rewrite (BuildChild region separator parent $row
+            (ScopedBody body (PartsPair (Parts keys wa la ca) (Parts keys wb lb cb))))
+  (Tuple
+    (ShareChild region separator parent keys wa la (Gather children ca) (Ready (Gather children ca)))
+    (ShareChild region separator parent keys wb lb (Gather children cb) (Ready (Gather children cb))))
+  :name "scoped-shared-child"
+  :when ((= region (Region origin destination attrs funcs owned children))))
+(rewrite (ShareRoot region keys weights local incoming (B1))
+  (ViewColumn (SharedView region keys) weights local incoming))
+(rewrite (ShareChild region separator parent keys weights local incoming (B1))
+  (ViewLookup (ViewColumn (SharedView region (MaskUnion separator keys)) weights local incoming) keys parent))
+;;; Equality of lookup results alone does not merge the tables they read.
+;;; Reconnect an already-derived shared column to its identical standalone
+;;; kernel, bottom-up through the incoming columns. This creates no new view.
+(rewrite standalone shared :name "scoped-column-identity"
+  :when ((= standalone (ComputeView region keys weights local incoming))
+         (= shared (ViewColumn (SharedView region keys) weights local incoming))))
+(rewrite (FinishRoot region keys weights local incoming (B1))
+  (ComputeView region keys weights local incoming) :name "scoped-materialize-root")
+(rewrite (FinishChild region separator parent keys weights local incoming (B1))
+  (ViewLookup (ComputeView region (MaskUnion separator keys) weights local incoming) keys parent)
+  :name "scoped-materialize-child")

@@ -19,7 +19,70 @@ fn build(
     sort: &str,
     q: &mut Query,
     actions: &mut Vec<String>,
+) -> Result<Built, String> {
+    fold_rhs(
+        &|head| &lang.constructors[head],
+        t,
+        sort,
+        &mut Vec::new(),
+        &mut |term, sort, path, children, bind| {
+            build_node(
+                lang,
+                term,
+                sort,
+                q,
+                actions,
+                path.is_empty(),
+                children,
+                bind,
+            )
+        },
+    )
+}
+
+/// The head's construction order, shared by emission and source proof replay.
+/// Paths use source argument positions; payload arguments are never traversed.
+pub(super) fn fold_rhs<'a, T>(
+    constructor: &impl Fn(&str) -> &'a Constructor,
+    term: &Term,
+    sort: &str,
+    path: &mut Vec<usize>,
+    visit: &mut impl FnMut(&Term, &str, &[usize], Vec<T>, bool) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut children = Vec::new();
+    let mut bind = false;
+    if let Term::Node(head, args) = term {
+        for (index, column) in constructor(head).columns.iter().enumerate() {
+            let child_sort = match column {
+                Column::Child => sort,
+                Column::Var | Column::Binder => "Var",
+                Column::Payload(_) => continue,
+            };
+            path.push(index);
+            children.push(fold_rhs(
+                constructor,
+                &args[index],
+                child_sort,
+                path,
+                visit,
+            )?);
+            path.pop();
+        }
+        bind = !children.is_empty() || term.has_payload_variable();
+    }
+    visit(term, sort, path, children, bind)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_node(
+    lang: &Language,
+    t: &Term,
+    sort: &str,
+    q: &mut Query,
+    actions: &mut Vec<String>,
     root: bool,
+    built: Vec<Built>,
+    bind: bool,
 ) -> Result<Built, String> {
     match t {
         Term::Variable(pv) => {
@@ -55,7 +118,7 @@ fn build(
                 .collect::<Result<Vec<_>, _>>()?;
             if children.is_empty() {
                 let node = op.node(n, &[], &[], &pays);
-                let value = if t.has_payload_variable() {
+                let value = if bind {
                     let v = q.fresh(&format!("built_{}", n.to_lowercase()));
                     actions.push(format!("(let {v} {node})"));
                     v
@@ -67,15 +130,6 @@ fn build(
                     value,
                     slots: Slots::Set("(map-empty)".into()),
                 });
-            }
-            let mut built = Vec::new();
-            for (c, column) in children.iter().zip(op.children()) {
-                let input_sort = if *column == Column::Child {
-                    sort
-                } else {
-                    "Var"
-                };
-                built.push(build(lang, c, input_sort, q, actions, false)?);
             }
             let value = q.fresh(&format!("built_{}", n.to_lowercase()));
             let mut edges = built.iter().map(|b| b.edge.clone()).collect::<Vec<_>>();
@@ -241,6 +295,20 @@ pub(super) struct Rewrite<'a> {
     pub name: Option<&'a str>,
     pub ordinal: usize,
     pub nested: bool,
+    pub proofs: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SubstitutionRequest {
+    pub name: String,
+    pub relation: String,
+    pub sort: String,
+    pub columns: Vec<String>,
+    pub root_column: usize,
+    pub root: String,
+    pub body: (String, usize),
+    pub replacement: (String, usize),
+    pub slot: String,
 }
 
 /// Lower a rewrite together with the names needed to reconstruct its proofs.
@@ -248,7 +316,7 @@ pub(super) fn compile(
     lang: &Language,
     mut r: Rewrite<'_>,
     mut names: query::ProofNames,
-) -> Result<(String, query::ProofNames), String> {
+) -> Result<(String, query::ProofNames, Option<SubstitutionRequest>), String> {
     let mut rhs = r.rhs.clone();
     lang.refresh_shadowed(&mut rhs);
     let mut fresh = std::collections::BTreeSet::new();
@@ -274,6 +342,8 @@ pub(super) fn compile(
     let root_sort = q.sorts[r.root].clone();
     let root_class = q.class(r.root)?;
     let sy = lang.symbols(&root_sort);
+    let mut substitution = None;
+    let mut declaration = String::new();
     let actions = match &rhs {
         Term::Variable(pv) => {
             let c = q.class(pv)?;
@@ -285,10 +355,56 @@ pub(super) fn compile(
                 sy.equated, q.maps[r.root], q.maps[pv]
             )]
         }
+        Term::Subst(args) if r.proofs => {
+            // Apply the same input and scope checks as the native primitive path.
+            let _ = substitute(lang, r.root, args, &mut q)?;
+            let relation = format!("_slotted_substitution_{}", r.ordinal);
+            let mut columns = vec![q.frame.clone()];
+            let mut sorts = vec!["Frame".to_owned()];
+            for (variable, class) in &q.classes {
+                columns.push(class.clone());
+                sorts.push(q.sorts[variable].clone());
+            }
+            let mut payloads: Vec<_> = q.pays.values().collect();
+            payloads.sort();
+            for (value, sort) in payloads {
+                columns.push(value.clone());
+                sorts.push(sort.clone());
+            }
+            let [
+                Term::Variable(body),
+                Term::Slot(slot),
+                Term::Variable(replacement),
+            ] = &**args
+            else {
+                unreachable!("substitute validated the arguments")
+            };
+            let column = |name: &str| 1 + q.classes.iter().position(|(v, _)| v == name).unwrap();
+            declaration = format!("(relation {relation} ({}))\n", sorts.join(" "));
+            substitution = Some(SubstitutionRequest {
+                name: r
+                    .name
+                    .ok_or("proof substitutions need named rules")?
+                    .to_owned(),
+                relation: relation.clone(),
+                sort: root_sort.clone(),
+                columns: sorts,
+                root: r.root.to_owned(),
+                body: (body.clone(), column(body)),
+                replacement: (replacement.clone(), column(replacement)),
+                slot: slot.clone(),
+                root_column: 1 + q
+                    .classes
+                    .iter()
+                    .position(|(variable, _)| variable == r.root)
+                    .unwrap(),
+            });
+            vec![call(&relation, columns)]
+        }
         Term::Subst(args) => substitute(lang, r.root, args, &mut q)?,
         _ => {
             let mut acts = Vec::new();
-            let node = build(lang, &rhs, &root_sort, &mut q, &mut acts, true)?;
+            let node = build(lang, &rhs, &root_sort, &mut q, &mut acts)?;
             acts.push(format!("(union {} {root_class})", node.value));
             acts
         }
@@ -300,9 +416,17 @@ pub(super) fn compile(
         .map(|(v, c)| (v.to_owned(), c.clone()))
         .collect();
     names.readings = q.readings.clone();
+    names.atoms = q.atoms.clone();
     names.frame = q.frame.clone();
     let Some(split) = q.split else {
-        return Ok((rule(&q.body, &actions, naive, None, r.name), names));
+        return Ok((
+            format!(
+                "{declaration}{}",
+                rule(&q.body, &actions, naive, None, r.name)
+            ),
+            names,
+            substitution,
+        ));
     };
     let relation = format!("_slotted_match_{}", r.ordinal);
     let mut columns = vec![q.refined.clone(), q.length.clone()];
@@ -320,6 +444,11 @@ pub(super) fn compile(
     let row = call(&relation, columns);
     let mut apply_body = vec![row.clone()];
     apply_body.extend_from_slice(&q.body[split..]);
+    let apply_ruleset = if substitution.is_some() {
+        "slotted-subst-apply"
+    } else {
+        "slotted-apply"
+    };
     let code = [
         format!("(relation {relation} ({}))", sorts.join(" ")),
         rule(
@@ -333,17 +462,17 @@ pub(super) fn compile(
             &apply_body,
             &actions,
             naive,
-            Some("slotted-apply"),
+            Some(apply_ruleset),
             r.name.map(|n| format!("{n}/apply")).as_deref(),
         ),
         rule(
             std::slice::from_ref(&row),
             &[format!("(delete {row})")],
             false,
-            Some("slotted-apply"),
+            Some(apply_ruleset),
             r.name.map(|n| format!("{n}/drain")).as_deref(),
         ),
     ]
     .join("\n");
-    Ok((code, names))
+    Ok((format!("{declaration}{code}"), names, substitution))
 }

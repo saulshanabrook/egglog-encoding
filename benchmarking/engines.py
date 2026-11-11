@@ -23,6 +23,7 @@ type Treatment = Literal[
     "egg-nee",
     "egg-oee",
     "slotted",
+    "slotted-proof-testing",
     "slotted-no-aliasing",
     "slotted-ref-multi",
     "slotted-ref-nested",
@@ -93,6 +94,8 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
         for name in cast(tuple[Treatment, ...], ("egg-de", "egg-ee", "egg-nee", "egg-oee"))
     },
     "slotted": replace(_EGGLOG, flags=("--slotted",)),
+    # Slotted --proofs translates and checks source equalities, unlike ordinary --proofs.
+    "slotted-proof-testing": replace(_EGGLOG, flags=("--slotted", "--proofs")),
     "slotted-no-aliasing": replace(_EGGLOG, flags=("--slotted", "--slotted-no-aliasing")),
     "slotted-ref-multi": replace(_SLOTTED, flags=("--matcher", "multi", "--substitution", "snapshot")),
     "slotted-ref-nested": replace(_SLOTTED, flags=("--matcher", "nested", "--substitution", "syntactic")),

@@ -103,9 +103,10 @@ def test_runtime_contract_changes_require_a_report_schema_bump() -> None:
         "math_arguments": engines.MATH_WORKLOAD_ARGUMENTS,
     }
     digest = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
-    assert (REPORT_SCHEMA_VERSION, digest) == (9, "55fb51fdcf87c331b11844821ce472d7ca0dfa2e46d9a5fee1cd5d58f0c23134"), (
-        "Bump the report schema version and update this contract digest"
-    )
+    assert (REPORT_SCHEMA_VERSION, digest) == (
+        10,
+        "50a4203ec63c66c19d02047891319c88e170292fdf723872654ea884fd25130d",
+    ), "Bump the report schema version and update this contract digest"
 
 
 def test_raised_timeout_does_not_retry_control_failure(tmp_path: Path) -> None:

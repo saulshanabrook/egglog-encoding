@@ -12,6 +12,8 @@ pub(crate) struct ProofNames {
     /// Generated class bindings for pattern variables and atoms.
     pub classes: BTreeMap<String, String>,
     pub readings: BTreeMap<String, String>,
+    /// Exact frame labels for roots with one atom; repeated roots are ambiguous.
+    pub atoms: BTreeMap<String, Option<String>>,
     pub frame: String,
 }
 
@@ -31,21 +33,34 @@ fn children(a: &Atom) -> BTreeSet<String> {
         .collect()
 }
 /// Order a nonempty multipattern to join connected atoms before disconnected ones.
-pub(super) fn connected(mut atoms: Vec<Atom>) -> Vec<Atom> {
+pub(super) fn connected(atoms: Vec<Atom>) -> Vec<Atom> {
+    connected_by(atoms, |atom| atom.root.as_str(), children)
+}
+
+pub(super) fn connected_by<T>(
+    mut atoms: Vec<T>,
+    root: impl Fn(&T) -> &str,
+    children: impl Fn(&T) -> BTreeSet<String>,
+) -> Vec<T> {
+    let variables = |atom: &T| {
+        std::iter::once(root(atom).to_owned())
+            .chain(children(atom))
+            .collect::<BTreeSet<_>>()
+    };
     let a = atoms.remove(0);
     let mut seen = variables(&a);
-    let mut roots = BTreeSet::from([a.root.clone()]);
+    let mut roots = BTreeSet::from([root(&a).to_owned()]);
     let mut kids = children(&a);
     let mut out = vec![a];
     while !atoms.is_empty() {
         let i = atoms
             .iter()
-            .position(|a| kids.contains(&a.root) || !children(a).is_disjoint(&roots))
+            .position(|a| kids.contains(root(a)) || !children(a).is_disjoint(&roots))
             .or_else(|| atoms.iter().position(|a| !variables(a).is_disjoint(&seen)))
             .unwrap_or(0);
         let a = atoms.remove(i);
         seen.extend(variables(&a));
-        roots.insert(a.root.clone());
+        roots.insert(root(&a).to_owned());
         kids.extend(children(&a));
         out.push(a);
     }
@@ -150,6 +165,7 @@ pub(super) struct Query {
     pub length: String,
     pub filter_start: usize,
     pub readings: BTreeMap<String, String>,
+    pub atoms: BTreeMap<String, Option<String>>,
     used: BTreeSet<String>,
     prefix: String,
     id: usize,
@@ -426,6 +442,10 @@ pub(super) fn compile(
         }
         q.body.extend(facts);
         let av = q.fresh(&format!("atom_{idx}"));
+        q.atoms
+            .entry(a.root.clone())
+            .and_modify(|label| *label = None)
+            .or_insert_with(|| Some(format!("@atom:{idx}")));
         q.body.push(format!(
             "(= {av} ({} \"@atom:{idx}\" {}))",
             if nested { "nested-atom" } else { "atom" },

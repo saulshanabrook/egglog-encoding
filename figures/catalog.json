@@ -1,5 +1,9 @@
 {
   "rounds": 10,
+  "lmfao": {
+    "data": "../benchmarks/local/lmfao/source/data/favorita-small",
+    "backend": "../benchmarks/local/lmfao/build/multifaq"
+  },
   "figures": {
     "disequality-runtime": {
       "spec": "eval/disequality-runtime.vl.json",

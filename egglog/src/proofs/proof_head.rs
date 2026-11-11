@@ -126,34 +126,9 @@ impl HeadLayout {
         dropped: &HashSet<usize>,
     ) -> HeadLayout {
         let mut layout = HeadLayout { runs: vec![] };
-        for (at, action) in actions.iter().enumerate() {
-            if dropped.contains(&at) {
-                continue;
-            }
-            match action {
-                GenericAction::Let(_, var, expr) if construct_into.contains_key(&var.name) => {
-                    let (_, args) = constructor_operand(expr)
-                        .expect("a construct-into guest is a constructor application");
-                    layout.args(args);
-                    layout.claim(HeadPosition::Guest);
-                }
-                GenericAction::Let(_, _, expr) | GenericAction::Expr(_, expr) => layout.expr(expr),
-                GenericAction::Union(_, lhs, rhs) => {
-                    layout.expr(lhs);
-                    layout.expr(rhs);
-                    layout.claim(HeadPosition::Union);
-                }
-                GenericAction::Set(_, _, args, value) => {
-                    layout.args(args);
-                    layout.expr(value);
-                    layout.claim(HeadPosition::Set);
-                }
-                // A `change` concludes nothing, and a `panic` is passed through
-                // uninstrumented, so neither they nor their arguments hold a
-                // column.
-                GenericAction::Change(..) | GenericAction::Panic(..) => {}
-            }
-        }
+        visit_head_positions::<false>(actions, construct_into, dropped, &mut |position, _, _| {
+            layout.claim(position);
+        });
         layout
     }
 
@@ -172,30 +147,108 @@ impl HeadLayout {
         run.position.proofs().get(column - run.first).copied()
     }
 
-    fn expr(&mut self, expr: &ResolvedExpr) {
-        let ResolvedExpr::Call(_, _, args) = expr else {
-            // A variable or a literal builds nothing, so it is not a position.
-            return;
-        };
-        self.args(args);
-        self.claim(match constructor_operand(expr) {
-            Some(_) => HeadPosition::Built,
-            None => HeadPosition::Call,
-        });
-    }
-
-    fn args(&mut self, args: &[ResolvedExpr]) {
-        for arg in args {
-            self.expr(arg);
-        }
-    }
-
     fn claim(&mut self, position: HeadPosition) {
         let first = self
             .runs
             .last()
             .map_or(0, |run| run.first + run.position.proofs().len());
         self.runs.push(HeadRun { position, first });
+    }
+}
+
+fn visit_head_positions<const PATHS: bool>(
+    actions: &[ResolvedAction],
+    construct_into: &HashMap<String, ConstructInto>,
+    dropped: &HashSet<usize>,
+    visit: &mut impl FnMut(HeadPosition, usize, &[usize]),
+) {
+    fn expr<const PATHS: bool>(
+        value: &ResolvedExpr,
+        action: usize,
+        path: &mut Vec<usize>,
+        guest: bool,
+        visit: &mut impl FnMut(HeadPosition, usize, &[usize]),
+    ) {
+        let ResolvedExpr::Call(_, _, args) = value else {
+            return;
+        };
+        for (index, arg) in args.iter().enumerate() {
+            if PATHS {
+                path.push(index);
+            }
+            expr::<PATHS>(arg, action, path, false, visit);
+            if PATHS {
+                path.pop();
+            }
+        }
+        let position = if guest {
+            HeadPosition::Guest
+        } else if constructor_operand(value).is_some() {
+            HeadPosition::Built
+        } else {
+            HeadPosition::Call
+        };
+        visit(position, action, path);
+    }
+    for (at, action) in actions.iter().enumerate() {
+        if dropped.contains(&at) {
+            continue;
+        }
+        match action {
+            ResolvedAction::Let(_, var, value) => {
+                expr::<PATHS>(
+                    value,
+                    at,
+                    &mut if PATHS { vec![0] } else { vec![] },
+                    construct_into.contains_key(&var.name),
+                    visit,
+                );
+            }
+            ResolvedAction::Expr(_, value) => expr::<PATHS>(
+                value,
+                at,
+                &mut if PATHS { vec![0] } else { vec![] },
+                false,
+                visit,
+            ),
+            ResolvedAction::Union(_, lhs, rhs) => {
+                expr::<PATHS>(
+                    lhs,
+                    at,
+                    &mut if PATHS { vec![0] } else { vec![] },
+                    false,
+                    visit,
+                );
+                expr::<PATHS>(
+                    rhs,
+                    at,
+                    &mut if PATHS { vec![1] } else { vec![] },
+                    false,
+                    visit,
+                );
+                visit(HeadPosition::Union, at, &[]);
+            }
+            ResolvedAction::Set(_, _, args, value) => {
+                for (index, arg) in args.iter().enumerate() {
+                    expr::<PATHS>(
+                        arg,
+                        at,
+                        &mut if PATHS { vec![index] } else { vec![] },
+                        false,
+                        visit,
+                    );
+                }
+                expr::<PATHS>(
+                    value,
+                    at,
+                    &mut if PATHS { vec![args.len()] } else { vec![] },
+                    false,
+                    visit,
+                );
+                visit(HeadPosition::Set, at, &[]);
+            }
+            ResolvedAction::Change(..) | ResolvedAction::Panic(..) => {}
+        }
     }
 }
 
@@ -340,6 +393,41 @@ impl HeadPlan {
             layout,
         }
     }
+    pub(crate) fn source_position(
+        &self,
+        column: usize,
+        original: &[ResolvedAction],
+    ) -> (usize, Vec<usize>) {
+        let mut next = 0;
+        let mut selected = None;
+        visit_head_positions::<true>(
+            &self.actions,
+            &self.construct_into,
+            &self.dropped,
+            &mut |position, action, path| {
+                let end = next + position.proofs().len();
+                if (next..end).contains(&column) {
+                    selected = Some((action, path.to_vec()));
+                }
+                next = end;
+            },
+        );
+        let (normalized, mut path) = selected.expect("the head column was evaluated");
+        let mut next = 0;
+        let mut selected = None;
+        for (at, action) in original.iter().enumerate() {
+            visit_normalized_action(action, &mut || "@origin".into(), &mut |operand, _| {
+                if next == normalized {
+                    if let Some(operand) = operand {
+                        path[0] = operand;
+                    }
+                    selected = Some(at);
+                }
+                next += 1;
+            });
+        }
+        (selected.expect("the normalized head action exists"), path)
+    }
 }
 
 /// The `(FuncType, args)` of a constructor-application expression, else `None`.
@@ -375,25 +463,34 @@ fn normalize_union_operands(
 ) -> Vec<ResolvedAction> {
     let mut out = vec![];
     for action in actions {
-        match action {
-            ResolvedAction::Union(span, lhs, rhs) => {
-                let lhs = lift_union_operand(lhs.clone(), &mut out, fresh);
-                let rhs = lift_union_operand(rhs.clone(), &mut out, fresh);
-                out.push(ResolvedAction::Union(span.clone(), lhs, rhs));
-            }
-            other => out.push(other.clone()),
-        }
+        visit_normalized_action(action, fresh, &mut |_, action| out.push(action));
     }
     out
 }
 
-/// If `operand` is a constructor application, bind it to a fresh `let` (pushed
-/// onto `out`) and return a variable referencing it; otherwise return `operand`
+/// Visit a normalized action and the original operand of each lifted `let`.
+pub(crate) fn visit_normalized_action(
+    action: &ResolvedAction,
+    fresh: &mut dyn FnMut() -> String,
+    emit: &mut impl FnMut(Option<usize>, ResolvedAction),
+) {
+    match action {
+        ResolvedAction::Union(span, lhs, rhs) => {
+            let lhs = lift_union_operand(lhs.clone(), fresh, &mut |action| emit(Some(0), action));
+            let rhs = lift_union_operand(rhs.clone(), fresh, &mut |action| emit(Some(1), action));
+            emit(None, ResolvedAction::Union(span.clone(), lhs, rhs));
+        }
+        other => emit(None, other.clone()),
+    }
+}
+
+/// If `operand` is a constructor application, emit a fresh `let` and return
+/// a variable referencing it; otherwise return `operand`
 /// unchanged.
 fn lift_union_operand(
     operand: ResolvedExpr,
-    out: &mut Vec<ResolvedAction>,
     fresh: &mut dyn FnMut() -> String,
+    emit: &mut impl FnMut(ResolvedAction),
 ) -> ResolvedExpr {
     if constructor_operand(&operand).is_none() {
         return operand;
@@ -404,7 +501,7 @@ fn lift_union_operand(
         sort: operand.output_type(),
         is_global_ref: false,
     };
-    out.push(ResolvedAction::Let(span.clone(), var.clone(), operand));
+    emit(ResolvedAction::Let(span.clone(), var.clone(), operand));
     GenericExpr::Var(span, var)
 }
 

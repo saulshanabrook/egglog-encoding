@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 type HashMap<K, V> = hashbrown::HashMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
@@ -253,6 +254,15 @@ pub struct Frame {
     /// Nested matching keeps the outer class's slots and each node's fresh
     /// redundant slots distinct, even across atoms. None enables full aliasing.
     rigid: Option<BTreeSet<Occ>>,
+}
+
+/// One group reading used to construct a refinement.
+#[derive(Clone, Debug)]
+pub(crate) struct SelectedReading {
+    pub atom: String,
+    pub variable: String,
+    pub edge: Renaming,
+    pub element: Renaming,
 }
 
 /// An immutable frame value registered with egglog.
@@ -513,9 +523,13 @@ impl Frame {
     }
 
     /// Every consistent assignment of the open readings, each once.
-    fn resolved(&self) -> Vec<Frame> {
+    fn resolved<T: Default>(
+        &self,
+        record: &impl Fn(&Pending, &Renaming, &mut T),
+        visit: &mut dyn FnMut(Frame, T) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
         if self.pending.is_empty() {
-            return vec![self.clone()];
+            return visit(self.clone(), T::default());
         }
         // the reading the rest of the frame constrains most goes first, so that the
         // elements it rules out are never multiplied by the others' -- a claim spells
@@ -532,7 +546,6 @@ impl Frame {
             .filter(|(i, _)| *i != pick)
             .map(|(_, p)| p.clone())
             .collect();
-        let mut out = Vec::new();
         let mut seen: BTreeSet<Vec<Vec<Occ>>> = BTreeSet::new();
         'elements: for g in first.group.iter() {
             let mut eqs = Vec::with_capacity(first.edge.len());
@@ -548,13 +561,16 @@ impl Frame {
             let Some(next) = self.with(&eqs, rest.clone()) else {
                 continue;
             };
-            for frame in next.resolved() {
+            next.resolved(record, &mut |frame, mut trace| {
                 if seen.insert(frame.blocks.clone()) {
-                    out.push(frame);
+                    record(first, g, &mut trace);
+                    visit(frame, trace)
+                } else {
+                    ControlFlow::Continue(())
                 }
-            }
+            })?;
         }
-        out
+        ControlFlow::Continue(())
     }
 
     /// The frame spelled in this variable's slot names.
@@ -662,65 +678,6 @@ impl Frame {
             .iter()
             .position(|b| b.contains(&occ))
             .map(|i| numbers[i])
-    }
-
-    /// The atom whose node is an invocation of `var`'s class: the one whose node
-    /// occurrences share a block with the variable's class slots. `None` when the
-    /// class has no slots.
-    pub fn atom_of(&self, var: &str) -> Option<String> {
-        let var = PVarId::new(var);
-        for block in &self.blocks {
-            if block
-                .iter()
-                .any(|o| matches!(o, Occ::Var(v, _) if *v == var))
-            {
-                for o in block {
-                    if let Occ::Node(a, _) = o {
-                        return Some(a.as_str().to_string());
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// The atoms whose node slot `s` shares a block with slot `t` of `var`'s class.
-    pub fn node_atoms_with(&self, var: &str, t: i64, s: i64) -> Vec<String> {
-        let var = PVarId::new(var);
-        let mut out = vec![];
-        for block in &self.blocks {
-            if block
-                .iter()
-                .any(|o| matches!(o, Occ::Var(v, u) if *v == var && *u == t))
-            {
-                for o in block {
-                    if let Occ::Node(a, u) = o
-                        && *u == s
-                    {
-                        out.push(a.as_str().to_string());
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// The atoms whose node slot `s` shares a block with the literal `lit`.
-    pub fn node_atoms_with_literal(&self, lit: &str, s: i64) -> Vec<String> {
-        let lit = Name::new(lit);
-        let mut out = vec![];
-        for block in &self.blocks {
-            if block.iter().any(|o| matches!(o, Occ::Lit(l) if *l == lit)) {
-                for o in block {
-                    if let Occ::Node(a, u) = o
-                        && *u == s
-                    {
-                        out.push(a.as_str().to_string());
-                    }
-                }
-            }
-        }
-        out
     }
 
     /// The literals the pattern wrote, by name.
@@ -848,18 +805,58 @@ impl Frame {
     /// This is the reference's `final_refine`; no valid alternatives are discarded.
     pub fn refinements(&self) -> Vec<Frame> {
         let mut out = Vec::new();
-        let mut seen: BTreeSet<Vec<Vec<Occ>>> = BTreeSet::new();
-        for frame in self.resolved() {
-            if !seen.insert(frame.blocks.clone()) {
-                continue;
-            }
+        let _ = self.refinements_with(&|_, _, _: &mut ()| {}, &mut |frame, ()| {
             out.push(frame.clone());
-            frame.walk(&mut seen, &mut out);
-        }
+            ControlFlow::Continue(())
+        });
         out
     }
 
-    fn walk(&self, seen: &mut BTreeSet<Vec<Vec<Occ>>>, out: &mut Vec<Frame>) {
+    /// Replay the group readings that produced the selected refinement.
+    pub(crate) fn refinement_readings(&self, mut index: usize) -> Option<Vec<SelectedReading>> {
+        let mut selected = None;
+        let _ = self.refinements_with(
+            &|pending, element, trace: &mut Vec<SelectedReading>| {
+                trace.push(SelectedReading {
+                    atom: pending.atom.to_string(),
+                    variable: pending.var.to_string(),
+                    edge: pending.edge.clone(),
+                    element: element.clone(),
+                });
+            },
+            &mut |_, trace| {
+                if index == 0 {
+                    selected = Some(trace.clone());
+                    ControlFlow::Break(())
+                } else {
+                    index -= 1;
+                    ControlFlow::Continue(())
+                }
+            },
+        );
+        selected
+    }
+
+    fn refinements_with<T: Default>(
+        &self,
+        record: &impl Fn(&Pending, &Renaming, &mut T),
+        visit: &mut dyn FnMut(&Frame, &T) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        let mut seen: BTreeSet<Vec<Vec<Occ>>> = BTreeSet::new();
+        self.resolved(record, &mut |frame, trace| {
+            if !seen.insert(frame.blocks.clone()) {
+                return ControlFlow::Continue(());
+            }
+            visit(&frame, &trace)?;
+            frame.walk(&mut seen, &mut |frame| visit(frame, &trace))
+        })
+    }
+
+    fn walk(
+        &self,
+        seen: &mut BTreeSet<Vec<Vec<Occ>>>,
+        visit: &mut dyn FnMut(&Frame) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
         let cands: Vec<usize> = (0..self.blocks.len())
             .filter(|&i| self.carried(&self.blocks[i]))
             .collect();
@@ -872,10 +869,11 @@ impl Frame {
                 if !seen.insert(next.blocks.clone()) {
                     continue;
                 }
-                out.push(next.clone());
-                next.walk(seen, out);
+                visit(&next)?;
+                next.walk(seen, visit)?;
             }
         }
+        ControlFlow::Continue(())
     }
 }
 
@@ -1007,6 +1005,17 @@ impl BaseSort for FrameSort {
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
+        // Certifying a substitution request needs an expression of sort Frame.
+        // The native proof builder evaluates this wrapper to a JSON string literal.
+        // Frames occur only in the encoded proof; lifting removes them from the source proof.
+        let value_validator = |dag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [value] = args else { return None; };
+            let frame = frame_from_term(dag, *value)?;
+            Some(frame_to_term(dag, &frame))
+        };
+        add_primitive_with_validator!(eg, "frame-from-json" = |value: S| -?> Fr {
+            serde_json::from_str::<Frame>(&value).ok().map(Fr::new)
+        }, value_validator);
         // Validators and runtime primitives use the same Frame operations.
         let frame_validator = |termdag: &mut TermDag, _: &[TermId]| -> Option<TermId> {
             Some(frame_to_term(termdag, &Frame::default()))
@@ -1420,6 +1429,47 @@ mod tests {
         assert_eq!(nested, b.join(&a).unwrap().anchored("p").unwrap());
         assert_eq!(nested.refinements().len(), 1);
         assert_ne!(nested.ren("p").unwrap()[&0], nested.ren("a").unwrap()[&0]);
+    }
+
+    #[test]
+    fn refinement_replay_keeps_the_selected_group_element_and_direction() {
+        let elements = vec![
+            m(&[(0, 1), (1, 2), (2, 0)]),
+            m(&[(0, 0), (1, 1), (2, 2)]),
+            m(&[(0, 2), (1, 0), (2, 1)]),
+        ];
+        let edge = m(&[(0, 0), (1, 1), (2, 2)]);
+        let input = Frame::atom(
+            "node",
+            &[
+                root("p", &[0, 1, 2]),
+                Binding::Child {
+                    var: "a".into(),
+                    edge: edge.clone(),
+                    free_vars: ident(&[0, 1, 2]),
+                    reading: Reading::Group(Arc::new(elements.clone())),
+                },
+            ],
+        )
+        .unwrap()
+        .anchored("p")
+        .unwrap();
+        let frames = input.refinements();
+        assert_eq!(frames.len(), elements.len());
+        for (index, (frame, element)) in frames.iter().zip(&elements).enumerate() {
+            let readings = input.refinement_readings(index).unwrap();
+            let [reading] = readings.as_slice() else {
+                panic!("one open reading")
+            };
+            assert_eq!(reading.atom, "node");
+            assert_eq!(reading.variable, "a");
+            assert_eq!(&reading.edge, &edge);
+            assert_eq!(&reading.element, element);
+            for (&from, &to) in element.iter() {
+                assert_eq!(frame.ren("a").unwrap()[&to], from);
+            }
+        }
+        assert!(input.refinement_readings(frames.len()).is_none());
     }
 
     #[test]

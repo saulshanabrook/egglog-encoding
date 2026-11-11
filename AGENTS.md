@@ -41,9 +41,11 @@ all paper oracles and the ordinary Rust debug assertions remain active.
 CI sets the explicitly partial `RUST_TEST_ARGS="--skip paper/"` filter for
 `make test-rust`. Local `make check` runs all enabled paper cases. The paper target honors
 the normal `--test-threads` option and `RUST_TEST_THREADS` environment variable.
-The local Make invocation defaults to two paper workers; ordinary Rust tests
-keep their usual parallelism. Its allocator limit is per child; set
-`RUST_TEST_THREADS=1` for a serial paper run.
+The Make invocation defaults to one worker per Rust test binary, including
+custom test harnesses. Set `RUST_TEST_THREADS=N` to change the default; an explicit
+`--test-threads` in `RUST_TEST_ARGS` takes precedence. This controls concurrent
+test cases, not each e-graph's worker settings, and is not an individual memory
+cap. The paper allocator limit remains per child.
 The paper target
 uses the allocator/address-space cap from `benchmarking/config.py` by default;
 `PAPER_TEST_MEMORY_LIMIT_BYTES=none` runs it uncapped. Apply the shared ignore
@@ -120,7 +122,9 @@ or modify the JSONL.
 - Bare `./bench.py` compares `proof-testing` with `off`, including proof
   extraction and checking. Recording-only `proofs` and unchecked
   `proof-extraction` remain explicit choices.
-- The five core egglog treatments and two slotted encoding treatments run
+- `slotted-proof-testing` runs `--slotted --proofs`, translating and checking ground
+  source equality claims. This differs from ordinary recording-only `proofs`.
+- The five core egglog treatments and three slotted encoding treatments run
   `egglog-experimental`. Native slotted treatments run `slotted-reference` with
   explicit matcher/substitution flags. The `egg` treatment and
   its three proof variants run `egg-math-benchmark` on the fixed Rational Math

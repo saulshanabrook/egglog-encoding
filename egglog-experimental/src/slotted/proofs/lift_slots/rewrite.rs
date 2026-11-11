@@ -9,15 +9,220 @@ struct ConditionProof {
     occurrences: HashMap<Vec<usize>, Occurrence>,
 }
 
-impl SlotLifter<'_> {
+#[derive(Clone)]
+pub(super) struct RuleInstance {
+    proof: ViewId,
+    head: ViewId,
+    origin: TermId,
+    occurrences: HashMap<Vec<usize>, Occurrence>,
+}
+
+pub(super) type FiringKey = (String, Vec<ProofId>, Vec<(TermId, ProofId)>);
+
+impl SlotLifter<'_, NativeProofs<'_>> {
+    fn pattern_labels(
+        &self,
+        names: &ProofNames,
+        patterns: &[Option<TermId>],
+    ) -> LiftResult<Vec<BTreeMap<String, Option<String>>>> {
+        let mut atoms = Vec::new();
+        for (index, positions) in names.patterns.iter().enumerate() {
+            let Some(pattern) = patterns[index] else {
+                continue;
+            };
+            for (path, root) in positions {
+                let term = self.subterm_at(pattern, path)?;
+                let Term::App(head, arguments) = self.out.term_dag.get(term) else {
+                    return Err("source atom position is not a constructor".into());
+                };
+                let mut children = BTreeSet::new();
+                for (column, kind) in self.program.constructors[head].columns.iter().enumerate() {
+                    if *kind != ColumnKind::Child {
+                        continue;
+                    }
+                    match self.out.term_dag.get(arguments[column]) {
+                        Term::Var(variable) => {
+                            children.insert(variable.clone());
+                        }
+                        Term::App(..) => {
+                            let mut child_path = path.clone();
+                            child_path.push(column);
+                            if let Some((_, name)) =
+                                positions.iter().find(|(path, _)| path == &child_path)
+                            {
+                                children.insert(name.clone());
+                            }
+                        }
+                        Term::Lit(_) => {}
+                    }
+                }
+                atoms.push((index, root.clone(), children));
+            }
+        }
+        let mut labels = vec![BTreeMap::new(); patterns.len()];
+        if !atoms.is_empty() {
+            for (label, (pattern, root, _)) in crate::slotted::query::connected_by(
+                atoms,
+                |atom| atom.1.as_str(),
+                |atom| atom.2.clone(),
+            )
+            .into_iter()
+            .enumerate()
+            {
+                labels[pattern].insert(root, Some(format!("@atom:{label}")));
+            }
+        }
+        Ok(labels)
+    }
+
     pub(super) fn apply_rule(
         &mut self,
+        id: ProofId,
         name: &str,
         prems: &[ProofId],
         subst: &IndexMap<String, TermId>,
         lhs: TermId,
         rhs: TermId,
     ) -> LiftResult<ViewId> {
+        self.derive_rule(
+            name,
+            prems,
+            subst,
+            &HashMap::default(),
+            Some((lhs, rhs)),
+            Some((id, &[])),
+        )
+    }
+
+    pub(super) fn derive_rule(
+        &mut self,
+        name: &str,
+        prems: &[ProofId],
+        subst: &IndexMap<String, TermId>,
+        selected: &HashMap<TermId, ProofId>,
+        result: Option<(TermId, TermId)>,
+        head: Option<(ProofId, &[usize])>,
+    ) -> LiftResult<ViewId> {
+        let mut rekeys: Vec<_> = selected
+            .iter()
+            .map(|(&term, &proof)| (term, proof))
+            .collect();
+        rekeys.sort();
+        let key = (name.to_owned(), prems.to_vec(), rekeys);
+        let instance = if let Some(instance) = self.rule_instances.get(&key) {
+            instance.clone()
+        } else {
+            let instance = self.instantiate_rule(name, prems, subst, selected)?;
+            self.rule_instances.insert(key, instance.clone());
+            instance
+        };
+        let p = instance.proof;
+        let Some((lhs, rhs)) = result else {
+            return Ok(p);
+        };
+        if lhs == rhs && self.is_carrier_term(lhs) {
+            let built = self.dec(lhs)?;
+            let (id, path) = head.ok_or("constructed rule term lacks its head position")?;
+            let mut proof = instance.head;
+            for &index in path {
+                proof = self.out.project(proof, index).map_err(|e| e.to_string())?;
+            }
+            let occurrences = instance
+                .occurrences
+                .iter()
+                .filter_map(|(at, occurrence)| {
+                    at.strip_prefix(path).map(|at| (at.to_vec(), *occurrence))
+                })
+                .collect();
+            proof = self.align_occurrences(proof, built, &occurrences, true)?;
+            let proof = self.note(proof);
+            let proof = self.existence_from(proof, built)?;
+            self.record_head_supports(id, lhs, proof, path, &instance.occurrences)?;
+            return Ok(proof);
+        }
+        if !self.is_carrier_term(lhs) {
+            let (_, _, cls_x) = self.row_sides(lhs)?;
+            let target = self.dec(cls_x)?;
+            return self.align(p, target);
+        }
+        let built = if lhs == instance.origin {
+            rhs
+        } else if rhs == instance.origin {
+            lhs
+        } else {
+            return Err("the step relates neither side with the matched class".into());
+        };
+        let target = self.dec(built)?;
+        let p = self
+            .fit(p, target, &instance.occurrences)
+            .map_err(|e| format!("result of {name}: {e}"))?;
+        if let Some((id, path)) = head {
+            self.record_head_supports(id, built, p, path, &instance.occurrences)?;
+        }
+        self.orient(p, lhs, rhs)
+    }
+
+    /// Retain ordinary equality proofs for restricted children at this
+    /// exact head position. Freshening every unsupported free name makes the
+    /// endpoints' free-slot intersection a support certificate; later swaps use
+    /// that equality and the existing absence lemma.
+    fn record_head_supports(
+        &mut self,
+        proof: ProofId,
+        row: TermId,
+        parent: ViewId,
+        path: &[usize],
+        occurrences: &HashMap<Vec<usize>, Occurrence>,
+    ) -> LiftResult<()> {
+        let (head, args) = self.app(row).ok_or("constructed head is not a row")?;
+        let columns = self.program.constructors[head].clone();
+        for (column, kind, physical) in columns.encoded_columns() {
+            if *kind != ColumnKind::Child || self.head_supports.contains_key(&(proof, column)) {
+                continue;
+            }
+            let mut at = path.to_vec();
+            at.push(column);
+            let class = args[physical.end - 1];
+            let edge = self.slot_map(args[physical.start])?;
+            let term = self.dec(class)?;
+            let free = self.program.free_slots(&self.out.term_dag, term);
+            if free.iter().all(|slot| edge.contains_key(slot)) {
+                continue;
+            }
+            let fresh = free
+                .into_iter()
+                .filter(|slot| !edge.contains_key(slot))
+                .map(|slot| (slot, self.fresh()))
+                .collect::<Vec<_>>();
+            let fresh = Renaming::completing(fresh).ok_or("support freshening is not injective")?;
+            let target = rename(&mut self.out.term_dag, &fresh, term);
+            let child = self
+                .out
+                .project(parent, column)
+                .map_err(|error| error.to_string())?;
+            let coordinates = self.edge_memo[&(row, column)].inverse();
+            let child = self.rename_both(child, &coordinates);
+            let inputs = occurrences
+                .iter()
+                .filter_map(|(path, occurrence)| {
+                    path.strip_prefix(at.as_slice())
+                        .map(|path| (path.to_vec(), *occurrence))
+                })
+                .collect();
+            let certificate = self.fit_content(child, target, &inputs)?;
+            let certificate = self.out.proof(certificate);
+            self.head_supports.insert((proof, column), certificate);
+        }
+        Ok(())
+    }
+
+    fn instantiate_rule(
+        &mut self,
+        name: &str,
+        prems: &[ProofId],
+        subst: &IndexMap<String, TermId>,
+        selected: &HashMap<TermId, ProofId>,
+    ) -> LiftResult<RuleInstance> {
         let rewrite = self
             .program
             .rewrites
@@ -47,7 +252,8 @@ impl SlotLifter<'_> {
         else {
             return Err(format!("the match of {name} is not a rule firing"));
         };
-        let bridges: HashMap<TermId, ProofId> = rekeys.into_iter().collect();
+        let mut bridges: HashMap<TermId, ProofId> = rekeys.into_iter().collect();
+        bridges.extend(selected.iter().map(|(term, proof)| (*term, *proof)));
         let frame = {
             let m = self.sub(subst, &names.frame)?;
             frame_from_term(self.egg(), m).ok_or("the apply rule's frame is not a frame")?
@@ -56,31 +262,43 @@ impl SlotLifter<'_> {
         // class as the rows show it; the substitution is then read off the
         // expansions' contents, lifted into the frame's slot names.
         let cls_p = self.sub(&match_subst, root_class)?;
+        let selected_readings =
+            self.selected_readings(firing, Some(&format!("{name}/apply")), subst)?;
+        let patterns = std::iter::once(Some(lhs_pattern))
+            .chain(rewrite.conditions().iter().map(|condition| {
+                condition
+                    .binding()
+                    .map(|(_, expression)| pattern_term(&mut self.out.term_dag, expression))
+            }))
+            .collect::<Vec<_>>();
+        let labels = self.pattern_labels(names, &patterns)?;
         let ctx = ExpandCtx {
+            firing,
+            root_binding: Some(root_class.clone()),
             prems: &match_prems,
             subst: &match_subst,
             names: names.patterns[0].iter().cloned().collect(),
-            classes: names.classes.clone(),
             readings: names.readings.clone(),
+            labels: &labels[0],
+            selected: &selected_readings,
             bridges: &bridges,
         };
         let Expansion {
             proof: root,
             mut variables,
             occurrences: root_occ,
+            slots: root_slots,
         } = self.expand(cls_p, lhs_pattern, &[], &ctx, HashMap::default())?;
-        let root = self.content_form(root); // cls_p = C
-        let root_atom = self
-            .atom_label(&frame, &root_name, lhs_pattern, root_occ.get(&vec![]))
-            .or(Some("@atom:0".to_string()));
-        let nested = self.nested_node_slots(
-            &frame,
-            lhs_pattern,
-            &root_occ,
-            &ctx.names,
-            self.out.edge(root).rhs,
-        )?;
-        let (root, _) = self.lift(root, &frame, root_atom.as_deref(), &nested);
+        let root = if self.atom_label(ctx.labels, &root_name).is_some() {
+            self.lift(root, &frame, &root_slots)?
+        } else {
+            let root = self.content_form(root);
+            let coordinates = frame
+                .ren(&root_name)
+                .ok_or("matched root lacks its frame coordinates")?;
+            let coordinates = self.complete(&coordinates, self.out.edge(root).rhs);
+            self.out.reframe(root, coordinates)
+        };
         let content = self.out.edge(root).rhs;
         let mut sigma: HashMap<String, TermId> = HashMap::default();
         let mut contents: Vec<(TermId, TermId)> = vec![(lhs_pattern, content)];
@@ -96,17 +314,26 @@ impl SlotLifter<'_> {
                     .unwrap_or_default();
                 let cond_ctx = ExpandCtx {
                     names: cond_names,
+                    labels: &labels[i + 1],
+                    root_binding: names.classes.get(&var).cloned(),
                     ..ctx.clone()
                 };
                 let cls_v = match variables.get(&var).copied() {
-                    Some(c) => c,
+                    Some(occurrence) => occurrence.cls,
                     None => {
                         let binding = names
                             .classes
                             .get(&var)
                             .ok_or_else(|| format!("no class binding for {var}"))?;
                         let class = self.sub(&match_subst, binding)?;
-                        variables.insert(var.clone(), class);
+                        variables.insert(
+                            var.clone(),
+                            Occurrence {
+                                cls: class,
+                                row: None,
+                                support: self.optional_support(&match_prems, class)?,
+                            },
+                        );
                         class
                     }
                 };
@@ -118,18 +345,17 @@ impl SlotLifter<'_> {
                     proof: p,
                     variables: expanded,
                     occurrences: occ_v,
+                    slots,
                 } = self.expand(cls_v, pattern, &[], &cond_ctx, variables)?;
                 variables = expanded;
-                let p = self.content_form(p); // cls_v = C_v
-                let atom = self.atom_label(&frame, &var, call, occ_v.get(&vec![]));
-                let nested = self.nested_node_slots(
-                    &frame,
-                    call,
-                    &occ_v,
-                    &cond_ctx.names,
-                    self.out.edge(p).rhs,
-                )?;
-                let (p, _) = self.lift(p, &frame, atom.as_deref(), &nested);
+                variables.insert(
+                    var.clone(),
+                    Occurrence {
+                        row: None,
+                        ..occ_v[&Vec::new()]
+                    },
+                );
+                let p = self.lift(p, &frame, &slots)?;
                 let c_v = self.out.edge(p).rhs;
                 contents.push((call, c_v));
                 condition_proofs.push(ConditionProof {
@@ -143,12 +369,13 @@ impl SlotLifter<'_> {
         // Each class variable is its class under the frame's renaming of it, as
         // the compiler builds the right-hand side; a slot literal is that slot;
         // what the frame does not name is read off the contents.
-        for (v, &cls) in &variables {
+        for (v, occurrence) in &variables {
             if let Some(r) = frame.ren(v) {
                 let m: SlotMap = r.iter().map(|(k, v)| (*k, *v)).collect();
-                let d = self.dec(cls)?;
+                let d = self.dec(occurrence.cls)?;
                 let completion = self.complete(&m, d);
                 let s = rename(&mut self.out.term_dag, &completion, d);
+
                 sigma.insert(v.clone(), s);
             }
         }
@@ -220,6 +447,7 @@ impl SlotLifter<'_> {
         for (v, s) in &sigma_order {
             log::debug!("rule {name}: {v} := {}", self.out_string(*s));
         }
+
         let instance_lhs = rewrite.instantiate(&mut self.out.term_dag, lhs_pattern, &sigma)?;
         let instance_lhs = self
             .program
@@ -248,7 +476,7 @@ impl SlotLifter<'_> {
                 .fit(p, call_inst, &occ_v)
                 .map_err(|e| format!("condition {var} of {name}: {e}"))?; // dec(cls_v) = ·call[σ]
             // from the class to σ(v), a renaming of it
-            let d = self.dec(variables[&var])?;
+            let d = self.dec(variables[&var].cls)?;
             let target = sigma[&var];
             let mut pairs = BTreeMap::new();
             self.unify_slots(d, target, &mut pairs)
@@ -256,239 +484,101 @@ impl SlotLifter<'_> {
             let rho =
                 Renaming::completing(pairs.into_iter()).ok_or("non-injective class renaming")?;
             let p = self.rename_both(p, &rho); // σ(v) = ·call[σ]
-            let p = self.fit_content(p, call_inst, &occ_v)?;
+            let p = self
+                .fit_content(p, call_inst, &occ_v)
+                .map_err(|e| format!("condition {var} of {name}: {e}"))?;
             premises.push(p);
         }
         let rule_step = self.out.rule(
             Proposition::new(instance_lhs, instance_rhs),
             name.to_string(),
-            sigma_order.clone(),
-            premises.clone(),
+            sigma_order,
+            premises,
             self.program,
         );
         self.note(rule_step);
         let p = self.trans(root, rule_step)?; // cls_p = ·R[σ]
-        if lhs == rhs && self.is_carrier_term(lhs) {
-            // the step states the reflexivity of a term the head built: a
-            // subterm of the instance, which the rule may conclude
-            let built = self.dec(lhs)?;
-            let found = self
-                .find_subterm_like(instance_rhs, built)
-                .or(self.find_subterm_like(instance_lhs, built));
-            if let Some(sub) = found {
-                let refl = self.out.rule(
-                    Proposition::new(sub, sub),
-                    name.to_string(),
-                    sigma_order,
-                    premises,
-                    self.program,
-                );
-                let refl = self.note(refl);
-                let reframed = self.align(refl, built)?; // sub = ·built
-                let s = self.out.sym(reframed); // built = ·sub
-                return self.trans(s, reframed);
-            }
-        }
-        if !self.is_carrier_term(lhs) {
-            // a bare-variable right-hand side states an `Equated` row: cls_p = ·cls_x
-            let (_, _, cls_x) = self.row_sides(lhs)?;
-            let target = self.dec(cls_x)?;
-            return self.align(p, target);
-        }
-        // the built term, which the instance may spell with other names for the
-        // slots the class does not depend on
-        let origin = self.sub(subst, root_class)?;
-        let built = if lhs == rhs {
-            lhs
-        } else if lhs == origin {
-            rhs
-        } else if rhs == origin {
-            lhs
-        } else {
-            return Err("the step relates neither side with the matched class".into());
-        };
-        let target = self.dec(built)?;
-        let rhs_occ = self.pattern_occurrences(rhs_pattern, &variables);
-        let p = self
-            .fit(p, target, &rhs_occ)
-            .map_err(|e| format!("result of {name}: {e}"))?;
-        self.orient(p, lhs, rhs)
+        Ok(RuleInstance {
+            proof: p,
+            head: rule_step,
+            origin: self.sub(subst, root_class)?,
+            occurrences: self.pattern_occurrences(rhs_pattern, &variables),
+        })
     }
 
     /// The classes at a right-hand-side pattern's variable positions.
     fn pattern_occurrences(
         &self,
         pattern: TermId,
-        variables: &HashMap<String, TermId>,
+        variables: &HashMap<String, Occurrence>,
     ) -> HashMap<Vec<usize>, Occurrence> {
-        match self.out.term_dag.get(pattern) {
-            Term::Var(v) => variables
-                .get(v)
-                .map(|&cls| (vec![], Occurrence { cls, row: None }))
-                .into_iter()
-                .collect(),
-            Term::App(_, kids) => kids
-                .iter()
-                .enumerate()
-                .flat_map(|(j, &kid)| {
-                    self.pattern_occurrences(kid, variables).into_iter().map(
-                        move |(path, occurrence)| {
-                            (std::iter::once(j).chain(path).collect(), occurrence)
-                        },
-                    )
-                })
-                .collect(),
-            Term::Lit(_) => HashMap::default(),
-        }
-    }
-
-    /// The label of the atom whose root is `var`, matched at the row the
-    /// expansion found for `pattern`: through the root variable's class slots, or
-    /// through a child variable's or literal's, which share a block with the
-    /// atom's node slots.
-    fn atom_label(
-        &self,
-        frame: &Fr,
-        var: &str,
-        pattern: TermId,
-        occ: Option<&Occurrence>,
-    ) -> Option<String> {
-        if let Some(a) = frame.atom_of(var) {
-            return Some(a);
-        }
-        let Some(Occurrence {
-            row: Some((row, _)),
-            ..
-        }) = occ
-        else {
-            return None;
-        };
-        let Term::App(head, kids) = self.out.term_dag.get(pattern).clone() else {
-            return None;
-        };
-        let (_, args) = self.app(*row)?;
-        let ctor = self.program.constructors.get(&head)?;
-        let mut i = 0;
-        let mut candidates: Option<BTreeSet<String>> = None;
-        for (j, col) in ctor.columns.iter().enumerate() {
-            match col {
-                ColumnKind::Child | ColumnKind::Var | ColumnKind::Binder => {
-                    if let Term::Var(v) = self.out.term_dag.get(kids[j]) {
-                        let edge = renaming_from_term(self.egg(), args[i]);
-                        if let Some(edge) = edge {
-                            for (t, s) in edge.iter() {
-                                let found: BTreeSet<String> =
-                                    if matches!(col, ColumnKind::Var | ColumnKind::Binder) {
-                                        frame.node_atoms_with_literal(v, *s).into_iter().collect()
-                                    } else {
-                                        frame.node_atoms_with(v, *t, *s).into_iter().collect()
-                                    };
-                                if found.is_empty() {
-                                    continue;
-                                }
-                                candidates = Some(match candidates {
-                                    None => found,
-                                    Some(c) => c.intersection(&found).cloned().collect(),
-                                });
-                            }
-                        }
+        let mut occurrences = HashMap::default();
+        let mut pending = vec![(pattern, Vec::new())];
+        while let Some((term, path)) = pending.pop() {
+            match self.out.term_dag.get(term) {
+                Term::Var(variable) => {
+                    if let Some(&occurrence) = variables.get(variable) {
+                        occurrences.insert(path, occurrence);
                     }
-                    i += if *col == ColumnKind::Child { 2 } else { 1 };
                 }
-                ColumnKind::Payload(_) => i += 1,
+                Term::App(_, children) => {
+                    for (index, &child) in children.iter().enumerate() {
+                        let mut path = path.clone();
+                        path.push(index);
+                        pending.push((child, path));
+                    }
+                }
+                Term::Lit(_) => {}
             }
         }
-        candidates.and_then(|c| c.into_iter().next())
+        occurrences
     }
 
-    /// The frame coordinates of the nested atoms' node slots, as `(content slot,
-    /// frame slot)` pairs: a nested row's node slot reaches the content through
-    /// the renaming its occurrence spells it with.
-    fn nested_node_slots(
-        &mut self,
-        frame: &Fr,
-        pattern: TermId,
-        occ: &HashMap<Vec<usize>, Occurrence>,
-        names: &HashMap<Vec<usize>, String>,
-        content: TermId,
-    ) -> LiftResult<Vec<(i64, i64)>> {
-        let mut out = vec![];
-        let mut paths: Vec<&Vec<usize>> = occ.keys().filter(|p| !p.is_empty()).collect();
-        paths.sort();
-        for path in paths {
-            let o = occ[path];
-            let Some((row, _)) = o.row else { continue };
-            let Some(name) = names.get(path) else {
-                continue;
-            };
-            let sub_pattern = self.subterm_at(pattern, path)?;
-            let Some(label) = self.atom_label(frame, name, sub_pattern, Some(&o)) else {
-                continue;
-            };
-            let dr = self.dec(row)?;
-            let sub = self.subterm_at(content, path)?;
-            let mut pairs = BTreeMap::new();
-            if self.unify_slots(dr, sub, &mut pairs).is_err() {
-                continue;
-            }
-            for (s, cs) in pairs {
-                if let Some(f) = frame.node_slot(&label, s) {
-                    out.push((cs, f));
-                }
-            }
-        }
-        Ok(out)
+    pub(super) fn atom_label(
+        &self,
+        labels: &BTreeMap<String, Option<String>>,
+        var: &str,
+    ) -> Option<String> {
+        labels.get(var).and_then(Clone::clone)
     }
 
-    /// A content in a matched node's own slot names restated in the frame's: each
-    /// node slot goes to the pattern slot the frame gave it (the root atom's
-    /// through `atom`, the nested atoms' as `nested` lists them), the rest (slots
-    /// the pattern never named) to fresh names. Where two content slots would
-    /// take one frame name, only the first does: a redundancy certificate is
-    /// needed for the other.
+    /// Restate the expanded pattern in its frame coordinates. Slots identified
+    /// by the frame share one representative; the remaining occurrence slots
+    /// get fresh names and are related by their recorded support certificates.
     pub(super) fn lift(
         &mut self,
-        p: ViewId,
+        proof: ViewId,
         frame: &Fr,
-        atom: Option<&str>,
-        nested: &[(i64, i64)],
-    ) -> (ViewId, Renaming) {
-        let content = self.out.edge(p).rhs;
+        nodes: &[(String, i64, i64)],
+    ) -> LiftResult<ViewId> {
+        let renaming = self.out.edge(proof).renaming.clone();
+        let proof = self.content_form(proof);
+        let content = self.out.edge(proof).rhs;
         let slots = all_slots(&self.out.term_dag, content);
-        let mut pairs: Vec<(i64, i64)> = vec![];
-        let mut taken: BTreeSet<i64> = BTreeSet::new();
-        for s in &slots {
-            if let Some(a) = atom
-                && let Some(f) = frame.node_slot(a, *s)
-            {
-                pairs.push((*s, f));
-                taken.insert(f);
-            }
-        }
-        for (cs, f) in nested {
-            if !slots.contains(cs) || pairs.iter().any(|(k, _)| k == cs) || taken.contains(f) {
+        let mut pairs = BTreeMap::new();
+        let mut taken = BTreeSet::new();
+        for (atom, node, slot) in nodes {
+            let slot = renaming.apply(*slot);
+            let Some(target) = frame.node_slot(atom, *node) else {
                 continue;
+            };
+            if slots.contains(&slot) && !pairs.contains_key(&slot) && taken.insert(target) {
+                pairs.insert(slot, target);
             }
-            pairs.push((*cs, *f));
-            taken.insert(*f);
         }
         self.fresh.reserve(taken);
-        for s in &slots {
-            if !pairs.iter().any(|(k, _)| k == s) {
-                let f = self.fresh();
-                pairs.push((*s, f));
-            }
+        for slot in slots {
+            pairs.entry(slot).or_insert_with(|| self.fresh());
         }
-        let Some(pi) = Renaming::completing(pairs) else {
-            return (p, Renaming::identity());
-        };
-        let r = self.out.reframe(p, pi.clone());
-        (self.note(r), pi)
+        let coordinates =
+            Renaming::completing(pairs).ok_or("recorded atom coordinates are not injective")?;
+        let proof = self.out.reframe(proof, coordinates);
+        Ok(self.note(proof))
     }
 
     /// Read a substitution off a pattern's instance: each variable's first
     /// occurrence binds it, a slot literal binds to the slot at its position.
-    fn bind_from_content(
+    pub(super) fn bind_from_content(
         &mut self,
         pattern: TermId,
         content: TermId,
@@ -538,22 +628,5 @@ impl SlotLifter<'_> {
                 Ok(())
             }
         }
-    }
-
-    /// A subterm of `haystack` that is `needle` up to a bijection of slots.
-    fn find_subterm_like(&self, haystack: TermId, needle: TermId) -> Option<TermId> {
-        let mut stack = vec![haystack];
-        while let Some(t) = stack.pop() {
-            let mut pairs = BTreeMap::new();
-            if self.unify_slots(t, needle, &mut pairs).is_ok()
-                && Renaming::completing(pairs.into_iter()).is_some()
-            {
-                return Some(t);
-            }
-            if let Term::App(_, kids) = self.out.term_dag.get(t) {
-                stack.extend(kids.iter().copied());
-            }
-        }
-        None
     }
 }
