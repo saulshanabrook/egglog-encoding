@@ -305,7 +305,7 @@ pub(super) fn compile(
         seen.insert(root.clone());
     }
     for (name, id) in &conditions.concrete_slots {
-        globals.push(format!("(lit {} (map-of 0 {id}))", quote(name)));
+        globals.push(format!("(lit {} {id})", quote(name)));
     }
     if !globals.is_empty() {
         let label = q.fresh("globals");
@@ -502,7 +502,7 @@ pub(super) fn compile(
     for lit in literals.union(&conditions.fresh) {
         q.slots.insert(
             lit.clone(),
-            format!("(map-get (ren {} {}) 0)", q.frame, quote(lit)),
+            format!("(frame-slot {} {})", q.frame, quote(lit)),
         );
     }
     for (name, id) in &conditions.concrete_slots {

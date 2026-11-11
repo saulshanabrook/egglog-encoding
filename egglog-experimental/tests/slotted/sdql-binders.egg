@@ -2,7 +2,7 @@
 ;;;
 ;;; Written in the SLOTTED language and compiled by
 ;;; `egglog-experimental --slotted`, so nothing below mentions a renaming, an
-;;; edge or rigid singleton map: those are the encoding, and the point of a test at this level is
+;;; edge or rigid integer slot: those are the encoding, and the point of a test at this level is
 ;;; that it reads the way the paper does.
 ;;;
 ;;; `Sum(AppliedId, Bind<Bind<AppliedId>>)` in the reference is four slotted children of

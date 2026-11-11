@@ -664,7 +664,8 @@ fn equal_decoded_endpoints_preserve_a_nontrivial_class_equality() {
     let identity = map(&[0, 0]);
     let redundant = map(&[0, 0, 7, 9]);
     let shifted = map(&[0, 1]);
-    let variable = encoded.app("V".into(), vec![identity]);
+    let slot = encoded.lit(Literal::Int(0));
+    let variable = encoded.app("V".into(), vec![slot]);
     let left = encoded.app("Pair".into(), vec![identity, variable, shifted, variable]);
     let right = encoded.app("Pair".into(), vec![redundant, variable, shifted, variable]);
     let egg = ProofStore::new(encoded, HashMap::default(), HashSet::default());

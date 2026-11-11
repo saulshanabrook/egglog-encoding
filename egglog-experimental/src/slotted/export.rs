@@ -572,7 +572,7 @@ fn read_row(
             Column::Var | Column::Binder => {
                 edges.push(Edge {
                     class: None,
-                    map: renaming(graph, values[column])?,
+                    map: [(0, graph.value_to_base::<i64>(values[column]))].into(),
                 });
                 column += 1;
             }

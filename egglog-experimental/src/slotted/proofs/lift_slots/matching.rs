@@ -355,7 +355,13 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                 if matches!(kind, ColumnKind::Payload(_)) {
                     continue;
                 }
-                let edge = self.slot_map(args[physical.start])?;
+                let edge = match kind {
+                    ColumnKind::Child => self.slot_map(args[physical.start])?,
+                    ColumnKind::Var | ColumnKind::Binder => {
+                        self.slot_column(args[physical.start])?
+                    }
+                    ColumnKind::Payload(_) => unreachable!(),
+                };
                 for (child, node) in edge {
                     let content = match kind {
                         ColumnKind::Var => node,

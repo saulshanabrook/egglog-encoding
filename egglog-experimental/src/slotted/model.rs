@@ -110,12 +110,56 @@ impl Constructor {
             .iter()
             .map(|c| match c {
                 Column::Payload(s) => s.clone(),
-                Column::Var | Column::Binder => "Renaming".into(),
+                Column::Var | Column::Binder => "i64".into(),
                 Column::Child => format!("Renaming {}", self.sort),
             })
             .collect::<Vec<_>>()
             .join(" ")
     }
+    /// Map views for algorithms that treat a rigid slot as the edge `{0 -> slot}`.
+    /// Constructor tables themselves keep the slot directly as an integer.
+    pub(super) fn edge_maps(&self, columns: &[String]) -> Vec<String> {
+        self.children()
+            .iter()
+            .zip(columns)
+            .map(|(kind, value)| {
+                if **kind == Column::Child {
+                    value.clone()
+                } else {
+                    format!("(map-of 0 {value})")
+                }
+            })
+            .collect()
+    }
+
+    pub(super) fn columns_from_maps(&self, maps: &[String]) -> Vec<String> {
+        self.children()
+            .iter()
+            .zip(maps)
+            .map(|(kind, value)| {
+                if **kind == Column::Child {
+                    value.clone()
+                } else {
+                    format!("(map-get {value} 0)")
+                }
+            })
+            .collect()
+    }
+
+    pub(super) fn column_slots(&self, columns: &[String]) -> Vec<String> {
+        self.children()
+            .iter()
+            .zip(columns)
+            .map(|(kind, value)| {
+                if **kind == Column::Child {
+                    format!("(map-image {value})")
+                } else {
+                    format!("(map-of {value} {value})")
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn node(
         &self,
         head: &str,
@@ -223,13 +267,23 @@ impl Language {
     }
     pub fn encode(&self, t: &Term) -> String {
         match t {
-            Term::Slot(_) => self.edge(t),
-            Term::Global(n) if self.global_slot(n).is_some() => self.edge(t),
+            Term::Slot(s) => self.slot_names.id(s).to_string(),
+            Term::Global(n) if self.global_slot(n).is_some() => self.encode(&self.globals[n]),
             Term::Global(n) => format!("${n}"),
             Term::Node(n, args) => {
                 let op = &self.constructors[n];
                 let (kids, pays) = op.split(args);
-                let edges = kids.iter().map(|k| self.edge(k)).collect::<Vec<_>>();
+                let edges = kids
+                    .iter()
+                    .zip(op.children())
+                    .map(|(k, column)| {
+                        if *column == Column::Child {
+                            self.edge(k)
+                        } else {
+                            self.encode(k)
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 let children = kids.iter().map(|k| self.encode(k)).collect::<Vec<_>>();
                 let pays = pays
                     .iter()

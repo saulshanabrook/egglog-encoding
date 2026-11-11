@@ -150,7 +150,7 @@ in front of its own variables.
 ```
 (sort Renaming (Map i64 i64))
 (sort Math)
-(constructor V (Renaming) Math)
+(constructor V (i64) Math)
 (relation RenamesToLeader (Math Renaming Math))
 (relation Equated (Math Renaming Math))
 (function FreeVars (Math) Renaming :merge (map-intersect old new))
@@ -172,8 +172,9 @@ Trivial groups normalize directly; proof tracing still records the minimum
 callback needed by proof reconstruction.
 
 **`V`** is the source's unique unary variable constructor for `Math`. Its
-`Var` argument becomes a singleton renaming `{0 -> s}`: `(V $s)` lowers to
-`(V (map-of 0 s))`. The same shape and maintenance rules used for other
+`Var` argument becomes an integer slot: `(V $s)` lowers to `(V s)`.
+Shape normalization views it as `{0 -> s}` without storing a map in the row.
+The same shape and maintenance rules used for other
 constructors relate its different name choices. Its slot field has the identity
 group, never an eclass group. No variable node is seeded automatically.
 
@@ -421,7 +422,7 @@ A child column expands to a renaming column and a class column, so
 ```
 
 and `(Add (V $0) (V $1))` lowers to
-`(Add (map-of 0 0) (V (map-of 0 0)) (map-of 1 1) (V (map-of 0 1)))`.
+`(Add (map-of 0 0) (V 0) (map-of 1 1) (V 1))`.
 Maintenance relates the two variable nodes under renaming. Each constructor then gets one
 block of rules: class slots, the shape index, migration, and one child-update per child
 column.
@@ -534,8 +535,8 @@ Part II explains how the current implementation keeps one.
 
 Binder columns have source sort `Var`. For example,
 `(datatype Expr (V Var) (Lam Var Expr :binder 0))` lowers `Lam` to
-`(constructor Lam (Renaming Renaming Expr) Expr)`. The first field stores the
-bound name as a singleton `{0 -> s}`. The body has an ordinary renaming and
+`(constructor Lam (i64 Renaming Expr) Expr)`. The first field stores the
+bound name directly as an integer `s`. The body has an ordinary renaming and
 class pair. Removing the bound name from the body's public support makes the
 lambda independent of that name; other children remain outside its scope.
 
@@ -544,14 +545,13 @@ restated without the bound slot, and the class-slot transport above then interse
 that slot away, so the class does not depend on what it binds.
 
 ```
-(rule ((RenamesToLeader (Lam mvar m2 c2) ml l)
-       (= v (map-get mvar 0)))
-      ((Equated (Lam mvar m2 c2) (inverse (map-remove (inverse ml) v)) l)) :ruleset slotted)
+(rule ((RenamesToLeader (Lam v m2 c2) ml l))
+      ((Equated (Lam v m2 c2) (inverse (map-remove (inverse ml) v)) l)) :ruleset slotted)
 ```
 
 Shape computation uses the identity group for each rigid slot field. These fields
 have no child-update rule: an equation between `V` applications cannot change a
-binder name. Migration transports the singleton name with a total renaming even
+binder name. Migration transports the integer name through a total renaming even
 when the surrounding class has lost its free slots.
 
 When a bound slot collides with a free one the machinery renames the bound one
@@ -590,8 +590,8 @@ and a renaming of that class's slots into the pattern's (C1). `$x` and `$y` are 
 literals, names the pattern gives to slots of its own. Each atom becomes one egglog
 row pattern with a variable per column: `cls_p` and `cls_t1` for the two classes,
 `e0_R` for atom 0's edge to `R`, `e1_e1` for atom 1's edge to `e1`, and so on. An
-edge is a renaming from the child class's slots to the node's; a binder column's edge
-sends `0` to the bound slot.
+edge is a renaming from the child class's slots to the node's; a binder column
+stores the bound slot directly.
 
 ### Occurrences
 
@@ -675,7 +675,7 @@ The primitives:
 | --- | --- |
 | `(root "p" cs [sym\|grp])` | the atom's node is an invocation of `p`'s class, whose exact slots are `cs`; through the symmetry `sym`, or through some element of the group `grp` that `refinements` decides, if `p` was matched before |
 | `(child "v" e cs [sym\|grp])` | the column with edge `e` carries `v`: `Node(a, e(t)) = Var(v, t)` for each class slot `t`, through `sym` or an element of `grp` likewise |
-| `(lit "$x" e)`, `(bound "$x" e)` | the column is the literal `$x`: `Node(a, e(0)) = Lit("$x")`; `bound` is a binder column, whose literal is node data and not carried into refinement |
+| `(lit "$x" s)`, `(bound "$x" s)` | the integer column is the literal `$x`: `Node(a, s) = Lit("$x")`; `bound` is a binder column, whose literal is node data and not carried into refinement |
 | `(leaf e)` | a payload leaf reached through its own class: node slots, nothing more |
 | `(atom "a" binding...)` | one atom's constraints, closed; fails if its own columns break a clique |
 | `(nested-atom "a" binding...)` | the same constraints, plus this node's fresh slots in the nested compatibility clique described below |
@@ -685,6 +685,7 @@ The primitives:
 | `(mint f (names "$z"...))` | fresh slots for a right-hand side, apart from everything named |
 | `(map-contains image slot)`, `(map-not-contains image slot)` | test membership in the union of the matched terms' renaming images |
 | `(ren m "v")` | `v`'s renaming into the pattern's slots; a literal comes back as `{0 -> slot}` |
+| `(frame-slot m "$x")` | a literal's integer slot directly, without interning its singleton map |
 | `(node-slots m uncovered covered bound)` | a built node's free slots from its named columns; `(without m slots bound)` for a built child under a binder |
 
 ### The compiled rule, plainly
@@ -700,7 +701,7 @@ that schedule. Part II gives the emitted arrangement.
 
 ```
 (rule (;; egglog's own match of the two atoms, one row pattern each: an ordinary
-       ;; term column is an edge and a class; a binder column is a singleton map
+       ;; term column is an edge and a class; a binder column is an integer slot
        (= cls_p (Sum e0_R cls_R e0_lit_x e0_lit_y e0_t1 cls_t1))
        (= cls_t1 (Sing e1_e1 cls_e1 e1_e2 cls_e2))
        ;; _t1 is bound by the first atom and read again by the second, so the second
@@ -730,7 +731,7 @@ that schedule. Part II gives the emitted arrangement.
        (map-not-contains (map-image (ren m "e1")) (map-get (ren m "$x") 0))
        (map-not-contains (map-image (ren m "e1")) (map-get (ren m "$y") 0)))
       (;; the right-hand side bottom-up, each column's renaming read out of m
-       (let built_sum (Sum (ren m "R") cls_R (ren m "$x") (ren m "$y") (ren m "e2") cls_e2))
+       (let built_sum (Sum (ren m "R") cls_R (frame-slot m "$x") (frame-slot m "$y") (ren m "e2") cls_e2))
        ;; the built node's free slots: R's image, and e2's with the bound $x, $y taken out
        (let built_sum_slots (node-slots m (names "R") (names "$x" "$y" "e2") (names "$x" "$y")))
        ;; a built child sits at the identity, its slot set as the edge
@@ -879,7 +880,7 @@ holds the parent row looks the key up and joins the readings on it exactly — e
 cannot join on a value a primitive computes inside the same rule, and keying the
 readings by row instead multiplied the index's work by the number of rows. There is
 one rule per term child. Rigid Var and binder fields have no child class to read,
-but their singleton maps still pin their names. A claim's subterms are read the
+but their integer slots still pin their names. A claim's subterms are read the
 same way, parent first.
 
 ```
@@ -997,8 +998,8 @@ once.
 
 ```
 (let shape_sum (shape (ren m "R") (ren m "$x") (ren m "$y") (ren m "e2")))
-(let built_sum (Sum (vec-get shape_sum 0) cls_R (vec-get shape_sum 1)
-                    (vec-get shape_sum 2) (vec-get shape_sum 3) cls_e2))
+(let built_sum (Sum (vec-get shape_sum 0) cls_R (map-get (vec-get shape_sum 1) 0)
+                    (map-get (vec-get shape_sum 2) 0) (vec-get shape_sum 3) cls_e2))
 (let built_sum_slots (node-slots m (names "R") (names "$x" "$y" "e2") (names "$x" "$y")))
 ;; the frame's names for those slots, read off the canonical ones; `compose` drops a
 ;; canonical slot the node binds

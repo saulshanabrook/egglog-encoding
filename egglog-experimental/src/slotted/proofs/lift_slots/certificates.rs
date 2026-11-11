@@ -1008,7 +1008,8 @@ mod tests {
         let zero = map(0);
         let one = map(1);
         let two = map(2);
-        let variable = encoded.app("V".into(), vec![zero]);
+        let slot = encoded.lit(Literal::Int(0));
+        let variable = encoded.app("V".into(), vec![slot]);
         let old_class = encoded.app("Pair".into(), vec![zero, variable, two, variable]);
         let current_class = encoded.app("Pair".into(), vec![zero, variable, one, variable]);
         let egg = ProofStore::new(encoded, HashMap::default(), HashSet::default());

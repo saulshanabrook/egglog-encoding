@@ -268,10 +268,7 @@ impl Representatives {
                 arguments.push(self.term(dag, edge.child)?);
                 column += 2;
             } else if let Some(slot) = node.slots.get(&column) {
-                arguments.push(super::terms::renaming_to_term(
-                    dag,
-                    &BTreeMap::from([(0, *slot)]),
-                ));
+                arguments.push(dag.lit(egglog::ast::Literal::Int(*slot)));
                 column += 1;
             } else {
                 let text = node.payload_text[column]
@@ -302,9 +299,6 @@ pub const SLOTTED_SUBST_FRAME: &str = "slotted-subst-frame";
 
 /// A slot name, as a renaming spells it.
 type Slot = i64;
-
-/// Every rigid slot field is the singleton renaming `0 -> slot`.
-const VAR_SLOT: Slot = 0;
 
 const NODE_LAYOUT: &str = "SlottedNodeLayout";
 const EDGE_LAYOUT: &str = "SlottedEdgeLayout";
@@ -515,8 +509,7 @@ impl Rebuild<'_> {
         for binder in &node.binders {
             let old = *node.slots.get(&binder.marker)?;
             let fresh = self.fresh.take()?;
-            let marker_ren = Renaming::from([(VAR_SLOT, fresh)]);
-            args[binder.marker] = intern(state, &marker_ren);
+            args[binder.marker] = state.base_to_value::<i64>(fresh);
             refreshed.push((*binder, old, fresh));
         }
 
@@ -825,13 +818,7 @@ fn parse_node<'a, 'db: 'a>(
 
     let mut slots = BTreeMap::new();
     for &col in &layout.slots {
-        let ren = decode_renaming(state, children[col])?;
-        if ren.len() != 1 || !ren.contains_key(&VAR_SLOT) {
-            return Err(format!(
-                "constructor {ctor} slot at column {col} must be {{0 -> slot}}"
-            ));
-        }
-        slots.insert(col, ren[&VAR_SLOT]);
+        slots.insert(col, state.value_to_base::<i64>(children[col]));
     }
     let mut binders = Vec::new();
     for binder in &layout.binders {
@@ -1056,9 +1043,9 @@ fn validate_constructor_layout<'a, 'db: 'a>(
                 "overlapping or out-of-range {SLOT_LAYOUT} column {slot} for {ctor}"
             ));
         }
-        if action.schema.get(slot) != Some(&ColumnTy::Id) {
+        if action.schema.get(slot) != Some(&ColumnTy::Base(state.base_values().get_ty::<i64>())) {
             return Err(format!(
-                "{SLOT_LAYOUT} for {ctor} marks a non-Id column {slot}"
+                "{SLOT_LAYOUT} for {ctor} marks a non-i64 column {slot}"
             ));
         }
     }
@@ -1235,7 +1222,7 @@ impl Layouts {
                 }
             }
             for &col in &layout.slots {
-                if signature.input[col].name() != "Renaming" {
+                if signature.input[col].name() != "i64" {
                     return Err(format!("invalid rigid slot sort for {name} column {col}"));
                 }
             }

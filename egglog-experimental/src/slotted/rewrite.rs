@@ -102,7 +102,7 @@ fn build_node(
             "term has sort Var, expected {sort}; use the variable constructor"
         )),
         Term::Slot(s) => Ok(Built {
-            edge: format!("(ren {} {})", q.frame, quote(s)),
+            edge: format!("(frame-slot {} {})", q.frame, quote(s)),
             value: String::new(),
             slots: Slots::Name(s.clone()),
         }),
@@ -137,11 +137,16 @@ fn build_node(
                 None
             } else {
                 let sh = q.fresh(&format!("shape_{}", n.to_lowercase()));
-                actions.push(format!("(let {sh} (shape {}))", edges.join(" ")));
+                actions.push(format!(
+                    "(let {sh} (shape {}))",
+                    op.edge_maps(&edges).join(" ")
+                ));
                 let back = format!("(vec-get {sh} {})", edges.len());
-                edges = (0..edges.len())
-                    .map(|i| format!("(vec-get {sh} {i})"))
-                    .collect();
+                edges = op.columns_from_maps(
+                    &(0..edges.len())
+                        .map(|i| format!("(vec-get {sh} {i})"))
+                        .collect::<Vec<_>>(),
+                );
                 Some(back)
             };
             let node = op.node(

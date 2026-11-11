@@ -443,7 +443,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                     i += 2;
                 }
                 ColumnKind::Var | ColumnKind::Binder => {
-                    edges.push(self.slot_map(args[i])?);
+                    edges.push(self.slot_column(args[i])?);
                     classes.push(None);
                     i += 1;
                 }

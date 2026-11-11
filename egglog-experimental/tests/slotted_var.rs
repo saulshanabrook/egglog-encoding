@@ -165,3 +165,49 @@ fn a_concrete_global_binder_keeps_its_name() {
     "#,
     );
 }
+
+#[test]
+fn variable_and_binder_columns_store_integer_slots() {
+    for proof_mode in [ProofMode::Disabled, ProofMode::Prove] {
+        let mut graph = if proof_mode == ProofMode::Prove {
+            new_egraph_with_proofs()
+        } else {
+            new_egraph()
+        };
+        let mut compiler = Compiler::for_egraph(
+            Options {
+                proof_mode,
+                ..Default::default()
+            },
+            &graph,
+        );
+        compiler
+            .compile_program(
+                None,
+                r#"
+            (datatype Expr (V Var) (Pair Expr Expr) (Lam Var Expr :binder 0))
+            (let term (Lam $bound (Pair (V $bound) (V $free))))
+            (check (= term (Lam $fresh (Pair (V $fresh) (V $free)))))
+            (extract term)
+        "#,
+            )
+            .unwrap()
+            .run(&mut graph)
+            .unwrap();
+        for (name, expected) in [
+            ("V", vec!["i64"]),
+            ("Lam", vec!["i64", "Renaming", "Expr"]),
+            ("Pair", vec!["Renaming", "Expr", "Renaming", "Expr"]),
+        ] {
+            let schema = graph.get_function(name).unwrap().func_type();
+            assert_eq!(
+                schema
+                    .input
+                    .iter()
+                    .map(|sort| sort.name())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+}

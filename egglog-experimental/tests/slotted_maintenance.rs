@@ -38,7 +38,7 @@ fn leader_reversals_preserve_identities_and_symmetries() {
         for reverse in [false, true] {
             for symmetric in [false, true] {
                 let mut graph = new_egraph();
-                let mut program = format!("{base}\n(let $v (V (map-of 0 0)))\n");
+                let mut program = format!("{base}\n(let $v (V 0))\n");
                 for (name, ctor) in ["a", "b", "c"]
                     .into_iter()
                     .zip(order.map(|i| ["F", "G", "H"][i]))
@@ -92,7 +92,7 @@ fn child_unions_preserve_fresh_shapes_and_cosets() {
                 children.reverse();
             }
             let mut program = format!(
-                "{base}\n(let $v (V (map-of 0 0)))\n{}\n{maintenance}\n(Equated_0 $b (map-of 0 1 1 0) $b)\n{maintenance}\n",
+                "{base}\n(let $v (V 0))\n{}\n{maintenance}\n(Equated_0 $b (map-of 0 1 1 0) $b)\n{maintenance}\n",
                 children.join("\n")
             );
             for i in order {
@@ -145,7 +145,7 @@ fn shape_collisions_keep_the_selected_class_and_renaming_together() {
     // orders. Keep the second row's back renaming before indexing the first.
     let program = format!(
         r#"{base}
-(let variable (V (map-of 0 0)))
+(let variable (V 0))
 (let closed (A))
 (set (EclassGroup_0 variable) (set-of (map-of 0 0)))
 (set (EclassGroup_0 closed) (set-of (map-empty)))

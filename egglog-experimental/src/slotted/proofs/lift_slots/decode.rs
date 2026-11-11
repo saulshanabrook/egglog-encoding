@@ -8,6 +8,17 @@ impl SlotLifter<'_, NativeProofs<'_>> {
             .ok_or_else(|| format!("not a renaming: {}", self.egg_string(t)))
     }
 
+    /// Literal slot and binder columns are stored directly as integers.
+    pub(super) fn slot_column(&self, t: TermId) -> LiftResult<SlotMap> {
+        let Term::Lit(Literal::Int(slot)) = self.egg().get(t) else {
+            return Err(format!(
+                "not an integer slot column: {}",
+                self.egg_string(t)
+            ));
+        };
+        Ok([(0, *slot)].into_iter().collect())
+    }
+
     pub(super) fn group(&self, t: TermId) -> LiftResult<Vec<SlotMap>> {
         group_from_term(self.egg(), t).ok_or_else(|| format!("not a group: {}", self.egg_string(t)))
     }
@@ -86,7 +97,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                 ColumnKind::Binder => {
                     let m = match edges {
                         Some(e) => e[k].clone(),
-                        None => self.slot_map(*args.get(i).ok_or("short row")?)?,
+                        None => self.slot_column(*args.get(i).ok_or("short row")?)?,
                     };
                     let slot = *m.get(&0).ok_or("a binder column without its slot")?;
                     let b = self.fresh();
@@ -102,7 +113,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                 ColumnKind::Var => {
                     let m = match edges {
                         Some(e) => e[k].clone(),
-                        None => self.slot_map(*args.get(i).ok_or("short row")?)?,
+                        None => self.slot_column(*args.get(i).ok_or("short row")?)?,
                     };
                     let slot = *m.get(&0).ok_or("a Var column without its slot")?;
                     children.push(slot_term(&mut self.out.term_dag, slot));
