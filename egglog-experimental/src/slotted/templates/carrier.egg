@@ -8,6 +8,7 @@
 (relation {equated} ({sort} Renaming {sort}))
 (function {free_vars} ({sort}) Renaming :merge (map-intersect old new))
 (relation {subst_pending} ({sort} Renaming Renaming {sort}))
+{substitution_memo}
 (function {shape_equal} ({sort} Renaming {sort}) Unit :no-merge)
 {invocation_decl}
 (function {group} ({sort}) Group :merge (set-union old new))

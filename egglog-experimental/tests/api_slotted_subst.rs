@@ -59,6 +59,84 @@ const SLOTTED: &str = r#"
       :ruleset slots)
 "#;
 
+const MEMO: &str = r#"
+(function SubstMemoClass_FreeVars (String) U :merge old)
+(function SubstMemoFrame_FreeVars (String) Renaming :merge old)
+"#;
+
+#[test]
+fn substitution_memo_reuses_invocations_after_physical_rows_move() -> Result<(), Error> {
+    let mut graph = egraph(&format!(
+        r#"{MEMO}
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
+(run-schedule (saturate (run slots)))
+(let $out (slotted-subst $body 0 (map-empty) (Null)))
+(run-schedule (saturate (run slots)))
+; Keep an equal representative while deleting the original physical row.
+(let $alias (Lbl "equivalent" (map-of 0 1) (V (map-of 0 0))))
+(union $out $alias)
+(delete (H (map-empty) (Null) (map-of 0 1) (V (map-of 0 0))))
+(let $again (slotted-subst $body 0 (map-empty) (Null)))
+(let $frame (slotted-subst-frame $body 0 (map-empty) (Null)))
+(check (= $again $out))
+(check (= $frame (map-of 1 1)))
+"#,
+    ))?;
+    // Reuse the existing invocation, without resurrecting its deleted spelling.
+    assert_eq!(row_count(&mut graph, "H"), 1);
+    Ok(())
+}
+
+#[test]
+fn substitution_memo_tracks_representatives_and_rolls_back() -> Result<(), Error> {
+    let mut graph = egraph(&format!(
+        r#"{MEMO}
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
+(run-schedule (saturate (run slots)))
+(let $first (slotted-subst $body 0 (map-empty) (Null)))
+(push)
+(union $body (V (map-of 0 0)))
+(set (FreeVars $body) (map-of 0 0))
+(let $second (slotted-subst $body 0 (map-empty) (Null)))
+(check (= $second (Null)))
+(pop)
+(let $again (slotted-subst $body 0 (map-empty) (Null)))
+(check (= $again $first))
+(fail (check (= $again (Null))))
+"#,
+    ))?;
+    assert_eq!(row_count(&mut graph, "H"), 2);
+    assert_eq!(graph.get_size("SubstMemoClass_FreeVars"), 1);
+    Ok(())
+}
+
+#[test]
+fn substitution_memo_observes_result_shrink_without_changing_variable_frames() -> Result<(), Error>
+{
+    egraph(&format!(
+        r#"{MEMO}
+(let $body (H (map-of 0 0) (V (map-of 0 0)) (map-of 0 1) (V (map-of 0 0))))
+(let $replacement (Lbl "replacement" (map-empty) (Null)))
+(run-schedule (saturate (run slots)))
+(let $out (slotted-subst $body 0 (map-empty) $replacement))
+(run-schedule (saturate (run slots)))
+(let $before (slotted-subst-frame $body 0 (map-empty) $replacement))
+(check (= $before (map-of 1 1)))
+(union $out (Null))
+(set (FreeVars $out) (map-empty))
+(let $after (slotted-subst-frame $body 0 (map-empty) $replacement))
+(check (= $after (map-empty)))
+; Variable bodies preserve the caller's replacement frame, including entries
+; beyond its public slots, just as an uncached substitution does.
+(let $variable-result (slotted-subst (V (map-of 0 0)) 0 (map-of 5 9) (Null)))
+(let $variable-frame (slotted-subst-frame (V (map-of 0 0)) 0 (map-of 5 9) (Null)))
+(check (= $variable-result (Null)))
+(check (= $variable-frame (map-of 5 9)))
+"#,
+    ))?;
+    Ok(())
+}
+
 fn egraph(program: &str) -> Result<EGraph, Error> {
     let mut egraph = egglog_experimental::slotted::new_egraph();
     egraph.parse_and_run_program(None, &format!("{SLOTTED}\n{program}"))?;
