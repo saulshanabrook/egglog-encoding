@@ -1,0 +1,73 @@
+{
+  "status": "reviewed-worker-patch-already-integrated-by-root",
+  "sealed_at": "2026-09-25T12:33:03.464295+00:00",
+  "mirror": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate",
+  "write_set": [
+    "scripts/reproduction_misaal_abi_gate.py",
+    "tests/test_reproduction_misaal_abi_gate.py",
+    "benchmarks/reproduction/misaal-hardboiled.md",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-general-depth1.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-ordinary-depth2.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/ki4k2nlc.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/provenance.json"
+  ],
+  "baseline_sha256": {
+    "benchmarks/reproduction/misaal-hardboiled.md": "cfb5ad86dca8e4a433d31857ce787aa178bb756ea2ad8a271ea84ce5e851bf95"
+  },
+  "new_paths": [
+    "scripts/reproduction_misaal_abi_gate.py",
+    "tests/test_reproduction_misaal_abi_gate.py",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-general-depth1.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-ordinary-depth2.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/ki4k2nlc.rkt",
+    "benchmarks/reproduction/fixtures/misaal-parameter/provenance.json"
+  ],
+  "worker_result_sha256": {
+    "scripts/reproduction_misaal_abi_gate.py": "73ae35cf3550d314c6b3d900369ace2c46c562cc1b12454e9aa29fbe05a2876e",
+    "tests/test_reproduction_misaal_abi_gate.py": "5d5b751198640a5e3c9f2a3132a462fc83376cd44858339f85a50aa0cf7a90f9",
+    "benchmarks/reproduction/misaal-hardboiled.md": "adb2bc6b8c551d0bddd9d1f91fe617bb4746a7087eda95f879b0d19ff7745ab3",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-general-depth1.rkt": "a1b97d6a5bd1c149bcc0116c14eefb1ec5f121a1c93b8a373951060e37ffd51a",
+    "benchmarks/reproduction/fixtures/misaal-parameter/c098-ordinary-depth2.rkt": "c6149ee7123608f10facf84e0eccd1f652436f2f5066bd99a661bf4f70309650",
+    "benchmarks/reproduction/fixtures/misaal-parameter/ki4k2nlc.rkt": "32d0edbfbd86bdde0ba6b47af8eebd260f1421af79dcbb223923015f389a8521",
+    "benchmarks/reproduction/fixtures/misaal-parameter/provenance.json": "4848a1dfc5537b4f3f27d9a23b186f3b6691c2afb2479457e1ef4c071fac980e"
+  },
+  "patch": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/review/abi-gate.patch",
+  "patch_sha256": "2373bc38acd7c7fcd549ce9bcf71cfa91650ab2296491a980b0aadd274ee0622",
+  "api": {
+    "run_gates": "run_gates(runtime_path: Path, checkout: Path, output: Path, *, lock_owned: bool = False) -> dict[str, Any]",
+    "prepare_programs": "prepare_programs(checkout: Path, output: Path) -> dict[str, Any] (offline only)",
+    "CAPTURED_FIXTURE": "ROOT / benchmarks/reproduction/fixtures/misaal-parameter/ki4k2nlc.rkt",
+    "CAPTURED_SHA256": "32d0edbfbd86bdde0ba6b47af8eebd260f1421af79dcbb223923015f389a8521",
+    "return": "status, abi_gate:{path,sha256}, captured_gate:{path,sha256}, active_gate, process, admitted:false, proof_admitted:false",
+    "terminal_summary": "output/result.json; last returned process receipt retained directly for recursive safety-status scanning",
+    "abi_result": "output/abi/result.json",
+    "captured_result": "output/captured/result.json",
+    "manifest": "output/programs/manifest.json"
+  },
+  "checks": {
+    "pytest": "66 passed in isolated mirror (18 new mocked gate tests +48 existing adaptation tests); 18 gate tests passed again after summary safety propagation",
+    "ruff_check": "passed",
+    "ruff_format": "passed",
+    "mypy": "passed in two source files",
+    "git_apply_check": "passed before root integrated; final recheck correctly detected already integrated paths",
+    "actual_source_offline": "all 21 class method pins passed; all four generated program hashes equal earlier native-passed diagnostic",
+    "offline_manifest_sha256": "cea2c1f084cb4f4077260e5cba03d47087fd4dbfbdc9e5f5455c93a8fb0fe659"
+  },
+  "review": {
+    "agent": "/root/prove_extract_design_review",
+    "result": "no concrete blocker",
+    "scope": "exact fixture hashes; full-module source CodeTypes and oracle bytes; five guarded fail-stop calls; lock defaults and coordinator override; terminal safety-status propagation; final seal boundary"
+  },
+  "root_owned_integration_corrections": [
+    "Use tests.test_reproduction_misaal_patterns import per root test-package convention; isolated mirror lacked tests/__init__.py so local collection did not expose this mismatch",
+    "Add optional preparer_path to _runtime/run_gates defaulting to current preparer; explicitly bind archived executed source hash in summary, never execute archive, matching seal_runtime archival API",
+    "Preserve native-gate preflight failure0001 as evidence; no native job launched in that failed preflight"
+  ],
+  "limitations": [
+    "No native jobs/builds/acquisitions/root writes/commits by worker",
+    "Historical fixture is actual captured diagnostic, not a benchmark or complete reproduction success",
+    "Worker patch originally accepts only runtime matching current preparer; root owns explicit archival extension and root-test import correction",
+    "Root owns prepare_family integration, native gate execution and final seal_runtime",
+    "No workload or proof admission implied"
+  ]
+}

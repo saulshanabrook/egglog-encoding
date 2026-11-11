@@ -1,0 +1,91 @@
+{
+  "status": "prepared-offline-only",
+  "admitted": false,
+  "proof_admitted": false,
+  "source_pins": {
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/lib/patterns/PatternUtils.py": "e89b1a4c9dda901f2416100dbc6b5e47554264e00eb755c52c669f48b54eb8d5",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/misaal/synthesis/param_abstract.rkt": "762f379a373b30c965d8bb3760b2908515f52945e58a76c820c11da2fa6c2b47",
+    "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL/lib/utils/DSLInstructionUtils.py": "e385eaa17a81bbcb8106ad33cbbe1ac2ed4307879b0f366f3b72219744b43bdb",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/benchmarks/reproduction/fixtures/misaal-parameter/ki4k2nlc.rkt": "32d0edbfbd86bdde0ba6b47af8eebd260f1421af79dcbb223923015f389a8521",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/benchmarks/reproduction/fixtures/misaal-parameter/c098-ordinary-depth2.rkt": "c6149ee7123608f10facf84e0eccd1f652436f2f5066bd99a661bf4f70309650",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/benchmarks/reproduction/fixtures/misaal-parameter/c098-general-depth1.rkt": "a1b97d6a5bd1c149bcc0116c14eefb1ec5f121a1c93b8a373951060e37ffd51a",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/benchmarks/reproduction/fixtures/misaal-parameter/provenance.json": "4848a1dfc5537b4f3f27d9a23b186f3b6691c2afb2479457e1ef4c071fac980e",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/scripts/reproduction_misaal_abi_gate.py": "98c909d316ccea64d8a7bb356dc39610dfa190bd4a4ac054c28a00f758f10356",
+    "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/scripts/reproduction_misaal_patterns.py": "4511c92e40a95b01730f88c8d6591c6e2ef2cee09b743c4a5b7f66d642dc5d08"
+  },
+  "adaptation_receipt": {
+    "parameter_abi": {
+      "contract": "c098-four-argument-v1",
+      "status": "complete",
+      "semantics": "mixed-revision restoration of executable c098 paper ABI; register-only intent unvalidated",
+      "paper_revision": "c098f0f289d03f0c58db1ef85d9b4ff7eef9dec4",
+      "implementation_sha256": "4511c92e40a95b01730f88c8d6591c6e2ef2cee09b743c4a5b7f66d642dc5d08",
+      "sources": {
+        "lib/patterns/PatternUtils.py": "e89b1a4c9dda901f2416100dbc6b5e47554264e00eb755c52c669f48b54eb8d5",
+        "misaal/synthesis/param_abstract.rkt": "762f379a373b30c965d8bb3760b2908515f52945e58a76c820c11da2fa6c2b47"
+      },
+      "original_methods": {
+        "__init__": "0c0f4a2b8b7db27a487992263b675ffe15e9c447315787681ff55eb3cc06b752",
+        "emit_create_param_abstract_spec": "d04cc11883501cefc07b6765e1e7a4ddddf01789b6c30f8c856aaa9c727e430b",
+        "emit_synthesize_query": "a11330b1f8de77ab40ff554664256590b450da037e78552fce7e17c68a505731",
+        "generate_param_expr": "7719f52e231b47393c065ea878bb961a283869a263569b68917a111dd466ac72",
+        "generate_param_expr_general": "eed6cbd28c6729ee56293dea8600ffb4ae778c69263d12e1bbdf012bbef6173d",
+        "canonicalize_pattern_bucket": "14c76cc6430017e68e890889660813eda6c6f35b70044b796c2810f8c9dc3bfd",
+        "canonicalize_halide": "57c1124526ab7d4ca66f8ac6efda53a94c5900572b10cb107c8343b3a63ff313",
+        "abstract_patterns": "7678db458a451a84f0f93d671d2dce8b9876b59c9ab7f994083553d29610de17",
+        "get_expr_num_numeric_positions": "b4cd9b56e851c07ad22ceae040462c3731eccf2004f0262634d8360692e5fd15",
+        "get_expr_numeric_positions": "3feae217a11e31c7cd3203aa89a54b83e8768b62296fca11ecb505b730664fcf",
+        "set_expr_numeric_position": "9c740455b214342a2bced6a3793bdff5f22e5dcd08fef3edc4b785e49721b052",
+        "increment_regs": "2d2103124aec812dd2d2c8afc8bee64a84f5d7b6667c838af06c2e3446b3d9b2",
+        "graph_has_cycle": "613974706ad8ffdd4ab1bc6b72b621aabd0a11a7bc167dcfda7377ca3742f9f7",
+        "should_exclude_reg": "5c910a608b3701ff5ff2d6a682a4f6d34f4c7b793345230e436c92875471aeef",
+        "peel_symbolic_parameters": "6b1307d1f0a4e06bcc6938c8c748e6c7192b1921d7cbbf59ac4a0b6a20f71fa8",
+        "inline_symbolic_references": "20952fc0d1eae320e4b169ad80b05587422d9e8ef8f7581700160ad51d0d8888",
+        "replace_parameters_with_symbolic_exprs": "770c080a89614533e5fc6c51ce50563eec38b39c31be2ddefc30f7c4ab383778",
+        "swap_patterns": "71592c93ebae466a609d7fc95678c88903ce6f65752f15245328837a3d35bb5e",
+        "abstract_pattern_bucket": "1afe91ec8d62e2a6b624dfda6ceb697616b3acf81395ec9e9a091154a285d7ab",
+        "find_cycles": "98ee6b4e1b798564de4e4d9b1e72214c94980d740dde9d1f019b81fae2f819ce",
+        "find_node_in_most_cycles": "816cef84a5973b704ce44694a4eb711759a1dd861e875edcfc53f5d7808a3af4"
+      },
+      "adapted_methods": {
+        "emit_synthesize_query": "99d60646fc3364512158b11280be4f0bfc414b288dbab21d4d9fc6c2fb586421",
+        "generate_param_expr_general": "e9b9c28d6b6aa636d6f8979cbc5a37a61f5872b1fa4d959450d496d7efe1cf37"
+      },
+      "adapted_source_sha256": "14ab9d50573a51f5b6207d15b8e2b89727a92390f9f9068d5e8996f31f1752b9"
+    }
+  },
+  "programs": {
+    "ordinary-depth2": {
+      "expected_exit": 0,
+      "result_file": "ordinary-depth2.temp",
+      "path": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/review/offline-programs-final/ordinary-depth2.rkt",
+      "sha256": "c6149ee7123608f10facf84e0eccd1f652436f2f5066bd99a661bf4f70309650"
+    },
+    "ordinary-depth2-unadapted": {
+      "expected_exit": 1,
+      "path": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/review/offline-programs-final/ordinary-depth2-unadapted.rkt",
+      "sha256": "62baee1e3bbe7c80f78b101f2d3966485a970bad7b89921f3d00a3b7a1fa0d68"
+    },
+    "general-depth1": {
+      "expected_exit": 0,
+      "result_file": "general-depth1.temp",
+      "path": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/review/offline-programs-final/general-depth1.rkt",
+      "sha256": "a1b97d6a5bd1c149bcc0116c14eefb1ec5f121a1c93b8a373951060e37ffd51a"
+    },
+    "general-depth1-unadapted": {
+      "expected_exit": 1,
+      "path": "/Users/saul/p/wt/egglog-encoding/misaal-abi-gate/review/offline-programs-final/general-depth1-unadapted.rkt",
+      "sha256": "43e319da37e3969844639bed67f50ad843ec241873840d56f44dbd06625ea715"
+    }
+  },
+  "request": {
+    "checkout": "/Users/saul/p/egglog-encoding/benchmarks/local/reproduction/stages/misaal-prerequisites/prepare/de24509065a91a0011099031af73b866aad56a8f4ccd70149684696c620846b1/attempt-0001/environment/sources/MISAAL",
+    "revision": "44ff893445d664cd87f52b08a138260ed2015ba8",
+    "parameter_abi": "c098-four-argument-v1",
+    "source_hashes": {
+      "lib/patterns/PatternUtils.py": "e89b1a4c9dda901f2416100dbc6b5e47554264e00eb755c52c669f48b54eb8d5",
+      "misaal/synthesis/param_abstract.rkt": "762f379a373b30c965d8bb3760b2908515f52945e58a76c820c11da2fa6c2b47"
+    }
+  },
+  "scope": "source-emitted ABI diagnostics compared with c098 oracle bytes; not workload admission"
+}
