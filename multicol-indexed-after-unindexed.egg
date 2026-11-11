@@ -1,0 +1,13 @@
+(function edge (i64 i64) i64 :merge old)
+(index EdgeOcc edge (any 1 2))
+(relation seed (i64))
+(relation hit (i64 i64 i64))
+
+(set (edge 1 1) 10)
+(seed 1)
+
+;; x first occurs at unindexed row column 0, but it also occurs at indexed
+;; column 1.  The occurrence condition is therefore implied by the row atom.
+(rule ((seed x) (EdgeOcc x x x c)) ((hit x x c)))
+(run 1)
+(check (hit 1 1 10))

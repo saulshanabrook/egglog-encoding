@@ -1,0 +1,17 @@
+(function edge (i64 i64) i64 :merge old)
+(index EdgeOcc edge (any 0))
+(relation seed (i64))
+(relation hit (i64 i64 i64))
+
+(set (edge 1 1) 10)
+(set (edge 1 2) 11)
+(set (edge 2 1) 12)
+(seed 1)
+
+;; The probe value x must both occur at indexed column 0 and equal the
+;; unindexed row column 1.  Only edge(1, 1) = 10 meets both requirements.
+(rule ((seed x) (EdgeOcc x a x c)) ((hit a x c)))
+(run 1)
+(check (hit 1 1 10))
+(fail (check (hit 1 2 11)))
+(fail (check (hit 2 1 12)))

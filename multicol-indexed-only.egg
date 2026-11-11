@@ -1,0 +1,13 @@
+(function edge (i64 i64) i64 :merge old)
+(index EdgeOcc edge (any 1 2))
+(relation seed (i64))
+(relation hit (i64 i64 i64))
+
+(set (edge 1 1) 10)
+(seed 1)
+
+;; Nearby canary: without the earlier unindexed repetition, the indexed
+;; column itself makes the occurrence condition implied.
+(rule ((seed x) (EdgeOcc x a x c)) ((hit a x c)))
+(run 1)
+(check (hit 1 1 10))
