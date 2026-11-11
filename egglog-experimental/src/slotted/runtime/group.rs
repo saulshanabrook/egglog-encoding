@@ -1,23 +1,73 @@
 //! Finite symmetry-group operations, independent of egglog's value registry.
-use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 type Map<T> = BTreeMap<T, T>;
 
-use egglog::sort::compose;
+/// Read either a container's tree map or the compact native slot map without
+/// materializing an intermediate tree. Iteration follows key order (signed slot
+/// order for native maps).
+pub(crate) trait MapView<T: Copy + Ord> {
+    fn pairs(&self) -> impl Iterator<Item = (T, T)>;
+    fn get_slot(&self, key: &T) -> Option<T>;
+    fn to_tree(&self) -> Map<T> {
+        self.pairs().collect()
+    }
+}
+
+impl<T: Copy + Ord> MapView<T> for Map<T> {
+    fn pairs(&self) -> impl Iterator<Item = (T, T)> {
+        self.iter().map(|(k, v)| (*k, *v))
+    }
+    fn get_slot(&self, key: &T) -> Option<T> {
+        self.get(key).copied()
+    }
+}
+
+impl<T: Copy + Ord, M: MapView<T>> MapView<T> for std::sync::Arc<M> {
+    fn pairs(&self) -> impl Iterator<Item = (T, T)> {
+        self.as_ref().pairs()
+    }
+    fn get_slot(&self, key: &T) -> Option<T> {
+        self.as_ref().get_slot(key)
+    }
+}
+
+impl MapView<i64> for super::Renaming {
+    fn pairs(&self) -> impl Iterator<Item = (i64, i64)> {
+        self.iter().map(|(k, v)| (*k, *v))
+    }
+    fn get_slot(&self, key: &i64) -> Option<i64> {
+        self.get(key).copied()
+    }
+}
+
+impl<T: Copy + Ord, M: MapView<T>> MapView<T> for &M {
+    fn pairs(&self) -> impl Iterator<Item = (T, T)> {
+        (*self).pairs()
+    }
+    fn get_slot(&self, key: &T) -> Option<T> {
+        (*self).get_slot(key)
+    }
+}
+
+fn compose<T: Copy + Ord>(a: &impl MapView<T>, b: &impl MapView<T>) -> Map<T> {
+    b.pairs()
+        .filter_map(|(k, v)| a.get_slot(&v).map(|v| (k, v)))
+        .collect()
+}
 
 pub(super) fn restrict<T: Copy + Ord>(
-    group: &[impl Borrow<Map<T>>],
-    slots: &Map<T>,
+    group: &[impl MapView<T>],
+    slots: &impl MapView<T>,
 ) -> Vec<Map<T>> {
     group
         .iter()
-        .map(|g| compose(slots, &compose(g.borrow(), slots)))
+        .map(|g| compose(slots, &compose(g, slots)))
         .collect()
 }
 
 /// Close finite slot maps under composition, including partial maps during restriction.
-pub(super) fn close<T: Copy + Ord>(group: &[impl Borrow<Map<T>>]) -> Vec<Map<T>> {
+pub(super) fn close<T: Copy + Ord>(group: &[impl MapView<T>]) -> Vec<Map<T>> {
     close_with(group, |_| {})
 }
 
@@ -29,19 +79,19 @@ pub(in crate::slotted) enum Composition {
 
 /// Compute the closure, reporting one derivation per output in output order.
 pub(in crate::slotted) fn close_with<T: Copy + Ord>(
-    group: &[impl Borrow<Map<T>>],
+    group: &[impl MapView<T>],
     mut record: impl FnMut(Composition),
 ) -> Vec<Map<T>> {
     let mut known = Vec::new();
     let mut seen = BTreeSet::new();
     let mut generators = Vec::new();
     for (i, generator) in group.iter().enumerate() {
-        let generator = generator.borrow();
-        if !seen.insert(generator.clone()) {
+        let tree = generator.to_tree();
+        if !seen.insert(tree.clone()) {
             continue;
         }
         generators.push((generator, known.len()));
-        known.push(generator.clone());
+        known.push(tree);
         record(Composition::Input(i));
         // Every generated map is a nonempty word in the generators. Extending
         // words on one side suffices, including for partial maps during slot
@@ -68,19 +118,18 @@ pub(in crate::slotted) fn close_with<T: Copy + Ord>(
 /// not inputs, of that permutation. Returns indices into the input group;
 /// ordering is by slot numbers.
 pub(super) fn coset_reps<T: Copy + Ord>(
-    group: &[impl Borrow<Map<T>>],
-    pinned: &Map<T>,
+    group: &[impl MapView<T>],
+    pinned: &impl MapView<T>,
 ) -> Vec<usize> {
     let mut least: BTreeMap<Map<T>, usize> = BTreeMap::new();
     for (i, g) in group.iter().enumerate() {
-        let g = g.borrow();
         let key = g
-            .iter()
-            .filter(|(_, v)| pinned.contains_key(v))
-            .map(|(k, v)| (*v, *k))
+            .pairs()
+            .filter(|(_, v)| pinned.get_slot(v).is_some())
+            .map(|(k, v)| (v, k))
             .collect();
         match least.get(&key) {
-            Some(&j) if group[j].borrow() <= g => {}
+            Some(&j) if group[j].pairs().cmp(g.pairs()).is_le() => {}
             _ => {
                 least.insert(key, i);
             }
@@ -90,46 +139,48 @@ pub(super) fn coset_reps<T: Copy + Ord>(
 }
 
 pub(super) fn coset_min<T: Copy + Ord>(
-    map: &Map<T>,
-    group: &[impl Borrow<Map<T>>],
+    map: &impl MapView<T>,
+    group: &[impl MapView<T>],
 ) -> Option<Map<T>> {
     coset_min_with_index(map, group).map(|(_, least)| least)
 }
 
 pub(in crate::slotted) fn coset_min_with_index<T: Copy + Ord>(
-    map: &Map<T>,
-    group: &[impl Borrow<Map<T>>],
+    map: &impl MapView<T>,
+    group: &[impl MapView<T>],
 ) -> Option<(usize, Map<T>)> {
     group
         .iter()
         .enumerate()
-        .map(|(index, g)| (index, compose(map, g.borrow())))
+        .map(|(index, g)| (index, compose(map, g)))
         .min_by(|(_, a), (_, b)| a.cmp(b))
 }
 
 pub(super) fn coset_same<T: Copy + Ord>(
-    a: &Map<T>,
-    b: &Map<T>,
-    group: &[impl Borrow<Map<T>>],
+    a: &impl MapView<T>,
+    b: &impl MapView<T>,
+    group: &[impl MapView<T>],
 ) -> bool {
-    group.iter().any(|g| compose(b, g.borrow()) == *a)
+    group.iter().any(|g| compose(b, g).pairs().eq(a.pairs()))
 }
 
-pub(super) fn slot_closure<T: Copy + Ord>(group: &[impl Borrow<Map<T>>], slots: &Map<T>) -> Map<T> {
+pub(super) fn slot_closure<T: Copy + Ord>(
+    group: &[impl MapView<T>],
+    slots: &impl MapView<T>,
+) -> Map<T> {
     slot_closure_with(group, slots, |_, _, _| {})
 }
 
 /// Report each removed slot, its group element, and whether the inverse image removed it.
 pub(in crate::slotted) fn slot_closure_with<T: Copy + Ord>(
-    group: &[impl Borrow<Map<T>>],
-    slots: &Map<T>,
+    group: &[impl MapView<T>],
+    slots: &impl MapView<T>,
     mut removed: impl FnMut(T, usize, bool),
 ) -> Map<T> {
-    let mut kept: BTreeSet<T> = slots.keys().copied().collect();
+    let mut kept: BTreeSet<T> = slots.pairs().map(|(k, _)| k).collect();
     for (index, g) in group.iter().enumerate() {
-        let g = g.borrow();
         let forward: BTreeSet<T> = compose(g, slots).values().copied().collect();
-        let inverse: Map<T> = g.iter().map(|(k, v)| (*v, *k)).collect();
+        let inverse: Map<T> = g.pairs().map(|(k, v)| (v, k)).collect();
         let backward: BTreeSet<T> = compose(&inverse, slots).values().copied().collect();
         kept.retain(|x| {
             if !forward.contains(x) {
@@ -183,6 +234,12 @@ mod tests {
                 }
             }
             assert_eq!(close(&input).into_iter().collect::<BTreeSet<_>>(), expected);
+            let compact: Vec<super::super::Renaming> =
+                input.iter().cloned().map(Into::into).collect();
+            assert_eq!(
+                close(&compact).into_iter().collect::<BTreeSet<_>>(),
+                expected
+            );
             input.reverse();
             input.extend(input.clone());
             assert_eq!(close(&input).into_iter().collect::<BTreeSet<_>>(), expected);

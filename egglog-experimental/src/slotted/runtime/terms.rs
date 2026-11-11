@@ -1,13 +1,12 @@
 //! Convert slotted runtime values to and from their proof terms. Renamings,
 //! groups, and vectors use canonical map, set, and vector terms. `Frame`,
 //! `Binding`, and `Names` use JSON string literals.
+use super::group::MapView;
 use super::*;
 use egglog::sort::{map_term_to_btreemap, normalize_map_term};
 use egglog::sort::{normalize_set_term, set_term_to_btreeset};
 use egglog::sort::{vec_term, vec_term_children};
 use serde::{Serialize, de::DeserializeOwned};
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
 
 pub(crate) fn int_from_term(termdag: &TermDag, id: TermId) -> Option<i64> {
     match termdag.get(id) {
@@ -32,10 +31,10 @@ pub(crate) fn renaming_from_term(termdag: &TermDag, id: TermId) -> Option<Renami
 }
 
 /// The canonical `(map-of ...)` term of a renaming.
-pub(crate) fn renaming_to_term(termdag: &mut TermDag, renaming: &BTreeMap<i64, i64>) -> TermId {
+pub(crate) fn renaming_to_term(termdag: &mut TermDag, renaming: &impl MapView<i64>) -> TermId {
     let flat: Vec<TermId> = renaming
-        .iter()
-        .flat_map(|(k, v)| [*k, *v])
+        .pairs()
+        .flat_map(|(k, v)| [k, v])
         .map(|n| termdag.lit(Literal::Int(n)))
         .collect();
     normalize_map_term(termdag, &flat).expect("even arity")
@@ -55,14 +54,8 @@ pub(crate) fn group_from_term(termdag: &TermDag, id: TermId) -> Option<Vec<Renam
 }
 
 /// The canonical `(set-of ...)` term of a group.
-pub(crate) fn group_to_term(
-    termdag: &mut TermDag,
-    group: &[impl Borrow<BTreeMap<i64, i64>>],
-) -> TermId {
-    let elements: Vec<TermId> = group
-        .iter()
-        .map(|m| renaming_to_term(termdag, m.borrow()))
-        .collect();
+pub(crate) fn group_to_term(termdag: &mut TermDag, group: &[impl MapView<i64>]) -> TermId {
+    let elements: Vec<TermId> = group.iter().map(|m| renaming_to_term(termdag, m)).collect();
     normalize_set_term(termdag, &elements)
 }
 
@@ -77,11 +70,11 @@ pub(crate) fn renamings_from_term(termdag: &TermDag, id: TermId) -> Option<Vec<R
 /// The canonical vector term of renamings.
 pub(crate) fn renamings_to_term(
     termdag: &mut TermDag,
-    maps: impl IntoIterator<Item = impl Borrow<BTreeMap<i64, i64>>>,
+    maps: impl IntoIterator<Item = impl MapView<i64>>,
 ) -> TermId {
     let elements: Vec<TermId> = maps
         .into_iter()
-        .map(|m| renaming_to_term(termdag, m.borrow()))
+        .map(|m| renaming_to_term(termdag, &m))
         .collect();
     vec_term(termdag, elements)
 }

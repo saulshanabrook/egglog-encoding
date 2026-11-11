@@ -162,6 +162,10 @@ in front of its own variables.
 
 **`Renaming`** is a partial injection on slots, spelled as a map from `i64` to
 `i64`. `compose`, `inverse`, `map-image` and `map-domain` are primitives on it.
+Runtime frame, shape, and substitution algorithms keep decoded renamings as sorted
+small vectors with up to four inline `(i64, i64)` pairs. They preserve signed slot
+ordering and explicit partial domains. Generated child-edge columns and proof
+terms still use ordinary egglog `Map` syntax at the runtime boundary.
 
 **`V`** is the source's unique unary variable constructor for `Math`. Its
 `Var` argument becomes a singleton renaming `{0 -> s}`: `(V $s)` lowers to

@@ -1,4 +1,5 @@
 //! Conversion between egglog values and the slotted algorithms.
+use super::group::MapView;
 use super::renaming::*;
 use super::terms::*;
 use super::*;
@@ -8,14 +9,14 @@ use std::collections::BTreeMap;
 /// This also handles non-identity maps, so it has exactly the semantics of
 /// `map == range ∘ map ∘ domain`, not an unchecked slot-set assumption.
 fn restriction_eq<T: Copy + Ord>(
-    map: &BTreeMap<T, T>,
-    range: &BTreeMap<T, T>,
-    domain: &BTreeMap<T, T>,
+    map: &impl MapView<T>,
+    range: &impl MapView<T>,
+    domain: &impl MapView<T>,
 ) -> bool {
     domain
-        .iter()
-        .filter_map(|(from, to)| Some((from, range.get(map.get(to)?)?)))
-        .eq(map.iter())
+        .pairs()
+        .filter_map(|(from, to)| Some((from, range.get_slot(&map.get_slot(&to)?)?)))
+        .eq(map.pairs())
 }
 
 /// Decode a renaming's entries as slot numbers.
@@ -150,12 +151,12 @@ pub(super) fn register_map(eg: &mut EGraph, arc: ArcSort) {
         let m = renaming_from_term(dag, *m)?;
         let range = renaming_from_term(dag, *range)?;
         let domain = renaming_from_term(dag, *domain)?;
-        Some(dag.lit(Literal::Bool(restriction_eq(&m.0, &range.0, &domain.0))))
+        Some(dag.lit(Literal::Bool(restriction_eq(&m, &range, &domain))))
     });
-    add_primitive_with_validator!(eg, "map-intersect" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_intersect(&xs.data, &ys.data)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(Renaming(map_intersect(&a.0,&b.0))) }));
-    add_primitive_with_validator!(eg, "compose-total" = |a: @MapContainer (arc), b: @MapContainer (arc)| -?> @MapContainer (arc) { Some(map_container(compose_total(&a.data, &b.data)?)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(Renaming(compose_total(&a.0,&b.0)?)) }));
-    add_primitive_with_validator!(eg, "map-image" = |a: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_image(&a.data)) }, renamings_validator(|ms| { let [a] = ms else { return None }; Some(Renaming(map_image(&a.0))) }));
-    add_primitive_with_validator!(eg, "map-domain" = |a: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_domain(&a.data)) }, renamings_validator(|ms| { let [a] = ms else { return None }; Some(Renaming(map_domain(&a.0))) }));
+    add_primitive_with_validator!(eg, "map-intersect" = |xs: @MapContainer (arc), ys: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_intersect(&xs.data, &ys.data)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(map_intersect(a,b).into()) }));
+    add_primitive_with_validator!(eg, "compose-total" = |a: @MapContainer (arc), b: @MapContainer (arc)| -?> @MapContainer (arc) { Some(map_container(compose_total(&a.data, &b.data)?)) }, renamings_validator(|ms| { let [a,b] = ms else { return None }; Some(compose_total(a,b)?.into()) }));
+    add_primitive_with_validator!(eg, "map-image" = |a: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_image(&a.data)) }, renamings_validator(|ms| { let [a] = ms else { return None }; Some(map_image(a).into()) }));
+    add_primitive_with_validator!(eg, "map-domain" = |a: @MapContainer (arc)| -> @MapContainer (arc) { map_container(map_domain(&a.data)) }, renamings_validator(|ms| { let [a] = ms else { return None }; Some(map_domain(a).into()) }));
     // Slotted matching frames (`slotted/frame.rs`) read renamings off matched
     // e-nodes and hand renamings back: the bindings an `atom` is made of,
     // a variable's renaming out of a frame, and a built node's slot set.
@@ -256,7 +257,7 @@ pub(super) fn register_set(eg: &mut EGraph, arc: ArcSort, renaming: ArcSort) {
     }}, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
         let [s, cs] = args else { return None };
         let (group, cs) = (group_from_term(termdag, *s)?, renaming_from_term(termdag, *cs)?);
-        let out = group::restrict(&group, &cs.0);
+        let out = group::restrict(&group, &cs);
         Some(group_to_term(termdag, &out))
     });
     add_primitive_with_validator!(eg, "group-close" = {arc.clone(): ArcSort} |s: @SetContainer (arc.clone())| -?> @SetContainer (arc.clone()) {{
@@ -275,7 +276,7 @@ pub(super) fn register_set(eg: &mut EGraph, arc: ArcSort, renaming: ArcSort) {
     }}, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
         let [m, s] = args else { return None };
         let (m, group) = (renaming_from_term(termdag, *m)?, group_from_term(termdag, *s)?);
-        let least = group::coset_min(&m.0, &group)?;
+        let least = group::coset_min(&m, &group)?;
         Some(renaming_to_term(termdag, &least))
     });
     // `(root "p" cs grp)` and `(child "v" e cs grp)`: a binding whose reading of
@@ -305,7 +306,7 @@ pub(super) fn register_set(eg: &mut EGraph, arc: ArcSort, renaming: ArcSort) {
     }}, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
         let [m1, m2, s] = args else { return None };
         let (m1, m2) = (renaming_from_term(termdag, *m1)?, renaming_from_term(termdag, *m2)?);
-        let same = group::coset_same(&m1.0, &m2.0, &group_from_term(termdag, *s)?);
+        let same = group::coset_same(&m1, &m2, &group_from_term(termdag, *s)?);
         Some(termdag.lit(Literal::Bool(same)))
     });
     add_primitive_with_validator!(eg, "group-slot-closure" = {arc.clone(): ArcSort} |s: @SetContainer (arc.clone()), slots: @MapContainer (renaming.clone())| -?> @MapContainer (renaming.clone()) {{
@@ -314,7 +315,7 @@ pub(super) fn register_set(eg: &mut EGraph, arc: ArcSort, renaming: ArcSort) {
     }}, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
         let [s, slots] = args else { return None };
         let (group, slots) = (group_from_term(termdag, *s)?, renaming_from_term(termdag, *slots)?);
-        let out = group::slot_closure(&group, &slots.0);
+        let out = group::slot_closure(&group, &slots);
         Some(renaming_to_term(termdag, &out))
     });
 
@@ -420,29 +421,30 @@ pub(super) fn register_frame_vec(eg: &mut EGraph, arc: ArcSort) {
 
 /// `a ∘ b`, preserving every key of `b`; `None` if `im(b)` escapes `dom(a)`.
 /// Use this for e-node edges, whose domain must remain the child's slot set.
-fn compose_total<T: Copy + Ord>(a: &BTreeMap<T, T>, b: &BTreeMap<T, T>) -> Option<BTreeMap<T, T>> {
-    let out = compose(a, b);
-    (out.len() == b.len()).then_some(out)
+fn compose_total<T: Copy + Ord>(
+    a: &impl MapView<T>,
+    b: &impl MapView<T>,
+) -> Option<BTreeMap<T, T>> {
+    b.pairs().map(|(k, v)| Some((k, a.get_slot(&v)?))).collect()
 }
 
 /// The identity map on `im(m)`.
-fn map_image<T: Copy + Ord>(m: &BTreeMap<T, T>) -> BTreeMap<T, T> {
-    m.values().map(|v| (*v, *v)).collect()
+fn map_image<T: Copy + Ord>(m: &impl MapView<T>) -> BTreeMap<T, T> {
+    m.pairs().map(|(_, v)| (v, v)).collect()
 }
 
 /// The identity map on `dom(m)`; the counterpart of [`map_image`].
-fn map_domain<T: Copy + Ord>(m: &BTreeMap<T, T>) -> BTreeMap<T, T> {
-    m.keys().map(|k| (*k, *k)).collect()
+fn map_domain<T: Copy + Ord>(m: &impl MapView<T>) -> BTreeMap<T, T> {
+    m.pairs().map(|(k, _)| (k, k)).collect()
 }
 
 /// The entries two maps agree on.
 ///
 /// A slot set is an identity renaming, so this is how one narrows: intersecting two
 /// identity maps gives the identity on the intersection of their domains.
-fn map_intersect<T: Copy + Ord>(a: &BTreeMap<T, T>, b: &BTreeMap<T, T>) -> BTreeMap<T, T> {
-    a.iter()
-        .filter(|(k, v)| b.get(k) == Some(v))
-        .map(|(k, v)| (*k, *v))
+fn map_intersect<T: Copy + Ord>(a: &impl MapView<T>, b: &impl MapView<T>) -> BTreeMap<T, T> {
+    a.pairs()
+        .filter(|(k, v)| b.get_slot(k) == Some(*v))
         .collect()
 }
 
