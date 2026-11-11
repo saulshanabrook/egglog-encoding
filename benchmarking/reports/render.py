@@ -161,8 +161,9 @@ def _markdown_section_parts(section: ReportSection) -> tuple[str, ...]:
     parts: list[str] = []
     if section.title is not None:
         parts.append(f"## {_markdown_heading(section.title)}")
+    hide_first_table_title = _first_table_repeats_section_title(section)
     for index, block in enumerate(section.blocks):
-        if isinstance(block, ReportTable) and index == 0 and block.title == section.title:
+        if isinstance(block, ReportTable) and index == 0 and hide_first_table_title:
             parts.append(render_markdown_table(block, heading_level=None))
         else:
             parts.append(_render_markdown_block(block))
