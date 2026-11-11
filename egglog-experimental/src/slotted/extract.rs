@@ -199,6 +199,39 @@ impl Decoder<'_> {
     }
 }
 
+/// Decode several selected trees in a shared slot namespace. Substitution uses
+/// this same capture-avoiding decoder as user-facing extraction.
+pub(super) fn decode_terms(
+    encoded: &TermDag,
+    layouts: &Layouts,
+    roots: &[(TermId, BTreeMap<i64, i64>)],
+    reserved: impl IntoIterator<Item = i64>,
+) -> Result<(TermDag, Vec<TermId>), Error> {
+    let mut decoder = Decoder {
+        encoded,
+        layouts,
+        output: TermDag::default(),
+        used: roots
+            .iter()
+            .flat_map(|(_, frame)| frame.values().copied())
+            .chain(reserved)
+            .map(|n| format!("${n}"))
+            .collect(),
+        next: 0,
+        memo: BTreeMap::new(),
+    };
+    let terms = roots
+        .iter()
+        .map(|(term, frame)| {
+            decoder.term(
+                *term,
+                frame.iter().map(|(a, b)| (*a, format!("${b}"))).collect(),
+            )
+        })
+        .collect::<Result<_, _>>()?;
+    Ok((decoder.output, terms))
+}
+
 /// Evaluate the compiler's prepared root after maintenance and decode its best tree.
 pub(super) struct ExtractCommand;
 

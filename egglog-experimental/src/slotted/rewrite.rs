@@ -295,6 +295,20 @@ pub(super) struct Rewrite<'a> {
     pub name: Option<&'a str>,
     pub ordinal: usize,
     pub nested: bool,
+    pub proofs: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SubstitutionRequest {
+    pub name: String,
+    pub relation: String,
+    pub sort: String,
+    pub columns: Vec<String>,
+    pub root_column: usize,
+    pub root: String,
+    pub body: (String, usize),
+    pub replacement: (String, usize),
+    pub slot: String,
 }
 
 /// Lower a rewrite together with the names needed to reconstruct its proofs.
@@ -302,7 +316,7 @@ pub(super) fn compile(
     lang: &Language,
     mut r: Rewrite<'_>,
     mut names: query::ProofNames,
-) -> Result<(String, query::ProofNames), String> {
+) -> Result<(String, query::ProofNames, Option<SubstitutionRequest>), String> {
     let mut rhs = r.rhs.clone();
     lang.refresh_shadowed(&mut rhs);
     let mut fresh = std::collections::BTreeSet::new();
@@ -328,6 +342,8 @@ pub(super) fn compile(
     let root_sort = q.sorts[r.root].clone();
     let root_class = q.class(r.root)?;
     let sy = lang.symbols(&root_sort);
+    let mut substitution = None;
+    let mut declaration = String::new();
     let actions = match &rhs {
         Term::Variable(pv) => {
             let c = q.class(pv)?;
@@ -338,6 +354,52 @@ pub(super) fn compile(
                 "({} {root_class} (compose (inverse {}) {}) {c})",
                 sy.equated, q.maps[r.root], q.maps[pv]
             )]
+        }
+        Term::Subst(args) if r.proofs => {
+            // Apply the same input and scope checks as the native primitive path.
+            let _ = substitute(lang, r.root, args, &mut q)?;
+            let relation = format!("_slotted_substitution_{}", r.ordinal);
+            let mut columns = vec![q.frame.clone()];
+            let mut sorts = vec!["Frame".to_owned()];
+            for (variable, class) in &q.classes {
+                columns.push(class.clone());
+                sorts.push(q.sorts[variable].clone());
+            }
+            let mut payloads: Vec<_> = q.pays.values().collect();
+            payloads.sort();
+            for (value, sort) in payloads {
+                columns.push(value.clone());
+                sorts.push(sort.clone());
+            }
+            let [
+                Term::Variable(body),
+                Term::Slot(slot),
+                Term::Variable(replacement),
+            ] = &**args
+            else {
+                unreachable!("substitute validated the arguments")
+            };
+            let column = |name: &str| 1 + q.classes.iter().position(|(v, _)| v == name).unwrap();
+            declaration = format!("(relation {relation} ({}))\n", sorts.join(" "));
+            substitution = Some(SubstitutionRequest {
+                name: r
+                    .name
+                    .ok_or("proof substitutions need named rules")?
+                    .to_owned(),
+                relation: relation.clone(),
+                sort: root_sort.clone(),
+                columns: sorts,
+                root: r.root.to_owned(),
+                body: (body.clone(), column(body)),
+                replacement: (replacement.clone(), column(replacement)),
+                slot: slot.clone(),
+                root_column: 1 + q
+                    .classes
+                    .iter()
+                    .position(|(variable, _)| variable == r.root)
+                    .unwrap(),
+            });
+            vec![call(&relation, columns)]
         }
         Term::Subst(args) => substitute(lang, r.root, args, &mut q)?,
         _ => {
@@ -357,7 +419,14 @@ pub(super) fn compile(
     names.atoms = q.atoms.clone();
     names.frame = q.frame.clone();
     let Some(split) = q.split else {
-        return Ok((rule(&q.body, &actions, naive, None, r.name), names));
+        return Ok((
+            format!(
+                "{declaration}{}",
+                rule(&q.body, &actions, naive, None, r.name)
+            ),
+            names,
+            substitution,
+        ));
     };
     let relation = format!("_slotted_match_{}", r.ordinal);
     let mut columns = vec![q.refined.clone(), q.length.clone()];
@@ -375,6 +444,11 @@ pub(super) fn compile(
     let row = call(&relation, columns);
     let mut apply_body = vec![row.clone()];
     apply_body.extend_from_slice(&q.body[split..]);
+    let apply_ruleset = if substitution.is_some() {
+        "slotted-subst-apply"
+    } else {
+        "slotted-apply"
+    };
     let code = [
         format!("(relation {relation} ({}))", sorts.join(" ")),
         rule(
@@ -388,17 +462,17 @@ pub(super) fn compile(
             &apply_body,
             &actions,
             naive,
-            Some("slotted-apply"),
+            Some(apply_ruleset),
             r.name.map(|n| format!("{n}/apply")).as_deref(),
         ),
         rule(
             std::slice::from_ref(&row),
             &[format!("(delete {row})")],
             false,
-            Some("slotted-apply"),
+            Some(apply_ruleset),
             r.name.map(|n| format!("{n}/drain")).as_deref(),
         ),
     ]
     .join("\n");
-    Ok((code, names))
+    Ok((format!("{declaration}{code}"), names, substitution))
 }

@@ -1005,6 +1005,17 @@ impl BaseSort for FrameSort {
 
     #[rustfmt::skip]
     fn register_primitives(&self, eg: &mut EGraph) {
+        // Certifying a substitution request needs an expression of sort Frame.
+        // The native proof builder evaluates this wrapper to a JSON string literal.
+        // Frames occur only in the encoded proof; lifting removes them from the source proof.
+        let value_validator = |dag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+            let [value] = args else { return None; };
+            let frame = frame_from_term(dag, *value)?;
+            Some(frame_to_term(dag, &frame))
+        };
+        add_primitive_with_validator!(eg, "frame-from-json" = |value: S| -?> Fr {
+            serde_json::from_str::<Frame>(&value).ok().map(Fr::new)
+        }, value_validator);
         // Validators and runtime primitives use the same Frame operations.
         let frame_validator = |termdag: &mut TermDag, _: &[TermId]| -> Option<TermId> {
             Some(frame_to_term(termdag, &Frame::default()))

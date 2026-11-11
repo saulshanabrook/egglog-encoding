@@ -127,20 +127,18 @@ mod tests {
     }
 
     #[test]
-    fn source_substitution_rejection_precedes_core_instrumentation() {
+    fn source_substitution_lowers_through_core_proofs() {
         let source = r#"
-            (datatype U (V Var) (F U))
-            (rewrite (F x) (subst x $a x) :name "beta")
+            (datatype U (V Var) (Lam Var U :binder 0) (Let U Var U :binder 1))
+            (let input (Let (V $y) $x (Lam $y (V $x))))
+            (rewrite (Let value $x body) (subst body $x value) :name "beta")
+            (run 1)
+            (check (= input (Lam $z (V $y))))
         "#;
-        assert!(matches!(
-            proof_program(None, source),
-            Err(ProofCompilationError::Source(
-                CompileError::UnsupportedProofFeature {
-                    feature: egglog_experimental::slotted::UnsupportedProofFeature::Substitution,
-                    ..
-                }
-            ))
-        ));
+        let lowered = proof_program(None, source).unwrap();
+        assert!(nodes(&lowered).unwrap() > nodes(source).unwrap());
+        assert!(lowered.contains("slotted-substitute"));
+        assert!(lowered.contains("slotted-prove"));
     }
 
     #[test]

@@ -144,6 +144,7 @@ impl Scope {
         let err = |e: &dyn Display| SourceError(e.to_string());
         let mut graph = self.source_types(&source.span)?;
         guards::register(&mut graph, guards);
+        super::substitution::register(&mut graph, guards);
         let source_terms: Vec<_> = std::iter::once(&source.lhs)
             .chain(std::iter::once(&source.rhs))
             .chain(source.conditions.iter().flat_map(|fact| match fact {
@@ -516,6 +517,19 @@ impl Reader {
                 }
                 ResolvedNCommand::CoreAction(action)
             }
+            ("extract", [value]) => {
+                // Source extraction constructs its input. Retain that fact for
+                // this certificate and later queries without exposing a global.
+                let name = format!(
+                    "{INTERNAL_SYMBOL_PREFIX}slotted-extract-{}",
+                    self.resolved.commands.len()
+                );
+                let value = value.expr().map_err(SourceError)?;
+                let action = self
+                    .scope
+                    .resolve_action(span, Action::Let(span.clone(), name, value))?;
+                ResolvedNCommand::CoreAction(action)
+            }
             ("rewrite", _) => {
                 let mut rule = source_rewrite(args).map_err(SourceError)?;
                 name_rewrite(&mut rule, self.rules, Some(&mut self.rule_names));
@@ -525,8 +539,8 @@ impl Reader {
                 }
             }
             (
-                "run" | "check" | "fail" | "extract" | "print-size" | "print-function"
-                | "print-stats" | "slotted-export" | "set-option",
+                "run" | "check" | "fail" | "print-size" | "print-function" | "print-stats"
+                | "slotted-export" | "set-option",
                 _,
             ) => return Ok(()),
             _ => return Err(SourceError(format!("unsupported source command {head}"))),
@@ -565,6 +579,7 @@ impl Reader {
         let mut program = self.resolved.clone();
         let mut graph = self.scope.source_types(&egglog::span!())?;
         guards::register(&mut graph, &Arc::new(self.guard_context()));
+        super::substitution::register(&mut graph, &Arc::new(self.guard_context()));
         // Earlier rules may receive terms built with later constructor declarations.
         // Refresh only the primitive registrations; preserve their resolved arguments.
         for command in &mut program.commands {

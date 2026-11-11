@@ -299,7 +299,7 @@ fn renaming_comparison_preserves_aliasing_payloads_and_binding() {
 }
 
 #[test]
-fn subst_is_refused() {
+fn subst_is_resolved_as_a_source_primitive() {
     let mut dag = TermDag::default();
     let mut program = ProofContext::default();
     program.add_constructor("V", vec![ColumnKind::Var]);
@@ -307,13 +307,13 @@ fn subst_is_refused() {
         "Let",
         vec![ColumnKind::Child, ColumnKind::Binder, ColumnKind::Child],
     );
-    let err = program
+    let name = program
         .add_rewrite(
             &mut dag,
             r#"(rewrite (Let t $x b) (subst b $x t) :name "beta")"#,
         )
-        .unwrap_err();
-    assert!(err.0.contains("subst"));
+        .unwrap();
+    assert_eq!(name, "beta");
 }
 
 impl ProofContext {

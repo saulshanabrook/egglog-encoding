@@ -143,6 +143,22 @@ fn demo_proof_snapshots() {
 (run 1)
 (check (= input (V $a)))"#,
         ),
+        (
+            "demo_substitution",
+            r#"(datatype E (Num i64) (V Var) (Let E Var E :binder 1))
+(let input (Let (Num 7) $x (V $x)))
+(rewrite (Let value $v body) (subst body $v value) :name "beta")
+(run 1)
+(check (= input (Num 7)))"#,
+        ),
+        (
+            "demo_substitution_capture_avoidance",
+            r#"(datatype E (V Var) (Lam Var E :binder 0) (Let E Var E :binder 1))
+(let input (Let (V $y) $x (Lam $y (V $x))))
+(rewrite (Let value $v body) (subst body $v value) :name "beta")
+(run 1)
+(check (= input (Lam $z (V $y))))"#,
+        ),
     ] {
         let proofs = prove(
             &mut compiler(ProofMode::Prove),
@@ -495,15 +511,15 @@ fn quoted_source_payloads_round_trip() {
 }
 
 #[test]
-fn unsupported_substitution_does_not_change_compiler_state() {
+fn malformed_substitution_does_not_change_compiler_state() {
     let mut compiler = compiler(ProofMode::Prove);
     let error = compiler
         .compile(
             None,
-            "(datatype U (V Var) (F U)) (rewrite (F x) (subst x $0 x))",
+            "(datatype U (V Var) (F U)) (rewrite (F x) (subst (F x) $0 x))",
         )
         .unwrap_err();
-    assert!(error.to_string().contains("no proof translation"));
+    assert!(error.to_string().contains("subst"));
     assert!(
         compiler
             .compile(None, "(datatype U (V Var) (F U U))")

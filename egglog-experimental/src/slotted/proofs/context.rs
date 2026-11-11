@@ -161,7 +161,19 @@ impl SourceRule {
                 .iter()
                 .map(|(name, &term)| (name.clone(), term)),
         );
-        super::terms::instantiate(dag, term, &bindings)
+        let term = super::terms::instantiate(dag, term, &bindings)?;
+        let (_, rhs) = self.endpoints();
+        if let ResolvedExpr::Call(_, ResolvedCall::Primitive(primitive), _) = rhs
+            && let Term::App(head, args) = dag.get(term).clone()
+            && head == primitive.name()
+        {
+            primitive
+                .validator()
+                .and_then(|validate| validate(dag, &args))
+                .ok_or_else(|| format!("could not validate source operation {head}"))
+        } else {
+            Ok(term)
+        }
     }
 
     /// Variables of a source pattern; global references are not variables.
