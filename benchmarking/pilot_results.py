@@ -505,9 +505,10 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
                 else "unavailable"
             )
             label = "Ordinary egglog" if treatment == "off" else "Proof production"
-            checked = "N/A" if treatment == "off" else f"{validated}/{len(inputs)}"
+            checked_coverage = "N/A" if treatment == "off" else f"{validated}/{len(inputs)}"
             source_runtime.append(
-                f"{project_link} & {label} & {len(timing_values)}/{len(inputs)} & {runtime} & {checked} " + r"\\"
+                f"{project_link} & {label} & {len(timing_values)}/{len(inputs)} & {runtime} & {checked_coverage} "
+                + r"\\"
             )
     sources.append(r"\end{tabular}")
     source_runtime.append(r"\end{tabular}")
