@@ -867,6 +867,28 @@ impl EGraph {
         });
     }
 
+    /// Read rows whose function column `col` equals `value`, excluding internal
+    /// metadata from the callback's values and retaining subsumption status.
+    pub fn for_each_matching_col(
+        &self,
+        table: FunctionId,
+        col: usize,
+        value: Value,
+        mut f: impl FnMut(ScanEntry<'_>),
+    ) {
+        let info = &self.funcs[table];
+        let schema_math = info.schema_math();
+        assert!(col < schema_math.func_cols, "not a function column");
+        self.with_execution_state(None, |state| {
+            state.for_each_matching_col(info.table, ColumnId::from_usize(col), value, |row| {
+                f(ScanEntry {
+                    vals: &row[..schema_math.func_cols],
+                    subsumed: schema_math.subsume && row[schema_math.subsume_col()] == SUBSUMED,
+                });
+            });
+        });
+    }
+
     /// Iterate over the rows of a function table, calling `f` on each row. If `f` returns `false`
     /// the function returns early and stops reading rows from the table.
     pub fn for_each_while(&self, table: FunctionId, mut f: impl FnMut(ScanEntry<'_>) -> bool) {

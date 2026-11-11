@@ -77,76 +77,60 @@ struct EqStage {
     row: Option<(Vec<Value>, Vec<TermId>)>,
 }
 
-/// The non-subsumed rows of one function, grouped by the value in its
-/// extraction output column.
+/// The requested non-subsumed row groups of one function, loaded by the value
+/// in its extraction output column.
 ///
 /// A group's rows are in lexicographic order, so which row a search picks does
 /// not depend on storage row iteration order — see `prove_exists`.
+#[derive(Default)]
 struct FunctionRows {
-    /// Row width; zero when the function has no rows.
+    /// Row width; zero until a nonempty group is loaded.
     arity: usize,
-    /// The rows, concatenated in storage iteration order.
+    /// The loaded rows, concatenated in storage iteration order within each group.
     vals: Vec<Value>,
-    /// Row numbers into `vals`, ordered by output value and then by row
-    /// contents, so each group is a contiguous run.
+    /// Row numbers into `vals`, in load order by group and lexicographic order
+    /// within each group. Appending a group preserves earlier ranges.
     order: Vec<u32>,
     /// Where each output value's group sits in `order`.
     groups: HashMap<Value, Range<usize>>,
 }
 
 impl FunctionRows {
-    fn build(egraph: &EGraph, func: &Function) -> Self {
-        let output_idx = func.extraction_layout().1;
-        let mut arity = 0;
-        let mut vals = Vec::new();
-        egraph
-            .backend
-            .for_each(func.backend_id, |row: egglog_bridge::ScanEntry| {
-                if !row.subsumed {
-                    arity = row.vals.len();
-                    vals.extend_from_slice(row.vals);
-                }
-            });
-        vals.shrink_to_fit();
-
-        let count = if arity == 0 { 0 } else { vals.len() / arity };
-        let mut order: Vec<u32> = (0..count as u32).collect();
-        order.sort_unstable_by(|&a, &b| {
-            let a = &vals[a as usize * arity..][..arity];
-            let b = &vals[b as usize * arity..][..arity];
-            // Group by output value; order a group lexicographically by whole row.
-            a[output_idx].cmp(&b[output_idx]).then_with(|| a.cmp(b))
-        });
-
-        let mut groups: HashMap<Value, Range<usize>> = HashMap::default();
-        let mut start = 0;
-        while start < order.len() {
-            let value = vals[order[start] as usize * arity + output_idx];
-            let mut end = start + 1;
-            while end < order.len() && vals[order[end] as usize * arity + output_idx] == value {
-                end += 1;
-            }
-            groups.insert(value, start..end);
-            start = end;
-        }
-
-        Self {
-            arity,
-            vals,
-            order,
-            groups,
-        }
-    }
-
     /// The row at `position` in the ordering.
     fn row(&self, position: usize) -> &[Value] {
         let start = self.order[position] as usize * self.arity;
         &self.vals[start..start + self.arity]
     }
 
-    /// Where the rows holding `value` in the output column sit in the ordering.
-    fn group(&self, value: Value) -> Range<usize> {
-        self.groups.get(&value).cloned().unwrap_or(0..0)
+    /// Load and order the requested output group once. New groups are appended,
+    /// so a suspended frame's range remains valid while resolving its children.
+    fn group(&mut self, egraph: &EGraph, func: &Function, value: Value) -> Range<usize> {
+        if let Some(group) = self.groups.get(&value) {
+            return group.clone();
+        }
+        let start = self.order.len();
+        egraph.backend.for_each_matching_col(
+            func.backend_id,
+            func.extraction_layout().1,
+            value,
+            |row| {
+                if !row.subsumed {
+                    self.arity = row.vals.len();
+                    self.order.push(self.order.len() as u32);
+                    self.vals.extend_from_slice(row.vals);
+                }
+            },
+        );
+        let arity = self.arity;
+        let vals = &self.vals;
+        self.order[start..].sort_unstable_by(|&a, &b| {
+            let a = &vals[a as usize * arity..][..arity];
+            let b = &vals[b as usize * arity..][..arity];
+            a.cmp(b)
+        });
+        let group = start..self.order.len();
+        self.groups.insert(value, group.clone());
+        group
     }
 }
 
@@ -195,8 +179,8 @@ impl EqStage {
 
             self.rows = scanned
                 .entry(self.func)
-                .or_insert_with(|| FunctionRows::build(egraph, func))
-                .group(value);
+                .or_default()
+                .group(egraph, func, value);
         }
     }
 }
@@ -489,6 +473,57 @@ mod tests {
         assert_eq!(
             extract_to_string(&egraph, first_input(&egraph, "Box", 0), "ExprPair"),
             "(pair (Leaf) (Leaf))"
+        );
+    }
+
+    #[test]
+    fn preserves_pending_rows_when_child_groups_are_loaded() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort Expr)
+                (constructor Node (Expr) Expr)
+                (constructor Leaf (i64) Expr)
+                "#,
+            )
+            .unwrap();
+        let node = egraph.functions["Node"].backend_id;
+        let leaf = egraph.functions["Leaf"].backend_id;
+        let root = egraph.backend.fresh_id();
+        let cycle = egraph.backend.fresh_id();
+        let branch = egraph.backend.fresh_id();
+        let first_leaf = egraph.backend.fresh_id();
+        let second_leaf = egraph.backend.fresh_id();
+        let seven = egraph.backend.base_values().get(7i64);
+        let nine = egraph.backend.base_values().get(9i64);
+        // Root candidates sort as cycle, branch, second_leaf. The first fails
+        // after loading another group; the second must remain next even though
+        // the last was inserted first and also has a reconstructable term.
+        egraph.backend.add_values([
+            (node, vec![second_leaf, root]),
+            (node, vec![cycle, root]),
+            (node, vec![first_leaf, branch]),
+            (node, vec![root, cycle]),
+            (node, vec![branch, root]),
+            (leaf, vec![seven, first_leaf]),
+            (leaf, vec![nine, second_leaf]),
+        ]);
+        let sort = egraph.get_sort_by_name("Expr").unwrap().clone();
+        let mut termdag = TermDag::default();
+        let mut extractor = RootExtractor::new();
+        let term = extractor
+            .extract(&egraph, &mut termdag, root, &sort)
+            .unwrap();
+        assert_eq!(termdag.to_string(term), "(Node (Node (Leaf 7)))");
+        let other = extractor
+            .extract(&egraph, &mut termdag, second_leaf, &sort)
+            .unwrap();
+        assert_eq!(termdag.to_string(other), "(Leaf 9)");
+        assert_eq!(
+            extractor.extract(&egraph, &mut termdag, root, &sort),
+            Some(term)
         );
     }
 
