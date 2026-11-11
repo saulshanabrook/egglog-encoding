@@ -339,7 +339,7 @@ pub(super) fn register_vec(eg: &mut EGraph, arc: ArcSort) {
 pub(super) fn register_node_shape(eg: &mut EGraph, arc: ArcSort, groups: ArcSort) {
     // `(node-shape (vec-of e1 ...) (vec-of g1 ...))`: the canonical edges, the
     // renaming back to the node's names, then its symmetries; see `node_shape`.
-    add_primitive_with_validator!(eg, "node-shape" = {arc.clone(): ArcSort} |es: @VecContainer (arc.clone()), gs: @VecContainer (groups.clone())| -?> @VecContainer (arc.clone()) {{
+    add_primitive_with_validator!(eg, "node-shape" = |es: @VecContainer (arc.clone()), gs: @VecContainer (groups.clone())| -?> @VecContainer (arc.clone()) {{
         let edges = slot_maps(&state, es.data.iter().copied())?;
         let mut groups = Vec::with_capacity(gs.data.len());
         for value in gs.data.iter().copied() {

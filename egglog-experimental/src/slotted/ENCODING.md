@@ -167,6 +167,10 @@ small vectors with up to four inline `(i64, i64)` pairs. They preserve signed sl
 ordering and explicit partial domains. Generated child-edge columns and proof
 terms still use ordinary egglog `Map` syntax at the runtime boundary.
 
+`node-shape` calculates shapes directly from decoded edges and child groups.
+Trivial groups normalize directly; proof tracing still records the minimum
+callback needed by proof reconstruction.
+
 **`V`** is the source's unique unary variable constructor for `Math`. Its
 `Var` argument becomes a singleton renaming `{0 -> s}`: `(V $s)` lowers to
 `(V (map-of 0 s))`. The same shape and maintenance rules used for other
@@ -1037,6 +1041,8 @@ Three of the primitives do more than their signature says, for the same reason.
 `node-shape` walks the product of the children's groups once and returns the canonical
 edges, the renaming back, and the node's own symmetries together, so the key and the
 symmetries cost one walk, with `_shapeof_F` carrying both to their consumers.
+Identity-only groups use direct normalization without constructing a product of
+child readings.
 
 `map-restriction-eq m range domain` checks `m = range ∘ m ∘ domain` without
 materializing either intermediate composition. Leader reconciliation keeps the

@@ -114,3 +114,34 @@ fn group_element_indices_are_independent_of_interning_order() -> Result<(), Erro
     }
     Ok(())
 }
+
+#[test]
+fn node_shapes_respect_clones_and_popped_value_registries() -> Result<(), Error> {
+    let base = egglog_experimental::slotted::new_egraph();
+    for slot in [-7, i64::MIN, i64::MAX, 13] {
+        let mut eg = base.clone();
+        // Each clone registers the same sequence of maps with different slot
+        // values. A memo keyed only by container/integer IDs would alias them.
+        for pushed in [true, false] {
+            let (push, pop) = if pushed {
+                ("(push)", "(pop)")
+            } else {
+                ("", "")
+            };
+            let value = if pushed { slot } else { !slot };
+            eg.parse_and_run_program(
+                None,
+                &format!(
+                    r#"
+{push}
+(let $shape (node-shape (vec-of (map-of -3 {value})) (vec-of (set-of (map-of -3 -3)))))
+(check (= (vec-get $shape 0) (map-of -3 0)))
+(check (= (vec-get $shape 1) (map-of 0 {value})))
+{pop}
+"#
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}

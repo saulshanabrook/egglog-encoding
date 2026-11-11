@@ -80,6 +80,18 @@ fn node_shape_impl<T: Clone + Ord>(
     mut symmetry: impl FnMut(&Renaming, &[T]),
 ) -> NodeShape {
     let own = shape(edges);
+    // The common case has no nonidentity child readings. Preserve the tracing
+    // callback while avoiding identity clones, Cartesian-product setup, and a
+    // second normalization of the same edges.
+    if edges.iter().enumerate().all(|(i, _)| {
+        groups
+            .get(i)
+            .is_none_or(|group| group.iter().all(|g| g.iter().all(|(from, to)| from == to)))
+    }) {
+        let chosen: Vec<T> = edges.iter().map(|edge| selected(edge, None)).collect();
+        minimum(&own, &chosen);
+        return own;
+    }
     let mut best: Option<NodeShape> = None;
     let mut symmetries: Vec<Renaming> = Vec::new();
     for (variant, chosen) in readings(edges, groups, selected) {
@@ -122,12 +134,15 @@ fn readings<T: Clone + Ord>(
         .iter()
         .enumerate()
         .map(|(i, edge)| {
-            let domain: BTreeSet<i64> = edge.keys().copied().collect();
+            let domain: smallvec::SmallVec<[i64; 4]> = edge.keys().copied().collect();
             let mut out = vec![(edge.clone(), selected(edge, None))];
             for g in groups.get(i).map(Vec::as_slice).unwrap_or_default() {
-                if g.keys().copied().collect::<BTreeSet<_>>() == domain
-                    && g.values().copied().collect::<BTreeSet<_>>() == domain
-                {
+                if !g.keys().eq(edge.keys()) {
+                    continue;
+                }
+                let mut image: smallvec::SmallVec<[i64; 4]> = g.values().copied().collect();
+                image.sort_unstable();
+                if image == domain {
                     out.push((
                         g.iter().map(|(&s, &t)| (s, edge[&t])).collect(),
                         selected(edge, Some(g)),
@@ -284,6 +299,31 @@ mod tests {
         }
         assert!(find_mapping_total(&[]).is_none());
         assert!(find_mapping_total(&std::array::from_fn::<_, 3, _>(|_| Renaming::new())).is_none());
+    }
+
+    #[test]
+    fn trivial_child_groups_keep_identity_proof_readings() {
+        let edges = [Renaming::from([(-7, 90), (5, -2)]), Renaming::new()];
+        let identity = Renaming::from([(-7, -7), (5, 5)]);
+        let expected: Vec<_> = shape(&edges).into_maps().collect();
+        for groups in [
+            vec![],
+            vec![vec![]],
+            vec![vec![identity.clone()]],
+            // Restricted identity and identity on unrelated slots are invalid
+            // permutations and must be ignored just as in the general path.
+            vec![vec![Renaming::from([(-7, -7)]), Renaming::from([(10, 10)])]],
+        ] {
+            let mut minimums = Vec::new();
+            let result = node_shape_with(
+                &edges,
+                &groups,
+                |_, selected| minimums.push(selected.to_vec()),
+                |_, _| panic!("identity groups cannot create self-symmetries"),
+            );
+            assert_eq!(result.into_maps().collect::<Vec<_>>(), expected);
+            assert_eq!(minimums, vec![vec![identity.clone(), Renaming::new()]]);
+        }
     }
 
     #[test]
