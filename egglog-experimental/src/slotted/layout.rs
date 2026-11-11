@@ -165,7 +165,7 @@ impl Layouts {
                     }
                     Column::Var | Column::Binder => {
                         edge_columns.push(col);
-                        if schema.input.get(col).map(|s| s.name()) != Some("Renaming") {
+                        if schema.input.get(col).map(|s| s.name()) != Some("i64") {
                             return Err(format!("slot type mismatch for {name} column {col}"));
                         }
                         physical += 1;

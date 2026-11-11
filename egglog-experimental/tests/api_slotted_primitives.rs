@@ -145,3 +145,18 @@ fn node_shapes_respect_clones_and_popped_value_registries() -> Result<(), Error>
     }
     Ok(())
 }
+
+#[test]
+fn scalar_slot_bindings_preserve_frame_semantics() -> Result<(), Error> {
+    egglog_experimental::slotted::new_egraph().parse_and_run_program(
+        None,
+        r#"
+        (check (= (lit "$x" -7) (lit "$x" (map-of 0 -7))))
+        (check (= (bound "$x" -7) (bound "$x" (map-of 0 -7))))
+        (let f (atom "a" (root "p" (map-of -7 -7)) (lit "$x" -7)))
+        (check (= (frame-slot f "$x") (map-get (ren f "$x") 0)))
+        (fail (frame-slot f "unknown"))
+    "#,
+    )?;
+    Ok(())
+}

@@ -80,7 +80,7 @@ fn export_checks_actual_groups_and_does_not_run_maintenance() {
         Some(2)
     );
     graph
-        .parse_and_run_program(None, "(delete (FreeVars_0 (V (map-of 0 0))))")
+        .parse_and_run_program(None, "(delete (FreeVars_0 (V 0)))")
         .unwrap();
     assert!(export(&graph).unwrap_err().contains("FreeVars"));
 }
@@ -174,14 +174,19 @@ fn raw_edges_are_checked_before_projection() {
 #[test]
 fn native_reads_reject_invalid_variables_renamings_and_metadata() {
     let source = "(sort U) (constructor V (Var) U) (constructor Null () U) (constructor F (U U) U) (let a (F (V $0) (Null))) (run 0)";
+    // Scalar slots cannot carry a malformed singleton map at all.
+    assert!(
+        run(source)
+            .parse_and_run_program(None, "(V (map-of 1 1))")
+            .is_err()
+    );
     for mutation in [
-        "(V (map-of 1 1))",
-        "(F (map-of 0 2 1 2) (V (map-of 0 0)) (map-empty) (Null))",
+        "(F (map-of 0 2 1 2) (V 0) (map-empty) (Null))",
         "(delete (SlottedEdgeLayout \"F\" 0))",
         "(delete (SlottedNodeLayout \"Null\" 0))",
         "(set (SlottedNodeLayout \"F\" 99) ())",
         "(set (SlottedEdgeLayout \"F\" 1) ())",
-        "(constructor AnotherName (Renaming) U) (set (SlottedNodeLayout \"AnotherName\" 1) ()) (set (SlottedSlotLayout \"AnotherName\" 0) ())",
+        "(constructor AnotherName (i64) U) (set (SlottedNodeLayout \"AnotherName\" 1) ()) (set (SlottedSlotLayout \"AnotherName\" 0) ())",
     ] {
         let mut graph = run(source);
         graph.parse_and_run_program(None, mutation).unwrap();
@@ -190,7 +195,12 @@ fn native_reads_reject_invalid_variables_renamings_and_metadata() {
     // An identity map and a nonidentity FreeVars map can share the same keys;
     // replace the row instead of invoking its intersection merge.
     let mut graph = run(source);
-    graph.parse_and_run_program(None, "(delete (FreeVars_0 (V (map-of 0 0)))) (set (FreeVars_0 (V (map-of 0 0))) (map-of 0 1))").unwrap();
+    graph
+        .parse_and_run_program(
+            None,
+            "(delete (FreeVars_0 (V 0))) (set (FreeVars_0 (V 0)) (map-of 0 1))",
+        )
+        .unwrap();
     assert!(export(&graph).unwrap_err().contains("identity"));
 }
 

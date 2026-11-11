@@ -33,7 +33,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                     i += 2;
                 }
                 ColumnKind::Var | ColumnKind::Binder => {
-                    key.edges.push(self.slot_map(args[i])?);
+                    key.edges.push(self.slot_column(args[i])?);
                     key.classes.push(None);
                     i += 1;
                 }

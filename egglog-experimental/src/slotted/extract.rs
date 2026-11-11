@@ -135,7 +135,14 @@ impl Decoder<'_> {
                 if matches!(column, Column::Payload(_)) {
                     physical += 1;
                 } else {
-                    let edge = self.edge(args[physical])?;
+                    let edge = if *column == Column::Child {
+                        self.edge(args[physical])?
+                    } else {
+                        let Term::Lit(Literal::Int(slot)) = self.encoded.get(args[physical]) else {
+                            return Err(error("expected an integer slot column"));
+                        };
+                        BTreeMap::from([(0, *slot)])
+                    };
                     if *column == Column::Binder {
                         let slot = *edge.get(&0).ok_or_else(|| error("binder lacks its slot"))?;
                         if edge.len() != 1 {

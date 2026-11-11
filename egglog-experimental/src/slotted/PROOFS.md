@@ -329,7 +329,7 @@ derivations, and fresh-slot supply across expansions. Its core is a denotation
 `dec` from encoded terms to source terms:
 `dec(F(m1, c1, ..., mk, ck)) = F(m̂1·dec(c1), ...)`, where
 each edge is completed to a bijection by naming the child's redundant slots with
-fresh names. A rigid name column is a singleton renaming: `dec(V({0→a}))` is
+fresh names. A rigid name column stores its slot directly: `dec(V(a))` is
 `(V $a)`. Binder columns use the same physical representation, with fresh bound
 names when needed. They have no child eclass or group premise; shape operations
 use the identity group for these columns. Every encoded fact then denotes an

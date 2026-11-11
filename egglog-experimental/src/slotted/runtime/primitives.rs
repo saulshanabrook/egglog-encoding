@@ -142,6 +142,18 @@ fn lit_binding(carried: bool) -> impl Fn(&TermDag, &[TermId]) -> Option<Binding>
     }
 }
 
+/// A literal slot column does not need an interned singleton map.
+fn scalar_binding(carried: bool) -> impl Fn(&TermDag, &[TermId]) -> Option<Binding> + Send + Sync {
+    move |termdag: &TermDag, args: &[TermId]| -> Option<Binding> {
+        let [name, slot] = args else { return None };
+        Some(Binding::Lit {
+            name: Name::new(string_from_term(termdag, *name)?),
+            edge: Renaming::from([(0, int_from_term(termdag, *slot)?)]),
+            carried,
+        })
+    }
+}
+
 #[rustfmt::skip]
 pub(super) fn register_map(eg: &mut EGraph, arc: ArcSort) {
     add_primitive_with_validator!(eg, "map-restriction-eq" = |m: @MapContainer (arc), range: @MapContainer (arc), domain: @MapContainer (arc)| -> bool {
@@ -195,6 +207,20 @@ pub(super) fn register_map(eg: &mut EGraph, arc: ArcSort) {
     add_primitive_with_validator!(eg, "bound" = |x: S, e: @MapContainer (arc)| -> Bd {
         Bd::new(Binding::Lit { name: Name::new(x.as_str()), edge: slot_map(state.base_values(), &e.data), carried: false })
     }, binding_validator(lit_binding(false)));
+    add_primitive_with_validator!(eg, "lit" = |x: S, slot: i64| -> Bd {
+        Bd::new(Binding::Lit { name: Name::new(x.as_str()), edge: Renaming::from([(0, slot)]), carried: true })
+    }, binding_validator(scalar_binding(true)));
+    add_primitive_with_validator!(eg, "bound" = |x: S, slot: i64| -> Bd {
+        Bd::new(Binding::Lit { name: Name::new(x.as_str()), edge: Renaming::from([(0, slot)]), carried: false })
+    }, binding_validator(scalar_binding(false)));
+    add_primitive_with_validator!(eg, "frame-slot" = |f: Fr, name: S| -?> i64 {
+        f.ren(name.as_str())?.get(&0).copied()
+    }, |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [f, name] = args else { return None };
+        let frame = frame_from_term(termdag, *f)?;
+        let slot = *frame.ren(string_from_term(termdag, *name)?)?.get(&0)?;
+        Some(termdag.lit(Literal::Int(slot)))
+    });
     add_primitive_with_validator!(eg, "leaf" = |e: @MapContainer (arc)| -> Bd {
         Bd::new(Binding::Leaf { edge: slot_map(state.base_values(), &e.data) })
     }, binding_validator(|termdag, args| {

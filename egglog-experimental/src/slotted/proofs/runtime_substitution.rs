@@ -267,7 +267,7 @@ fn map(pairs: impl IntoIterator<Item = (i64, i64)>) -> String {
 }
 
 /// Encode the evaluated source result in its selected frame. Each child
-/// keeps its own free names; binder markers are rigid singleton maps.
+/// keeps its own free names; binder markers are rigid integer slots.
 fn encode(context: &ProofContext, dag: &TermDag, term: TermId) -> Result<String, Error> {
     let Term::App(head, args) = dag.get(term) else {
         return Err(error("substitution result is not a carrier term"));
@@ -289,7 +289,7 @@ fn encode(context: &ProofContext, dag: &TermDag, term: TermId) -> Result<String,
             ColumnKind::Var | ColumnKind::Binder => {
                 let slot = super::terms::slot_of(dag, arg)
                     .ok_or_else(|| error("invalid substitution result slot"))?;
-                columns.push(format!("(map-of 0 {slot})"));
+                columns.push(slot.to_string());
             }
             ColumnKind::Payload(_) => columns.push(dag.to_string(arg)),
         }
