@@ -129,7 +129,14 @@ def snapshot_fixture() -> dict[str, Any]:
                 "capture": "captured",
             }
         },
-        "files": [{"logical_id": "sha256:file", "project": "demo", "input_loc": 12}],
+        "files": [
+            {
+                "logical_id": "sha256:file",
+                "project": "demo",
+                "input_loc": 12,
+                "ordinary_output_parity": "not-compared",
+            }
+        ],
         "conditions": conditions,
         "comparisons": comparisons,
         "provenance": {"target": {"git_sha": "frozen"}},
@@ -436,6 +443,39 @@ def test_runtime_absence_is_pending_and_source_table_preserves_provenance() -> N
     assert all(row["state"] == "pending" for row in result["comparisons"])
     source = pilot_results.coverage_tables(snapshot)["corpus-sources.table.tex"]
     assert r"\href{https://example.com}{Demo}" in source and "captured" in source
+
+
+@pytest.mark.parametrize(
+    "missing_evidence",
+    (None, "parity", "checked-input", "failed-validation", "missing-summary", "partial-certificates", "empty-project"),
+)
+def test_source_validation_requires_parity_and_verified_certificates_for_every_input(
+    missing_evidence: str | None,
+) -> None:
+    snapshot = snapshot_fixture()
+    first = snapshot["files"][0]
+    first["ordinary_output_parity"] = "passed-c-and-cp"
+    second = {**first, "logical_id": "sha256:second"}
+    snapshot["files"].append(second)
+    proof = deepcopy(snapshot["conditions"][2])
+    proof.update(id="second-proof", logical_id=second["logical_id"])
+    snapshot["conditions"].append(proof)
+    if missing_evidence == "parity":
+        second["ordinary_output_parity"] = "not-compared"
+    elif missing_evidence == "checked-input":
+        snapshot["conditions"].pop()
+    elif missing_evidence == "failed-validation":
+        proof["validation"]["status"] = "failed"
+    elif missing_evidence == "missing-summary":
+        proof["validation"]["summary"] = None
+    elif missing_evidence == "partial-certificates":
+        proof["validation"]["summary"]["verified_certificates"] = 1
+    elif missing_evidence == "empty-project":
+        snapshot["files"] = []
+    source = pilot_results.coverage_tables(snapshot)["corpus-sources.table.tex"]
+    assert " & Validated " in source
+    assert (r"$\checkmark$" in source) == (missing_evidence is None)
+    assert (r"\textbf{TODO}" in source) == (missing_evidence is not None)
 
 
 def test_application_proof_views_omit_term_control_even_in_an_older_snapshot() -> None:

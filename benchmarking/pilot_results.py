@@ -467,8 +467,8 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         counter_note,
     ]
     sources = [
-        r"\begin{tabular}{@{}lp{0.32\linewidth}rr@{}}",
-        r"Project & Acquisition & Replays & \shortstack{Input LOC\\median [range]} \\",
+        r"\begin{tabular}{@{}lp{0.27\linewidth}rrc@{}}",
+        r"Project & Acquisition & Replays & \shortstack{Input LOC\\median [range]} & Validated \\",
         r"\hline",
     ]
     source_runtime = [
@@ -477,6 +477,18 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         r"\hline",
     ]
     conditions = [condition_estimates(c, snapshot["rounds"]) for c in snapshot["conditions"]]
+    checked_inputs = {
+        (c["project"], c["logical_id"])
+        for c in conditions
+        if c["treatment"] == "proof-extraction"
+        and c["validation"] is not None
+        and c["validation"]["status"] == "passed"
+        and c["validation"]["summary"] is not None
+        and c["validation"]["summary"]["success"]
+        and 0
+        < c["validation"]["summary"]["produced_certificates"]
+        == c["validation"]["summary"]["verified_certificates"]
+    }
     for project, info in snapshot["projects"].items():
         inputs = [f for f in snapshot["files"] if f["project"] == project]
         locs = [f["input_loc"] for f in inputs]
@@ -496,7 +508,22 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         )
         description = "unavailable" if not locs else f"{statistics.median(locs):,g} [{min(locs):,}, {max(locs):,}]"
         project_link = r"\href{" + info["source"] + "}{" + tex_escape(info["label"]) + "}"
-        sources.append(f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description} " + r"\\")
+        # File-level passed-c-and-cp means every source check and extraction was
+        # compared with ordinary egglog under both c and cp. Execution and checked
+        # certificates alone do not establish this ordinary-output parity.
+        validation_marker = (
+            r"$\checkmark$"
+            if inputs
+            and all(
+                f["ordinary_output_parity"] == "passed-c-and-cp" and (project, f["logical_id"]) in checked_inputs
+                for f in inputs
+            )
+            else r"\textbf{TODO}"
+        )
+        sources.append(
+            f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description} & {validation_marker} "
+            + r"\\"
+        )
         for treatment in ("off", "proof-extraction"):
             timing_values = times[treatment]
             runtime = (
