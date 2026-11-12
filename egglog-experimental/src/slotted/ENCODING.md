@@ -162,6 +162,14 @@ in front of its own variables.
 
 **`Renaming`** is a partial injection on slots, spelled as a map from `i64` to
 `i64`. `compose`, `inverse`, `map-image` and `map-domain` are primitives on it.
+Runtime frame, shape, and substitution algorithms keep decoded renamings as sorted
+small vectors with up to four inline `(i64, i64)` pairs. They preserve signed slot
+ordering and explicit partial domains. Generated child-edge columns and proof
+terms still use ordinary egglog `Map` syntax at the runtime boundary.
+
+`node-shape` calculates shapes directly from decoded edges and child groups.
+Trivial groups normalize directly; proof tracing still records the minimum
+callback needed by proof reconstruction.
 
 **`V`** is the source's unique unary variable constructor for `Math`. Its
 `Var` argument becomes a singleton renaming `{0 -> s}`: `(V $s)` lowers to
@@ -313,8 +321,8 @@ differently between an edge and its restatement.
        (RenamesToLeader a m2 c)
        (!= a c) (!= a b)
        (= csa (FreeVars a)) (= csb (FreeVars b)) (= csc (FreeVars c))
-       (= m1 (compose csa (compose m1 csb)))
-       (= m2 (compose csa (compose m2 csc)))
+       (guard (map-restriction-eq m1 csa csb))
+       (guard (map-restriction-eq m2 csa csc))
        (= (ordering-max b c) b)
        (guard (or (bool-!= b c)
                   (and (bool= b c) (bool-!= m1 m2) (bool= (ordering-max m1 m2) m1)))))
@@ -1033,6 +1041,12 @@ Three of the primitives do more than their signature says, for the same reason.
 `node-shape` walks the product of the children's groups once and returns the canonical
 edges, the renaming back, and the node's own symmetries together, so the key and the
 symmetries cost one walk, with `_shapeof_F` carrying both to their consumers.
+Identity-only groups use direct normalization without constructing a product of
+child readings.
+
+`map-restriction-eq m range domain` checks `m = range ∘ m ∘ domain` without
+materializing either intermediate composition. Leader reconciliation keeps the
+same pairwise rule and ordering while avoiding those temporary maps.
 
 Interned frames share immutable storage, so reading a frame in a primitive does
 not copy its partition or slot maps. `vec-get` and `vec-length` borrow the vector's
@@ -1046,7 +1060,14 @@ equal sizes the least canonical spelling, so every run copies the same one — a
 choice reads the constructor tables, class slots, and layout metadata. Within one
 rule-application phase every insert is staged: the execution state owns the parsed
 nodes, chosen terms, and memo of results shared by the class and frame primitives.
-A call then walks only its own term.
+The ordinary compiler also emits database-owned `SubstMemoClass_*` and
+`SubstMemoFrame_*` tables to reuse a materialized invocation in later phases. The
+key includes its selected representative DAG, public slots, and physical layout;
+changes to any of those invalidate reuse. Database ownership preserves clone,
+rollback, and native union behavior. Cached constructor frames are restricted to
+the result's current public slots, which can shrink independently of the body.
+Variable bodies preserve the replacement frame exactly. Proof mode uses its
+explicit reconstruction path and does not emit these memo tables.
 
 The extraction cost is tree size, counting each child occurrence with exact integer
 arithmetic on both sides. This keeps a parent's cost strictly above its children's,
@@ -1274,8 +1295,10 @@ be made the same, each established on a minimal case the harness keeps:
   `cheapest`), from the e-graph as the round began, since `beta/apply` runs in one
   apply phase whose reads are that snapshot. The parsed terms and substitution results
   belong to that execution state and are shared by its workers and the two result
-  primitives. A new phase starts with an empty cache, including after `push`/`pop`
-  or an e-graph clone; constructor, class-slot, and layout changes are all observed.
+  primitives. Each phase rereads constructor, class-slot, and layout changes.
+  Ordinary execution can reuse a materialized invocation from the database memo
+  only when its complete selected-DAG signature still agrees; `push`/`pop` and
+  graph clones carry those memo tables with the database.
   The crate's own methods read the graph at
   application time, after the round's earlier unions, and its default takes the node a
   class was created with -- history the encoding cannot replay. So the oracle harness

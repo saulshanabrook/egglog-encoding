@@ -85,6 +85,8 @@ struct SubstSnapshot {
     terms: Terms,
     slots_used: BTreeSet<Slot>,
     results: HashMap<ResultKey, Option<(Value, Renaming)>>,
+    /// Exact selected DAGs in this immutable phase, shared by calls on one body.
+    signatures: HashMap<Value, String>,
 }
 
 impl SubstSnapshot {
@@ -98,7 +100,59 @@ impl SubstSnapshot {
             terms,
             slots_used,
             results: HashMap::new(),
+            signatures: HashMap::new(),
         })
+    }
+}
+
+impl SubstSnapshot {
+    /// Opaque, graph-local keys: include every selected node and its public slots,
+    /// not just the root class, because a cheaper representative can appear
+    /// without changing that class. The memo lives in database tables, so rows
+    /// containing execution-local value IDs are rolled back along with the graph.
+    fn memo_key<'a, 'db: 'a>(
+        &mut self,
+        state: &impl Read<'a, 'db>,
+        key: &ResultKey,
+    ) -> Result<String, String> {
+        use std::fmt::Write as _;
+        let signature = match self.signatures.entry(key.body) {
+            hashbrown::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            hashbrown::hash_map::Entry::Vacant(entry) => {
+                let mut seen = BTreeSet::new();
+                let mut pending = vec![key.body];
+                while let Some(class) = pending.pop() {
+                    if !seen.insert(class) {
+                        continue;
+                    }
+                    let index = self
+                        .terms
+                        .best
+                        .get(&class)
+                        .ok_or("no finite representative")?;
+                    pending.extend(self.terms.nodes[&class][*index].children());
+                }
+                let mut signature = String::new();
+                for class in seen {
+                    let node = &self.terms.nodes[&class][self.terms.best[&class]];
+                    let slots = free_vars_if_present(state, &self.free_vars, class)?;
+                    write!(
+                        signature,
+                        "{class:?}:{:?}:{:?}:{:?}:{:?}:{slots:?};",
+                        node.ctor, node.args, node.binders, node.slots
+                    )
+                    .unwrap();
+                    for edge in &node.edges {
+                        write!(signature, "e{};", edge.col).unwrap();
+                    }
+                }
+                entry.insert(signature)
+            }
+        };
+        Ok(format!(
+            "{:?}:{}:{:?}:{:?};{signature}",
+            key.body, key.slot, key.replacement_frame, key.replacement
+        ))
     }
 }
 
@@ -177,6 +231,7 @@ impl Representatives {
             terms,
             slots_used,
             results: HashMap::new(),
+            signatures: HashMap::new(),
         };
         Ok(Self {
             snapshot,
@@ -290,6 +345,13 @@ struct Node {
 impl Node {
     fn children(&self) -> impl Iterator<Item = Value> + '_ {
         self.edges.iter().map(|edge| edge.child)
+    }
+
+    fn variable_slot(&self) -> Option<Slot> {
+        self.slots
+            .iter()
+            .find(|(col, _)| !self.binders.iter().any(|binder| binder.marker == **col))
+            .map(|(_, slot)| *slot)
     }
 }
 
@@ -436,11 +498,7 @@ impl Rebuild<'_> {
         let node = self.terms.nodes[&c][*self.terms.best.get(&c)?].clone();
         // The variable constructor is the only node with a non-binding slot
         // field. Read its name in the current frame before substituting.
-        if let Some((_, &slot)) = node
-            .slots
-            .iter()
-            .find(|(col, _)| !node.binders.iter().any(|binder| binder.marker == **col))
-        {
+        if let Some(slot) = node.variable_slot() {
             return Some(if m.get(&slot) == Some(&self.x) {
                 (self.t, self.t_ren.clone())
             } else {
@@ -1363,7 +1421,7 @@ impl FullPrim for SlottedSubst {
         let result = match cache.results.get(&key) {
             Some(result) => result.clone(),
             None => {
-                let result = match substitute(&mut state, body, x, &t_ren, t, cache) {
+                let result = match memoized_substitute(&mut state, &key, &t_ren, cache) {
                     Ok(result) => result,
                     Err(err) => {
                         log::error!("{}: {err}", self.name());
@@ -1380,6 +1438,67 @@ impl FullPrim for SlottedSubst {
             Half::Frame => intern(&mut state, &frame),
         })
     }
+}
+
+/// Reuse materialized invocations across application phases. Keeping the rows
+/// in egglog (rather than a primitive-owned map) gives them normal clone/pop and
+/// native-union behavior. Encodings without the optional memo tables keep the
+/// standalone primitive API and its phase-local cache.
+fn memoized_substitute(
+    state: &mut FullState<'_, '_>,
+    key: &ResultKey,
+    replacement_frame: &Renaming,
+    cache: &mut SubstSnapshot,
+) -> Result<Option<(Value, Renaming)>, String> {
+    let classes = format!("SubstMemoClass_{}", cache.free_vars);
+    let frames = format!("SubstMemoFrame_{}", cache.free_vars);
+    let memo = state.table_subtype(&classes).is_some()
+        && state.table_subtype(&frames).is_some()
+        && cache.terms.best.contains_key(&key.body);
+    let memo_key = if memo {
+        let signature = cache.memo_key(state, key)?;
+        let value = state.base_to_value(S::new(signature));
+        let class = state
+            .lookup(&classes, RawValues(vec![value]))
+            .map_err(|e| e.to_string())?;
+        let frame = state
+            .lookup(&frames, RawValues(vec![value]))
+            .map_err(|e| e.to_string())?;
+        if let (Some(class), Some(frame)) = (class, frame) {
+            let mut frame = decode_renaming(state, frame)?;
+            let node = &cache.terms.nodes[&key.body][cache.terms.best[&key.body]];
+            // Rebuilding a constructor clips its result to the current public
+            // slots. A cached result may have shrunk independently of the body.
+            // Variable roots return the replacement frame verbatim instead.
+            if node.variable_slot().is_none()
+                && let Some(slots) = free_vars_if_present(state, &cache.free_vars, class)?
+            {
+                frame.retain(|slot, _| slots.contains_key(slot));
+            }
+            return Ok(Some((class, frame)));
+        }
+        Some(value)
+    } else {
+        None
+    };
+    let result = substitute(
+        state,
+        key.body,
+        key.slot,
+        replacement_frame,
+        key.replacement,
+        cache,
+    )?;
+    if let (Some(memo_key), Some((class, frame))) = (memo_key, &result) {
+        let frame = intern(state, frame);
+        state
+            .set(&classes, RawValues(vec![memo_key]), *class)
+            .map_err(|e| e.to_string())?;
+        state
+            .set(&frames, RawValues(vec![memo_key]), frame)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(result)
 }
 
 /// `(slotted-subst body x t_ren t [free_vars])`, where the optional string
