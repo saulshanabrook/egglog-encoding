@@ -472,10 +472,11 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
     composition.extend(
         (
             r"\end{tabular}",
-            r"\par\smallskip{\footnotesize Additional goals await restricted/complete semantic comparisons. "
+            r"\par\smallskip{\footnotesize Additional goals are established by complete matching "
+            r"but not restricted matching after the same bounded search. "
             r"\ding{51} denotes a separate successful source-check launch with every produced certificate verified. "
             + (
-                "* Reviewed source-proof omissions: " + ", ".join(omitted_source_proofs) + ". "
+                "* Source-proof verification omitted for: " + ", ".join(omitted_source_proofs) + ". "
                 if omitted_source_proofs
                 else ""
             )

@@ -536,7 +536,7 @@ def test_composition_main_keeps_discoveries_pending_and_qualifies_source_proofs(
     assert r"BATAX / 2nd & \textbf{TODO} & " + marker in main
     assert "Overhead" not in main and "Executed" not in main
     assert "Overhead" in tables["composition-coverage-details.table.tex"]
-    assert ("* Reviewed source-proof omissions: BATAX / 2nd." in main) == (proof_evidence == "excluded")
+    assert ("* Source-proof verification omitted for: BATAX / 2nd." in main) == (proof_evidence == "excluded")
 
 
 def test_coverage_retains_reference_certificates_and_known_partial_counter_denominators() -> None:
