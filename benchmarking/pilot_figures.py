@@ -454,7 +454,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                     {"filter": "isValid(datum.x_low) && isValid(datum.x_high)"},
                     {"calculate": f"max(datum.x_low, {x_domain[0]})", "as": "x_plot_low"},
                 ],
-                "mark": {"type": "rule", "opacity": 0.45, "strokeWidth": 0.65, "clip": True},
+                "mark": {"type": "rule", "opacity": 0.28, "strokeWidth": 0.4, "clip": True},
                 "encoding": {
                     "x": {**axes["x"], "field": "x_plot_low"},
                     "x2": {"field": "x_high"},
@@ -467,7 +467,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                     {"filter": "isValid(datum.y_low) && isValid(datum.y_high)"},
                     {"calculate": f"max(datum.y_low, {y_domain[0]})", "as": "y_plot_low"},
                 ],
-                "mark": {"type": "rule", "opacity": 0.45, "strokeWidth": 0.65, "clip": True},
+                "mark": {"type": "rule", "opacity": 0.28, "strokeWidth": 0.4, "clip": True},
                 "encoding": {
                     "x": axes["x"],
                     "y": {**axes["y"], "field": "y_plot_low"},
