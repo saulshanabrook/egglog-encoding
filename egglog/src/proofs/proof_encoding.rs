@@ -307,10 +307,11 @@ pub(crate) struct ProofInstrumentor<'a> {
     /// Bare fresh-id bindings emitted by this instrumentor, which have no
     /// effect if their value is never read. Other primitives are never pruned.
     generated_fresh_ids: HashSet<String>,
-    /// Within one closed fiat action, repeated nullary constructors can use
-    /// the first occurrence's term and proof. Never shared between blocks or
-    /// with rule heads, whose proof columns describe each written occurrence.
-    nullary_operands: Option<HashMap<String, Operand>>,
+    /// Within one closed fiat action, repeated constructor terms can use the
+    /// first occurrence's proof. Key children by their natural, pinned terms:
+    /// canonical values may already equate differently written constructors.
+    /// Never shared between blocks or rule heads with numbered proof columns.
+    constructor_operands: Option<HashMap<(String, Vec<String>), Operand>>,
 }
 
 /// Where a variable a rule body binds gets its reflexive `t = t` proof from: a
@@ -479,7 +480,7 @@ impl<'a> ProofInstrumentor<'a> {
             global_action,
             action_expr_index: HashMap::default(),
             generated_fresh_ids: HashSet::default(),
-            nullary_operands: None,
+            constructor_operands: None,
             egraph,
             reflexive: HashSet::default(),
             deferred: HashMap::default(),
@@ -1886,19 +1887,23 @@ impl<'a> ProofInstrumentor<'a> {
             let canon = self.add_constructor_term_only(emit.stmts, func_type, &ids(args));
             Operand::plain(canon)
         } else {
-            if args.is_empty()
+            let key = self.constructor_operands.as_ref().map(|_| {
+                (
+                    func_type.name.clone(),
+                    args.iter().map(|arg| arg.natural.clone()).collect(),
+                )
+            });
+            if let Some(key) = &key
                 && let Some(operand) = self
-                    .nullary_operands
+                    .constructor_operands
                     .as_ref()
-                    .and_then(|operands| operands.get(&func_type.name))
+                    .and_then(|operands| operands.get(key))
             {
                 return operand.clone();
             }
             let operand = self.add_constructor_with_proof(emit, func_type, args, run);
-            if args.is_empty()
-                && let Some(operands) = &mut self.nullary_operands
-            {
-                operands.insert(func_type.name.clone(), operand.clone());
+            if let (Some(key), Some(operands)) = (key, &mut self.constructor_operands) {
+                operands.insert(key, operand.clone());
             }
             operand
         }
@@ -2329,7 +2334,7 @@ impl<'a> ProofInstrumentor<'a> {
                 _ => false,
             }
         }
-        self.nullary_operands = (self.proofs_enabled()
+        self.constructor_operands = (self.proofs_enabled()
             && matches!(justification, Justification::Fiat)
             && self.egraph.parser.can_share_generated_terms()
             && match actions {
@@ -2401,7 +2406,7 @@ impl<'a> ProofInstrumentor<'a> {
                 _ => self.instrument_action(action, &mut emit, &mut scope),
             }
         }
-        self.nullary_operands = None;
+        self.constructor_operands = None;
         res
     }
 
@@ -2884,8 +2889,8 @@ mod fresh_liveness_tests {
     use super::*;
 
     #[test]
-    fn repeated_nullaries_share_fiat_terms_only_without_parser_hooks() {
-        fn lowered(disable_sharing: bool) -> (usize, usize) {
+    fn repeated_constructor_terms_share_fiats_only_without_parser_hooks() {
+        fn lowered(source: &str, disable_sharing: bool) -> (usize, usize) {
             let mut graph = EGraph::new_with_proofs();
             if disable_sharing {
                 graph.parser.add_expr_macro(Arc::new(ast::SimpleMacro::new(
@@ -2894,13 +2899,13 @@ mod fresh_liveness_tests {
                 )));
             }
             graph
-                .parse_and_run_program(None, "(datatype E (A) (B) (Pair E E))")
+                .parse_and_run_program(None, "(datatype E (A) (B) (F E) (Pair E E))")
                 .unwrap();
             let mint = crate::proofs::proof_fresh::mint_prim_name(
                 &graph.proof_state.proof_names.fiat_term_constructor,
             );
             let lowered = graph
-                .resolve_program(None, "(union (Pair (A) (A)) (Pair (B) (A)))")
+                .resolve_program(None, source)
                 .unwrap()
                 .iter()
                 .map(ToString::to_string)
@@ -2911,10 +2916,15 @@ mod fresh_liveness_tests {
                 graph.proof_state.global_actions_numbered,
             )
         }
-        let shared = lowered(false);
-        let legacy = lowered(true);
-        assert_eq!(shared.0 + 2, legacy.0);
-        assert_eq!(shared.1, legacy.1);
+        for (source, removed) in [
+            ("(union (Pair (A) (A)) (Pair (B) (A)))", 2),
+            ("(union (Pair (F (A)) (F (A))) (Pair (F (B)) (F (A))))", 4),
+        ] {
+            let shared = lowered(source, false);
+            let legacy = lowered(source, true);
+            assert_eq!(shared.0 + removed, legacy.0);
+            assert_eq!(shared.1, legacy.1);
+        }
     }
 
     #[test]

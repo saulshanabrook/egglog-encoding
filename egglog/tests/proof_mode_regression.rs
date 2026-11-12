@@ -24,6 +24,8 @@ fn repeated_closed_nullaries_keep_strict_proofs_and_command_boundaries() {
             (union (B) (A))
             (F (A))
             (check (= (F (A)) (F (B))))
+            (union (Pair (F (A)) (F (B))) (Pair (F (A)) (F (A))))
+            (check (= (Pair (F (B)) (F (A))) (Pair (F (A)) (F (B)))))
             (push)
             (union (F (A)) (Pair (A) (A)))
             (check (= (F (B)) (Pair (B) (A))))
