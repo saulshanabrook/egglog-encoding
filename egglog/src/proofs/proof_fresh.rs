@@ -34,6 +34,10 @@ impl Primitive for ExtractFunctionRoot {
         signature.push(self.function.output().clone());
         SimpleTypeConstraint::new(&self.name, signature, span.clone()).into_box()
     }
+
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        Some(self.function.output().clone())
+    }
 }
 
 impl ReadPrim for ExtractFunctionRoot {
@@ -105,6 +109,10 @@ impl Primitive for MintRow {
         sig.push(self.id_sort.clone());
         SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
     }
+
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        Some(self.id_sort.clone())
+    }
 }
 
 /// Register an FD view's interner and (in proof mode) its proof-column reader,
@@ -169,6 +177,10 @@ impl Primitive for Intern {
         sig.push(self.out_sorts[0].clone());
         SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
     }
+
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        Some(self.out_sorts[0].clone())
+    }
 }
 
 /// Reads an FD view's proof column (column 1) by its key, for building the
@@ -196,6 +208,10 @@ impl Primitive for ViewProof {
         sig.push(self.proof_sort.clone());
         sig.push(self.proof_sort.clone());
         SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
+    }
+
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        Some(self.proof_sort.clone())
     }
 }
 
@@ -227,6 +243,13 @@ impl Primitive for GetFresh {
     }
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
         Box::new(GetFreshTypeConstraint { span: span.clone() })
+    }
+
+    fn infer_action_output(&self, args: &[core::AtomTerm], types: &TypeInfo) -> Option<ArcSort> {
+        let [core::AtomTerm::Literal(_, Literal::String(name))] = args else {
+            return None;
+        };
+        types.get_sort_by_name(name).cloned()
     }
 }
 
