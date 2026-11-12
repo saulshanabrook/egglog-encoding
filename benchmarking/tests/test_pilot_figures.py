@@ -534,9 +534,45 @@ def test_pilot_catalog_preserves_full_corpus_complete_cases_and_reference_scope(
     checked = batax.exclusion_for("slotted-proof-testing", memory_limit_bytes=17179869184)
     assert checked is not None and checked.reason.startswith("Defer the full BATAX second-phase source proof")
     timed = batax.exclusion_for("slotted-proof-extraction", memory_limit_bytes=17179869184)
-    assert timed is not None and "encoded multipattern mode" in timed.reason
+    assert timed is None
+    ordinary = batax.exclusion_for("slotted", memory_limit_bytes=17179869184)
+    assert ordinary is not None and "encoded multipattern mode" in ordinary.reason
+    for path in ("batax_2nd", "mttkrp_2nd"):
+        source = files[f"benchmarks/slotted/inputs/sdql/{path}-44rules.egg"]
+        for treatment in ("slotted-proof-extraction", "slotted-proof-extraction-no-aliasing"):
+            assert source.exclusion_for(cast(Treatment, treatment), memory_limit_bytes=17179869184) is None
     spec = TREATMENT_SPECS["egg-nee-proof-extraction"]
     assert spec.allocator_limit and spec.build_args[-4:] == ("--features", "proof-driver", "--bin", "egg-nee-proofs")
+
+
+def test_proof_resource_aliases_preserve_explicit_outcomes_and_unsupported_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = json.loads(pilot_figures.DEFAULT_CONFIG.read_bytes())
+    source = pilot_figures.ROOT / "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"
+    for experiment in config["experiments"]:
+        experiment["files"] = [str(source)]
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(config))
+    original = pilot_figures.resolve_files([str(source)], pilot_figures.ROOT)[0]
+    resources = (
+        models.Exclusion("resource", "ordinary historical cap", "saved", ("slotted",)),
+        models.Exclusion("resource", "explicit production cap", "saved", ("slotted-proof-extraction-no-aliasing",)),
+        models.Exclusion("resource", "strict replay cap", "saved", ("slotted-proof-testing",)),
+        models.Exclusion("unsupported", "nested matcher unavailable", "saved", ("slotted-no-aliasing",)),
+    )
+    monkeypatch.setattr(pilot_figures, "resolve_files", lambda *_: [replace(original, exclusions=resources)])
+    _, files = pilot_figures.load_experiments(catalog)
+    logical = next(iter(files.values()))
+    assert logical.exclusion_for("slotted-proof-extraction", memory_limit_bytes=17179869184) is None
+    explicit = logical.exclusion_for("slotted-proof-extraction-no-aliasing", memory_limit_bytes=17179869184)
+    assert explicit is not None and explicit.reason == "explicit production cap"
+    checked = logical.exclusion_for("slotted-proof-testing", memory_limit_bytes=17179869184)
+    assert checked is not None and checked.reason == "strict replay cap"
+    assert any(
+        rule.kind == "unsupported" and "slotted-proof-testing-no-aliasing" in rule.treatments
+        for rule in logical.exclusions
+    )
 
 
 def test_runtime_absence_is_pending_and_source_table_preserves_provenance() -> None:

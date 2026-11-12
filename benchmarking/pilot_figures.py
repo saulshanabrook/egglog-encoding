@@ -147,8 +147,8 @@ def load_experiments(path: Path) -> tuple[dict[str, Any], dict[str, FileSpec]]:
                                             name
                                             for name, original in aliases.items()
                                             if original in rule.treatments
-                                            # Checked replay limits do not bound production-only performance.
-                                            and not (name == "proof-extraction" and rule.kind == "resource")
+                                            # Resource outcomes belong to the recorded treatment, not its proof aliases.
+                                            and not (name in PROOF_ORACLES and rule.kind == "resource")
                                             and not any(name in explicit.treatments for explicit in file.exclusions)
                                         ),
                                     )
