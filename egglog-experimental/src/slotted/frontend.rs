@@ -357,17 +357,21 @@ impl Compiler {
         }
     }
 
-    fn emit(&mut self, out: &mut Vec<String>, source: String, source_name: Option<&str>) {
+    fn emit(
+        &mut self,
+        out: &mut Vec<String>,
+        generated: maintenance::Generated,
+        source_name: Option<&str>,
+    ) {
         // Reserve the declarations actually emitted, except the source's own
         // sort or constructor. This also catches collisions across input files.
-        for (form, _) in syntax::parse(None, &source).expect("generated declarations") {
-            if let Some(name) = declaration_name(&form)
-                && Some(name) != source_name
-            {
-                self.state.reserved.insert(name.to_owned());
-            }
-        }
-        out.push(source);
+        self.state.reserved.extend(
+            generated
+                .declarations
+                .into_iter()
+                .filter(|name| Some(name.as_str()) != source_name),
+        );
+        out.push(generated.source);
     }
 
     fn constructor(&self, f: &Form) -> Result<Constructor, String> {
