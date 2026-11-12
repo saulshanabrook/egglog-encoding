@@ -497,7 +497,7 @@ impl<'program> Proofs<'program> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proofs::proof_lifting::ProofOrigin;
+    use crate::proofs::{proof_format::Justification, proof_lifting::ProofOrigin};
 
     fn graph() -> EGraph {
         let mut graph = EGraph::new_with_proofs();
@@ -620,6 +620,85 @@ mod tests {
         }
         // Printing follows every reachable premise and preserves justification,
         // substitution and child order without exposing arena-local IDs.
+        for (&fresh_id, &resumed_id) in fresh_ids.iter().zip(&resumed_ids) {
+            assert_eq!(
+                fresh.proof_to_string(fresh_id),
+                resumed.proof_to_string(resumed_id)
+            );
+        }
+        fresh.check_proofs(&fresh_ids, program).unwrap();
+        resumed.check_proofs(&resumed_ids, program).unwrap();
+    }
+
+    #[test]
+    fn resumed_lifting_keeps_interned_firings_across_fresh_head_plans() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (Num i64) (F E) (G E))
+                 (Num 1) (Num 2)
+                 (rule ((= x (Num n))) ((let child (F x)) (G child)) :name \"build\")
+                 (run 1)",
+            )
+            .unwrap();
+        let mut terms = TermDag::default();
+        let inputs = [1, 2].map(|n| {
+            let n = terms.lit(Literal::Int(n));
+            let num = terms.app("Num".into(), vec![n]);
+            let f = terms.app("F".into(), vec![num]);
+            let g = terms.app("G".into(), vec![f]);
+            (f, g)
+        });
+        let sort = graph.get_sort_by_name("E").unwrap().clone();
+        let requested =
+            [inputs[0].1, inputs[0].0, inputs[1].1, inputs[1].0].map(|root| (root, sort.clone()));
+        let recorded = graph.record_existing_terms(&terms, &requested).unwrap();
+        let first = recorded.roots[1];
+        let roots = [
+            recorded.roots[0],
+            recorded.roots[2],
+            first,
+            recorded.roots[0],
+        ];
+        let program = &graph.proof_check_program[..recorded.program_len];
+        let (mut proofs, initial_ids) = Proofs::from_raw(
+            recorded.raw,
+            program,
+            recorded.normalizers,
+            recorded.value_heads,
+            &[first],
+        );
+        let cached = initial_ids[0];
+        let (name, premises) = proofs
+            .decoded
+            .proofs()
+            .find_map(|(_, proof)| match proof.justification() {
+                Justification::Rule {
+                    name,
+                    premise_proofs,
+                    ..
+                } if name == "build" => Some((name.clone(), premise_proofs.clone())),
+                _ => None,
+            })
+            .expect("the first column decoded its rule firing");
+        let firing = proofs.decoded.rule_firing(&name, &premises);
+        assert!(proofs.lifted.get(roots[0]).is_none());
+        assert!(proofs.lifted.get(roots[1]).is_none());
+        let raw = fresh_raw(&proofs, &graph);
+        let (mut fresh, fresh_ids) = raw.lift_with(
+            program,
+            &roots,
+            proofs.decoded.container_normalizers.clone(),
+            proofs.decoded.prim_value_constructors.clone(),
+            None,
+        );
+        // The next lifter builds fresh walks for another column of the first
+        // firing and for a second firing, retaining the store's interned keys.
+        let (mut resumed, resumed_ids) = proofs.lift(&roots, None);
+        assert!(resumed.rule_firing(&name, &premises) == firing);
+        assert_eq!(resumed_ids[2], cached);
+        assert_eq!(resumed_ids[0], resumed_ids[3]);
         for (&fresh_id, &resumed_id) in fresh_ids.iter().zip(&resumed_ids) {
             assert_eq!(
                 fresh.proof_to_string(fresh_id),
