@@ -370,6 +370,8 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
         for field in ("y", "y_low", "y_high")
         if point[field] is not None and point[field] > 0
     ]
+    if applications and speedup and ys:
+        ys.append(1.0)
     x_domain = [min(xs) / 1.3, max(xs) * 1.3] if xs else [0.001, 1000]
     y_domain = [min(ys) / 1.3, max(ys) * 1.3] if ys else ([0.01, 100] if speedup else [0.001, 1000])
     proof_colors = {
@@ -405,7 +407,9 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
             "type": "quantitative",
             "scale": {"type": "log", "domain": y_domain},
             "axis": {"values": log_major_ticks(y_domain), "grid": False},
-            "title": "Speedup (reference / candidate)"
+            "title": "Without / with proofs"
+            if applications and speedup
+            else "Speedup (reference / candidate)"
             if speedup
             else f"{'With proofs:' if applications else 'Our'} {measurement}",
         },
