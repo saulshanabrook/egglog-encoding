@@ -104,7 +104,7 @@ def queryPattern (P : Program) (p : Pattern) (remaining : List Proof) :
     let rev ← symm P a
     let result ← trans P rev z
     some (result, rest)
-  -- Source queries carry no disequality; the fragment excludes it.
+  -- A lifted source query carries no disequality: the checker's fragment excludes it.
   | .ne _ _ => none
 
 def queryPatterns (P : Program) : Query → List Proof → Option (List Proof × List Proof)

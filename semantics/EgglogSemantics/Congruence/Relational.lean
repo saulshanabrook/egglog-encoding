@@ -162,8 +162,8 @@ termination_by n _ S => (sizeOf S, n + 1)
 
 end
 
-/-- The final check at identity: `QueryHolds` on the state with subsumption forgotten. -/
-def holds (d : FDatabase) (q : Query) : Bool := !(matchQuery d.forgetSubsumed q).isEmpty
+/-- The final check at identity: `QueryHolds` on the final state. -/
+def holds (d : FDatabase) (q : Query) : Bool := !(matchQuery d q).isEmpty
 
 /-- Execute a union-free program's schedule using only structural equality and table
 operations. -/

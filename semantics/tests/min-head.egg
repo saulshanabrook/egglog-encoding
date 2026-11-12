@@ -1,0 +1,18 @@
+; Minima over query variables in a rule head: the smaller endpoint of each pair, before
+; and after a union moves a representative.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor C () Math)
+(constructor Pair (Math Math) Math)
+(constructor Least (Math) Math)
+(constructor Bound (Math Math) Math)
+(Pair (A) (B))
+(Pair (B) (C))
+(Pair (C) (A))
+(rule ((Pair x y))
+  ((Least (ordering-min x y)) (Bound x (ordering-min x y)) (Bound y (ordering-min x y))))
+(run 1)
+(union (B) (C))
+(run 1)
+(check (Least (A)) (Least (B)) (Bound (C) (B)))

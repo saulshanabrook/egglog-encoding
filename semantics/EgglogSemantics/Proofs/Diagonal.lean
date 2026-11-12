@@ -30,8 +30,6 @@ theorem Diag.addTerms {db : Database} (h : db.Diag) (ts : List Term) :
 theorem Diag.withOperands {db : Database} (h : db.Diag) (ts : List Term) :
     (db.withOperands ts).Diag := h.addTerms ts
 
-theorem Diag.forgetSubsumed {db : Database} (h : db.Diag) : db.forgetSubsumed.Diag := h
-
 end Database
 
 /-- **On a diagonal state congruence is equality.** No equation relates two distinct terms,

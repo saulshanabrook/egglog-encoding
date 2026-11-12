@@ -529,21 +529,6 @@ theorem toDatabase_subsume {d : FDatabase} (he : d.Closed) (t : Term) :
   rw [toDatabase_subsume_eq]
   exact (toDatabase_addTerm he).addSubsumed {t}
 
-@[simp] theorem toDatabase_forgetSubsumed (d : FDatabase) :
-    d.forgetSubsumed.toDatabase = d.toDatabase.forgetSubsumed := by
-  refine Database.ext rfl ?_
-  ext t
-  simp [FDatabase.forgetSubsumed, toDatabase, Database.forgetSubsumed]
-
-theorem Closed.forgetSubsumed {d : FDatabase} (h : d.Closed) : d.forgetSubsumed.Closed :=
-  ⟨h.eqs, h.subterms⟩
-
-theorem IndexOk.forgetSubsumed {d : FDatabase} (h : d.IndexOk) : d.forgetSubsumed.IndexOk :=
-  ⟨h.ctor, fun _ ht => (List.not_mem_nil ht).elim⟩
-
-theorem IndexCurrent.forgetSubsumed {d : FDatabase} (h : d.IndexCurrent) :
-    d.forgetSubsumed.IndexCurrent := h
-
 end FDatabase
 
 end Egglog

@@ -143,16 +143,19 @@ theorem writes_subsumes_commute :
       execActions [] FDatabase.empty [.expr (f a).toExpr, .subsume "f" [a.toExpr]] := by
   rfl
 
-/-- Matching skips a subsumed row while the final check includes it. -/
-theorem subsumed_not_matched_but_checked :
+/-- Matching and the final check both skip a subsumed row; the observer's compatibility
+mode, egglog's current `check`, includes it. -/
+theorem subsumed_not_matched_nor_checked :
     let d := FDatabase.empty.subsume (f a)
-    patternHolds d (.expr (f a).toExpr) [] = false ∧ d.holds [.expr (f a).toExpr] = true := by
+    patternHolds d (.expr (f a).toExpr) [] = false ∧ d.holds [.expr (f a).toExpr] = false ∧
+      d.holdsWith true [.expr (f a).toExpr] = true := by
   decide +kernel
 
 /-- Congruent children identify one subsumed row, even at an unstored spelling. -/
 theorem congruent_subsumed_spelling_not_matched :
     let d := (FDatabase.empty.addEq a b).subsume (f a)
-    patternHolds d (.expr (f b).toExpr) [] = false ∧ d.holds [.expr (f b).toExpr] = true := by
+    patternHolds d (.expr (f b).toExpr) [] = false ∧ d.holds [.expr (f b).toExpr] = false ∧
+      d.holdsWith true [.expr (f b).toExpr] = true := by
   decide +kernel
 
 /-- A round that only changes row liveness is not a semantic fixed point. -/
@@ -176,7 +179,7 @@ private def replaceRows : Program :=
 /-- Saturation replaces live rows while retaining the subsumed rows. -/
 theorem subsume_min_disequality_saturation :
     ∃ out, Reach Database.empty replaceRows.schedule out ∧
-      QueryHolds out.forgetSubsumed replaceRows.check ∧
+      QueryHolds out replaceRows.check ∧
       Cong out (.app "R" [a]) (.app "R" [a]) ∧
       Cong out (.app "R" [b]) (.app "R" [b]) ∧ Term.app "R" [b] ∉ out.live := by
   have hu : replaceRows.UnionFree := by
@@ -204,26 +207,30 @@ theorem subsume_min_disequality_saturation :
   intro hl
   exact ((hmean.live _).mpr hl).2 ⟨_, hterms.2, Database.SameRow.self_app hb⟩
 
-private def sameRound : Program :=
-  ⟨Schedule.seqAll [.run [⟨[], [.expr (.app "a" [])]⟩],
+private def sameRound : Schedule :=
+  Schedule.seqAll [.run [⟨[], [.expr (.app "a" [])]⟩],
     .run [⟨[.expr (.app "a" [])], [.subsume "a" []]⟩,
       ⟨[.expr (.app "a" [])], [.expr (.app "a" []), .subsume "a" [],
-        .expr (.app "b" [])]⟩]], [.expr (.app "a" []), .expr (.app "b" [])]⟩
+        .expr (.app "b" [])]⟩]]
 
-/-- All firings see the pre-state; the final check sees their writes and subsumed rows. -/
+/-- All firings see the pre-state; the final check sees their writes and not their subsumed
+rows. -/
 theorem simultaneous_writes_and_subsumes :
-    Eval Database.empty sameRound .ok := by
-  have hs : (exec sameRound).isSome = true := by
-    simp only [exec, sameRound, Schedule.seqAll, execSchedule, Option.bind_some]
+    Eval Database.empty ⟨sameRound, [.expr (.app "b" [])]⟩ .ok ∧
+      Eval Database.empty ⟨sameRound, [.expr (.app "a" [])]⟩ .checkFailed := by
+  have hu : sameRound.UnionFree := by
+    simp [sameRound, Schedule.rules, Schedule.seqAll, Action.UnionFree]
+  have hs : (execSchedule runFuel FDatabase.empty sameRound).any
+      (fun d => d.holds [.expr (.app "b" [])] && !d.holds [.expr (.app "a" [])]) = true := by
+    simp only [sameRound, Schedule.seqAll, execSchedule, Option.bind_some]
     decide +kernel
-  obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hs
-  obtain ⟨out, hout, _, hq⟩ := exec_programStep_check_noUnions
-    (by simp [sameRound, Schedule.rules, Schedule.seqAll, Action.UnionFree]) he
-  have hcheck : (exec sameRound).any (fun d => d.holds sameRound.check) = true := by
-    simp only [exec, sameRound, Schedule.seqAll, execSchedule, Option.bind_some]
-    decide +kernel
-  rw [he] at hcheck
-  exact .ok hout (hq.mp hcheck)
+  obtain ⟨e, he, hb⟩ := (Option.any_eq_true _ _).mp hs
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at hb
+  obtain ⟨out, hout, _, hq⟩ :=
+    exec_programStep_check_noUnions (p := ⟨sameRound, [.expr (.app "b" [])]⟩) hu he
+  obtain ⟨out', hout', _, hq'⟩ :=
+    exec_programStep_check_noUnions (p := ⟨sameRound, [.expr (.app "a" [])]⟩) hu he
+  exact ⟨.ok hout (hq.mp hb.1), .checkFailed hout' fun h => absurd (hq'.mpr h) (by simp [hb.2])⟩
 
 private def stuckHead : Program :=
   ⟨Schedule.seqAll [.run [⟨[], [.expr (.app "a" [])]⟩],

@@ -1,0 +1,14 @@
+; A marked spelling hides a second spelling when a later union joins their children.
+; The rule must not derive Seen after the union.
+(sort Math)
+(constructor A () Math)
+(constructor B () Math)
+(constructor F (Math) Math)
+(constructor Seen (Math) Math)
+(F (A))
+(F (B))
+(subsume (F (A)))
+(union (A) (B))
+(rule ((F x)) ((Seen x)))
+(run-schedule (saturate (run)))
+(check (Seen (B)))
