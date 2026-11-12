@@ -22,12 +22,21 @@ type Treatment = Literal[
     "egg-ee",
     "egg-nee",
     "egg-oee",
+    "egg-nee-proof-extraction",
+    "egg-nee-proof-testing",
     "slotted",
     "slotted-proof-testing",
+    "slotted-proof-testing-no-aliasing",
+    "slotted-proof-extraction",
+    "slotted-proof-extraction-no-aliasing",
     "slotted-no-aliasing",
     "slotted-ref-multi",
     "slotted-ref-nested",
     "slotted-ref-nested-snapshot",
+    "slotted-ref-multi-proofs",
+    "slotted-ref-nested-proofs",
+    "slotted-ref-multi-proof-testing",
+    "slotted-ref-nested-proof-testing",
 ]
 
 
@@ -72,6 +81,18 @@ _SLOTTED = TreatmentSpec(
     input_suffix=".ref",
     timing_summary=False,
 )
+_SLOTTED_PROOFS = replace(
+    _SLOTTED,
+    binary_name="slotted-reference-proofs",
+    build_args=(
+        "--locked",
+        "-p",
+        "slotted-reference-proofs",
+        "--no-default-features",
+        "--bin",
+        "slotted-reference-proofs",
+    ),
+)
 TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
     "off": _EGGLOG,
     "term": replace(_EGGLOG, flags=("--term-encoding",)),
@@ -93,16 +114,76 @@ TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
         )
         for name in cast(tuple[Treatment, ...], ("egg-de", "egg-ee", "egg-nee", "egg-oee"))
     },
+    "egg-nee-proof-extraction": TreatmentSpec(
+        "egg-nee-proofs",
+        (
+            "--locked",
+            "--manifest-path",
+            "benchmarks/disequality/native/Cargo.toml",
+            "--features",
+            "proof-driver",
+            "--bin",
+            "egg-nee-proofs",
+        ),
+        flags=("--proof-mode", "extract"),
+        input_suffix=".in",
+        timing_summary=False,
+        target_directory="benchmarks/local/parameter-native/target",
+    ),
+    "egg-nee-proof-testing": TreatmentSpec(
+        "egg-nee-proofs",
+        (
+            "--locked",
+            "--manifest-path",
+            "benchmarks/disequality/native/Cargo.toml",
+            "--features",
+            "proof-driver",
+            "--bin",
+            "egg-nee-proofs",
+        ),
+        flags=("--proof-mode", "check"),
+        input_suffix=".in",
+        timing_summary=False,
+        target_directory="benchmarks/local/parameter-native/target",
+    ),
     "slotted": replace(_EGGLOG, flags=("--slotted",)),
     # Slotted --proofs translates and checks source equalities, unlike ordinary --proofs.
     "slotted-proof-testing": replace(_EGGLOG, flags=("--slotted", "--proofs")),
+    "slotted-proof-testing-no-aliasing": replace(_EGGLOG, flags=("--slotted", "--proofs", "--slotted-no-aliasing")),
+    "slotted-proof-extraction": replace(_EGGLOG, flags=("--slotted", "--proof-extraction")),
+    "slotted-proof-extraction-no-aliasing": replace(
+        _EGGLOG, flags=("--slotted", "--proof-extraction", "--slotted-no-aliasing")
+    ),
     "slotted-no-aliasing": replace(_EGGLOG, flags=("--slotted", "--slotted-no-aliasing")),
     "slotted-ref-multi": replace(_SLOTTED, flags=("--matcher", "multi", "--substitution", "snapshot")),
     "slotted-ref-nested": replace(_SLOTTED, flags=("--matcher", "nested", "--substitution", "syntactic")),
     "slotted-ref-nested-snapshot": replace(_SLOTTED, flags=("--matcher", "nested", "--substitution", "snapshot")),
+    "slotted-ref-multi-proofs": replace(
+        _SLOTTED_PROOFS, flags=("--matcher", "multi", "--substitution", "snapshot", "--proof-mode", "extract")
+    ),
+    "slotted-ref-nested-proofs": replace(
+        _SLOTTED_PROOFS, flags=("--matcher", "nested", "--substitution", "syntactic", "--proof-mode", "extract")
+    ),
+    "slotted-ref-multi-proof-testing": replace(
+        _SLOTTED_PROOFS, flags=("--matcher", "multi", "--substitution", "snapshot", "--proof-mode", "check")
+    ),
+    "slotted-ref-nested-proof-testing": replace(
+        _SLOTTED_PROOFS, flags=("--matcher", "nested", "--substitution", "syntactic", "--proof-mode", "check")
+    ),
 }
 TREATMENTS = tuple(TREATMENT_SPECS)
-EGGLOG_FLAGS = ("--mode", "no-messages", "-j", "1")
+PROOF_ORACLES: dict[Treatment, Treatment] = {
+    "proofs": "proof-testing",
+    "proof-extraction": "proof-testing",
+    "egg-proofs": "egg-proof-testing",
+    "egg-proof-extraction": "egg-proof-testing",
+    "egg-nee-proof-extraction": "egg-nee-proof-testing",
+    "slotted-proof-extraction": "slotted-proof-testing",
+    "slotted-proof-extraction-no-aliasing": "slotted-proof-testing-no-aliasing",
+    "slotted-ref-multi-proofs": "slotted-ref-multi-proof-testing",
+    "slotted-ref-nested-proofs": "slotted-ref-nested-proof-testing",
+}
+EGGLOG_FLAGS = ("--mode", "no-messages")
 PROCESS_ENV = {"RUST_LOG": "error"}
 NATIVE_PARAMETER_ARGUMENTS = ("100000", "10000")
 
@@ -136,18 +217,22 @@ def validate_binary_workload(file_spec: WorkloadFile, treatment: Treatment) -> N
 
     binary_name = TREATMENT_SPECS[treatment].binary_name
     if binary_name == "egglog-experimental":
-        if treatment == "slotted-no-aliasing":
+        if treatment in (
+            "slotted-no-aliasing",
+            "slotted-proof-extraction-no-aliasing",
+            "slotted-proof-testing-no-aliasing",
+        ):
             reference = file_spec.absolute_path.with_suffix(".ref")
             if reference.is_file():
                 frozen = json.loads(reference.read_text())
                 if frozen["nested"] is None:
                     raise ValueError(frozen["unsupported_reason"])
         return
-    if binary_name == "slotted-reference":
+    if binary_name.startswith("slotted-reference"):
         if file_spec.absolute_path.suffix != ".ref":
             raise ValueError(f"treatment {treatment} requires a frozen slotted .ref workload")
         frozen = json.loads(file_spec.absolute_path.read_text())
-        matcher = "multi" if treatment == "slotted-ref-multi" else "nested"
+        matcher = "multi" if "multi" in treatment else "nested"
         if frozen[matcher] is None:
             raise ValueError(frozen["unsupported_reason"])
         return

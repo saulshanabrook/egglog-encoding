@@ -58,8 +58,9 @@ With no files, the executable reads commands from stdin. Successive inputs
 share declarations, globals, rewrites, and graph state. Include paths are
 relative to the invocation directory. A failed complete REPL input restores
 both compiler and graph state, including changes from earlier commands in that
-input. `--slotted` cannot be combined with `--term-encoding`, `--proof-testing`,
-or `--proof-extraction`.
+input. `--slotted` cannot be combined with `--term-encoding` or `--proof-testing`.
+With `--proof-extraction`, it materializes and simplifies source proofs without
+verifying their derivations. `--proofs` retains full source-proof verification.
 
 ## Sorts and constructors
 

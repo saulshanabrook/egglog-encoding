@@ -84,6 +84,25 @@ def test_pair_cli_defaults_to_current_checkout_off_vs_checked_proofs() -> None:
     assert not args.verbose
 
 
+def test_public_worker_options_distinguish_same_treatment_endpoints_and_serial_native_budget() -> None:
+    args = benchmark.parse_benchmark_args(
+        ["--threads", "4", "--compare-threads", "2", "--treatment", "off", "--compare-treatment", "off"]
+    )
+    baseline, candidate = benchmark.endpoint_requests(args)
+    assert (baseline.threads, candidate.threads) == (2, 4)
+    assert baseline != candidate
+    baseline, candidate = benchmark.endpoint_requests(
+        benchmark.parse_benchmark_args(["--threads", "4", "--treatment", "egg"])
+    )
+    assert (baseline.threads, candidate.threads, candidate.requested_threads) == (4, 1, 4)
+
+
+@pytest.mark.parametrize("flag", ["--threads", "--compare-threads"])
+def test_public_worker_options_reject_nonpositive_counts(flag: str) -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_benchmark_args([flag, "0"])
+
+
 @pytest.mark.parametrize("flag", ["-v", "--verbose"])
 def test_pair_cli_accepts_verbose(flag: str) -> None:
     assert benchmark.parse_benchmark_args([flag]).verbose
@@ -285,8 +304,8 @@ def test_comparison_permits_shared_binary_across_different_treatments() -> None:
 
     comparison = models.ComparisonSpec(baseline, candidate, (FILE_SPEC,), 2, 120)
 
-    assert baseline.cache_identity == ("sha256:shared", "off")
-    assert candidate.cache_identity == ("sha256:shared", "proofs")
+    assert baseline.cache_identity == ("sha256:shared", "off", 1)
+    assert candidate.cache_identity == ("sha256:shared", "proofs", 1)
     assert comparison.baseline.target is comparison.candidate.target
 
 

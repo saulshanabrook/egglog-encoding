@@ -24,11 +24,11 @@ from ..models import (
     Treatment,
 )
 
-type ReportSchemaVersion = Literal[10]
-REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 10
+type ReportSchemaVersion = Literal[11]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 11
 
-type GroupedSchemaVersion = Literal[7]
-GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 7
+type GroupedSchemaVersion = Literal[8]
+GROUPED_SCHEMA_VERSION: Final[GroupedSchemaVersion] = 8
 
 type TimingSummarySchemaVersion = Literal[4]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 4
@@ -64,6 +64,17 @@ class TimingSummaryRecord(TypedDict):
     rulesets: list[RulesetTimingRecord]
 
 
+class ProofSummaryRecord(TypedDict):
+    """Executed proof requests and certificates from a separate checked launch."""
+
+    schema_version: Literal[1]
+    success: bool
+    check_requests: int
+    extraction_requests: int
+    produced_certificates: int
+    verified_certificates: int
+
+
 class ReportRecord(TypedDict):
     """One complete benchmark observation persisted as one JSON line."""
 
@@ -80,12 +91,15 @@ class ReportRecord(TypedDict):
     file_path: str
     file_sha256: str
     treatment: Treatment
+    threads: int
+    requested_threads: int
     timeout_sec: int
     wall_sec: float | None
     max_rss_bytes: int | None
     error_message: str | None
     memory_limit_bytes: int | None
     timing_summary: TimingSummaryRecord | None
+    proof_summary: ProofSummaryRecord | None
 
 
 @dataclass(frozen=True)
@@ -95,6 +109,7 @@ class CacheKey:
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
+    threads: int = 1
 
     @classmethod
     def for_endpoint(cls, endpoint: BenchmarkEndpoint, file_spec: FileSpec) -> CacheKey:
@@ -105,6 +120,7 @@ class CacheKey:
             binary_sha256=endpoint.binary_sha256,
             file_sha256=file_spec.sha256,
             treatment=endpoint.treatment,
+            threads=endpoint.threads,
         )
 
 
@@ -161,6 +177,7 @@ class GroupedKey(TypedDict):
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
+    threads: int
 
 
 class GroupedSample(ReportRecord):
@@ -413,6 +430,7 @@ def _record_key(record: ReportRecord) -> CacheKey:
         binary_sha256=record["binary_sha256"],
         file_sha256=record["file_sha256"],
         treatment=record["treatment"],
+        threads=record["threads"],
     )
 
 
@@ -476,7 +494,12 @@ def _require_current_record(record: ReportRecord) -> None:
     summary = record["timing_summary"]
     if summary is not None:
         _require_current_timing_summary(summary)
-    if record["status"] == "success" and summary is None and TREATMENT_SPECS[record["treatment"]].timing_summary:
+    if (
+        record["status"] == "success"
+        and summary is None
+        and record["threads"] == 1
+        and TREATMENT_SPECS[record["treatment"]].timing_summary
+    ):
         raise ValueError("successful benchmark record is missing its timing summary")
 
 

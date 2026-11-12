@@ -23,7 +23,7 @@ from benchmarks.reproduction.corpus import MANIFEST_RELATIVE_PATH, VALIDATION_PO
 from benchmarks.reproduction.native import NATIVE_ALLOCATION_FAILURE
 
 from .config import DEFAULT_AST_CACHE, DEFAULT_MEMORY_LIMIT_BYTES, DEFAULT_REPORT, DEFAULT_TIMEOUT_SEC
-from .engines import TREATMENT_SPECS, TREATMENTS, Treatment
+from .engines import PROOF_ORACLES, TREATMENT_SPECS, TREATMENTS, Treatment
 from .figure_reuse import FIGURE_DATA_VERSION, FigureData
 from .models import (
     BenchmarkEndpoint,
@@ -43,12 +43,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "figures/catalog.json"
 DEFAULT_OUTPUT_DIR = ROOT / "figures/output/eval"
 VEGA_PACKAGES = ("vega@6.4.0", "vega-lite@6.4.3", "vega-cli@6.4.0", "canvas@3.2.3")
-PROOF_ORACLES: dict[Treatment, Treatment] = {
-    "proofs": "proof-testing",
-    "proof-extraction": "proof-testing",
-    "egg-proofs": "egg-proof-testing",
-    "egg-proof-extraction": "egg-proof-testing",
-}
 
 
 @dataclass(frozen=True)
@@ -74,6 +68,7 @@ class FigureConfig:
     figures: tuple[Figure, ...]
     memory_limit_bytes: int | None = DEFAULT_MEMORY_LIMIT_BYTES
     lmfao: LmfaoConfig | None = None
+    threads: int = 1
 
 
 @dataclass(frozen=True)
@@ -267,13 +262,16 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
         help="output directory (default: this checkout's figures/output/eval)",
     )
     parser.add_argument("--timeout-sec", type=int, default=config.timeout_sec, help="per-process resource guard")
+    parser.add_argument("--threads", type=int, default=1, help="requested workers per process (default: 1)")
     parser.add_argument("--lmfao-data", type=Path, help="override the catalog's prepared LMFAO dataset")
     parser.add_argument("--lmfao-backend", type=Path, help="override the catalog's prepared LMFAO executable")
     parser.add_argument("--lmfao-cxxflags", help="C++ flags for LMFAO generated programs, including any Boost path")
+    parser.add_argument("--proof-validation", type=Path, help="delegated proof replay evidence for LMFAO")
+    parser.add_argument("--proof-source-receipt", type=Path, help="frozen production binary/source binding receipt")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
-    if args.rounds < 1 or args.timeout_sec < 1:
-        parser.error("--rounds and --timeout-sec must be positive")
+    if args.rounds < 1 or args.timeout_sec < 1 or args.threads < 1:
+        parser.error("--rounds, --timeout-sec and --threads must be positive")
     if str(args.report) == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
     if len(args.names) != len(set(args.names)):
@@ -291,7 +289,11 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
             ),
         )
     return args, replace(
-        config, rounds=args.rounds, timeout_sec=args.timeout_sec, memory_limit_bytes=args.memory_limit_bytes
+        config,
+        rounds=args.rounds,
+        timeout_sec=args.timeout_sec,
+        memory_limit_bytes=args.memory_limit_bytes,
+        threads=args.threads,
     )
 
 
@@ -319,6 +321,11 @@ def prepare_lmfao(args: argparse.Namespace, config: FigureConfig) -> argparse.Na
     selected.samples, selected.timeout = config.rounds, config.timeout_sec
     selected.report = args.report.expanduser().resolve()
     selected.memory_limit_bytes = config.memory_limit_bytes
+    selected.threads = config.threads
+    selected.proof_validation = args.proof_validation.expanduser().resolve() if args.proof_validation else None
+    selected.proof_source_receipt = (
+        args.proof_source_receipt.expanduser().resolve() if args.proof_source_receipt else None
+    )
     if args.lmfao_cxxflags is not None:
         selected.cxxflags = args.lmfao_cxxflags
     if not args.no_runs:
@@ -443,6 +450,7 @@ def render_figures(
                     target.binary_sha256_for(treatment),
                     treatment,
                     memory_limit_bytes=config.memory_limit_bytes,
+                    threads=config.threads,
                 )
                 key = CacheKey.for_endpoint(endpoint, file)
                 selection = select_observations(grouped, endpoint, file, config.rounds, config.timeout_sec)
@@ -474,6 +482,8 @@ def render_figures(
                         "family": info["family"] if info else "",
                         "file_sha256": physical.sha256,
                         "treatment": treatment,
+                        "threads": endpoint.threads,
+                        "requested_threads": endpoint.requested_threads,
                         "binary_sha256": key.binary_sha256,
                         "memory_limit_bytes": endpoint.memory_limit_bytes,
                         "selected_row_indices": [row.row_index for row in rows],
@@ -494,6 +504,7 @@ def render_figures(
             "timeout_sec": config.timeout_sec,
             "rounds": config.rounds,
             "memory_limit_bytes": config.memory_limit_bytes,
+            "threads": config.threads,
             "t_critical": t_critical,
             "selected_inputs": selected_inputs,
             "treatments": figure.treatments,
@@ -523,6 +534,7 @@ def render_figures(
             "report_path": str(report_path),
             "timeout_sec": config.timeout_sec,
             "memory_limit_bytes": config.memory_limit_bytes,
+            "threads": config.threads,
             "source_blockers": inventory["unavailable_cases"],
             "view_domains": results.get("view_domains"),
         }
@@ -594,14 +606,19 @@ def render_figure_data(
             name = item.name
             results.update(figure_data_version=FIGURE_DATA_VERSION, provenance=item.provenance, renderer=renderer)
             # Include only selected measurements; full profiling/provenance lives outside the plot view.
-            selections: dict[tuple[str, str, str], set[int]] = {}
+            selections: dict[tuple[str, str, str, int], set[int]] = {}
             for selected in parameters["selected_inputs"]:
-                identity = (selected["binary_sha256"], selected["file_sha256"], selected["treatment"])
+                identity = (
+                    selected["binary_sha256"],
+                    selected["file_sha256"],
+                    selected["treatment"],
+                    selected["threads"],
+                )
                 selections.setdefault(identity, set()).update(selected["selected_row_indices"])
             groups = []
             for group in item.grouped.data["groups"]:
                 key = group["key"]
-                indices = selections.get((key["binary_sha256"], key["file_sha256"], key["treatment"]))
+                indices = selections.get((key["binary_sha256"], key["file_sha256"], key["treatment"], key["threads"]))
                 if indices is not None:
                     groups.append(
                         {
@@ -617,6 +634,8 @@ def render_figure_data(
                                         "max_rss_bytes",
                                         "timeout_sec",
                                         "memory_limit_bytes",
+                                        "threads",
+                                        "requested_threads",
                                     )
                                 }
                                 for row in group["samples"]
@@ -693,6 +712,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             directory = args.reuse_from.expanduser().resolve()
             explicit = {token.split("=", 1)[0] for token in raw}
+            if "--threads" in explicit:
+                raise ValueError(
+                    "portable replay retains recorded worker counts; use --target to collect a new selection"
+                )
             names = args.names or (
                 [figure.name for figure in config.figures]
                 if "--config" in explicit
@@ -799,13 +822,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             console.print(f"  loaded {store.row_count} observations in {perf_counter() - started:.1f}s")
         requests = tuple(
             BenchmarkRequest(
-                EndpointRequest(target_request, treatment, memory_limit_bytes=config.memory_limit_bytes), figure.files
+                EndpointRequest(
+                    target_request, treatment, memory_limit_bytes=config.memory_limit_bytes, threads=config.threads
+                ),
+                figure.files,
             )
             for figure in figures
             for treatment in figure.figure.treatments
         )
         if lmfao is not None:
-            requests += optimizer_requests(lmfao_files, target_request, config.memory_limit_bytes)
+            requests += optimizer_requests(lmfao_files, target_request, config.memory_limit_bytes, config.threads)
         status = 0
         if args.no_runs:
             binaries = []
@@ -881,6 +907,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     saved["binary_sha256"]["slotted"] != targets[target_request].binary_sha256_for("slotted")
                     or saved["optimizer_memory_limit_bytes"] != config.memory_limit_bytes
                     or saved["optimizer_timeout_seconds"] != config.timeout_sec
+                    or saved.get("egraph_workers", 1) != config.threads
                     or any(item["requested_samples"] != config.rounds for item in saved["optimizer"].values())
                     or any(
                         saved["optimizer"][mode]["input_sha256"] != file.sha256 for mode, file in lmfao_files.items()
@@ -898,6 +925,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     config.timeout_sec,
                     config.memory_limit_bytes,
                     lmfao.rewrite_rounds,
+                    config.threads,
                 )
                 if "slotted" not in observed.successful or any(
                     row["status"] not in ("timed-out", "memory-limited")

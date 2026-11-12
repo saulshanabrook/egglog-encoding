@@ -1,7 +1,7 @@
 //! Lift and check ordinary proofs using retained slotted compiler results.
 
 use super::HashMap;
-use super::checker::check_claim;
+use super::checker::{check_claim, claim_renaming};
 use super::context::{ProofContext, SourceError};
 use super::lift_slots::{self, matched_frame};
 use super::program::ResolvedSlottedProgram;
@@ -71,6 +71,23 @@ pub(in crate::slotted) struct ProofRequest {
     pub flattened: ResolvedSlottedProgram,
     pub names: EncodingNames,
     pub claims: Vec<SlottedClaim>,
+    pub verify: bool,
+}
+
+#[derive(Debug)]
+struct SourceProofs(Vec<(super::SlottedProofStore, super::ProofId, super::Renaming)>);
+
+impl Display for SourceProofs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for (i, (store, proof, renaming)) in self.0.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            // Formatting may append renamed terms, so keep the stored certificate immutable.
+            write!(f, "{}", store.clone().claim_to_string(*proof, renaming))?;
+        }
+        Ok(())
+    }
 }
 
 impl ProofRequest {
@@ -83,9 +100,9 @@ impl ProofRequest {
             .extension_state::<super::runtime_substitution::Evidence>()
             .cloned()
             .unwrap_or_default();
-        let text = self.prove(graph, facts, &evidence).map_err(error)?;
+        let proofs = self.prove(graph, facts, &evidence).map_err(error)?;
         log::debug!("query extracted");
-        Ok(vec![CommandOutput::UserDefined(Arc::new(text))])
+        Ok(vec![CommandOutput::UserDefined(Arc::new(proofs))])
     }
 
     #[cfg(test)]
@@ -116,7 +133,7 @@ impl ProofRequest {
         graph: &mut EGraph,
         facts: Vec<Fact>,
         evidence: &super::runtime_substitution::Evidence,
-    ) -> Result<String, String> {
+    ) -> Result<SourceProofs, String> {
         let claim = &self.claims[0];
         let resolved = &self.source;
         let mut dag = TermDag::default();
@@ -182,7 +199,7 @@ impl ProofRequest {
             &evidence,
         )?;
         log::debug!("query witness done");
-        let mut texts = Vec::new();
+        let mut certificates = Vec::new();
         for claim in &self.claims {
             let patterns = [
                 query_program.query_pattern(&mut dag, &claim.lhs),
@@ -227,21 +244,34 @@ impl ProofRequest {
             log::debug!("query lifted {} steps", store.len());
             let (mut store, proof) = unflatten::lift(store, &program, &flattened, proof)?;
             log::debug!("query unflattened {} steps", store.len());
-            check_claim(&mut store, resolved, &source, proof).map_err(|e| {
-                format!(
-                    "the translated proof does not check: {e}\n{}",
-                    store.proof_to_string(proof)
-                )
-            })?;
-            log::debug!("query checked {} steps", store.len());
+            if self.verify {
+                check_claim(&mut store, resolved, &source, proof).map_err(|e| {
+                    format!(
+                        "the translated proof does not check: {e}\n{}",
+                        store.proof_to_string(proof)
+                    )
+                })?;
+                log::debug!("query checked {} steps", store.len());
+            }
+            let expected = store.proposition(proof).clone();
             let proof = store.simplify(proof);
             log::debug!("query simplified {} steps", store.len());
-            let renaming = check_claim(&mut store, resolved, &source, proof)
-                .map_err(|e| format!("the normalized proof does not check: {e}"))?;
-            log::debug!("query formatting");
-            texts.push(store.claim_to_string(proof, &renaming));
+            if store.proposition(proof) != &expected {
+                return Err("proof simplification changed the requested equality".into());
+            }
+            let renaming = if self.verify {
+                check_claim(&mut store, resolved, &source, proof)
+                    .map_err(|e| format!("the normalized proof does not check: {e}"))?
+            } else {
+                claim_renaming(&mut store, &program, &source, &expected)
+                    .map_err(|e| format!("the constructed proof does not match its claim: {e}"))?
+            };
+            certificates.push((store, proof, renaming));
+            if let Some(summary) = graph.extension_state::<egglog::proof_summary::ProofSummary>() {
+                summary.certificates(1, self.verify);
+            }
         }
-        Ok(texts.join("\n"))
+        Ok(SourceProofs(certificates))
     }
 }
 

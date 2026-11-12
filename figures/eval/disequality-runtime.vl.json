@@ -26,7 +26,7 @@
     {"flatten": [ "batches" ], "as": [ "candidates" ]},
     {"flatten": [ "candidates" ], "as": [ "group" ]},
     {"filter": "!isValid(datum.group) || indexof(datum.group.labels, target_label) >= 0"},
-    {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.treatment + '/' + datum.group.key.binary_sha256 : ''", "as": "group_id"},
+    {"calculate": "isValid(datum.group) ? datum.group.key.file_sha256 + '/' + datum.group.key.treatment + '/' + datum.group.key.binary_sha256 + '/' + datum.group.key.threads : ''", "as": "group_id"},
     {
       "aggregate": [{"op": "values", "as": "observed"}]
     },
@@ -34,7 +34,7 @@
     {"calculate": "pluck(datum.observed, 'group')", "as": "groups"},
     {"calculate": "selected_inputs", "as": "inputs"},
     {"flatten": [ "inputs" ], "as": [ "input" ]},
-    {"calculate": "datum.input.file_sha256 + '/' + datum.input.treatment + '/' + datum.input.binary_sha256", "as": "input_id"},
+    {"calculate": "datum.input.file_sha256 + '/' + datum.input.treatment + '/' + datum.input.binary_sha256 + '/' + datum.input.threads", "as": "input_id"},
     {"calculate": "indexof(datum.group_ids, datum.input_id)", "as": "group_index"},
     {"calculate": "datum.group_index >= 0 ? datum.groups[datum.group_index] : null", "as": "group"},
     {"calculate": "isValid(datum.group)", "as": "eligible_group"},

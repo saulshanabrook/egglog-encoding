@@ -9,8 +9,22 @@ fn run() -> Result<()> {
     let args: Vec<_> = benchmark_memory::configure(std::env::args_os())
         .into_iter()
         .collect();
-    let [_, mode, input, destination, timeout] = args.as_slice() else {
-        bail!("usage: lmfao-extract <slotted|off> INPUT PLAN.json DAG_TIMEOUT_SECONDS");
+    let (positional, workers) = match args.as_slice() {
+        [_, _, _, _, _] => (args.as_slice(), 1),
+        [positional @ .., flag, workers] if positional.len() == 5 && flag == "--threads" => {
+            let workers: usize = workers
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid worker count"))?
+                .parse()?;
+            ensure!(workers > 0, "worker count must be positive");
+            (positional, workers)
+        }
+        _ => bail!(
+            "usage: lmfao-extract <slotted|off> INPUT PLAN.json DAG_TIMEOUT_SECONDS [--threads N]"
+        ),
+    };
+    let [_, mode, input, destination, timeout] = positional else {
+        unreachable!()
     };
     let timeout: f64 = timeout
         .to_str()
@@ -28,7 +42,7 @@ fn run() -> Result<()> {
         } else {
             egglog_experimental::new_experimental_egraph_with_options(true)
         };
-        graph.set_num_threads(1);
+        graph.set_num_threads(workers);
         let encoded = if mode == "slotted" {
             slotted::Compiler::default()
                 .compile(None, &source)
@@ -48,6 +62,7 @@ fn run() -> Result<()> {
         bail!("unknown input mode")
     };
     let total = start.elapsed().as_secs_f64();
+    result.report["egraph_workers"] = workers.into();
     result.report["phases_seconds"] =
         serde_json::json!({"rewriting": rewriting, "extraction": total - rewriting});
     result.report["views"] = result.plan["views"].as_array().unwrap().len().into();

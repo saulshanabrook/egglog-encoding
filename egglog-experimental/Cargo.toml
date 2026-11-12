@@ -17,6 +17,11 @@ required-features = ["bin"]
 name = "slotted_ast"
 test = true
 
+[[example]]
+name = "translation_ast"
+test = true
+required-features = ["bin"]
+
 [[test]]
 harness = false
 name = "files"

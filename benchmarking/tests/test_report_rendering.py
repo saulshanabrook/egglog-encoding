@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -126,6 +127,28 @@ def test_selection_does_not_treat_cross_engine_binary_difference_as_target_chang
     )
 
     assert "This comparison changes both target and treatment" not in markdown
+
+
+def test_selection_reports_effective_and_requested_workers_and_joint_changes(tmp_path: Path) -> None:
+    baseline = make_endpoint(binary_sha256="sha256:shared", treatment="off")
+    candidate = replace(make_endpoint(binary_sha256="sha256:shared", treatment="term"), threads=4, requested_threads=4)
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    store = ReportStore(tmp_path / "report.jsonl").grouped_report()
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+    markdown = render_markdown_report_document(build_report_catalog(store, comparison))
+    assert "| Workers |" in markdown and "| term | 4 |" in markdown
+    assert "changes both treatment and worker count" in markdown
+    same_treatment = replace(candidate, treatment="off")
+    markdown = render_markdown_report_document(
+        build_report_catalog(store, models.ComparisonSpec(baseline, same_treatment, (file,), 1, 120))
+    )
+    assert "joint endpoint change" not in markdown
+    native = replace(candidate, treatment="egg", requested_threads=4)
+    assert native.threads == 1
+    markdown = render_markdown_report_document(
+        build_report_catalog(store, models.ComparisonSpec(baseline, native, (file,), 1, 120))
+    )
+    assert "| egg | 1 (4 requested) |" in markdown
 
 
 def test_shared_formatters_keep_compact_units_and_unambiguous_paths() -> None:
