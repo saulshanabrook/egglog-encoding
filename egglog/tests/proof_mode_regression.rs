@@ -10,6 +10,38 @@ struct RecordFunctionInputArity {
 
 struct DefineSort;
 
+#[test]
+fn repeated_closed_nullaries_keep_strict_proofs_and_command_boundaries() {
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            None,
+            r#"
+            (datatype E (A) (B) (Pair E E) (F E))
+            (union (Pair (A) (A)) (Pair (B) (A)))
+            (check (= (Pair (A) (A)) (Pair (B) (A))))
+            (union (A) (A))
+            (union (B) (A))
+            (F (A))
+            (check (= (F (A)) (F (B))))
+            (union (Pair (F (A)) (F (B))) (Pair (F (A)) (F (A))))
+            (check (= (Pair (F (B)) (F (A))) (Pair (F (A)) (F (B)))))
+            (push)
+            (union (F (A)) (Pair (A) (A)))
+            (check (= (F (B)) (Pair (B) (A))))
+            (pop)
+            (fail (check (= (F (A)) (Pair (A) (A)))))
+            (let saved (Pair (A) (A)))
+            (check (= saved (Pair (A) (B))))
+            (rule ((= x (A))) ((union (F x) (Pair x x))))
+            (run 1)
+            (check (= (F (A)) saved))
+            (extract (Pair (A) (A)))
+            "#,
+        )
+        .unwrap();
+}
+
 impl UserDefinedCommand for DefineSort {
     fn update(&self, egraph: &mut EGraph, _args: &[Expr]) -> Result<Vec<CommandOutput>, Error> {
         egraph.parse_and_run_program(None, "(sort Leaked)")
