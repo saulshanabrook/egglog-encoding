@@ -5,9 +5,7 @@ mod tests {
         ResolvedFact, RuleEvalMode, remove_globals::remove_globals, sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
-    use crate::proofs::proof_checker::{
-        eval_expr_with_subst, gather_global_actions, process_actions,
-    };
+    use crate::proofs::proof_checker::eval_expr_with_subst;
     use crate::proofs::proof_encoding_helpers::recomputable_premises;
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
@@ -624,81 +622,6 @@ mod tests {
                     .collect(),
                 "{source}"
             );
-        }
-    }
-
-    #[test]
-    fn action_collection_modes_preserve_bindings_evaluation_and_errors() {
-        let mut egraph = EGraph::new_with_proofs();
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-            (datatype N (Z) (S N)) (sort V (Vec i64))
-            (function f (N) N :merge old)
-            (let x (S (Z)))
-            (set (f x) (Z))
-            (union x (Z))
-            (S x)
-        "#,
-            )
-            .unwrap();
-        let expr = egraph
-            .parser
-            .get_expr_from_string(None, "(vec-get (vec-of 1) 2)")
-            .unwrap();
-        let output = egraph.get_sort_by_name("i64").unwrap().clone();
-        let expr = egraph
-            .typecheck_expr_with_bindings_and_output(&expr, &[], output, crate::Context::Read)
-            .unwrap();
-        let invalid_action = GenericAction::Expr(crate::Span::Panic, expr);
-        let actions = gather_global_actions(&egraph.proof_check_program).collect::<Vec<_>>();
-        assert!(
-            actions
-                .iter()
-                .any(|action| matches!(action, GenericAction::Let(..)))
-        );
-        assert!(
-            actions
-                .iter()
-                .any(|action| matches!(action, GenericAction::Union(..)))
-        );
-        assert!(
-            actions
-                .iter()
-                .any(|action| matches!(action, GenericAction::Set(..)))
-        );
-        assert!(
-            actions
-                .iter()
-                .any(|action| matches!(action, GenericAction::Expr(..)))
-        );
-        for tail in [None, Some(&invalid_action)] {
-            let mut actions = actions.clone();
-            actions.extend(tail);
-            let mut dag = TermDag::default();
-            let mut no_props_dag = dag.clone();
-            let result =
-                process_actions::<true>("action-modes", HashMap::default(), &actions, &mut dag);
-            let no_props = process_actions::<false>(
-                "action-modes",
-                HashMap::default(),
-                &actions,
-                &mut no_props_dag,
-            );
-            assert_eq!(dag, no_props_dag);
-            if tail.is_some() {
-                assert_eq!(
-                    result.unwrap_err().to_string(),
-                    no_props.unwrap_err().to_string()
-                );
-            } else {
-                let result = result.unwrap();
-                let no_props = no_props.unwrap();
-                assert_eq!(result.var_bindings, no_props.var_bindings);
-                assert!(!result.propositions.is_empty());
-                assert!(no_props.propositions.is_empty());
-            }
         }
     }
 

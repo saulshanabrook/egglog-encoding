@@ -120,9 +120,7 @@ pub(crate) fn eval_merge_expr(
 ///    - Reflexive equalities for all subterms
 ///    - Ground equalities from union statements (bidirectional)
 ///    - Reflexive equalities from set statements
-///
-/// With `COLLECT = false`, evaluation and bindings are unchanged, but no propositions are collected.
-pub(crate) fn process_actions<const COLLECT: bool>(
+pub(crate) fn process_actions(
     rule_name: &str,
     mut bindings: HashMap<String, TermId>,
     actions: &[&GenericAction<ResolvedCall, crate::ast::ResolvedVar>],
@@ -136,27 +134,23 @@ pub(crate) fn process_actions<const COLLECT: bool>(
             GenericAction::Let(_, var, expr) => {
                 // Evaluate the expression and collect propositions
                 let (term_id, new_props) =
-                    eval_expr_with_subst::<COLLECT>(rule_name, expr, term_dag, &bindings)?;
+                    eval_expr_with_subst::<true>(rule_name, expr, term_dag, &bindings)?;
                 bindings.insert(var.name.clone(), term_id);
-                if COLLECT {
-                    propositions.extend(new_props);
-                }
+                propositions.extend(new_props);
             }
             GenericAction::Union(_, lhs_expr, rhs_expr) => {
                 // Union creates ground equalities
                 let (lhs_term, lhs_props) =
-                    eval_expr_with_subst::<COLLECT>(rule_name, lhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst::<true>(rule_name, lhs_expr, term_dag, &bindings)?;
                 let (rhs_term, rhs_props) =
-                    eval_expr_with_subst::<COLLECT>(rule_name, rhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst::<true>(rule_name, rhs_expr, term_dag, &bindings)?;
 
                 // Collect propositions from evaluating both sides
-                if COLLECT {
-                    propositions.extend(lhs_props);
-                    propositions.extend(rhs_props);
-                    // Store both directions of the equality
-                    propositions.insert(Proposition::new(lhs_term, rhs_term));
-                    propositions.insert(Proposition::new(rhs_term, lhs_term));
-                }
+                propositions.extend(lhs_props);
+                propositions.extend(rhs_props);
+                // Store both directions of the equality
+                propositions.insert(Proposition::new(lhs_term, rhs_term));
+                propositions.insert(Proposition::new(rhs_term, lhs_term));
             }
             GenericAction::Set(_, func, args, rhs) => {
                 // Set creates reflexive equality for the resulting term
@@ -164,18 +158,14 @@ pub(crate) fn process_actions<const COLLECT: bool>(
                 all_args.push(rhs.clone());
                 let call_expr = ResolvedExpr::Call(crate::ast::Span::Panic, func.clone(), all_args);
                 let (_term, new_props) =
-                    eval_expr_with_subst::<COLLECT>(rule_name, &call_expr, term_dag, &bindings)?;
-                if COLLECT {
-                    propositions.extend(new_props);
-                }
+                    eval_expr_with_subst::<true>(rule_name, &call_expr, term_dag, &bindings)?;
+                propositions.extend(new_props);
             }
             GenericAction::Expr(_, expr) => {
                 // Expr creates reflexive equality for its result
                 let (_, new_props) =
-                    eval_expr_with_subst::<COLLECT>(rule_name, expr, term_dag, &bindings)?;
-                if COLLECT {
-                    propositions.extend(new_props);
-                }
+                    eval_expr_with_subst::<true>(rule_name, expr, term_dag, &bindings)?;
+                propositions.extend(new_props);
             }
             GenericAction::Panic(_, _) => {
                 // Panics do not create propositions
@@ -280,19 +270,6 @@ fn add_subterm_reflexive_equalities(
             add_subterm_reflexive_equalities(child_id, term_dag, propositions);
         }
     }
-}
-
-/// Gathers all global variables from a program and computes their values as terms
-/// without using globals (i.e., all global references are replaced with their definitions).
-///
-/// This expects the program to be in proof normalized form where globals appear as Let actions.
-pub(crate) fn gather_globals(
-    prog: &[ResolvedNCommand],
-    term_dag: &mut TermDag,
-) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let actions: Vec<_> = gather_global_actions(prog).collect();
-    let ctx = process_actions::<false>("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
 }
 
 /// Errors that can occur during proof checking.
@@ -591,8 +568,7 @@ impl ProofCheckContext {
 
         // Use the new refactored functions
         let actions: Vec<_> = gather_global_actions(prog).collect();
-        let action_ctx =
-            process_actions::<true>("global_actions", HashMap::default(), &actions, term_dag)?;
+        let action_ctx = process_actions("global_actions", HashMap::default(), &actions, term_dag)?;
 
         Ok(ProofCheckContext {
             global_equalities: action_ctx.propositions,
@@ -1389,8 +1365,7 @@ impl ProofStore {
         let action_refs: Vec<&GenericAction<ResolvedCall, crate::ast::ResolvedVar>> =
             rule.head.0.iter().collect();
         let bindings = subst_with_globals.clone();
-        let action_ctx =
-            process_actions::<true>(rule_name, bindings, &action_refs, &mut self.term_dag)?;
+        let action_ctx = process_actions(rule_name, bindings, &action_refs, &mut self.term_dag)?;
 
         // Check if the claimed equality is in the propositions
         if action_ctx.propositions.contains(claimed) {
