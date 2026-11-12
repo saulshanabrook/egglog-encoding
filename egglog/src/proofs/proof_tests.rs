@@ -10,6 +10,7 @@ mod tests {
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
     use crate::proofs::proof_head::{Firing, HeadPlan, HeadProof, ProofAlgebra};
+    use crate::proofs::proof_lifting::{ProofBuilder, Synthesis};
     use crate::util::{HashMap, HashSet, IndexMap, SymbolGen};
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
@@ -832,7 +833,7 @@ mod tests {
     /// A bridge supply for a firing where every term the head builds is new, so
     /// each one interns into itself. It never runs dry, so a walk drawing on it
     /// reaches the end of the head.
-    fn interns_into_itself(store: &mut ProofStore, to_canonical: ProofId) -> Option<ProofId> {
+    fn interns_into_itself(store: &mut ProofBuilder<'_>, to_canonical: ProofId) -> Option<ProofId> {
         Some(store.reflexive(to_canonical))
     }
 
@@ -862,6 +863,7 @@ mod tests {
         let mut dag = TermDag::default();
         let inputs = head_input_bindings(&rule.head.0, &mut dag);
         let mut whole = ProofStore::new(dag.clone(), HashMap::default(), HashSet::default());
+        let mut whole_synthesis = Synthesis::default();
         let mut uninterrupted = Firing::new(
             &rule.name,
             &plan,
@@ -870,9 +872,15 @@ mod tests {
             IndexMap::default(),
             Box::new(interns_into_itself),
         );
-        let expected = uninterrupted.proofs(&mut whole).to_vec();
+        let expected = uninterrupted
+            .proofs(&mut ProofBuilder {
+                store: &mut whole,
+                synthesis: &mut whole_synthesis,
+            })
+            .to_vec();
 
         let mut resumed = ProofStore::new(dag, HashMap::default(), HashSet::default());
+        let mut resumed_synthesis = Synthesis::default();
         let mut remaining = 1;
         let mut partial = Firing::new(
             &rule.name,
@@ -888,7 +896,10 @@ mod tests {
                 interns_into_itself(store, proof)
             }),
         );
-        partial.proofs(&mut resumed);
+        partial.proofs(&mut ProofBuilder {
+            store: &mut resumed,
+            synthesis: &mut resumed_synthesis,
+        });
         let walk = partial.into_walk();
         assert!(walk.reaches() > 0);
         let mut continuation = Firing::new(
@@ -900,7 +911,13 @@ mod tests {
             Box::new(interns_into_itself),
         );
         continuation.carry_on(walk);
-        assert_eq!(continuation.proofs(&mut resumed), expected);
+        assert_eq!(
+            continuation.proofs(&mut ProofBuilder {
+                store: &mut resumed,
+                synthesis: &mut resumed_synthesis
+            }),
+            expected
+        );
         assert_eq!(resumed.id_to_proof, whole.id_to_proof);
         assert_eq!(resumed.term_dag, whole.term_dag);
     }
@@ -1018,6 +1035,7 @@ mod tests {
             };
             let plan = HeadPlan::new(actions, &mut fresh);
             let mut store = ProofStore::new(term_dag, HashMap::default(), HashSet::default());
+            let mut store_synthesis = Synthesis::default();
             let expected = head_conclusions(&rule.name, actions, inputs.clone(), &mut store);
             // No premises, and every term the head builds interns into itself, so
             // each column states the head's conclusion there rather than one about
@@ -1031,7 +1049,10 @@ mod tests {
                 Box::new(interns_into_itself),
             );
             let columns: Vec<_> = firing
-                .proofs(&mut store)
+                .proofs(&mut ProofBuilder {
+                    store: &mut store,
+                    synthesis: &mut store_synthesis,
+                })
                 .iter()
                 .flatten()
                 .copied()
@@ -1166,6 +1187,7 @@ mod tests {
             let plan = HeadPlan::new(actions, &mut fresh);
             let layout = &plan.layout;
             let mut store = ProofStore::new(term_dag, HashMap::default(), HashSet::default());
+            let mut store_synthesis = Synthesis::default();
             let mut firing = Firing::new(
                 &walked.name,
                 &plan,
@@ -1175,7 +1197,10 @@ mod tests {
                 Box::new(interns_into_itself),
             );
             let filled: Vec<bool> = firing
-                .proofs(&mut store)
+                .proofs(&mut ProofBuilder {
+                    store: &mut store,
+                    synthesis: &mut store_synthesis,
+                })
                 .iter()
                 .map(Option::is_some)
                 .collect();
