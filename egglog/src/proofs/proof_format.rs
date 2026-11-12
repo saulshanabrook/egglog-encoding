@@ -1202,7 +1202,8 @@ mod tests {
             ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
         let prog = vec![];
         let globals = HashMap::default();
-        let mut lifting = ProofLifter::new(&prog, &globals, raw);
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(&prog, &globals, raw, &mut proof_ids);
         let mut lift = |id| {
             let lifted = lifting.proof(&mut store, id);
             store.simplify(lifted)
@@ -1423,7 +1424,9 @@ mod tests {
             HashMap::default(),
             HashSet::default(),
         );
-        ProofLifter::new(&[], &HashMap::default(), &firing.raw).proof(&mut store, packed);
+        let mut proof_ids = DenseIdMap::new();
+        ProofLifter::new(&[], &HashMap::default(), &firing.raw, &mut proof_ids)
+            .proof(&mut store, packed);
     }
 
     /// Every column of the row is a proof, including the e-class's past the last
