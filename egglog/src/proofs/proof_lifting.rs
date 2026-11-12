@@ -200,17 +200,14 @@ pub(in crate::proofs) fn global_bindings(
     program: &[ResolvedNCommand],
     dag: &mut TermDag,
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let definitions: Vec<_> = program
-        .iter()
-        .filter(|command| {
-            matches!(
-                command,
-                ResolvedNCommand::CoreAction(crate::GenericAction::Let(..))
-            )
-        })
-        .cloned()
-        .collect();
-    crate::proofs::proof_checker::gather_globals(&definitions, dag)
+    let mut bindings = HashMap::default();
+    for command in program {
+        if let ResolvedNCommand::CoreAction(crate::GenericAction::Let(_, var, expr)) = command {
+            let (term, _) = eval_expr_with_subst("global_action", expr, dag, &bindings)?;
+            bindings.insert(var.name.clone(), term);
+        }
+    }
+    Ok(bindings)
 }
 
 /// Hash-consing state for one decoded proof arena, discarded after lifting.
