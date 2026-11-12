@@ -1773,6 +1773,72 @@ mod tests {
     }
 
     #[test]
+    fn generated_function_hooks_preserve_unshared_proof_encoding() {
+        use std::sync::Mutex;
+
+        fn lowered(force_legacy: bool) -> (Vec<(String, usize)>, String) {
+            let mut graph = EGraph::new_with_proofs();
+            graph
+                .parse_and_run_program(None, "(datatype E (A) (Pair E E))")
+                .unwrap();
+            let packed = graph.proof_state.proof_names.packed_prefix.clone();
+            if force_legacy {
+                graph.parser.add_expr_macro(Arc::new(SimpleMacro::new(
+                    "unused-parser-hook",
+                    |_, _, _| unreachable!("this hook is never called"),
+                )));
+            }
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let calls = seen.clone();
+            graph.parser.add_command_macro(Arc::new(SimpleMacro::new(
+                "function",
+                move |args, span, parser| {
+                    let (Sexp::Atom(name, _), Sexp::List(inputs, _)) = (&args[0], &args[1])
+                    else {
+                        panic!("expected a generated function declaration");
+                    };
+                    calls.lock().unwrap().push((name.to_string(), inputs.len()));
+                    let form = Sexp::List(
+                        std::iter::once(Sexp::Atom("function".into(), span.clone()))
+                            .chain(args.iter().cloned())
+                            .collect(),
+                        span,
+                    );
+                    // Delegate to the builtin parser, preserving its complete
+                    // state and restoring this observer even on a parse error.
+                    let observer = parser.commands.remove("function").unwrap();
+                    let result = parser.parse_command(&form);
+                    parser.commands.insert("function".into(), observer);
+                    result
+                },
+            )));
+            let commands = graph
+                .resolve_program(
+                    None,
+                    "(union (Pair (Pair (A) (A)) (Pair (A) (A)))
+                            (Pair (Pair (A) (A)) (A)))",
+                )
+                .unwrap();
+            let transcript = seen.lock().unwrap().clone();
+            assert!(
+                transcript.iter().any(|(name, _)| name.starts_with(&packed)),
+                "the fixture must exercise a new packed-proof declaration"
+            );
+            let rendered = commands
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            (transcript, rendered)
+        }
+
+        let actual = lowered(false);
+        let legacy = lowered(true);
+        assert_eq!(actual.0, legacy.0, "generated declaration callbacks");
+        assert_eq!(actual.1, legacy.1, "function hooks must retain legacy encoding");
+    }
+
+    #[test]
     fn streamed_fallback_macros_keep_owned_spans() {
         use std::sync::Mutex;
 
