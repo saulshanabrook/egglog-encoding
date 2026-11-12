@@ -11,7 +11,6 @@ import argparse
 import glob
 import gzip
 import json
-import math
 import os
 import re
 import shlex
@@ -392,10 +391,10 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
         if y_domain[0] <= 1 <= y_domain[1]:
             guides.append({"x": x_domain[0], "x2": x_domain[1], "y": 1, "y2": 1, "factor": "1×"})
     else:
-        for factor in (1, 2, 10):
+        for factor in (0.5, 1, 2, 10):
             low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
             if low < high:
-                guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor}×"})
+                guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor:g}×"})
     layers.append(
         {
             "data": {"values": guides},
@@ -410,7 +409,11 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
         }
     )
     guide_labels = [
-        {"x": math.sqrt(row["x"] * row["x2"]), "y": math.sqrt(row["y"] * row["y2"]), "label": row["factor"]}
+        {
+            "x": row["x2"] * (row["x"] / row["x2"]) ** 0.08,
+            "y": row["y2"] * (row["y"] / row["y2"]) ** 0.08,
+            "label": row["factor"],
+        }
         for row in guides
     ]
     layers.append(

@@ -287,6 +287,10 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
             low, high = axes[axis]["scale"]["domain"]
             assert low <= guide[axis] <= guide[f"{axis}2"] <= high
         assert guide["y"] / guide["x"] == pytest.approx(float(guide["factor"].removesuffix("×")))
+        label = next(row for row in spec["layer"][1]["data"]["values"] if row["label"] == guide["factor"])
+        assert guide["x"] < label["x"] < guide["x2"]
+        assert label["x"] ** 2 > guide["x"] * guide["x2"]
+        assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
 
 
 @pytest.mark.parametrize("scope", ["extensions", "applications-proof"])

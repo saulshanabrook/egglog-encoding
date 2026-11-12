@@ -229,8 +229,8 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "data": {
                     "values": [
                         {
-                            "x": math.sqrt(row["x"] * row["x2"]),
-                            "y": math.sqrt(row["y"] * row["y2"]),
+                            "x": row["x2"] * (row["x"] / row["x2"]) ** 0.08,
+                            "y": row["y2"] * (row["y"] / row["y2"]) ** 0.08,
                             "label": row["label"],
                         }
                         for row in guides
