@@ -61,8 +61,37 @@ private def nested : Query := [.eq (.app "F" [atom "A"]) (.app "F" [atom "B"])]
 #guard !(Program.WellFormed ⟨.seq base (global [.expr (.app "F" [.var "x"])]), joined⟩)
 #guard Program.WellFormed ⟨global [.union (.lit (.int 0)) (.lit (.int 1))], []⟩
 #guard !(Program.Fragment ⟨global [.union (.lit (.int 0)) (.lit (.int 1))], []⟩)
--- The check is part of the fragment: a disequality there is outside it.
-#guard !(Program.Fragment ⟨base, [.ne (atom "A") (atom "B")]⟩)
+-- The check is a query like a rule's: it may test a disequality, under saturation too, and
+-- it may take the minimum of query variables when the program has no saturation.
+private def leastCheck : Query :=
+  [.expr (.app "F" [.var "x"]), .expr (.app "G" [.var "y"]),
+   .eq (.var "x") (.min (.var "x") (.var "y"))]
+#guard Program.Fragment ⟨base, [.ne (atom "A") (atom "B")]⟩
+#guard Program.Fragment ⟨.seq base (.saturate (.run [])), [.ne (atom "A") (atom "B")]⟩
+#guard Program.Fragment ⟨base, leastCheck⟩
+#guard !(Program.Fragment ⟨.seq base (.saturate (.run [])), leastCheck⟩)
+#guard !(SourceProof.Fragment ⟨base, [.ne (atom "A") (atom "B")]⟩)
+#guard !(SourceProof.Fragment ⟨base, leastCheck⟩)
+-- A rule may test a disequality, under saturation too.
+private def guarded : Rule :=
+  ⟨[.expr (.app "F" [.var "x"]), .expr (.app "G" [.var "y"]), .ne (.var "x") (.var "y")],
+   [.expr (.app "H" [.var "x", .var "y"])]⟩
+#guard Program.Fragment ⟨.seq base (.saturate (.run [guarded])), joined⟩
+#guard !(SourceProof.Fragment ⟨.seq base (.saturate (.run [guarded])), joined⟩)
+-- A rule may take the minimum of query variables when the program has no saturation.
+private def least : Rule :=
+  ⟨[.expr (.app "F" [.var "x"]), .expr (.app "G" [.var "y"])],
+   [.expr (.app "H" [.min (.var "x") (.var "y")])]⟩
+#guard Program.Fragment ⟨.seq base (.run [least]), joined⟩
+#guard !(Program.Fragment ⟨.seq base (.saturate (.run [least])), joined⟩)
+#guard !(SourceProof.Fragment ⟨.seq base (.run [least]), joined⟩)
+-- A minimum over an application is outside the fragment: the compiled head would build it
+-- whether or not it is chosen.
+#guard !(Program.Fragment ⟨.seq base (.run [⟨[.expr (.app "F" [.var "x"])],
+  [.expr (.app "H" [.min (.app "F" [.var "x"]) (.var "x")])]⟩]), joined⟩)
+-- Source rules may subsume rows.
+#guard (Program.Fragment ⟨.seq base (.run [⟨[.expr (.app "F" [.var "x"])],
+  [.subsume "F" [.var "x"]]⟩]), joined⟩)
 
 -- Query compilation and provenance instrumentation keep the check.
 private def provenancedObservation (p : Program) : Option Bool :=
@@ -71,13 +100,23 @@ private def provenancedObservation (p : Program) : Option Bool :=
 #guard provenancedObservation ⟨base, joined⟩ == some false
 #guard provenancedObservation ⟨unionPrefix, joined⟩ == some true
 
+-- The check sees live rows only; the observer's compatibility mode, egglog's current
+-- `check`, sees subsumed rows too.
+private def subsumedRow : Program :=
+  ⟨.seq (global [.expr (.app "F" [atom "A"])])
+    (.run [⟨[.expr (.app "F" [.var "x"])], [.subsume "F" [.var "x"]]⟩]),
+   [.expr (.app "F" [atom "A"])]⟩
+#guard observation (observe subsumedRow) == some false
+#guard observation (observe subsumedRow true) == some true
+#guard observation (observe ⟨subsumedRow.schedule, [.expr (.app "F" [.var "x"])]⟩) == some false
+
 -- Parsing keeps the check; a program without one ends in the empty check.
 #guard observation ((Program.ofEgg "(check (Missing))").toOption.bind observe) == some false
 #guard observation ((Program.ofEgg "(Missing)").toOption.bind observe) == some true
 
 -- The check decides the outcome and nothing else: a failed check still ran the schedule,
--- and the check reads the final state with subsumption forgotten.
+-- and the check reads the final state as a rule query does.
 example {db d : Database} {P : Program} (hs : Reach db P.schedule d)
-    (h : ¬ QueryHolds d.forgetSubsumed P.check) : Eval db P .checkFailed := .checkFailed hs h
+    (h : ¬ QueryHolds d P.check) : Eval db P .checkFailed := .checkFailed hs h
 
 end Egglog.Tests.Checks

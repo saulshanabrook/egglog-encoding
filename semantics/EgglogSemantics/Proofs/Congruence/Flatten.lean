@@ -601,29 +601,33 @@ theorem id_atom_mem {f : FnName} {args : List Expr} {n : Nat} {x : Expr}
 
 mutual
 
-/-- A keyed variable of an ordering-free expression is the second column of some
-union-find atom. -/
-theorem argVar_atom : ∀ (e : Expr) (n : Nat) {v : Var}, e.OrderingFree → Expr.ArgVar v e →
+/-- A keyed variable of an expression whose minima are over variables is the second
+column of some union-find atom: a minimum keys no variable. -/
+theorem argVar_atom : ∀ (e : Expr) (n : Nat) {v : Var}, e.MinOverVars → Expr.ArgVar v e →
     ∃ a, Pattern.expr (ufRow (.var a) (.var v)) ∈ (encodeQueryExprWith {} e n).2.1
   | .lit _, _, _, _, h => h.elim
   | .var _, _, _, _, h => h.elim
-  | .min _ _, _, _, ho, _ => (Expr.not_orderingFree_min ho).elim
+  | .min _ _, _, _, ho, h => by
+      obtain ⟨ha, hb⟩ := Expr.minOverVars_min ho
+      rcases h with h | h
+      · exact (ha.not_argVar h).elim
+      · exact (hb.not_argVar h).elim
   | .app f args, n, v, ho, h => by
       rcases h with h | h
       · exact id_atom_mem (var_mem_flatArgs_ids args n h)
-      · obtain ⟨a, ha⟩ := argVarList_atom args n (Expr.orderingFree_app ho) h
+      · obtain ⟨a, ha⟩ := argVarList_atom args n (Expr.minOverVars_app ho) h
         rcases hr : encodeQueryArgsWith {} args n with ⟨xs, ps, next⟩
         rw [hr] at ha
         rw [flat_app hr]
         simp only at ha ⊢
         exact ⟨a, List.mem_append_left _ (List.mem_append_left _ ha)⟩
 
-theorem argVarList_atom : ∀ (es : List Expr) (n : Nat) {v : Var}, Expr.OrderingFreeList es →
+theorem argVarList_atom : ∀ (es : List Expr) (n : Nat) {v : Var}, Expr.MinOverVarsList es →
     Expr.ArgVarList v es →
     ∃ a, Pattern.expr (ufRow (.var a) (.var v)) ∈ (encodeQueryArgsWith {} es n).2.1
   | [], _, _, _, h => h.elim
   | e :: es, n, v, ho, h => by
-      obtain ⟨hoe, hoes⟩ := Expr.orderingFreeList_cons ho
+      obtain ⟨hoe, hoes⟩ := Expr.minOverVarsList_cons ho
       rcases h₁ : encodeQueryExprWith {} e n with ⟨x, ps, next⟩
       rcases h₂ : encodeQueryArgsWith {} es next with ⟨xs, qs, last⟩
       rw [flatArgs_cons h₁ h₂]
@@ -638,12 +642,13 @@ theorem argVarList_atom : ∀ (es : List Expr) (n : Nat) {v : Var}, Expr.Orderin
 
 end
 
-theorem pattern_argVar_atom {p : Pattern} (n : Nat) (ho : p.OrderingFree) {v : Var}
+theorem pattern_argVar_atom {p : Pattern} (n : Nat) (ho : p.MinOverVars) {v : Var}
     (h : Pattern.ArgVar v p) :
     ∃ a, Pattern.expr (ufRow (.var a) (.var v)) ∈ (encodePatternWith {} p n).1 := by
   cases p with
   | expr e => exact argVar_atom e n ho h
   | eq l r | ne l r =>
+    obtain ⟨hol, hor⟩ := Bool.and_eq_true_iff.mp ho
     rcases h₁ : encodeQueryExprWith {} l n with ⟨x₁, ps, next⟩
     rcases h₂ : encodeQueryExprWith {} r next with ⟨x₂, qs, last⟩
     first
@@ -651,14 +656,14 @@ theorem pattern_argVar_atom {p : Pattern} (n : Nat) (ho : p.OrderingFree) {v : V
     | rw [pattern_ne h₁ h₂]
     simp only [List.mem_append]
     rcases h with h | h
-    · obtain ⟨a, ha⟩ := argVar_atom l n ho.1 h
+    · obtain ⟨a, ha⟩ := argVar_atom l n hol h
       rw [h₁] at ha
       exact ⟨a, Or.inl (Or.inl ha)⟩
-    · obtain ⟨a, ha⟩ := argVar_atom r next ho.2 h
+    · obtain ⟨a, ha⟩ := argVar_atom r next hor h
       rw [h₂] at ha
       exact ⟨a, Or.inl (Or.inr ha)⟩
 
-theorem query_argVar_atom {q : Query} (n : Nat) (ho : ∀ p ∈ q, p.OrderingFree) {v : Var}
+theorem query_argVar_atom {q : Query} (n : Nat) (ho : ∀ p ∈ q, p.MinOverVars) {v : Var}
     {p : Pattern} (hp : p ∈ q) (h : Pattern.ArgVar v p) :
     ∃ a, Pattern.expr (ufRow (.var a) (.var v)) ∈ (encodeQueryWith {} q n).1 := by
   induction q generalizing n with

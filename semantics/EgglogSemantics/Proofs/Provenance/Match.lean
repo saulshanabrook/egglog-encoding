@@ -78,13 +78,6 @@ theorem live_sub : d.live ⊆ d'.live := by
   have hl : ¬ IsLog t := h.noLog t ((h.good.live_iff).mp ht).1
   exact (h.live_iff hl).mpr ht
 
-theorem forgetSubsumed : Shadow d.forgetSubsumed d'.forgetSubsumed where
-  good := h.good.forgetSubsumed
-  good' := h.good'.forgetSubsumed
-  subsumed := rfl
-  terms := h.terms
-  noLog := h.noLog
-
 end Shadow
 
 /-! ### Keyed variables are bound inside live rows -/

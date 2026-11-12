@@ -22,6 +22,125 @@ theorem Term.least_eq_or (s t : Term) : Term.least s t = s ∨ Term.least s t = 
   · exact Or.inr rfl
   · exact Or.inl rfl
 
+/-! ### Minima over query variables -/
+
+/-- `Expr.isVarMinB`, as a proposition: a variable or a minimum of such expressions. -/
+abbrev Expr.IsVarMin (e : Expr) : Prop := e.isVarMinB = true
+
+/-- `Expr.minOverVarsB`, as a proposition: every `min` is over variable minima. -/
+abbrev Expr.MinOverVars (e : Expr) : Prop := e.minOverVarsB = true
+
+/-- `Expr.MinOverVars` over an argument list. -/
+abbrev Expr.MinOverVarsList (es : List Expr) : Prop := Expr.minOverVarsListB es = true
+
+/-- `Expr.MinOverVars` over both sides of a pattern. -/
+abbrev Pattern.MinOverVars (p : Pattern) : Prop := p.minOverVarsB = true
+
+/-- `Expr.MinOverVars` over every expression an action evaluates. -/
+abbrev Action.MinOverVars (a : Action) : Prop := a.minOverVarsB = true
+
+/-- `Action.MinOverVars` at every action of a head. -/
+def Actions.MinOverVars (as : List Action) : Prop := ∀ a ∈ as, a.MinOverVars
+
+theorem Expr.isVarMin_min {a b : Expr} (h : Expr.IsVarMin (.min a b)) :
+    a.IsVarMin ∧ b.IsVarMin :=
+  Bool.and_eq_true_iff.mp h
+
+theorem Expr.minOverVars_app {f : FnName} {args : List Expr}
+    (h : Expr.MinOverVars (.app f args)) : Expr.MinOverVarsList args := h
+
+theorem Expr.minOverVars_min {a b : Expr} (h : Expr.MinOverVars (.min a b)) :
+    a.IsVarMin ∧ b.IsVarMin :=
+  Bool.and_eq_true_iff.mp h
+
+theorem Expr.minOverVarsList_cons {e : Expr} {es : List Expr}
+    (h : Expr.MinOverVarsList (e :: es)) : e.MinOverVars ∧ Expr.MinOverVarsList es :=
+  Bool.and_eq_true_iff.mp h
+
+theorem Expr.minOverVarsList_mem {a : Expr} : ∀ {es : List Expr}, a ∈ es →
+    Expr.MinOverVarsList es → a.MinOverVars
+  | [], h, _ => by simp at h
+  | e :: es, h, ho => by
+      obtain ⟨hoe, hoes⟩ := Expr.minOverVarsList_cons ho
+      rcases List.mem_cons.mp h with rfl | h
+      · exact hoe
+      · exact Expr.minOverVarsList_mem h hoes
+
+theorem Pattern.minOverVars_eq {a b : Expr} (h : Pattern.MinOverVars (.eq a b)) :
+    a.MinOverVars ∧ b.MinOverVars :=
+  Bool.and_eq_true_iff.mp h
+
+theorem Pattern.minOverVars_ne {a b : Expr} (h : Pattern.MinOverVars (.ne a b)) :
+    a.MinOverVars ∧ b.MinOverVars :=
+  Bool.and_eq_true_iff.mp h
+
+theorem Action.minOverVars_union {a b : Expr} (h : Action.MinOverVars (.union a b)) :
+    a.MinOverVars ∧ b.MinOverVars :=
+  Bool.and_eq_true_iff.mp h
+
+/-- A variable minimum is an expression whose minima are over variables. -/
+theorem Expr.IsVarMin.minOverVars : ∀ {e : Expr}, e.IsVarMin → e.MinOverVars
+  | .var _, _ => by simp [Expr.MinOverVars, Expr.minOverVarsB]
+  | .min _ _, h => by simpa [Expr.MinOverVars, Expr.IsVarMin, Expr.minOverVarsB, Expr.isVarMinB] using h
+  | .lit _, h => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+  | .app _ _, h => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+
+mutual
+
+/-- An ordering-free expression takes no minimum at all. -/
+theorem Expr.minOverVars_of_orderingFree : ∀ e : Expr, e.OrderingFree → e.MinOverVars
+  | .lit _, _ => by simp [Expr.MinOverVars, Expr.minOverVarsB]
+  | .var _, _ => by simp [Expr.MinOverVars, Expr.minOverVarsB]
+  | .app _ args, h => Expr.minOverVarsList_of_orderingFree args h
+  | .min _ _, h => by simp [Expr.OrderingFree, Expr.hasMin] at h
+
+theorem Expr.minOverVarsList_of_orderingFree : ∀ es : List Expr, Expr.OrderingFreeList es →
+    Expr.MinOverVarsList es
+  | [], _ => by simp [Expr.MinOverVarsList, Expr.minOverVarsListB]
+  | e :: es, h => by
+      have h' : e.OrderingFree ∧ Expr.OrderingFreeList es := by
+        simpa [Expr.OrderingFreeList, Expr.OrderingFree, Expr.hasMinList] using h
+      simp only [Expr.MinOverVarsList, Expr.minOverVarsListB, Bool.and_eq_true]
+      exact ⟨Expr.minOverVars_of_orderingFree e h'.1,
+        Expr.minOverVarsList_of_orderingFree es h'.2⟩
+
+end
+
+theorem Pattern.minOverVars_of_orderingFree : ∀ p : Pattern, p.OrderingFree → p.MinOverVars
+  | .expr e, h => Expr.minOverVars_of_orderingFree e h
+  | .eq a b, h => by
+      simp only [Pattern.MinOverVars, Pattern.minOverVarsB, Bool.and_eq_true]
+      exact ⟨Expr.minOverVars_of_orderingFree a h.1, Expr.minOverVars_of_orderingFree b h.2⟩
+  | .ne a b, h => by
+      simp only [Pattern.MinOverVars, Pattern.minOverVarsB, Bool.and_eq_true]
+      exact ⟨Expr.minOverVars_of_orderingFree a h.1, Expr.minOverVars_of_orderingFree b h.2⟩
+
+theorem Action.minOverVars_of_orderingFree : ∀ a : Action, a.OrderingFree → a.MinOverVars
+  | .expr e, h => Expr.minOverVars_of_orderingFree e h
+  | .union a b, h => by
+      simp only [Action.MinOverVars, Action.minOverVarsB, Bool.and_eq_true]
+      exact ⟨Expr.minOverVars_of_orderingFree a h.1, Expr.minOverVars_of_orderingFree b h.2⟩
+  | .subsume f es, h => Expr.minOverVars_of_orderingFree (.app f es) h
+
+theorem Actions.minOverVars_of_orderingFree : ∀ {as : List Action}, Actions.OrderingFree as →
+    Actions.MinOverVars as
+  | [], _ => by simp [Actions.MinOverVars]
+  | a :: as, h => by
+      intro b hb
+      rcases List.mem_cons.mp hb with rfl | hb
+      · exact Action.minOverVars_of_orderingFree b h.1
+      · exact Actions.minOverVars_of_orderingFree h.2 b hb
+
+theorem Rule.minOverVars_of_orderingFree {r : Rule} (h : r.OrderingFree) :
+    (∀ p ∈ r.query, p.MinOverVars) ∧ Actions.MinOverVars r.actions :=
+  ⟨fun p hp => Pattern.minOverVars_of_orderingFree p (h.1 p hp),
+    Actions.minOverVars_of_orderingFree h.2⟩
+
+theorem Rule.minOverVars_of_minOverVarsB {r : Rule} (h : r.minOverVarsB = true) :
+    (∀ p ∈ r.query, p.MinOverVars) ∧ Actions.MinOverVars r.actions :=
+  ⟨List.all_eq_true.mp (Bool.and_eq_true_iff.mp h).1,
+    List.all_eq_true.mp (Bool.and_eq_true_iff.mp h).2⟩
+
 namespace Expr
 @[simp] theorem eval_lit {l : Lit} {σ : Env} :
     (Expr.lit l).eval σ = some (.lit l) := rfl
@@ -159,6 +278,47 @@ theorem Expr.evalList_isSome {σ : Env} (es : List Expr)
     exact ⟨t :: ts, by rw [Expr.evalList_cons, ht, Option.bind_some, hts, Option.map_some]⟩
 
 end
+
+/-- A variable minimum evaluates to the binding of one of its variables. -/
+theorem Expr.IsVarMin.eval_binding {σ : Env} : ∀ {e : Expr}, e.IsVarMin → ∀ {t : Term},
+    e.eval σ = some t → ∃ v ∈ e.vars, Env.lookup v σ = some t
+  | .var v, _, _, h => ⟨v, by simp, h⟩
+  | .min a b, h, _, he => by
+      obtain ⟨ha, hb⟩ := Expr.isVarMin_min h
+      rw [Expr.eval_min, Option.bind_eq_some_iff] at he
+      obtain ⟨x, hx, hmap⟩ := he
+      obtain ⟨y, hy, rfl⟩ := Option.map_eq_some_iff.mp hmap
+      rcases Term.least_eq_or x y with hl | hl <;> rw [hl]
+      · obtain ⟨v, hv, hvx⟩ := Expr.IsVarMin.eval_binding ha hx
+        exact ⟨v, by simp [hv], hvx⟩
+      · obtain ⟨v, hv, hvy⟩ := Expr.IsVarMin.eval_binding hb hy
+        exact ⟨v, by simp [hv], hvy⟩
+  | .lit _, h, _, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+  | .app _ _, h, _, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+
+/-- A variable minimum with a value matches: its variables are bound, and it reads no row. -/
+theorem Expr.IsVarMin.matches {db : Database} {σ : Env} : ∀ {e : Expr}, e.IsVarMin →
+    ∀ {t : Term}, e.eval σ = some t → Expr.Matches db σ e
+  | .var _, _, _, h => .var h
+  | .min a b, h, _, he => by
+      obtain ⟨ha, hb⟩ := Expr.isVarMin_min h
+      rw [Expr.eval_min, Option.bind_eq_some_iff] at he
+      obtain ⟨x, hx, hmap⟩ := he
+      obtain ⟨y, hy, -⟩ := Option.map_eq_some_iff.mp hmap
+      exact .min (Expr.IsVarMin.matches ha hx) (Expr.IsVarMin.matches hb hy)
+  | .lit _, h, _, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+  | .app _ _, h, _, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+
+/-- No variable is an application argument inside a variable minimum. -/
+theorem Expr.IsVarMin.not_argVar {v : Var} : ∀ {e : Expr}, e.IsVarMin → ¬ Expr.ArgVar v e
+  | .var _, _, h => h
+  | .min a b, h, ha => by
+      obtain ⟨h₁, h₂⟩ := Expr.isVarMin_min h
+      rcases ha with ha | ha
+      · exact Expr.IsVarMin.not_argVar h₁ ha
+      · exact Expr.IsVarMin.not_argVar h₂ ha
+  | .lit _, h, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
+  | .app _ _, h, _ => by simp [Expr.IsVarMin, Expr.isVarMinB] at h
 
 @[simp] theorem evalActions_nil {σ : Env} {db : Database} : evalActions σ db [] = some db := rfl
 @[simp] theorem evalActions_cons {σ : Env} {db : Database} {a : Action} {as : List Action} :

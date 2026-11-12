@@ -210,17 +210,14 @@ pub(in crate::proofs) fn global_bindings(
     program: &[ResolvedNCommand],
     dag: &mut TermDag,
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let definitions: Vec<_> = program
-        .iter()
-        .filter(|command| {
-            matches!(
-                command,
-                ResolvedNCommand::CoreAction(crate::GenericAction::Let(..))
-            )
-        })
-        .cloned()
-        .collect();
-    crate::proofs::proof_checker::gather_globals(&definitions, dag)
+    let mut bindings = HashMap::default();
+    for command in program {
+        if let ResolvedNCommand::CoreAction(crate::GenericAction::Let(_, var, expr)) = command {
+            let (term, _) = eval_expr_with_subst::<false>("global_action", expr, dag, &bindings)?;
+            bindings.insert(var.name.clone(), term);
+        }
+    }
+    Ok(bindings)
 }
 
 pub(super) struct ProofLifter<'a> {
@@ -391,7 +388,7 @@ impl<'a> ProofLifter<'a> {
         at: usize,
         expr: &crate::ast::ResolvedExpr,
     ) -> TermId {
-        crate::proofs::proof_checker::eval_expr_with_subst(
+        crate::proofs::proof_checker::eval_expr_with_subst::<true>(
             "global_action",
             expr,
             &mut store.term_dag,
@@ -943,7 +940,7 @@ impl ProofStore {
             .map(|(var, term)| (var.clone(), *term))
             .collect();
         let eval = |store: &mut Self, expr: &ResolvedExpr| {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings)
+            eval_expr_with_subst::<true>(rule_name, expr, &mut store.term_dag, &bindings)
                 .ok()
                 .map(|(term, _props)| term)
         };

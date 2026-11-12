@@ -1009,7 +1009,7 @@ impl<'a> Firing<'a> {
 
     /// The term `expr` evaluates to under the bindings in effect.
     fn eval(&mut self, store: &mut ProofStore, expr: &ResolvedExpr) -> TermId {
-        eval_expr_with_subst(
+        eval_expr_with_subst::<false>(
             self.rule_name,
             expr,
             &mut store.term_dag,

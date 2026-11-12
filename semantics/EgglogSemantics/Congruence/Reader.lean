@@ -5,7 +5,8 @@ import EgglogSemantics.Impl.Interp
 # Reading the congruence target, computed
 
 Compute the ids assigned to source terms by live union-find edges, corresponding to `Repr`.
-Two terms are equivalent when each reads to exactly one id and the ids agree.
+Two terms are equivalent when each reads to exactly one id and the ids agree. Subsumed
+source applications still have ids; their marks affect query matching, not equality.
 -/
 
 namespace Egglog.Congruence

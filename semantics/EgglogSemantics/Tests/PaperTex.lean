@@ -143,6 +143,7 @@ def ruleComment : RuleOrigin → String
   | .rebuild .compress => "path compression"
   | .rebuild .collide => "two parents: keep the smaller"
   | .rebuild (.congruence f) => "congruence of $" ++ name f ++ "$"
+  | .rebuild (.subsume f) => "subsumed spellings of $" ++ name f ++ "$"
   | .rebuild (.view f) => "view of $" ++ name f ++ "$"
   | .rebuild (.stale f) => "stale view row of $" ++ name f ++ "$"
   | .rebuild (.index f) => "index of $" ++ name f ++ "$'s view"
@@ -173,7 +174,7 @@ def rule (depth : Nat) (r : Rule) (origin : Option RuleOrigin) : String :=
 
 /-- Whether a run is exactly the maintenance set, compared by spelling. -/
 def isMaintenance (P : Program) (rs : List Rule) : Bool :=
-  rs.map Rule.toEgg == (maintenanceRules P).map fun rm => rm.1.toEgg
+  rs.map Rule.toEgg == (maintenanceRules (!P.schedule.subsumeFreeB) P).map fun rm => rm.1.toEgg
 
 /-- The schedule, with the maintenance set `M` named rather than repeated. -/
 partial def schedule (P : Program) (origins : List RuleOrigin) (depth : Nat) :
@@ -213,7 +214,7 @@ def eggprogram (body : String) : String :=
 /-- The compiled program as an `eggprogram`: `M`, the schedule, the check. -/
 def compiled (source : Program) : String :=
   let c := compile source
-  let m := maintenanceRules source
+  let m := maintenanceRules (!source.schedule.subsumeFreeB) source
   let mBlock := line 0 "M\\triangleq\\{"
     ++ String.join (m.map fun rm => rule 1 rm.1 (some rm.2)) ++ line 0 "\\}" (gap := true)
   let (sched, _) := schedule source c.origins 0 c.program.schedule

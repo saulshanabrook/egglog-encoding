@@ -5,31 +5,39 @@ import Architect
 /-!
 # Congruence compilation
 
-The paper's congruence pass compiles the constructor source fragment to rules over an
-explicit union-find relation `@UF(key, parent)`. Source terms serve as ids; building a term
-asserts its union-find self-loop. Maintenance rules compress paths, resolve parent
-collisions, and merge congruent applications. Leaders decrease in the term order, and
-subsumed edges remain stored but cannot match. Disequality guards prevent maintenance
-rules from subsuming canonical edges.
+The congruence pass compiles the constructor source fragment to rules over an explicit
+union-find relation `@UF(key, parent)`. Source terms serve as ids. Without source
+subsumption, builds assert only self-loops and congruence reads constructor rows directly;
+maintenance consists of compression, collision and constructor congruence. This is the
+encoding displayed in the paper.
+
+For a program containing a source `subsume`, `Options.forProgram` enables `subsumption`:
+builds also assert permanent `@Node_f(children, term)` rows, source subsumption records
+`@Sub_f(children)` markers, and maintenance hides every congruent spelling. Congruence
+reads the permanent node rows, so hidden applications still merge. Leaders decrease in
+the term order; disequality guards protect canonical edges from subsumption.
 
 Flattening visits children before parents, left to right. `Resugar.Query` consumes premise
 proofs in this same order. Each compiled run is followed by a complete rebuild; sequences
 and saturations preserve the source schedule's structure.
 
 `compile` returns the program and one origin per rule in `Program.rules` order, for proof
-lifting; `encode` returns the program alone. `Options` selects canonical node views and
-phased rebuilding. The default uses no views and one maintenance ruleset. The definitions'
+lifting; `encode` returns the program alone. `Options` also selects canonical node views
+and phased rebuilding. The default chooses subsumption from the source and uses no views
+and one maintenance ruleset. The definitions'
 `@[blueprint]` attributes display the pass as inference rules in the paper.
 -/
 
 namespace Egglog.Congruence
 
-/-- Generated maintenance rules: the union-find rules, the congruence rule of a constructor,
-and the rules of its canonical node view when that optimization is on. -/
+/-- Generated maintenance rules: the union-find rules, the congruence and subsumption rules
+of a constructor, and the rules of its canonical node view when that optimization is on. -/
 inductive RebuildOrigin where
   | compress
   | collide
   | congruence (constructor : FnName)
+  /-- A spelling whose children are congruent to a marked, subsumed row's is subsumed. -/
+  | subsume (constructor : FnName)
   /-- The naive view: derived from the terms and the union-find. -/
   | view (constructor : FnName)
   /-- A stale row of the naive view is subsumed. -/
@@ -52,11 +60,14 @@ inductive ViewMode where
   | indexed
   deriving DecidableEq, Repr
 
-/-- The optimizations of the pass. The defaults are the encoding the paper presents;
-`phased` runs the union-find rules to a fixpoint before the term rules in every rebuild. -/
+/-- Encoding options. The defaults give the paper's plain encoding on subsume-free
+programs; `forProgram` enables subsumption when the source needs it. `phased` runs the
+union-find rules to a fixpoint before the term rules in every rebuild. -/
 structure Options where
   views : ViewMode := .none
   phased : Bool := false
+  /-- Keep permanent nodes and propagate source subsumption between spellings. -/
+  subsumption : Bool := false
   deriving Repr
 
 /-- A source rule is identified by its position in `Program.rules` of the original program. -/
@@ -75,6 +86,16 @@ def ufRow (key parent : Expr) : Expr := .app ufName [key, parent]
 
 /-- Subsume a union-find row. -/
 def subsumeUf (key parent : Expr) : Action := .subsume ufName [key, parent]
+
+/-- A node atom of `f`: the children and the node, `@Node_f(a₁, …, aₙ, k)`. -/
+def nodeAtom (f : FnName) (children : List Expr) (id : Expr) : Expr :=
+  .app (nodeName f) (children ++ [id])
+
+/-- The node row a build writes for an application: its children and the application. -/
+def nodeRow (f : FnName) (args : List Expr) : Expr := nodeAtom f args (.app f args)
+
+/-- The marker row of a subsumed spelling: `@Sub_f(a₁, …, aₙ)`. -/
+def subRow (f : FnName) (args : List Expr) : Expr := .app (subName f) args
 
 /-- A view row of `f`: the children's leaders and the node's leader. -/
 def viewRow (f : FnName) (children : List Expr) (id : Expr) : Expr :=
@@ -180,6 +201,7 @@ def encodeQuery : Query → Nat → Query × Nat := encodeQueryWith {}
 mutual
 
 /-- Build children before their parent and give every value a union-find self-loop.
+When subsumption is enabled, also record each application in its permanent node relation.
 With indexed views, also write the node's view row, keyed by its children as built. -/
 def encodeBuildWith (o : Options) : Expr → List Action
   | e@(.lit _) | e@(.var _) => [.expr (ufRow e e)]
@@ -187,6 +209,7 @@ def encodeBuildWith (o : Options) : Expr → List Action
   | .app f args =>
       encodeBuildArgsWith o args ++
         (if o.views = .indexed then [.expr (viewRow f args (.app f args))] else []) ++
+        (if o.subsumption then [.expr (nodeRow f args)] else []) ++
         [.expr (ufRow (.app f args) (.app f args))]
 
 /-- Build argument occurrences in the same left-to-right order as query flattening. -/
@@ -196,8 +219,9 @@ def encodeBuildArgsWith (o : Options) : List Expr → List Action
 
 end
 
-/-- A union links both ids to their minimum; a bare action builds its term and subterms.
-Source subsumes are outside the fragment and compile to nothing. -/
+/-- A union links both ids to their minimum; a bare action builds its term and subterms; a
+subsume builds its row and subsumes the spelling it built. With subsumption enabled it
+also writes the marker from which `Sub_f` subsumes every congruent spelling. -/
 @[blueprint "def:compile-head"
   (statement := /--
   \[
@@ -215,16 +239,19 @@ def encodeActionWith (o : Options) : Action → List Action
   | .expr e => encodeBuildWith o e
   | .union a b => encodeBuildWith o a ++ encodeBuildWith o b ++
       [.expr (ufRow a (.min a b)), .expr (ufRow b (.min a b))]
-  | .subsume _ _ => []
+  | .subsume f es => encodeBuildWith o (.app f es) ++ [.subsume f es] ++
+      (if o.subsumption then [.expr (subRow f es)] else [])
 
 /-- No justification argument is needed for compiling a head. -/
 def encodeActionsWith (o : Options) (as : List Action) : List Action :=
   as.flatMap (encodeActionWith o)
 
 /-- Compile a rule with a local fresh-variable supply. Source names must avoid `@`.
-After rebuilding, query variables are bound to roots through union-find edges. -/
+After rebuilding, query variables are bound to roots through union-find edges. Subsumption
+affects heads and maintenance only; query compilation uses its fixed default setting. -/
 def encodeRuleWith (o : Options) (r : Rule) : Rule :=
-  { query := (encodeQueryWith o r.query 0).1, actions := encodeActionsWith o r.actions }
+  { query := (encodeQueryWith { o with subsumption := false } r.query 0).1,
+    actions := encodeActionsWith o r.actions }
 
 /-- Replace a parent edge by the edge to the parent's own parent. With `@a = @b` this
 removes the stale self-loop of a value that acquired a parent. -/
@@ -270,23 +297,68 @@ def ufCollideRule : Rule :=
 def congruenceVars (stem : String) (arity : Nat) : List Expr :=
   (List.range arity).map fun i => .var ("@" ++ stem ++ toString i)
 
-/-- Link the larger root under the smaller for two applications of `f` whose children
-have the same parents. -/
-def congruenceRule (f : FnName) (arity : Nat) : Rule :=
+/-- Link the larger root under the smaller for two applications with the same child
+parents. Plain mode reads constructor rows directly. Subsumption mode reads permanent
+node rows so that hidden applications still participate. -/
+def congruenceRule (subsumption : Bool) (f : FnName) (arity : Nat) : Rule :=
   let as := congruenceVars "a" arity
   let bs := congruenceVars "b" arity
   let rs := congruenceVars "r" arity
-  { query := [.expr (.app f as), .expr (.app f bs)] ++
+  let k := if subsumption then Expr.var "@k" else .app f as
+  let l := if subsumption then Expr.var "@l" else .app f bs
+  { query := (if subsumption then
+        [.expr (nodeAtom f as k), .expr (nodeAtom f bs l)]
+      else [.expr (.app f as), .expr (.app f bs)]) ++
       ((as.zip bs).zip rs).flatMap (fun abr =>
         [.expr (ufRow abr.1.1 abr.2), .expr (ufRow abr.1.2 abr.2)]) ++
-      [.expr (ufRow (.app f as) (.var "@y")), .expr (ufRow (.app f bs) (.var "@z")),
+      [.expr (ufRow k (.var "@y")), .expr (ufRow l (.var "@z")),
        .eq (.var "@y") (.min (.var "@y") (.var "@z")), .ne (.var "@y") (.var "@z")],
     actions := [.expr (ufRow (.var "@z") (.var "@y"))] }
 
-/-- The congruence rule of a constructor. A nullary constructor has one application and
-needs none. -/
-def rebuildRules (f : FnName) (arity : Nat) : List (Rule × RuleOrigin) :=
-  if arity = 0 then [] else [(congruenceRule f arity, .rebuild (.congruence f))]
+/-- Subsume a live application of `f` whose children have the same parents as a marked,
+subsumed spelling's: at a rebuild fixpoint the parents agree exactly when the children are
+congruent, so the compiled program subsumes the spellings the source considers subsumed,
+including the ones built after the marker. -/
+@[blueprint "def:subsume-encoding"
+  (statement := /--
+  For source programs with subsumption, extend the encoding by
+  \[
+  \operatorname{exist}(e)\mathrel{\gets}\operatorname{exist}(e)
+    \cup\{\mathtt{Node}_f(\bar e',f(\bar e'))\mid f(\bar e')\in\operatorname{subexpr}(e)\}.
+  \]
+  \begin{mathpar}
+  \ir{Subsume}{e=f(\bar e)}{\kw{subsume}(e)\leadsto\operatorname{exist}(e)
+    \cup\{\kw{subsume}(e),\ \mathtt{Sub}_f(\bar e)\}}
+  \end{mathpar}
+  Add $\textsc{Sub}_f$ to $M_P$ and replace $\textsc{Cong}_f$ by
+  \[
+  \begin{aligned}
+  \textsc{Sub}_f&:\ \mathtt{Sub}_f(\bar a)\land f(\bar b)
+    \land\textstyle\bigwedge_i\bigl(\mathtt{UF}(a_i,r_i)\land\mathtt{UF}(b_i,r_i)\bigr)
+    \Rightarrow\kw{subsume}(f(\bar b))\\
+  \textsc{Cong}_f&:\ \mathtt{Node}_f(\bar a,k)\land\mathtt{Node}_f(\bar b,l)
+    \land\textstyle\bigwedge_i\bigl(\mathtt{UF}(a_i,r_i)\land\mathtt{UF}(b_i,r_i)\bigr)\\
+  &\quad\land\ \mathtt{UF}(k,y)\land\mathtt{UF}(l,z)
+    \land y=\min(y,z)\land y\ne z\Rightarrow\mathtt{UF}(z,y).
+  \end{aligned}
+  \]
+  Lifting reads a node row as its node: $\lceil\mathtt{Node}_f(\bar a,t)\rceil\triangleq(t=t)$.
+  -/)
+  (latexEnv := "paperfragment")]
+def subsumeRule (f : FnName) (arity : Nat) : Rule :=
+  let as := congruenceVars "a" arity
+  let bs := congruenceVars "b" arity
+  let rs := congruenceVars "r" arity
+  { query := [.expr (subRow f as), .expr (.app f bs)] ++
+      ((as.zip bs).zip rs).flatMap (fun abr =>
+        [.expr (ufRow abr.1.1 abr.2), .expr (ufRow abr.1.2 abr.2)]),
+    actions := [.subsume f bs] }
+
+/-- Constructor congruence, plus subsumption propagation when enabled. A nullary
+constructor has one application and needs no congruence rule. -/
+def rebuildRules (subsumption : Bool) (f : FnName) (arity : Nat) : List (Rule × RuleOrigin) :=
+  (if arity = 0 then [] else [(congruenceRule subsumption f arity, .rebuild (.congruence f))]) ++
+    (if subsumption then [(subsumeRule f arity, .rebuild (.subsume f))] else [])
 
 /-! ### Canonical node views
 
@@ -394,7 +466,7 @@ def rekeyRules (o : Options) (f : FnName) (arity : Nat) : List (Rule × RuleOrig
 /-- The rule that detects a congruence of `f`, by mode. -/
 def mergeRules (o : Options) (f : FnName) (arity : Nat) : List (Rule × RuleOrigin) :=
   match o.views with
-  | .none => rebuildRules f arity
+  | .none => rebuildRules o.subsumption f arity
   | _ => [(viewCongruenceRule f arity, .rebuild (.viewCongruence f))]
 
 /-- The maintenance rules in the groups a phased rebuild runs: the union-find rules, the
@@ -424,9 +496,9 @@ def maintenanceGroups (o : Options) (P : Program) : List (List (Rule × RuleOrig
   \]
   -/)
   (latexEnv := "paperfragment")]
-def maintenanceRules (P : Program) : List (Rule × RuleOrigin) :=
+def maintenanceRules (subsumption : Bool) (P : Program) : List (Rule × RuleOrigin) :=
   (pathCompressRule, .rebuild .compress) :: (ufCollideRule, .rebuild .collide) ::
-    P.ctors.flatMap fun fk => rebuildRules fk.1 fk.2
+    P.ctors.flatMap fun fk => rebuildRules subsumption fk.1 fk.2
 
 /-- The compiled rules of a source command's rules, numbered from `index` in
 `Program.rules` of the source. -/
@@ -488,12 +560,22 @@ def encodeScheduleWith (o : Options) (P : Program) :
       let (T₂, o₂, last) := encodeScheduleWith o P S₂ next
       (.seq T₁ T₂, o₁ ++ o₂, last)
 
+/-- Detect source subsumption automatically, enabling permanent nodes, markers and their
+maintenance rules and selecting explicit reads. For subsume-free sources the requested
+options are retained, so callers may also enable node rows explicitly. Phasing is retained. -/
+def Options.forProgram (o : Options) (P : Program) : Options :=
+  if P.schedule.subsumeFreeB then o
+  else { o with views := .none, subsumption := true }
+
 /-- The congruence pass with origins for later proof resugaring, under the options. -/
 def compileWith (o : Options) (P : Program) : Compiled :=
+  let o := o.forProgram P
   let (S, os, _) := encodeScheduleWith o P P.schedule 0
-  { program := { schedule := S, check := (encodeQueryWith o P.check 0).1 }, origins := os }
+  let check := (encodeQueryWith { o with subsumption := false } P.check 0).1
+  { program := { schedule := S, check := check }, origins := os }
 
-/-- The congruence pass the paper presents: no views, one maintenance set. -/
+/-- The default pass: select subsumption exactly when the source contains it, with no
+views and one maintenance set. Subsume-free programs use the paper's plain encoding. -/
 def compile (P : Program) : Compiled := compileWith {} P
 
 /-- The executable program, independent of all proof instrumentation. -/

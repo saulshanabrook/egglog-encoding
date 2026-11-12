@@ -11,8 +11,9 @@ def sourceSubst (vars : List Var) (σ : Env) : Option Env :=
   vars.mapM fun v => (Env.lookup v σ).map (v, ·)
 
 /-- Justify row `r` written by maintenance rule `m`, from premise proofs in query order.
-Path compression, parent collision and constructor congruence are supported; view rules
-return `none`. -/
+Path compression, parent collision and constructor congruence are supported. A
+subsumption rule introduces no new equality and view rules are outside the lifted compilation, so
+both return `none`. -/
 @[blueprint "def:lift-rebuild"
   (statement := /--
   \begin{mathpar}
@@ -63,7 +64,7 @@ def rebuild (P : Program) (kind : Congruence.RebuildOrigin)
     trans P left py
   -- The canonical node views are an optimization of the congruence pass alone; proofs
   -- are extracted from the base compilation.
-  | .view _ | .stale _ | .index _ | .rekey _ _ | .viewCongruence _ => none
+  | .subsume _ | .view _ | .stale _ | .index _ | .rekey _ _ | .viewCongruence _ => none
 
 /-- The proof `k` builds must establish the source claim of the relational fact. -/
 def expect (P : Program) (fact : Term) (k : Claim → Option Proof) : Option Proof := do

@@ -48,10 +48,11 @@ theorem Expr.Matches.eval_cong {db : Database} {σ : Env}
 
 mutual
 
-/-- With no subsumption, an ordering-free instance matches as soon as its result
-exists. `min` needs both operands, including the unchosen one. -/
+/-- With no subsumption, an instance whose minima are over variables matches as soon as
+its result exists. `min` needs both operands, including the unchosen one, which are bound
+variables. -/
 theorem Expr.Matches.of_eval {db : Database} {σ : Env} (hX : db.subsumed = ∅) :
-    ∀ {e : Expr} {t : Term}, e.OrderingFree → e.eval σ = some t → Cong db t t →
+    ∀ {e : Expr} {t : Term}, e.MinOverVars → e.eval σ = some t → Cong db t t →
       e.eval σ = some t ∧ Expr.Matches db σ e
   | .lit l, _, _, he, ht => by
       cases he
@@ -59,22 +60,27 @@ theorem Expr.Matches.of_eval {db : Database} {σ : Env} (hX : db.subsumed = ∅)
   | .var v, _, _, he, _ => ⟨he, .var he⟩
   | .app f args, _, ho, he, ht => by
       obtain ⟨ts, hs, rfl⟩ := Option.map_eq_some_iff.mp he
-      have hargs := Expr.MatchesList.of_eval hX ho hs (fun t hmem =>
+      have hargs := Expr.MatchesList.of_eval hX (Expr.minOverVars_app ho) hs (fun t hmem =>
         Cong.subterm ht (.arg hmem (.refl t)))
       exact ⟨by simp [Expr.eval, hs],
         .app hargs.2 hs (by simpa [Database.live, hX] using ht)⟩
-  | .min _ _, _, ho, _, _ => by simp [Expr.OrderingFree, Expr.hasMin] at ho
+  | .min a b, _, ho, he, _ => by
+      obtain ⟨ha, hb⟩ := Expr.minOverVars_min ho
+      refine ⟨he, ?_⟩
+      rw [Expr.eval_min, Option.bind_eq_some_iff] at he
+      obtain ⟨x, hx, hmap⟩ := he
+      obtain ⟨y, hy, -⟩ := Option.map_eq_some_iff.mp hmap
+      exact .min (ha.matches hx) (hb.matches hy)
 
 theorem Expr.MatchesList.of_eval {db : Database} {σ : Env} (hX : db.subsumed = ∅) :
-    ∀ {es : List Expr} {ts : List Term}, Expr.OrderingFreeList es →
+    ∀ {es : List Expr} {ts : List Term}, Expr.MinOverVarsList es →
       Expr.evalList es σ = some ts → (∀ t ∈ ts, Cong db t t) →
       Expr.evalList es σ = some ts ∧ Expr.MatchesList db σ es
   | [], _, _, he, _ => ⟨he, .nil⟩
   | e :: es, _, ho, he, ht => by
       obtain ⟨t, hfirst, hrest⟩ := Option.bind_eq_some_iff.mp he
       obtain ⟨ts, hs, rfl⟩ := Option.map_eq_some_iff.mp hrest
-      have ho' : e.OrderingFree ∧ Expr.OrderingFreeList es := by
-        simpa [Expr.OrderingFreeList, Expr.OrderingFree, Expr.hasMinList] using ho
+      have ho' := Expr.minOverVarsList_cons ho
       have ha := Expr.Matches.of_eval hX ho'.1 hfirst (ht t (by simp))
       have hargs := Expr.MatchesList.of_eval hX ho'.2 hs (fun u hu => ht u (List.mem_cons_of_mem t hu))
       exact ⟨by simp [Expr.evalList, hfirst, hs], .cons ha.2 hargs.2⟩

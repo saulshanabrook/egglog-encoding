@@ -2,8 +2,8 @@ use crate::ast::FunctionSubtype;
 use crate::extract::find_canonical;
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
-use crate::{ArcSort, EGraph, Function, Value};
-use std::ops::Range;
+use crate::{ArcSort, EGraph, Value};
+use std::vec::IntoIter;
 
 /// A node of the search: a value together with the sort it is reconstructed at.
 type Key = (Value, String);
@@ -18,9 +18,6 @@ type Key = (Value, String);
 pub(super) struct RootExtractor {
     cache: HashMap<Key, Option<TermId>>,
     active: HashSet<Key>,
-    /// Every function the search has read so far, keyed by its index in
-    /// `EGraph::functions`. Scoped to one extraction run.
-    scanned: HashMap<usize, FunctionRows>,
 }
 
 /// What the frame on top of the stack needs from the driver.
@@ -70,84 +67,10 @@ struct EqStage {
     unscanned: usize,
     /// The function `rows` and `row` come from.
     func: usize,
-    /// Positions in that function's [`FunctionRows`] ordering, holding the rows
-    /// that match the node's value and have not been tried yet.
-    rows: Range<usize>,
+    /// Matching rows of this function in lexicographic order, still to try.
+    rows: IntoIter<Vec<Value>>,
     /// The row being reconstructed, with the child terms resolved so far.
     row: Option<(Vec<Value>, Vec<TermId>)>,
-}
-
-/// The non-subsumed rows of one function, grouped by the value in its
-/// extraction output column.
-///
-/// A group's rows are in lexicographic order, so which row a search picks does
-/// not depend on storage row iteration order — see `prove_exists`.
-struct FunctionRows {
-    /// Row width; zero when the function has no rows.
-    arity: usize,
-    /// The rows, concatenated in storage iteration order.
-    vals: Vec<Value>,
-    /// Row numbers into `vals`, ordered by output value and then by row
-    /// contents, so each group is a contiguous run.
-    order: Vec<u32>,
-    /// Where each output value's group sits in `order`.
-    groups: HashMap<Value, Range<usize>>,
-}
-
-impl FunctionRows {
-    fn build(egraph: &EGraph, func: &Function) -> Self {
-        let output_idx = func.extraction_layout().1;
-        let mut arity = 0;
-        let mut vals = Vec::new();
-        egraph
-            .backend
-            .for_each(func.backend_id, |row: egglog_bridge::ScanEntry| {
-                if !row.subsumed {
-                    arity = row.vals.len();
-                    vals.extend_from_slice(row.vals);
-                }
-            });
-        vals.shrink_to_fit();
-
-        let count = if arity == 0 { 0 } else { vals.len() / arity };
-        let mut order: Vec<u32> = (0..count as u32).collect();
-        order.sort_unstable_by(|&a, &b| {
-            let a = &vals[a as usize * arity..][..arity];
-            let b = &vals[b as usize * arity..][..arity];
-            // Group by output value; order a group lexicographically by whole row.
-            a[output_idx].cmp(&b[output_idx]).then_with(|| a.cmp(b))
-        });
-
-        let mut groups: HashMap<Value, Range<usize>> = HashMap::default();
-        let mut start = 0;
-        while start < order.len() {
-            let value = vals[order[start] as usize * arity + output_idx];
-            let mut end = start + 1;
-            while end < order.len() && vals[order[end] as usize * arity + output_idx] == value {
-                end += 1;
-            }
-            groups.insert(value, start..end);
-            start = end;
-        }
-
-        Self {
-            arity,
-            vals,
-            order,
-            groups,
-        }
-    }
-
-    /// The row at `position` in the ordering.
-    fn row(&self, position: usize) -> &[Value] {
-        let start = self.order[position] as usize * self.arity;
-        &self.vals[start..start + self.arity]
-    }
-
-    /// Where the rows holding `value` in the output column sit in the ordering.
-    fn group(&self, value: Value) -> Range<usize> {
-        self.groups.get(&value).cloned().unwrap_or(0..0)
-    }
 }
 
 impl EqStage {
@@ -155,7 +78,7 @@ impl EqStage {
         Self {
             unscanned: 0,
             func: 0,
-            rows: 0..0,
+            rows: Vec::new().into_iter(),
             row: None,
         }
     }
@@ -163,20 +86,11 @@ impl EqStage {
     /// The next row to try for `value` at `sort`, moving on to further functions
     /// once the current one's matching rows run out.
     ///
-    /// Rows come back lexicographically smallest first (see [`FunctionRows`]).
-    fn next_row(
-        &mut self,
-        egraph: &EGraph,
-        scanned: &mut HashMap<usize, FunctionRows>,
-        value: Value,
-        sort: &ArcSort,
-    ) -> Option<Vec<Value>> {
+    /// Rows come back lexicographically smallest first.
+    fn next_row(&mut self, egraph: &EGraph, value: Value, sort: &ArcSort) -> Option<Vec<Value>> {
         loop {
-            if let Some(position) = self.rows.next() {
-                let rows = scanned
-                    .get(&self.func)
-                    .expect("the function whose rows are being tried was scanned");
-                return Some(rows.row(position).to_vec());
+            if let Some(row) = self.rows.next() {
+                return Some(row);
             }
 
             let (_, func) = egraph.functions.get_index(self.unscanned)?;
@@ -193,10 +107,20 @@ impl EqStage {
                 continue;
             }
 
-            self.rows = scanned
-                .entry(self.func)
-                .or_insert_with(|| FunctionRows::build(egraph, func))
-                .group(value);
+            let mut rows = Vec::new();
+            egraph.backend.for_each_matching_col(
+                func.backend_id,
+                func.extraction_layout().1,
+                value,
+                |row| {
+                    if !row.subsumed {
+                        rows.push(row.vals.to_vec());
+                    }
+                },
+            );
+            // Sorting makes the chosen row independent of storage and index order.
+            rows.sort_unstable();
+            self.rows = rows.into_iter();
         }
     }
 }
@@ -207,7 +131,6 @@ impl Frame {
     fn advance(
         &mut self,
         egraph: &EGraph,
-        scanned: &mut HashMap<usize, FunctionRows>,
         termdag: &mut TermDag,
         resumed: Option<Option<TermId>>,
     ) -> Step {
@@ -278,7 +201,7 @@ impl Frame {
                                 Step::Need(row[index], func.func_type.input[index].clone())
                             };
                         }
-                        None => match eq.next_row(egraph, scanned, self.value, &self.sort) {
+                        None => match eq.next_row(egraph, self.value, &self.sort) {
                             Some(row) => eq.row = Some((row, Vec::new())),
                             None => return self.fall_back(egraph),
                         },
@@ -313,7 +236,6 @@ impl RootExtractor {
         Self {
             cache: Default::default(),
             active: Default::default(),
-            scanned: Default::default(),
         }
     }
 
@@ -353,7 +275,7 @@ impl RootExtractor {
             let step = stack
                 .last_mut()
                 .expect("the loop returns as soon as the stack empties")
-                .advance(egraph, &mut self.scanned, termdag, resumed.take());
+                .advance(egraph, termdag, resumed.take());
             match step {
                 Step::Need(value, sort) => match self.begin(value, sort) {
                     Begin::Push(frame) => stack.push(frame),
@@ -489,6 +411,57 @@ mod tests {
         assert_eq!(
             extract_to_string(&egraph, first_input(&egraph, "Box", 0), "ExprPair"),
             "(pair (Leaf) (Leaf))"
+        );
+    }
+
+    #[test]
+    fn preserves_pending_rows_when_child_groups_are_loaded() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort Expr)
+                (constructor Node (Expr) Expr)
+                (constructor Leaf (i64) Expr)
+                "#,
+            )
+            .unwrap();
+        let node = egraph.functions["Node"].backend_id;
+        let leaf = egraph.functions["Leaf"].backend_id;
+        let root = egraph.backend.fresh_id();
+        let cycle = egraph.backend.fresh_id();
+        let branch = egraph.backend.fresh_id();
+        let first_leaf = egraph.backend.fresh_id();
+        let second_leaf = egraph.backend.fresh_id();
+        let seven = egraph.backend.base_values().get(7i64);
+        let nine = egraph.backend.base_values().get(9i64);
+        // Root candidates sort as cycle, branch, second_leaf. The first fails
+        // after loading another group; the second must remain next even though
+        // the last was inserted first and also has a reconstructable term.
+        egraph.backend.add_values([
+            (node, vec![second_leaf, root]),
+            (node, vec![cycle, root]),
+            (node, vec![first_leaf, branch]),
+            (node, vec![root, cycle]),
+            (node, vec![branch, root]),
+            (leaf, vec![seven, first_leaf]),
+            (leaf, vec![nine, second_leaf]),
+        ]);
+        let sort = egraph.get_sort_by_name("Expr").unwrap().clone();
+        let mut termdag = TermDag::default();
+        let mut extractor = RootExtractor::new();
+        let term = extractor
+            .extract(&egraph, &mut termdag, root, &sort)
+            .unwrap();
+        assert_eq!(termdag.to_string(term), "(Node (Node (Leaf 7)))");
+        let other = extractor
+            .extract(&egraph, &mut termdag, second_leaf, &sort)
+            .unwrap();
+        assert_eq!(termdag.to_string(other), "(Leaf 9)");
+        assert_eq!(
+            extractor.extract(&egraph, &mut termdag, root, &sort),
+            Some(term)
         );
     }
 

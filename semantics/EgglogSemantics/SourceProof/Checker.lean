@@ -8,8 +8,25 @@ a missing rule premise. The checker reads only the program, never a state of the
 
 namespace Egglog.SourceProof
 
-/-- Only the monotone constructor source fragment. -/
-def sourceOk (P : Program) : Bool := decide P.Fragment
+/-- **The checker's fragment**: the compiler's source fragment, restricted to programs that
+test no disequality and take no minimum. A rule node is checked against its substitution
+alone: a disequality is a syntactic test on the two instances, which is not sound once the
+terms become equal in the final e-graph, and a minimum compares spellings, which the
+representatives of the final e-graph need not be. -/
+structure Fragment (P : Program) : Prop where
+  /-- The program is in the compiler's fragment. -/
+  fragment : P.Fragment
+  /-- No rule or final check tests a disequality, and no rule subsumes a row. -/
+  monotone : P.monotoneB = true
+  /-- The source never computes with `min`. -/
+  orderingFree : Program.OrderingFree P
+
+instance (P : Program) : Decidable (Fragment P) :=
+  decidable_of_iff (P.Fragment ∧ P.monotoneB = true ∧ Program.OrderingFree P)
+    ⟨fun h => ⟨h.1, h.2.1, h.2.2⟩, fun h => ⟨h.fragment, h.monotone, h.orderingFree⟩⟩
+
+/-- The checker's fragment, decided. -/
+def sourceOk (P : Program) : Bool := decide (Fragment P)
 
 /-- The premise proofs a rule node carries, one per equality pattern in order, claim the
 pattern's two instances; a bare pattern `e` is the paper's `e = e`, so its proof claims the

@@ -3,18 +3,20 @@ import EgglogSemantics.Proofs.Presentation
 import EgglogSemantics.Proofs.Writes
 
 /-! The maintenance rules of the view-free encoding: the rebuild is one saturation of the
-list `maintenance P`, and a firing of each rule is characterized by the live edges it
-matched and the rows it writes and marks. -/
+list `maintenance sub P`, and a firing of each rule is characterized by the live edges, node
+rows and markers it matched and the rows it writes and marks. -/
 
 namespace Egglog.Congruence
 
-/-- The maintenance rules without their origins. -/
-def maintenance (P : Program) : List Rule := (maintenanceRules P).map Prod.fst
+variable {sub : Bool}
 
-theorem rebuild_eq (P : Program) : (rebuildWith {} P).1 = .saturate (.run (maintenance P)) := by
+/-- The maintenance rules without their origins. -/
+def maintenance (sub : Bool) (P : Program) : List Rule := (maintenanceRules sub P).map Prod.fst
+
+theorem rebuild_eq (P : Program) : (rebuildWith { subsumption := sub } P).1 = .saturate (.run (maintenance sub P)) := by
   simp only [rebuildWith, maintenanceGroups, maintenance, maintenanceRules]
-  have hrekey : ∀ fk : FnName × Nat, rekeyRules {} fk.1 fk.2 = [] := fun _ => rfl
-  have hmerge : ∀ fk : FnName × Nat, mergeRules {} fk.1 fk.2 = rebuildRules fk.1 fk.2 :=
+  have hrekey : ∀ fk : FnName × Nat, rekeyRules { subsumption := sub } fk.1 fk.2 = [] := fun _ => rfl
+  have hmerge : ∀ fk : FnName × Nat, mergeRules { subsumption := sub } fk.1 fk.2 = rebuildRules sub fk.1 fk.2 :=
     fun _ => rfl
   have h0 : P.ctors.flatMap (fun _ => ([] : List (Rule × RuleOrigin))) = [] :=
     List.flatMap_eq_nil_iff.mpr fun _ _ => rfl
@@ -22,24 +24,28 @@ theorem rebuild_eq (P : Program) : (rebuildWith {} P).1 = .saturate (.run (maint
     List.flatten_filter_not_isEmpty, List.flatten_cons, List.flatten_nil, List.append_nil,
     List.nil_append, List.cons_append, List.map_cons]
 
+theorem mem_rebuildRules {f : FnName} {n : Nat} {ro : Rule × RuleOrigin} :
+    ro ∈ rebuildRules sub f n ↔
+      (n ≠ 0 ∧ ro = (congruenceRule sub f n, .rebuild (.congruence f))) ∨
+        (sub = true ∧ ro = (subsumeRule f n, .rebuild (.subsume f))) := by
+  cases sub <;> by_cases hn : n = 0 <;> simp [rebuildRules, hn]
+
 theorem mem_maintenance {P : Program} {r : Rule} :
-    r ∈ maintenance P ↔ r = pathCompressRule ∨ r = ufCollideRule ∨
-      ∃ fk ∈ P.ctors, fk.2 ≠ 0 ∧ r = congruenceRule fk.1 fk.2 := by
+    r ∈ maintenance sub P ↔ r = pathCompressRule ∨ r = ufCollideRule ∨
+      (∃ fk ∈ P.ctors, fk.2 ≠ 0 ∧ r = congruenceRule sub fk.1 fk.2) ∨
+      ∃ fk ∈ P.ctors, sub = true ∧ r = subsumeRule fk.1 fk.2 := by
   simp only [maintenance, maintenanceRules, List.map_cons, List.mem_cons, List.map_flatMap,
-    List.mem_flatMap, rebuildRules]
+    List.mem_flatMap, List.mem_map]
   apply or_congr_right
   apply or_congr_right
   constructor
-  · rintro ⟨fk, hfk, hr⟩
-    split at hr
-    · simp at hr
-    · next hne =>
-      rw [List.map_singleton, List.mem_singleton] at hr
-      exact ⟨fk, hfk, hne, hr⟩
-  · rintro ⟨fk, hfk, hne, rfl⟩
-    refine ⟨fk, hfk, ?_⟩
-    rw [if_neg hne]
-    simp
+  · rintro ⟨fk, hfk, ro, hro, rfl⟩
+    rcases mem_rebuildRules.mp hro with ⟨hne, rfl⟩ | ⟨hon, rfl⟩
+    · exact Or.inl ⟨fk, hfk, hne, rfl⟩
+    · exact Or.inr ⟨fk, hfk, hon, rfl⟩
+  · rintro (⟨fk, hfk, hne, rfl⟩ | ⟨fk, hfk, hon, rfl⟩)
+    · exact ⟨fk, hfk, _, mem_rebuildRules.mpr (Or.inl ⟨hne, rfl⟩), rfl⟩
+    · exact ⟨fk, hfk, _, mem_rebuildRules.mpr (Or.inr ⟨hon, rfl⟩), rfl⟩
 
 /-! ### Path compression -/
 
@@ -113,7 +119,7 @@ theorem collide_marks {σ : Env} {a b c : Term} (ha : Env.lookup "@a" σ = some 
   simp [Action.marks, Action.mark, Action.write, subsumeUf, ufRow, Expr.eval, Expr.evalList,
     ha, hb, hc]
 
-/-! ### Congruence -/
+/-! ### The column variables -/
 
 theorem congruenceVars_length (stem : String) (n : Nat) : (congruenceVars stem n).length = n := by
   simp [congruenceVars]
@@ -128,24 +134,24 @@ theorem congruenceVars_getElem? (stem : String) {n i : Nat} (hi : i < n) :
   rw [List.getElem?_eq_getElem (by rw [congruenceVars_length]; exact hi),
     congruenceVars_getElem stem hi]
 
-theorem congruence_query (f : FnName) (n : Nat) : (congruenceRule f n).query =
-    [.expr (.app f (congruenceVars "a" n)), .expr (.app f (congruenceVars "b" n))] ++
-      (((congruenceVars "a" n).zip (congruenceVars "b" n)).zip (congruenceVars "r" n)).flatMap
-        (fun abr => [.expr (ufRow abr.1.1 abr.2), .expr (ufRow abr.1.2 abr.2)]) ++
-      [.expr (ufRow (.app f (congruenceVars "a" n)) (.var "@y")),
-       .expr (ufRow (.app f (congruenceVars "b" n)) (.var "@z")),
-       .eq (.var "@y") (.min (.var "@y") (.var "@z")), .ne (.var "@y") (.var "@z")] := rfl
+/-- The value of a column variable from the evaluated list. -/
+theorem congruence_lookup {σ : Env} {stem : String} {n : Nat} {ts : List Term}
+    (hts : Expr.evalList (congruenceVars stem n) σ = some ts) {i : Nat} (hi : i < n) :
+    Env.lookup ("@" ++ stem ++ toString i) σ = ts[i]? := by
+  obtain ⟨t, ht, hev⟩ := Expr.getElem?_of_evalList hts i (congruenceVars_getElem? stem hi)
+  rw [ht]
+  exact hev
 
-theorem congruence_actions (f : FnName) (n : Nat) :
-    (congruenceRule f n).actions = [.expr (ufRow (.var "@z") (.var "@y"))] := rfl
+/-- The edge atoms of the congruence and subsumption rules, one pair per column. -/
+def edgeAtoms (n : Nat) : Query :=
+  (((congruenceVars "a" n).zip (congruenceVars "b" n)).zip (congruenceVars "r" n)).flatMap
+    fun abr => [.expr (ufRow abr.1.1 abr.2), .expr (ufRow abr.1.2 abr.2)]
 
-/-- The edge atoms of the congruence rule, one pair per column. -/
-theorem congruence_edge_atoms_mem {f : FnName} {n i : Nat} (hi : i < n) :
+theorem edge_atoms_mem {n i : Nat} (hi : i < n) :
     Pattern.expr (ufRow (.var ("@" ++ "a" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
-        (congruenceRule f n).query ∧
+        edgeAtoms n ∧
       Pattern.expr (ufRow (.var ("@" ++ "b" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
-        (congruenceRule f n).query := by
-  rw [congruence_query]
+        edgeAtoms n := by
   have hlen : i < (((congruenceVars "a" n).zip (congruenceVars "b" n)).zip
       (congruenceVars "r" n)).length := by
     simp [congruenceVars_length, hi]
@@ -156,24 +162,181 @@ theorem congruence_edge_atoms_mem {f : FnName} {n i : Nat} (hi : i < n) :
     refine ⟨i, hlen, ?_⟩
     rw [List.getElem_zip, List.getElem_zip, congruenceVars_getElem "a" hi,
       congruenceVars_getElem "b" hi, congruenceVars_getElem "r" hi]
-  constructor
-  · apply List.mem_append_left
-    apply List.mem_append_right
-    exact List.mem_flatMap.mpr ⟨_, hmem, by simp⟩
-  · apply List.mem_append_left
-    apply List.mem_append_right
-    exact List.mem_flatMap.mpr ⟨_, hmem, by simp⟩
+  exact ⟨List.mem_flatMap.mpr ⟨_, hmem, by simp⟩, List.mem_flatMap.mpr ⟨_, hmem, by simp⟩⟩
 
-/-- The value of a congruence variable from the evaluated list. -/
-theorem congruence_lookup {σ : Env} {stem : String} {n : Nat} {ts : List Term}
-    (hts : Expr.evalList (congruenceVars stem n) σ = some ts) {i : Nat} (hi : i < n) :
-    Env.lookup ("@" ++ stem ++ toString i) σ = ts[i]? := by
-  obtain ⟨t, ht, hev⟩ := Expr.getElem?_of_evalList hts i (congruenceVars_getElem? stem hi)
-  rw [ht]
-  exact hev
+/-- A member of the edge atoms is an edge between a column variable and its parent. -/
+theorem mem_edgeAtoms {n : Nat} {p : Pattern} (hp : p ∈ edgeAtoms n) :
+    ∃ i, i < n ∧ (p = .expr (ufRow (.var ("@" ++ "a" ++ toString i))
+      (.var ("@" ++ "r" ++ toString i))) ∨
+      p = .expr (ufRow (.var ("@" ++ "b" ++ toString i)) (.var ("@" ++ "r" ++ toString i)))) := by
+  obtain ⟨abr, habr, hp⟩ := List.mem_flatMap.mp hp
+  obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp habr
+  simp only [List.length_zip, congruenceVars_length, Nat.min_self] at hi
+  rw [List.getElem_zip, List.getElem_zip, congruenceVars_getElem "a" hi,
+    congruenceVars_getElem "b" hi, congruenceVars_getElem "r" hi] at hp
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+  exact ⟨i, hi, hp⟩
 
-theorem congruence_inv {d : Database} (hd : d.Diag) {σ : Env} {f : FnName} {n : Nat}
-    (hq : QueryMatches d (congruenceRule f n).query σ) :
+/-- The matched edges of the column groups. -/
+theorem edges_of_matches {d : Database} {σ : Env} {n : Nat} {rs : List Term}
+    (hrs : Expr.evalList (congruenceVars "r" n) σ = some rs) (stem : String) {ts : List Term}
+    (hts : Expr.evalList (congruenceVars stem n) σ = some ts)
+    (hm : ∀ i, i < n → Matches d (.expr (ufRow (.var ("@" ++ stem ++ toString i))
+      (.var ("@" ++ "r" ++ toString i)))) σ) :
+    List.Forall₂ (Edge d) ts rs := by
+  have hlen : ts.length = n := by rw [Expr.evalList_length hts, congruenceVars_length]
+  have hlenR : rs.length = n := by rw [Expr.evalList_length hrs, congruenceVars_length]
+  rw [List.forall₂_iff_get]
+  refine ⟨by rw [hlen, hlenR], fun i h₁ h₂ => ?_⟩
+  have hi : i < n := hlen ▸ h₁
+  obtain ⟨u, r, hu, hr, hur⟩ := matches_uf_var_var_iff.mp (hm i hi)
+  have hu' := congruence_lookup hts hi
+  have hr' := congruence_lookup hrs hi
+  rw [hu, List.getElem?_eq_getElem h₁] at hu'
+  rw [hr, List.getElem?_eq_getElem h₂] at hr'
+  simp only [List.get_eq_getElem]
+  rw [← Option.some.inj hu', ← Option.some.inj hr']
+  exact hur
+
+/-- The parents are bound when every column's edge atom is in the query. -/
+theorem parents_eval {d : Database} {σ : Env} {q : Query} {n : Nat}
+    (hq : QueryMatches d q σ) (hatoms : ∀ i, i < n →
+      Pattern.expr (ufRow (.var ("@" ++ "a" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈ q) :
+    ∃ rs, Expr.evalList (congruenceVars "r" n) σ = some rs := by
+  apply Expr.evalList_isSome
+  intro v hv
+  obtain ⟨e, he, hve⟩ := Expr.mem_varsList hv
+  obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp he
+  rw [congruenceVars_length] at hi
+  rw [congruenceVars_getElem "r" hi] at hve
+  simp only [Expr.vars_var, List.mem_singleton] at hve
+  subst hve
+  apply hq.1.1.mem_iff.mpr
+  rw [Query.mem_vars]
+  refine ⟨_, hatoms i hi, ?_⟩
+  simp [Pattern.vars, ufRow, Expr.vars, Expr.varsList]
+
+theorem evalList_append {σ : Env} {xs ys : List Expr} {ts : List Term}
+    (h : Expr.evalList (xs ++ ys) σ = some ts) :
+    ∃ ts₁ ts₂, Expr.evalList xs σ = some ts₁ ∧ Expr.evalList ys σ = some ts₂ ∧
+      ts = ts₁ ++ ts₂ := by
+  induction xs generalizing ts with
+  | nil => exact ⟨[], ts, rfl, h, rfl⟩
+  | cons x xs ih =>
+    rw [List.cons_append, Expr.evalList_cons, Option.bind_eq_some_iff] at h
+    obtain ⟨t, ht, hrest⟩ := h
+    obtain ⟨us, hus, rfl⟩ := Option.map_eq_some_iff.mp hrest
+    obtain ⟨ts₁, ts₂, h₁, h₂, rfl⟩ := ih hus
+    exact ⟨t :: ts₁, ts₂, by rw [Expr.evalList_cons, ht, Option.bind_some, h₁, Option.map_some],
+      h₂, rfl⟩
+
+/-- A held node atom is the node row of its children. -/
+theorem node_atom_inv {d : Database} (hs : Shape d) {f : FnName} {ts : List Term}
+    (h : Term.app (nodeName f) ts ∈ d.terms) :
+    ∃ as, ts = as ++ [Term.app f as] ∧ Node d f as := by
+  rcases hs.mem_terms_iff.mp h with ⟨k, p, _, heq⟩ | ⟨g, bs, hn, heq⟩ | ⟨g, bs, _, heq⟩ |
+    ⟨k, hk, hsub⟩
+  · exact ((nodeName_ne_ufName f) (Term.app.inj heq).1).elim
+  · have h' := Term.app.inj heq
+    obtain rfl := nodeName_inj h'.1
+    exact ⟨bs, h'.2, hn⟩
+  · exact ((subName_ne_nodeName g f) (Term.app.inj heq).1.symm).elim
+  · exact (not_sourceName_nodeName f
+      (Term.SourceShaped.head (hs.subterm_sourceShaped hk hsub))).elim
+
+/-- A held marker atom is a marker. -/
+theorem marker_atom_inv {d : Database} (hs : Shape d) {f : FnName} {ts : List Term}
+    (h : Term.app (subName f) ts ∈ d.terms) : Marker d f ts := by
+  rcases hs.mem_terms_iff.mp h with ⟨k, p, _, heq⟩ | ⟨g, bs, _, heq⟩ | ⟨g, bs, hm, heq⟩ |
+    ⟨k, hk, hsub⟩
+  · exact ((subName_ne_ufName f) (Term.app.inj heq).1).elim
+  · exact ((subName_ne_nodeName f g) (Term.app.inj heq).1).elim
+  · obtain ⟨rfl, rfl⟩ := subRowT_inj heq
+    exact hm
+  · exact (not_sourceName_subName f
+      (Term.SourceShaped.head (hs.subterm_sourceShaped hk hsub))).elim
+
+/-! ### Congruence -/
+
+theorem congruence_query_node (f : FnName) (n : Nat) : (congruenceRule true f n).query =
+    [.expr (nodeAtom f (congruenceVars "a" n) (.var "@k")),
+     .expr (nodeAtom f (congruenceVars "b" n) (.var "@l"))] ++ edgeAtoms n ++
+      [.expr (ufRow (.var "@k") (.var "@y")), .expr (ufRow (.var "@l") (.var "@z")),
+       .eq (.var "@y") (.min (.var "@y") (.var "@z")), .ne (.var "@y") (.var "@z")] := rfl
+
+theorem congruence_query_plain (f : FnName) (n : Nat) : (congruenceRule false f n).query =
+    [.expr (.app f (congruenceVars "a" n)), .expr (.app f (congruenceVars "b" n))] ++
+      (((congruenceVars "a" n).zip (congruenceVars "b" n)).zip (congruenceVars "r" n)).flatMap
+        (fun abr => [.expr (ufRow abr.1.1 abr.2), .expr (ufRow abr.1.2 abr.2)]) ++
+      [.expr (ufRow (.app f (congruenceVars "a" n)) (.var "@y")),
+       .expr (ufRow (.app f (congruenceVars "b" n)) (.var "@z")),
+       .eq (.var "@y") (.min (.var "@y") (.var "@z")), .ne (.var "@y") (.var "@z")] := rfl
+
+theorem congruence_actions (f : FnName) (n : Nat) :
+    (congruenceRule sub f n).actions = [.expr (ufRow (.var "@z") (.var "@y"))] := rfl
+
+theorem congruence_edge_atoms_mem {f : FnName} {n i : Nat} (hi : i < n) :
+    Pattern.expr (ufRow (.var ("@" ++ "a" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
+        (congruenceRule sub f n).query ∧
+      Pattern.expr (ufRow (.var ("@" ++ "b" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
+        (congruenceRule sub f n).query := by
+  cases sub <;> first | rw [congruence_query_plain] | rw [congruence_query_node]
+  all_goals exact ⟨List.mem_append_left _ (List.mem_append_right _ (edge_atoms_mem hi).1),
+    List.mem_append_left _ (List.mem_append_right _ (edge_atoms_mem hi).2)⟩
+
+/-- A node atom over the column variables of a group matches a node row of the group's
+values, which it binds the id variable to. -/
+theorem node_atom_matches {d : Database} (hd : d.Diag) (hs : Shape d) {σ : Env} {f : FnName}
+    {stem : String} {n : Nat} {v : Var}
+    (hm : Matches d (.expr (nodeAtom f (congruenceVars stem n) (.var v))) σ) :
+    ∃ ts, Expr.evalList (congruenceVars stem n) σ = some ts ∧
+      Env.lookup v σ = some (Term.app f ts) ∧ Node d f ts := by
+  obtain ⟨us, _, hus, hlive⟩ := matches_app_iff.mp hm
+  obtain ⟨ts, ks, hts, hk, rfl⟩ := evalList_append hus
+  obtain ⟨k, hk', rfl⟩ := Expr.evalList_singleton hk
+  obtain ⟨as, heq, hn⟩ := node_atom_inv hs ((Cong.iff_eq_and_mem_of_diag hd).mp hlive.1).2
+  obtain ⟨rfl, hk⟩ := List.append_inj' heq (by simp [Expr.evalList_length hts])
+  simp only [List.cons.injEq, and_true] at hk
+  subst hk
+  exact ⟨ts, hts, hk', hn⟩
+
+theorem congruence_inv_node {d : Database} (hd : d.Diag) (hs : Shape d) {σ : Env} {f : FnName}
+    {n : Nat} (hq : QueryMatches d (congruenceRule true f n).query σ) :
+    ∃ as bs rs y z, Expr.evalList (congruenceVars "a" n) σ = some as ∧
+      Expr.evalList (congruenceVars "b" n) σ = some bs ∧
+      Expr.evalList (congruenceVars "r" n) σ = some rs ∧
+      Env.lookup "@k" σ = some (Term.app f as) ∧ Env.lookup "@l" σ = some (Term.app f bs) ∧
+      Env.lookup "@y" σ = some y ∧ Env.lookup "@z" σ = some z ∧
+      Node d f as ∧ Node d f bs ∧
+      List.Forall₂ (Edge d) as rs ∧ List.Forall₂ (Edge d) bs rs ∧
+      Edge d (.app f as) y ∧ Edge d (.app f bs) z ∧ y = Term.least y z ∧ ¬ Cong d y z := by
+  have hm := hq.2
+  rw [congruence_query_node] at hm
+  have hA := hm (.expr (nodeAtom f (congruenceVars "a" n) (.var "@k"))) (by simp)
+  have hB := hm (.expr (nodeAtom f (congruenceVars "b" n) (.var "@l"))) (by simp)
+  have hY := hm (.expr (ufRow (.var "@k") (.var "@y"))) (by simp)
+  have hZ := hm (.expr (ufRow (.var "@l") (.var "@z"))) (by simp)
+  have hmin := hm (.eq (.var "@y") (.min (.var "@y") (.var "@z"))) (by simp)
+  have hne := hm (.ne (.var "@y") (.var "@z")) (by simp)
+  obtain ⟨as, has, hk, hna⟩ := node_atom_matches hd hs hA
+  obtain ⟨bs, hbs, hl, hnb⟩ := node_atom_matches hd hs hB
+  obtain ⟨ka, y, hk', hy, hey⟩ := matches_uf_var_var_iff.mp hY
+  obtain ⟨lb, z, hl', hz, hez⟩ := matches_uf_var_var_iff.mp hZ
+  obtain ⟨y', z', hy', hz', _, hyz⟩ := (matches_eq_min_iff hd).mp hmin
+  obtain ⟨y'', z'', hy'', hz'', hnyz⟩ := matches_ne_var_var_iff.mp hne
+  obtain rfl : ka = Term.app f as := Option.some.inj (hk'.symm.trans hk)
+  obtain rfl : lb = Term.app f bs := Option.some.inj (hl'.symm.trans hl)
+  obtain rfl : y = y' := Option.some.inj (hy.symm.trans hy')
+  obtain rfl : z = z' := Option.some.inj (hz.symm.trans hz')
+  obtain rfl : y = y'' := Option.some.inj (hy.symm.trans hy'')
+  obtain rfl : z = z'' := Option.some.inj (hz.symm.trans hz'')
+  obtain ⟨rs, hrs⟩ := parents_eval hq fun i hi => (congruence_edge_atoms_mem hi).1
+  refine ⟨as, bs, rs, y, z, has, hbs, hrs, hk, hl, hy, hz, hna, hnb, ?_, ?_, hey, hez, hyz, hnyz⟩
+  · exact edges_of_matches hrs "a" has fun i hi => hq.2 _ (congruence_edge_atoms_mem hi).1
+  · exact edges_of_matches hrs "b" hbs fun i hi => hq.2 _ (congruence_edge_atoms_mem hi).2
+
+theorem congruence_inv_plain {d : Database} (hd : d.Diag) {σ : Env} {f : FnName} {n : Nat}
+    (hq : QueryMatches d (congruenceRule false f n).query σ) :
     ∃ as bs rs y z, Expr.evalList (congruenceVars "a" n) σ = some as ∧
       Expr.evalList (congruenceVars "b" n) σ = some bs ∧
       Expr.evalList (congruenceVars "r" n) σ = some rs ∧
@@ -182,7 +345,7 @@ theorem congruence_inv {d : Database} (hd : d.Diag) {σ : Env} {f : FnName} {n :
       List.Forall₂ (Edge d) as rs ∧ List.Forall₂ (Edge d) bs rs ∧
       Edge d (.app f as) y ∧ Edge d (.app f bs) z ∧ y = Term.least y z ∧ ¬ Cong d y z := by
   have hm := hq.2
-  rw [congruence_query] at hm
+  rw [congruence_query_plain] at hm
   have hA := hm (.expr (.app f (congruenceVars "a" n))) (by simp)
   have hB := hm (.expr (.app f (congruenceVars "b" n))) (by simp)
   have hY := hm (.expr (ufRow (.app f (congruenceVars "a" n)) (.var "@y"))) (by simp)
@@ -225,7 +388,7 @@ theorem congruence_inv {d : Database} (hd : d.Diag) {σ : Env} {f : FnName} {n :
   have edges : ∀ (stem : String) (ts : List Term),
       Expr.evalList (congruenceVars stem n) σ = some ts →
       (∀ i, i < n → Pattern.expr (ufRow (.var ("@" ++ stem ++ toString i))
-        (.var ("@" ++ "r" ++ toString i))) ∈ (congruenceRule f n).query) →
+        (.var ("@" ++ "r" ++ toString i))) ∈ (congruenceRule false f n).query) →
       List.Forall₂ (Edge d) ts rs := by
     intro stem ts hts hatoms
     have hlen : ts.length = n := by rw [Expr.evalList_length hts, congruenceVars_length]
@@ -244,16 +407,84 @@ theorem congruence_inv {d : Database} (hd : d.Diag) {σ : Env} {f : FnName} {n :
   · exact edges "a" as has fun i hi => (congruence_edge_atoms_mem hi).1
   · exact edges "b" bs hbs fun i hi => (congruence_edge_atoms_mem hi).2
 
+/-- Both node reads produce the same child edges and output edges. -/
+theorem congruence_inv {d : Database} (hd : d.Diag) (hs : Shape d) {σ : Env} {f : FnName}
+    {n : Nat} (hq : QueryMatches d (congruenceRule sub f n).query σ) :
+    ∃ as bs rs y z, Expr.evalList (congruenceVars "a" n) σ = some as ∧
+      Expr.evalList (congruenceVars "b" n) σ = some bs ∧
+      Expr.evalList (congruenceVars "r" n) σ = some rs ∧
+      Env.lookup "@y" σ = some y ∧ Env.lookup "@z" σ = some z ∧
+      List.Forall₂ (Edge d) as rs ∧ List.Forall₂ (Edge d) bs rs ∧
+      Edge d (.app f as) y ∧ Edge d (.app f bs) z ∧ y = Term.least y z ∧ ¬ Cong d y z := by
+  cases sub with
+  | false =>
+    obtain ⟨as, bs, rs, y, z, ha, hb, hr, hy, hz, _, _, rest⟩ := congruence_inv_plain hd hq
+    exact ⟨as, bs, rs, y, z, ha, hb, hr, hy, hz, rest⟩
+  | true =>
+    obtain ⟨as, bs, rs, y, z, ha, hb, hr, _, _, hy, hz, _, _, rest⟩ :=
+      congruence_inv_node hd hs hq
+    exact ⟨as, bs, rs, y, z, ha, hb, hr, hy, hz, rest⟩
+
 theorem congruence_writes {σ : Env} {f : FnName} {n : Nat} {y z : Term}
     (hy : Env.lookup "@y" σ = some y) (hz : Env.lookup "@z" σ = some z) :
-    Action.writes σ (congruenceRule f n).actions = some ({(ufRowT z y, ufRowT z y)} ∪ ∅) := by
+    Action.writes σ (congruenceRule sub f n).actions = some ({(ufRowT z y, ufRowT z y)} ∪ ∅) := by
   rw [congruence_actions]
   simp [Action.writes, Action.write, ufRow, Expr.eval, Expr.evalList, hy, hz]
 
 theorem congruence_marks {σ : Env} {f : FnName} {n : Nat} {y z : Term}
     (hy : Env.lookup "@y" σ = some y) (hz : Env.lookup "@z" σ = some z) :
-    Action.marks σ (congruenceRule f n).actions = some (∅ ∪ ∅) := by
+    Action.marks σ (congruenceRule sub f n).actions = some (∅ ∪ ∅) := by
   rw [congruence_actions]
   simp [Action.marks, Action.mark, Action.write, ufRow, Expr.eval, Expr.evalList, hy, hz]
+
+/-! ### Subsumption -/
+
+theorem subsume_query (f : FnName) (n : Nat) : (subsumeRule f n).query =
+    [.expr (subRow f (congruenceVars "a" n)), .expr (.app f (congruenceVars "b" n))] ++
+      edgeAtoms n := rfl
+
+theorem subsume_actions (f : FnName) (n : Nat) :
+    (subsumeRule f n).actions = [.subsume f (congruenceVars "b" n)] := rfl
+
+theorem subsume_edge_atoms_mem {f : FnName} {n i : Nat} (hi : i < n) :
+    Pattern.expr (ufRow (.var ("@" ++ "a" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
+        (subsumeRule f n).query ∧
+      Pattern.expr (ufRow (.var ("@" ++ "b" ++ toString i)) (.var ("@" ++ "r" ++ toString i))) ∈
+        (subsumeRule f n).query := by
+  rw [subsume_query]
+  exact ⟨List.mem_append_right _ (edge_atoms_mem hi).1,
+    List.mem_append_right _ (edge_atoms_mem hi).2⟩
+
+theorem subsume_inv {d : Database} (hd : d.Diag) (hs : Shape d) {σ : Env} {f : FnName} {n : Nat}
+    (hq : QueryMatches d (subsumeRule f n).query σ) :
+    ∃ as bs rs, Expr.evalList (congruenceVars "a" n) σ = some as ∧
+      Expr.evalList (congruenceVars "b" n) σ = some bs ∧
+      Expr.evalList (congruenceVars "r" n) σ = some rs ∧
+      Marker d f as ∧ Term.app f bs ∈ d.live ∧
+      List.Forall₂ (Edge d) as rs ∧ List.Forall₂ (Edge d) bs rs := by
+  have hm := hq.2
+  rw [subsume_query] at hm
+  have hA := hm (.expr (subRow f (congruenceVars "a" n))) (by simp)
+  have hB := hm (.expr (.app f (congruenceVars "b" n))) (by simp)
+  obtain ⟨as, _, has, hliveA⟩ := matches_app_iff.mp hA
+  obtain ⟨bs, _, hbs, hliveB⟩ := matches_app_iff.mp hB
+  obtain ⟨rs, hrs⟩ := parents_eval hq fun i hi => (subsume_edge_atoms_mem hi).1
+  refine ⟨as, bs, rs, has, hbs, hrs,
+    marker_atom_inv hs ((Cong.iff_eq_and_mem_of_diag hd).mp hliveA.1).2, hliveB, ?_, ?_⟩
+  · exact edges_of_matches hrs "a" has fun i hi => hq.2 _ (subsume_edge_atoms_mem hi).1
+  · exact edges_of_matches hrs "b" hbs fun i hi => hq.2 _ (subsume_edge_atoms_mem hi).2
+
+theorem subsume_writes {σ : Env} {f : FnName} {n : Nat} {bs : List Term}
+    (hbs : Expr.evalList (congruenceVars "b" n) σ = some bs) :
+    Action.writes σ (subsumeRule f n).actions =
+      some ({(Term.app f bs, Term.app f bs)} ∪ ∅) := by
+  rw [subsume_actions]
+  simp [Action.writes, Action.write, hbs]
+
+theorem subsume_marks {σ : Env} {f : FnName} {n : Nat} {bs : List Term}
+    (hbs : Expr.evalList (congruenceVars "b" n) σ = some bs) :
+    Action.marks σ (subsumeRule f n).actions = some ({Term.app f bs} ∪ ∅) := by
+  rw [subsume_actions]
+  simp [Action.marks, Action.mark, hbs]
 
 end Egglog.Congruence

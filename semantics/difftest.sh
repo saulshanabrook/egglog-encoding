@@ -2,8 +2,11 @@
 # Differentially test the Lean semantics against egglog.
 #
 # `difftest` (semantics/DiffTest.lean) writes one .egg file and one .expected file per
-# case; each .expected holds the per-constructor row counts the Lean interpreter predicts.
-# This runs egglog on the .egg file and diffs its `(print-size)` output against that.
+# case; each .expected holds the per-constructor row counts the Lean interpreter predicts,
+# and the .egg file asserts the program's final check, if any, with the outcome the
+# interpreter predicts in egglog's check semantics: `(check ...)` or `(fail (check ...))`.
+# This runs egglog on the .egg file, which fails before printing when the check prediction
+# is wrong, and diffs its `(print-size)` output against the .expected file.
 #
 # Row counts are the same quantity egglog/tests/files.rs snapshots: one row per distinct
 # canonical argument tuple, which on the Lean side is one per congruence class of
@@ -94,5 +97,6 @@ profiles() { # <label> <glob-prefix>
     sort -u | wc -l) distinct $1 profiles"
 }
 profiles "random-case" rand
+echo "difftest: $(grep -lE '^\((fail \()?check' "$out"/*.egg | wc -l) cases assert their final check"
 echo "difftest: $pass passed, $fail failed, $skipped skipped (not generated)"
 [[ $fail -eq 0 ]]
