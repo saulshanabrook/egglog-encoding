@@ -1,0 +1,818 @@
+{
+  "schema_version": 1,
+  "kind": "Nested ΣMMM/MMM baseline-to-final comparison",
+  "baseline": {
+    "label": "main",
+    "source": "/tmp/slotted-mmm-bench-main",
+    "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+    "branch": "main",
+    "title": "Main baseline (includes merged PR218)"
+  },
+  "candidate": {
+    "label": "stage11",
+    "source": "/tmp/slotted-mmm-bench-11",
+    "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+    "branch": "perf/slotted-11-core-lowering",
+    "title": "5. Skip unused correspondence reconstruction during lowering"
+  },
+  "protocol": {
+    "purpose": "Diagnostic capped PR comparison pilot; first window retained before stage10/11 revision",
+    "cpu": 22,
+    "rounds": 3,
+    "timeout_sec": 500,
+    "memory_limit_bytes": 17179869184,
+    "collection_order": "Serial main, stage07, stage08, stage09, stage10, stage11; nested then multipattern within each stage.",
+    "measurement_window": "After all implementation, builds, and validation finish; no concurrent builds, tests, graph rendering, or other heavy task work during collection. Lightweight progress monitoring is allowed.",
+    "measurement_window_id": "first-window-cecac74c",
+    "collection_manifest_sha256": "sha256:40470c91aa008c173408429e430a65a873e990e97597ac628be2ab98694aaf55",
+    "watchdog_note": "Diagnostic first window: retained regression evidence; 500 s watchdog per workload process."
+  },
+  "confidence": 0.95,
+  "statistics": "Shared analyze_pair arithmetic means and independent Fieller 95% ratio intervals; percent intervals are monotone transforms of ratio intervals. Absolute changes are differences of mean point estimates, without an asserted absolute-change CI.",
+  "manifest_sha256": "sha256:e385e650d28ad06652318d0a107b5c13f1921f4dc7227c3e77575bd6d282c5e3",
+  "source_grouped": {
+    "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/report-grouped.json",
+    "sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f"
+  },
+  "analysis": {
+    "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+    "script_sha256": "sha256:be7a2d27fe54bba0c2bf3237a945d3c3ac96b7a54f10e6f977f4f8fb09480a4c"
+  },
+  "treatment": "slotted-no-aliasing",
+  "units": {
+    "means": "milliseconds",
+    "ratio": "candidate / baseline"
+  },
+  "rows": [
+    {
+      "workload": "ΣMMM · 1st",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+      "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "baseline_mean_ms": 167.19252872280777,
+      "candidate_mean_ms": 142.65601336956024,
+      "ratio": {
+        "point": 0.853243948514427,
+        "ci_low": 0.8510636880090762,
+        "ci_high": 0.8554348356655047
+      },
+      "issue": null,
+      "result_class": "lower"
+    },
+    {
+      "workload": "ΣMMM · 2nd",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+      "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "baseline_mean_ms": 562.6056006488701,
+      "candidate_mean_ms": 527.1523025973389,
+      "ratio": {
+        "point": 0.9369837448993721,
+        "ci_low": 0.9238102171934442,
+        "ci_high": 0.9504586603269839
+      },
+      "issue": null,
+      "result_class": "lower"
+    },
+    {
+      "workload": "MMM · 1st",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+      "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "baseline_mean_ms": 325.2099526580423,
+      "candidate_mean_ms": 278.3729833705972,
+      "ratio": {
+        "point": 0.8559792869048688,
+        "ci_low": 0.8436668520352664,
+        "ci_high": 0.8685237702666557
+      },
+      "issue": null,
+      "result_class": "lower"
+    },
+    {
+      "workload": "MMM · 2nd",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+      "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "baseline_mean_ms": 2120.262335985899,
+      "candidate_mean_ms": 2094.966332971429,
+      "ratio": {
+        "point": 0.9880693994393351,
+        "ci_low": 0.9637225092394898,
+        "ci_high": 1.0131276510151679
+      },
+      "issue": null,
+      "result_class": "unclear"
+    }
+  ],
+  "conditions": [
+    {
+      "endpoint": {
+        "target": {
+          "source": "main=/tmp/slotted-mmm-bench-main",
+          "path": "/tmp/slotted-mmm-bench-main",
+          "git_ref": "HEAD",
+          "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "is_dirty": false,
+          "label": "main"
+        },
+        "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+      "physical_file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "selected_row_indices": [
+        12,
+        32,
+        52
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:17:26Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.32586372597143054,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 12
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:22:53Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.32346807909198105,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 32
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:28:24Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.32629805291071534,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 52
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "main=/tmp/slotted-mmm-bench-main",
+          "path": "/tmp/slotted-mmm-bench-main",
+          "git_ref": "HEAD",
+          "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "is_dirty": false,
+          "label": "main"
+        },
+        "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+      "physical_file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "selected_row_indices": [
+        13,
+        33,
+        53
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:17:26Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.1043093719054013,
+          "max_rss_bytes": 129216512,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 13
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:22:54Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.1197964309249073,
+          "max_rss_bytes": 129253376,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 33
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:28:25Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.1366812051273882,
+          "max_rss_bytes": 129208320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 53
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "main=/tmp/slotted-mmm-bench-main",
+          "path": "/tmp/slotted-mmm-bench-main",
+          "git_ref": "HEAD",
+          "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "is_dirty": false,
+          "label": "main"
+        },
+        "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+      "physical_file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "selected_row_indices": [
+        14,
+        34,
+        54
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:17:28Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.16700592800043523,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 14
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:22:56Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.16733158007264137,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 34
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:28:27Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.1672400780953467,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 54
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "main=/tmp/slotted-mmm-bench-main",
+          "path": "/tmp/slotted-mmm-bench-main",
+          "git_ref": "HEAD",
+          "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "is_dirty": false,
+          "label": "main"
+        },
+        "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+      "physical_file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "selected_row_indices": [
+        15,
+        35,
+        55
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:17:28Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5606950058136135,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 15
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:22:56Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5659082911442965,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 35
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T11:28:27Z",
+          "status": "success",
+          "target_label": "main",
+          "target_source": "main=/tmp/slotted-mmm-bench-main",
+          "target_path": "/tmp/slotted-mmm-bench-main",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:2262222cb4fa0a19e89ef289394bc9275858fa1573ff3bc8113c277817a53b6b",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5612135049887002,
+          "max_rss_bytes": 120987648,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 55
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "stage11=/tmp/slotted-mmm-bench-11",
+          "path": "/tmp/slotted-mmm-bench-11",
+          "git_ref": "HEAD",
+          "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "is_dirty": false,
+          "label": "stage11"
+        },
+        "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+      "physical_file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "selected_row_indices": [
+        302,
+        312,
+        322
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:29:12Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.2783145410940051,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 302
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:31:41Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.2774314759299159,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 312
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:34:23Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+          "file_sha256": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.2793729330878705,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 322
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "stage11=/tmp/slotted-mmm-bench-11",
+          "path": "/tmp/slotted-mmm-bench-11",
+          "git_ref": "HEAD",
+          "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "is_dirty": false,
+          "label": "stage11"
+        },
+        "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+      "physical_file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "selected_row_indices": [
+        303,
+        313,
+        323
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:29:12Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.1080706228967756,
+          "max_rss_bytes": 126939136,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 303
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:31:41Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.08069611992687,
+          "max_rss_bytes": 126738432,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 313
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:34:24Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+          "file_sha256": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 2.096132256090641,
+          "max_rss_bytes": 127483904,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 323
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "stage11=/tmp/slotted-mmm-bench-11",
+          "path": "/tmp/slotted-mmm-bench-11",
+          "git_ref": "HEAD",
+          "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "is_dirty": false,
+          "label": "stage11"
+        },
+        "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+      "physical_file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "selected_row_indices": [
+        304,
+        314,
+        324
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:29:14Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.14263723883777857,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 304
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:31:43Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.14263646909967065,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 314
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:34:26Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+          "file_sha256": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.1426943321712315,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 324
+        }
+      ]
+    },
+    {
+      "endpoint": {
+        "target": {
+          "source": "stage11=/tmp/slotted-mmm-bench-11",
+          "path": "/tmp/slotted-mmm-bench-11",
+          "git_ref": "HEAD",
+          "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "is_dirty": false,
+          "label": "stage11"
+        },
+        "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+        "treatment": "slotted-no-aliasing",
+        "memory_limit_bytes": 17179869184
+      },
+      "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+      "physical_file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "selected_row_indices": [
+        305,
+        315,
+        325
+      ],
+      "exclusion": null,
+      "observations": [
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:29:15Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5261339149437845,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 305
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:31:44Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5287029079627246,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 315
+        },
+        {
+          "report_schema_version": 10,
+          "started_at": "2026-11-12T12:34:26Z",
+          "status": "success",
+          "target_label": "stage11",
+          "target_source": "stage11=/tmp/slotted-mmm-bench-11",
+          "target_path": "/tmp/slotted-mmm-bench-11",
+          "target_git_ref": "HEAD",
+          "target_git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+          "target_is_dirty": false,
+          "binary_sha256": "sha256:59b58ab73d5c382ae990d7f57b89f47d9b9ed4ed9a01cc2ff19be758761cbc4a",
+          "file_path": "/tmp/slotted-mmm-bench-main/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+          "file_sha256": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+          "treatment": "slotted-no-aliasing",
+          "timeout_sec": 500,
+          "wall_sec": 0.5266200848855078,
+          "max_rss_bytes": 110776320,
+          "error_message": null,
+          "memory_limit_bytes": 17179869184,
+          "row_index": 325
+        }
+      ]
+    }
+  ]
+}

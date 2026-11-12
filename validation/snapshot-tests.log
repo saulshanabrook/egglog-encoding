@@ -1,0 +1,41 @@
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-mmm-nested-substitution/egglog-experimental)
+    Finished `release` profile [optimized] target(s) in 2.84s
+     Running tests/slotted_files.rs (target/release/deps/slotted_files-b1bd4725f59402bc)
+
+running 1 test
+test tests/slotted/datatype.egg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.05s
+
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running tests/slotted_files.rs (target/release/deps/slotted_files-b1bd4725f59402bc)
+
+running 1 test
+test tests/slotted/multiple-sorts.egg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.09s
+
+    Finished `release` profile [optimized] target(s) in 0.17s
+     Running tests/slotted_files.rs (target/release/deps/slotted_files-b1bd4725f59402bc)
+
+running 1 test
+test tests/slotted/named-slots.egg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.06s
+
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running tests/slotted_files.rs (target/release/deps/slotted_files-b1bd4725f59402bc)
+
+running 1 test
+test tests/slotted/nested/binder-safe-matching.egg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.04s
+
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running tests/slotted_files.rs (target/release/deps/slotted_files-b1bd4725f59402bc)
+
+running 1 test
+test tests/slotted/query-predicates.egg ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.06s
+

@@ -1,0 +1,32 @@
+{
+  "required_checks_complete": true,
+  "source_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+  "source_commits": {
+    "main": "37b148e741755823f37ec29570b12f474821c278",
+    "stage07": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+    "stage08": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+    "stage09": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+    "stage10": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+    "stage11": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89"
+  },
+  "pr_validation_text": "The stack tip (`cecac74c`) passed root `make check` with only the exact MTTKRP2 paper group filtered: 1,167 Python tests, the workspace Rust and proof suites, 511 paper cases, and 25 Vega tests. The same MTTKRP2 input then passed separately in encoded multipattern, encoded nested, native nested, and native nested snapshot modes. Native multipattern MTTKRP2 was omitted at the user's request; existing repository exclusions are unchanged. All four published MMM/\u03a3MMM inputs passed strict proof checks and native differential checks. This is scoped validation of the stack tip, not a separate full-suite run for every intermediate commit.",
+  "required_checks_scope": "Run root make check with only the exact MTTKRP2 paper group filtered, then run that same input with both encoded and both nested-native policies; native multipattern is outside user scope. Do not describe the scoped run as an unfiltered full-suite pass.",
+  "evidence": [
+    {
+      "path": "/tmp/slotted-mmm-implementation/validation.json",
+      "sha256": "sha256:811e65f757e236b63eef4c3f648911476b45bb2ba1bcccb1353208ca9b4796c6"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/make-check.log",
+      "sha256": "sha256:2ea1aa27d2e02ddd0adf09d81fe20eaebf97357e3449771e17cd15c7a4931fae"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/mttkrp2-scoped.log",
+      "sha256": "sha256:50c8679a303bdd68575786f6feaf7fcf4224bc621a8526de8135bed54acf0222"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/paper-binary.log",
+      "sha256": "sha256:13ea80776db9b3c31859dc1f1cc9b337c1842ed448c086d92a4b7ff91445f5f3"
+    }
+  ]
+}

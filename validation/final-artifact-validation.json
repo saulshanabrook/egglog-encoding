@@ -1,0 +1,920 @@
+{
+  "validated_at": "2026-11-12T16:34:50.209189+00:00",
+  "grouped_sha256": "sha256:0d636271f7b206150eeb5515ca1ecaf894ab22da7131fe4e33db1646977d3fc9",
+  "manifest_sha256": "sha256:4bbe4fcce9d4602636029ac8aeedd63aeeef6140745925130cc7de2feaba359e",
+  "script_sha256": "sha256:be7a2d27fe54bba0c2bf3237a945d3c3ac96b7a54f10e6f977f4f8fb09480a4c",
+  "selected_conditions": 118,
+  "selected_observations": 354,
+  "selected_status": "all success",
+  "retained_observations": 462,
+  "retained_status_counts": {
+    "success": 462
+  },
+  "collection_windows": {
+    "original_grouped_sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f",
+    "original_observations_preserved": 354,
+    "reused_selected_observations": 246,
+    "fresh_selected_observations": 108,
+    "reused_selected_row_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      129,
+      130,
+      131,
+      132,
+      133,
+      134,
+      135,
+      136,
+      137,
+      138,
+      139,
+      140,
+      141,
+      142,
+      143,
+      144,
+      145,
+      146,
+      147,
+      148,
+      149,
+      150,
+      151,
+      152,
+      153,
+      154,
+      155,
+      156,
+      157,
+      158,
+      159,
+      160,
+      161,
+      162,
+      163,
+      164,
+      165,
+      166,
+      167,
+      168,
+      169,
+      170,
+      171,
+      172,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      193,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      200,
+      201,
+      202,
+      203,
+      204,
+      205,
+      206,
+      207,
+      208,
+      209,
+      210,
+      211,
+      212,
+      213,
+      214,
+      215,
+      216,
+      217,
+      218,
+      219,
+      220,
+      221,
+      222,
+      223,
+      224,
+      225,
+      226,
+      227,
+      228,
+      229,
+      230,
+      231,
+      232,
+      233,
+      234,
+      235,
+      236,
+      237,
+      238,
+      239,
+      240,
+      241,
+      242,
+      243,
+      244,
+      245
+    ],
+    "fresh_selected_row_indices": [
+      354,
+      355,
+      356,
+      357,
+      358,
+      359,
+      360,
+      361,
+      362,
+      363,
+      364,
+      365,
+      366,
+      367,
+      368,
+      369,
+      370,
+      371,
+      372,
+      373,
+      374,
+      375,
+      376,
+      377,
+      378,
+      379,
+      380,
+      381,
+      382,
+      383,
+      384,
+      385,
+      386,
+      387,
+      388,
+      389,
+      390,
+      391,
+      392,
+      393,
+      394,
+      395,
+      396,
+      397,
+      398,
+      399,
+      400,
+      401,
+      402,
+      403,
+      404,
+      405,
+      406,
+      407,
+      408,
+      409,
+      410,
+      411,
+      412,
+      413,
+      414,
+      415,
+      416,
+      417,
+      418,
+      419,
+      420,
+      421,
+      422,
+      423,
+      424,
+      425,
+      426,
+      427,
+      428,
+      429,
+      430,
+      431,
+      432,
+      433,
+      434,
+      435,
+      436,
+      437,
+      438,
+      439,
+      440,
+      441,
+      442,
+      443,
+      444,
+      445,
+      446,
+      447,
+      448,
+      449,
+      450,
+      451,
+      452,
+      453,
+      454,
+      455,
+      456,
+      457,
+      458,
+      459,
+      460,
+      461
+    ],
+    "historical_unselected_row_indices": [
+      246,
+      247,
+      248,
+      249,
+      250,
+      251,
+      252,
+      253,
+      254,
+      255,
+      256,
+      257,
+      258,
+      259,
+      260,
+      261,
+      262,
+      263,
+      264,
+      265,
+      266,
+      267,
+      268,
+      269,
+      270,
+      271,
+      272,
+      273,
+      274,
+      275,
+      276,
+      277,
+      278,
+      279,
+      280,
+      281,
+      282,
+      283,
+      284,
+      285,
+      286,
+      287,
+      288,
+      289,
+      290,
+      291,
+      292,
+      293,
+      294,
+      295,
+      296,
+      297,
+      298,
+      299,
+      300,
+      301,
+      302,
+      303,
+      304,
+      305,
+      306,
+      307,
+      308,
+      309,
+      310,
+      311,
+      312,
+      313,
+      314,
+      315,
+      316,
+      317,
+      318,
+      319,
+      320,
+      321,
+      322,
+      323,
+      324,
+      325,
+      326,
+      327,
+      328,
+      329,
+      330,
+      331,
+      332,
+      333,
+      334,
+      335,
+      336,
+      337,
+      338,
+      339,
+      340,
+      341,
+      342,
+      343,
+      344,
+      345,
+      346,
+      347,
+      348,
+      349,
+      350,
+      351,
+      352,
+      353
+    ]
+  },
+  "stages": [
+    {
+      "label": "stage07",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage07-slotted-comparison.png",
+          "sha256": "sha256:4eb37bb783e384ca533cefdd1101ca4cfc2a143591c3b54e19aa3f9eaf2bad78"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage07-slotted-comparison.svg",
+          "sha256": "sha256:738e16100425b476fc78d807ce34d2b8242ecc8934b33b9f78947c0e1419d3cb"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage07-slotted-comparison.pdf",
+          "sha256": "sha256:6c0fa5275702d1975b894495c6005ad75a356a74e0548673201312c0aec18b76"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage07-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:956f283f3e01ef5003503e95071da2cdb75ab00ddc52c210b40851decbcc7cd1"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage07-slotted-comparison.results.json",
+          "sha256": "sha256:7058a897d06a9c7e48c13e3c961de1c975038285accc22def697e44734857777"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:d8dc4f4b804b0bd83c161e6414d679a244b4d5ad7d4ce7326edcc0fb266c77bc",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/previews/stage07-800.png",
+      "preview_sha256": "sha256:964d44c655441e56d04aabc7941fe97b44e5b56578486e0dc6e5af14939bbeae",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0186951437132776,
+            "ci_low": 0.980040547656909,
+            "ci_high": 1.0592380316882388
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9706589800266336,
+              "ci_low": 0.959892408567171,
+              "ci_high": 0.9814376404661826,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 0.8912744191446729,
+              "ci_low": 0.8667896367595097,
+              "ci_high": 0.9170895481768154,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9378652753946278,
+              "ci_low": 0.9158839385042703,
+              "ci_high": 0.9607926797051156,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 0.9926386693810604,
+            "ci_low": 0.9397377857543504,
+            "ci_high": 1.0468059402642356
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.979868706728697,
+              "ci_low": 0.9612110109723345,
+              "ci_high": 0.9990779022040707,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9611070029954133,
+              "ci_low": 0.931362165330887,
+              "ci_high": 0.9926144698328154,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9808376032931301,
+              "ci_low": 0.9651079685378036,
+              "ci_high": 0.9969717105839012,
+              "result_class": "lower"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage08",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage08-slotted-comparison.png",
+          "sha256": "sha256:4abc3ef08f0905b7633ad4efa9a0521d603dba15cf44bd3926f912adb187150d"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage08-slotted-comparison.svg",
+          "sha256": "sha256:0702dc9af2d95e59b592cfbb88d74f030621614e59f9b1124a389a2c79977af0"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage08-slotted-comparison.pdf",
+          "sha256": "sha256:37fa8068fc6f156628fb214bf386f686187f5c6ae5759cbfd64a57d29d0b8499"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage08-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:479900ccc0fffd38cd4e10b0c1cd49afb40890c02dcf8d3646d6831b5111dba1"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage08-slotted-comparison.results.json",
+          "sha256": "sha256:e94df14339a5064ce85ce9e54b0314a094b61f6add66ad07290fdb7afc8750e6"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:2f6cf9d6b845ff9d4af6cf6312efd812c9a8d515fb9644821403ac84e0cf9065",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/previews/stage08-800.png",
+      "preview_sha256": "sha256:3f150f41657609ba66cf66a9856d9e6e707c7716532317e50a236d79717436b5",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0046903146756179,
+            "ci_low": 0.9637452285763144,
+            "ci_high": 1.0468071831728427
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9804587583876349,
+              "ci_low": 0.9687814755999629,
+              "ci_high": 0.9923653839290583,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 1.0281096030921377,
+              "ci_low": 1.001778227280549,
+              "ci_high": 1.0545424439155069,
+              "result_class": "higher"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 0.9771161630504064,
+            "ci_low": 0.932218491086012,
+            "ci_high": 1.0264577150070577
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.96574179183215,
+              "ci_low": 0.9398894905842254,
+              "ci_high": 0.9917714894786605,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 1.0122157809600807,
+              "ci_low": 1.002846592464113,
+              "ci_high": 1.0217015784033945,
+              "result_class": "higher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage09",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage09-slotted-comparison.png",
+          "sha256": "sha256:0f008ce7b56cbe5b9293b38e1d9d2f2fea2bdadc0a71fbdc15ce97527acf634c"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage09-slotted-comparison.svg",
+          "sha256": "sha256:374c222a6367be7b6617d94e030624f04561b32951f03db31c09707a249826d7"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage09-slotted-comparison.pdf",
+          "sha256": "sha256:ec4e81c16c1f6ccd527c105188a5f1b236809a30f2206965c62a9017282be897"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage09-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:a853146970d80b23deee1c44593fbfaf5174f59a8f51f8a558ff9543ecf94113"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage09-slotted-comparison.results.json",
+          "sha256": "sha256:eea2ba866aaafd32d739f30a181e2675f6af810a19ce9180801814c7f4fb079a"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:666dfa452dad02e69de5e543b392f5da6eb906e820879fbb99b50d6a539e1f10",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/previews/stage09-800.png",
+      "preview_sha256": "sha256:4b999159d9c22aea54c301c8dce8a6aea2fdb39d52bf5cbf739ad3fe867726b3",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.013200396466718,
+            "ci_low": 0.9609626432062492,
+            "ci_high": 1.0677196126500144
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9570784665840539,
+              "ci_low": 0.9322423753507335,
+              "ci_high": 0.9819675323937508,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.0235675898161458,
+            "ci_low": 1.0111114716090748,
+            "ci_high": 1.0361183270487764
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+              "ratio": 1.028047745905035,
+              "ci_low": 1.0137048082870177,
+              "ci_high": 1.0424799704212948,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9628333856191287,
+              "ci_low": 0.9519007641479185,
+              "ci_high": 0.9738989468548149,
+              "result_class": "lower"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage10",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage10-slotted-comparison.png",
+          "sha256": "sha256:1dfdc48fac918501cc3d6bf9a5fcd3738ef795764abfdad229ecbd69ba9a7267"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage10-slotted-comparison.svg",
+          "sha256": "sha256:9479243b9b3bb9502698e72d4653ffd13ca4248904f14eb4c22530da2bfea9aa"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage10-slotted-comparison.pdf",
+          "sha256": "sha256:707341f74ad10669976594f97638c019cad787135391c2637ce0fec6d6d69444"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage10-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:f3fd4089ade8aa01b0af6480649e64f6b122a58effb1ffe8ff47c71bbf889778"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage10-slotted-comparison.results.json",
+          "sha256": "sha256:c4a784753d30c0b31fcd2cfe229279b3ec70b9afd8e35c809cde379e144b742b"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:63c56daae4ba227d9c2e6c333a58f9c996f011546e527e604eb7bf8516637433",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/previews/stage10-800.png",
+      "preview_sha256": "sha256:06f6321bfb7a084a2dc4bc9b84c6db9fd13991dcc81bf695b9f9409405c474be",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0205334983907,
+            "ci_low": 0.9763677659520186,
+            "ci_high": 1.0680654158789795
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.9392297654873265,
+              "ci_low": 0.9006336082413449,
+              "ci_high": 0.9785798450160312,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 0.9402067778382668,
+              "ci_low": 0.8871543706841092,
+              "ci_high": 0.9948914880292057,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+              "ratio": 1.033512709454529,
+              "ci_low": 1.0061541339862135,
+              "ci_high": 1.0618886795910962,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9410481341494408,
+              "ci_low": 0.9095494825159971,
+              "ci_high": 0.9739975415466275,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.0320454947065496,
+            "ci_low": 0.9781875827881131,
+            "ci_high": 1.0861160138614554
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 1.0209220854516903,
+              "ci_low": 1.0099755808097581,
+              "ci_high": 1.03199408042891,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+              "ratio": 1.013327419042993,
+              "ci_low": 1.0000454732525677,
+              "ci_high": 1.0266373057522291,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 1.0233320855118406,
+              "ci_low": 1.0144740630903277,
+              "ci_high": 1.0322128910195236,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+              "ratio": 1.027758281897007,
+              "ci_low": 1.0039905356208747,
+              "ci_high": 1.0515553001742282,
+              "result_class": "higher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage11",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage11-slotted-comparison.png",
+          "sha256": "sha256:31664a0fab58002a69cbb060c0bcf1cb233b37723234aa9e75da06d9e00bb7ad"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage11-slotted-comparison.svg",
+          "sha256": "sha256:894435ac9669b26325e20a67932839013835f7e8ea1d675c91289dc78c339e1e"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage11-slotted-comparison.pdf",
+          "sha256": "sha256:42984aca34fe0fb1e3ddefad9971a9ec133c761154bafb79ea93157f9a653b34"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage11-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:9d84000185522f948ecadb069efc2f24b6206907b5f2b65b63651ad01722741c"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/artifacts/stage11-slotted-comparison.results.json",
+          "sha256": "sha256:d853ad490f079b36132a220957ed0544e02e8c04f0198587dc15501fd27c7e4b"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:b86d17c9efefa6e9b42e2b113592dff12e1d3b2c0af13ab5e86004530015f886",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/previews/stage11-800.png",
+      "preview_sha256": "sha256:5ea548b20c9927fd92b57851658249a092f08fe79ba54bf42941fcf6b09dec41",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0136474161329252,
+            "ci_low": 0.9613455623800709,
+            "ci_high": 1.0666911739220428
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9771511142868734,
+              "ci_low": 0.9565286513616542,
+              "ci_high": 0.9985160796673422,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.0127546528955222,
+            "ci_low": 0.9561960511198179,
+            "ci_high": 1.0746560476023612
+          },
+          "directional_files": []
+        }
+      ]
+    }
+  ],
+  "cumulative_results": {
+    "path": "/tmp/slotted-mmm-implementation/pr-stack/cumulative-results.json",
+    "sha256": "sha256:2cecbc2f056cce5daba65e0983efb74d6827525a95bf35434dbb334fd928b6d3"
+  },
+  "mmm_focus_results": {
+    "path": "/tmp/slotted-mmm-implementation/pr-stack/mmm-focus-results.json",
+    "sha256": "sha256:a49755a7f242fe835f4858619afe13e2490c9b94a3b17a1c48b7147ecd50c6db"
+  },
+  "all_plots_visually_inspected": true,
+  "preview_renderer": {
+    "pillow": "11.3.0",
+    "preview_width": 800
+  }
+}

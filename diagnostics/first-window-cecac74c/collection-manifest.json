@@ -1,0 +1,98 @@
+{
+  "binding_status": "final",
+  "renderer_root": "/tmp/slotted-mmm-bench-main",
+  "renderer_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+  "report_path": "/tmp/slotted-mmm-implementation/pr-stack/report.jsonl",
+  "grouped_path": "/tmp/slotted-mmm-implementation/pr-stack/report-grouped.json",
+  "output_dir": "/tmp/slotted-mmm-implementation/pr-stack/artifacts",
+  "scope": {
+    "nested_native_comparison": true,
+    "nested_parent_child": true,
+    "multipattern_parent_child": true,
+    "native_multipattern_comparison": false,
+    "native_multipattern_omission_reason": "Omitted at user request; not a benchmark ignore rule. No native multipattern work is planned.",
+    "baseline_reason": "Current main containing merged PR218 (identity-shape optimization); the closed direct-slot experiment PR219 is absent from every new stage."
+  },
+  "node_package": "node@22.14.0",
+  "node_version": "v22.14.0",
+  "renderer_cpu": 24,
+  "prebuild": {
+    "cpus": "30,31",
+    "cargo_jobs": 2,
+    "concurrent_with_collection": false,
+    "completion_required_before_collection": true
+  },
+  "concurrent_work": [
+    {
+      "task": "Lightweight progress monitoring only",
+      "excludes": "Concurrent builds, tests, rendering, and other heavy task work"
+    }
+  ],
+  "host_isolation": "No concurrent builds, tests, rendering, or other heavy work from this task during timing; lightweight progress monitoring is allowed. The shared host is not dedicated or exclusively controlled.",
+  "protocol": {
+    "purpose": "Capped PR comparison pilot; not final paper measurements",
+    "cpu": 22,
+    "rounds": 3,
+    "timeout_sec": 500,
+    "memory_limit_bytes": 17179869184,
+    "collection_order": "Serial main, stage07, stage08, stage09, stage10, stage11; nested then multipattern within each stage.",
+    "measurement_window": "After all implementation, builds, and validation finish; no concurrent builds, tests, graph rendering, or other heavy task work during collection. Lightweight progress monitoring is allowed."
+  },
+  "expected_selection": {
+    "encoded_stages": 6,
+    "nested_workloads": 10,
+    "multipattern_workloads": 8,
+    "native_conditions": 10,
+    "conditions": 118,
+    "observations": 354
+  },
+  "native": {
+    "label": "native",
+    "source": "/tmp/slotted-stack-bench-00-main",
+    "git_sha": "155b6812c334bca00f91d8ecc33ac14acf873c86"
+  },
+  "stages": [
+    {
+      "label": "main",
+      "source": "/tmp/slotted-mmm-bench-main",
+      "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+      "branch": "main",
+      "title": "Main baseline (includes merged PR218)"
+    },
+    {
+      "label": "stage07",
+      "source": "/tmp/slotted-mmm-bench-07",
+      "git_sha": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "branch": "perf/slotted-07-empty-queries",
+      "title": "1. Skip per-round assembly for empty-table queries"
+    },
+    {
+      "label": "stage08",
+      "source": "/tmp/slotted-mmm-bench-08",
+      "git_sha": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "branch": "perf/slotted-08-match-queues",
+      "title": "2. Share slotted match queues by schema"
+    },
+    {
+      "label": "stage09",
+      "source": "/tmp/slotted-mmm-bench-09",
+      "git_sha": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "branch": "perf/slotted-09-generated-code",
+      "title": "3. Emit generated code without redundant parsing"
+    },
+    {
+      "label": "stage10",
+      "source": "/tmp/slotted-mmm-bench-10",
+      "git_sha": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+      "branch": "perf/slotted-10-substitution-convergence",
+      "title": "4. Let slotted substitution rounds converge"
+    },
+    {
+      "label": "stage11",
+      "source": "/tmp/slotted-mmm-bench-11",
+      "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+      "branch": "perf/slotted-11-core-lowering",
+      "title": "5. Skip unused correspondence reconstruction during lowering"
+    }
+  ]
+}

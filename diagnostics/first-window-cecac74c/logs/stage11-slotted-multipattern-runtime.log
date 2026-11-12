@@ -1,0 +1,60 @@
+Preparing repository
+Loading cache /tmp/slotted-mmm-implementation/pr-stack/report.jsonl
+Resolving inputs
+Resolving targets
+Building stage11
+    Finished `release` profile [optimized] target(s) in 0.16s
+stage10: 24/24 runs cached · nothing to collect
+stage11: 0/24 runs cached · collecting 24 fresh · 3 samples/condition · timeout 
+500s
+Checking executables
+  [1/24] stage11 · batax_1st-44rules.egg · slotted: succeeded after 98.572s · 
+ETA ~0:07:22
+  [2/24] stage11 · mmm_1st-44rules.egg · slotted: succeeded after 0.415s · ETA 
+~0:07:21
+  [3/24] stage11 · mmm_2nd-44rules.egg · slotted: succeeded after 20.312s · ETA 
+~0:07:06
+  [4/24] stage11 · mmm_sum_1st-44rules.egg · slotted: succeeded after 0.155s · 
+ETA ~0:07:06
+  [5/24] stage11 · mmm_sum_2nd-44rules.egg · slotted: succeeded after 1.981s · 
+ETA ~0:07:04
+  [6/24] stage11 · mttkrp_1st-44rules.egg · slotted: succeeded after 1.198s · 
+ETA ~0:07:03
+  [7/24] stage11 · ttm_1st-44rules.egg · slotted: succeeded after 0.644s · ETA 
+~0:07:02
+  [8/24] stage11 · ttm_2nd-44rules.egg · slotted: succeeded after 56.878s · ETA 
+~0:06:01
+  [9/24] stage11 · batax_1st-44rules.egg · slotted: succeeded after 94.880s · 
+ETA ~0:04:20
+  [10/24] stage11 · mmm_1st-44rules.egg · slotted: succeeded after 0.416s · ETA 
+~0:04:20
+  [11/24] stage11 · mmm_2nd-44rules.egg · slotted: succeeded after 19.329s · ETA
+~0:03:59
+  [12/24] stage11 · mmm_sum_1st-44rules.egg · slotted: succeeded after 0.154s · 
+ETA ~0:03:59
+  [13/24] stage11 · mmm_sum_2nd-44rules.egg · slotted: succeeded after 1.937s · 
+ETA ~0:03:57
+  [14/24] stage11 · mttkrp_1st-44rules.egg · slotted: succeeded after 1.220s · 
+ETA ~0:03:56
+  [15/24] stage11 · ttm_1st-44rules.egg · slotted: succeeded after 0.659s · ETA 
+~0:03:55
+  [16/24] stage11 · ttm_2nd-44rules.egg · slotted: succeeded after 60.074s · ETA
+~0:03:00
+  [17/24] stage11 · batax_1st-44rules.egg · slotted: succeeded after 95.556s · 
+ETA ~0:01:23
+  [18/24] stage11 · mmm_1st-44rules.egg · slotted: succeeded after 0.416s · ETA 
+~0:01:23
+  [19/24] stage11 · mmm_2nd-44rules.egg · slotted: succeeded after 19.240s · ETA
+~0:01:03
+  [20/24] stage11 · mmm_sum_1st-44rules.egg · slotted: succeeded after 0.155s · 
+ETA ~0:01:03
+  [21/24] stage11 · mmm_sum_2nd-44rules.egg · slotted: succeeded after 1.992s · 
+ETA ~0:01:01
+  [22/24] stage11 · mttkrp_1st-44rules.egg · slotted: succeeded after 1.194s · 
+ETA ~0:01:00
+  [23/24] stage11 · ttm_1st-44rules.egg · slotted: succeeded after 0.644s · ETA 
+~0:00:59
+  [24/24] stage11 · ttm_2nd-44rules.egg · slotted: succeeded after 61.629s · ETA
+~0:00:00
+2 targets: collected 24 fresh runs · 24 successful
+Writing /tmp/slotted-mmm-implementation/pr-stack/report-grouped.json

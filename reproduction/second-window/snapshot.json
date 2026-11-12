@@ -1,0 +1,19 @@
+{
+  "window": "second-window-matcher-aware",
+  "timing_closed_at": "2026-11-12T16:32:26.004594+00:00",
+  "collector_exit_code": 0,
+  "source_tip": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+  "collection_manifest_sha256": "sha256:d74d2237469378988ba81273e140b2992fecc81f85fadf5ecd13fef4936a3e0b",
+  "rendering_manifest_sha256": "sha256:4bbe4fcce9d4602636029ac8aeedd63aeeef6140745925130cc7de2feaba359e",
+  "grouped_sha256": "sha256:0d636271f7b206150eeb5515ca1ecaf894ab22da7131fe4e33db1646977d3fc9",
+  "selected_conditions": 118,
+  "selected_observations": 354,
+  "reused_selected_observations": 246,
+  "fresh_selected_observations": 108,
+  "retained_observations": 462,
+  "retained_status_counts": {
+    "success": 462
+  },
+  "original_observations_unchanged": 354,
+  "raw_jsonl_copied": false
+}

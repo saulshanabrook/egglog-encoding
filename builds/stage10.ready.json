@@ -1,0 +1,25 @@
+{
+  "label": "stage10",
+  "path": "/tmp/slotted-mmm-bench-10",
+  "git_sha": "33c4a35dfbe041b9e635ad0bcc9b6fd988299646",
+  "command": [
+    "taskset",
+    "-c",
+    "30,31",
+    "cargo",
+    "build",
+    "--release",
+    "--locked",
+    "-p",
+    "egglog-experimental",
+    "--no-default-features",
+    "--features",
+    "bin",
+    "--bin",
+    "egglog-experimental"
+  ],
+  "elapsed_sec": 65.06187850912102,
+  "binaries": {
+    "egglog-experimental": "143f1dc1f90284df49cf2bcbdb6476fc6185f98dca35c2b83c55e61b4455cecb"
+  }
+}

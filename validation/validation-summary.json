@@ -1,0 +1,32 @@
+{
+  "commit": "33c4a35dfbe041b9e635ad0bcc9b6fd988299646",
+  "parent": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+  "branch": "perf/slotted-mmm-nested-substitution",
+  "worktree": "/tmp/slotted-mmm-nested-substitution",
+  "scope": "Ordinary nested substitution bypasses match queues; multipattern and proof lowering retain stage09 behavior.",
+  "focused_tests_passed": 48,
+  "snapshot_tests_passed": 5,
+  "proof_demo_test_passed": true,
+  "proof_demo_cases": 12,
+  "format_check_passed": true,
+  "diff_check_passed": true,
+  "emission": {
+    "multipattern_stage09_equivalent_inputs": 10,
+    "nested_old_stage10_equivalent_inputs": 10,
+    "unchanged_proof_mode_matcher_combinations": 4,
+    "parsed_commands_per_endpoint": 22642
+  },
+  "artifacts": {
+    "focused-tests.log": "b295be9962329bf146b1e6e74b4ebbe56dade3cfb8e09050d638da370f24e9e3",
+    "snapshot-tests.log": "f68af49f9786a392cbc7b73a102269744c737a752c86798a6f394ad11ea13187",
+    "proof-tests.log": "41f47b53f386dc380098f8fb2e2428a8f286c969f15c31ed264f701a9c48973d",
+    "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "emission-equivalence.json": "99298632e540da54ac6dd32273680442da6e3e8e27f4919d21918cce1270dcac",
+    "check-emission.py": "7b144432bad9b2d01096fcd9d1d8637dbba5ede185f0de6a690d4029ee28696d",
+    "check-emission.rs": "7c9287ad25f98f15edf523cba809ed7fbc4df844c670eea234136a0a93bc0066"
+  },
+  "not_run": [
+    "full make check (parent will run after integration)",
+    "performance measurements"
+  ]
+}

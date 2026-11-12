@@ -1,0 +1,138 @@
+Using CPython 3.12.3 interpreter at: /usr/bin/python3
+Creating virtual environment at: .venv
+Installed 20 packages in 250ms
+Preparing repository
+Loading cache /tmp/slotted-mmm-implementation/pr-stack/report.jsonl
+Resolving inputs
+Resolving targets
+Building native · slotted-reference
+    Finished `release` profile [optimized] target(s) in 0.10s
+Building main
+    Finished `release` profile [optimized] target(s) in 0.16s
+native: 0/30 runs cached · collecting 30 fresh · 3 samples/condition · timeout 
+500s
+main: 0/30 runs cached · collecting 30 fresh · 3 samples/condition · timeout 
+500s
+Checking executables
+  [1/60] native · batax_1st-44rules.ref · slotted-ref-nested: succeeded after 
+54.931s · ETA ~0:54:01
+  [2/60] native · batax_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+86.078s · ETA ~1:08:10
+  [3/60] native · mmm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.076s · ETA ~0:44:41
+  [4/60] native · mmm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+3.236s · ETA ~0:33:41
+  [5/60] native · mmm_sum_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.010s · ETA ~0:26:28
+  [6/60] native · mmm_sum_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+0.325s · ETA ~0:21:42
+  [7/60] native · mttkrp_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.280s · ETA ~0:18:18
+  [8/60] native · mttkrp_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+28.254s · ETA ~0:18:46
+  [9/60] native · ttm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.175s · ETA ~0:16:23
+  [10/60] native · ttm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+10.204s · ETA ~0:15:18
+  [11/60] main · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+80.922s · ETA ~0:19:39
+  [12/60] main · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+45.166s · ETA ~0:20:39
+  [13/60] main · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.326s · ETA ~0:18:41
+  [14/60] main · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.104s · ETA ~0:17:06
+  [15/60] main · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.167s · ETA ~0:15:37
+  [16/60] main · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+0.561s · ETA ~0:14:21
+  [17/60] main · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.643s · ETA ~0:13:13
+  [18/60] main · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+10.064s · ETA ~0:12:35
+  [19/60] main · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.436s · ETA ~0:11:40
+  [20/60] main · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.249s · ETA ~0:10:57
+  [21/60] native · batax_1st-44rules.ref · slotted-ref-nested: succeeded after 
+55.091s · ETA ~0:10:02
+  [22/60] native · batax_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+86.145s · ETA ~0:08:36
+  [23/60] native · mmm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.076s · ETA ~0:08:36
+  [24/60] native · mmm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+3.244s · ETA ~0:08:33
+  [25/60] native · mmm_sum_1st-44rules.ref · slotted-ref-nested: succeeded after
+0.010s · ETA ~0:08:33
+  [26/60] native · mmm_sum_2nd-44rules.ref · slotted-ref-nested: succeeded after
+0.324s · ETA ~0:08:32
+  [27/60] native · mttkrp_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.279s · ETA ~0:08:32
+  [28/60] native · mttkrp_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+28.374s · ETA ~0:08:04
+  [29/60] native · ttm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.176s · ETA ~0:08:04
+  [30/60] native · ttm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+10.178s · ETA ~0:07:54
+  [31/60] main · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+79.516s · ETA ~0:06:32
+  [32/60] main · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+45.473s · ETA ~0:05:47
+  [33/60] main · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.323s · ETA ~0:05:47
+  [34/60] main · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.120s · ETA ~0:05:44
+  [35/60] main · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.167s · ETA ~0:05:44
+  [36/60] main · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+0.566s · ETA ~0:05:44
+  [37/60] main · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.634s · ETA ~0:05:43
+  [38/60] main · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+10.016s · ETA ~0:05:33
+  [39/60] main · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.433s · ETA ~0:05:33
+  [40/60] main · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.209s · ETA ~0:05:28
+  [41/60] native · batax_1st-44rules.ref · slotted-ref-nested: succeeded after 
+54.996s · ETA ~0:04:33
+  [42/60] native · batax_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+86.618s · ETA ~0:03:07
+  [43/60] native · mmm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.077s · ETA ~0:03:07
+  [44/60] native · mmm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+3.252s · ETA ~0:03:04
+  [45/60] native · mmm_sum_1st-44rules.ref · slotted-ref-nested: succeeded after
+0.011s · ETA ~0:03:04
+  [46/60] native · mmm_sum_2nd-44rules.ref · slotted-ref-nested: succeeded after
+0.327s · ETA ~0:03:04
+  [47/60] native · mttkrp_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.280s · ETA ~0:03:03
+  [48/60] native · mttkrp_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+28.464s · ETA ~0:02:35
+  [49/60] native · ttm_1st-44rules.ref · slotted-ref-nested: succeeded after 
+0.178s · ETA ~0:02:35
+  [50/60] native · ttm_2nd-44rules.ref · slotted-ref-nested: succeeded after 
+10.176s · ETA ~0:02:25
+  [51/60] main · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+83.005s · ETA ~0:01:04
+  [52/60] main · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+44.960s · ETA ~0:00:19
+  [53/60] main · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.326s · ETA ~0:00:19
+  [54/60] main · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.137s · ETA ~0:00:17
+  [55/60] main · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.167s · ETA ~0:00:16
+  [56/60] main · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+0.561s · ETA ~0:00:16
+  [57/60] main · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.648s · ETA ~0:00:15
+  [58/60] main · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+10.060s · ETA ~0:00:05
+  [59/60] main · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.440s · ETA ~0:00:05
+  [60/60] main · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.251s · ETA ~0:00:00
+2 targets: collected 60 fresh runs · 60 successful
+Writing /tmp/slotted-mmm-implementation/pr-stack/report-grouped.json

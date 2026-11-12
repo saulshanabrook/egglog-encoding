@@ -1,0 +1,48 @@
+{
+  "repository": "saulshanabrook/egglog-encoding",
+  "base_commit": "37b148e741755823f37ec29570b12f474821c278",
+  "native_commit": "155b6812c334bca00f91d8ecc33ac14acf873c86",
+  "artifact_branch": "perf/slotted-startup-results-main37b",
+  "pull_requests": [
+    {
+      "stage": "stage07",
+      "head": "perf/slotted-07-empty-queries",
+      "base": "main",
+      "sha": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "title": "[1/5] Skip per-round assembly for empty-table queries",
+      "description": "Rules whose required positive tables are empty cannot produce matches. This change skips their per-round query assembly while leaving their timestamps unchanged, so later input and restored snapshots can still activate them. Initial cached-plan validation remains in place, and pending database writes retain the existing execution/merge path."
+    },
+    {
+      "stage": "stage08",
+      "head": "perf/slotted-08-match-queues",
+      "base": "perf/slotted-07-empty-queries",
+      "sha": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "title": "[2/5] Share ordinary slotted match queues by schema",
+      "description": "Ordinary slotted rewrites with the same ordered column sorts now share a typed match queue and one drain rule. A rule-id column keeps their matches separate while preserving the existing source/apply barrier. The queue registry follows compiler scopes and rollback; proof modes keep their existing per-rule queues."
+    },
+    {
+      "stage": "stage09",
+      "head": "perf/slotted-09-generated-code",
+      "base": "perf/slotted-08-match-queues",
+      "sha": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "title": "[3/5] Avoid reparsing generated slotted machinery",
+      "description": "Generated slotted machinery previously passed through a parser to namespace its variables and through another parse to reserve generated declaration names. The emitter now writes the namespace directly and carries declaration metadata alongside the text. Final program parsing and diagnostics remain, and the map-backed slot representation is unchanged."
+    },
+    {
+      "stage": "stage10",
+      "head": "perf/slotted-10-substitution-convergence",
+      "base": "perf/slotted-09-generated-code",
+      "sha": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+      "title": "[4/5] Let unchanged slotted substitution rounds converge",
+      "description": "An unchanged substitution round used to insert and drain temporary match rows, reporting changes even when substitution added nothing. Ordinary substitution now seeds refinement indices and runs its full apply query without that temporary queue. Naive rematching remains, including when extraction improves without a new left-hand-side tuple; source/apply ordering and proof behavior are preserved."
+    },
+    {
+      "stage": "stage11",
+      "head": "perf/slotted-11-core-lowering",
+      "base": "perf/slotted-10-substitution-convergence",
+      "sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+      "title": "[5/5] Skip unused correspondence trees during core lowering",
+      "description": "Executable core lowering constructed nested correspondence trees and immediately discarded them. The shared lowering algorithm now omits those trees when only flat atoms/actions are needed; type inference retains the mapped form it uses. Fresh-name allocation, global references, union-to-set optimization, and declaration-time errors keep the existing path. This removes unused reconstruction without adding a cross-command cache."
+    }
+  ]
+}

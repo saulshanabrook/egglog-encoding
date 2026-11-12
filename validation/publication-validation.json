@@ -1,0 +1,69 @@
+{
+  "required_checks_complete": true,
+  "source_sha": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+  "source_commits": {
+    "main": "37b148e741755823f37ec29570b12f474821c278",
+    "stage07": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+    "stage08": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+    "stage09": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+    "stage10": "33c4a35dfbe041b9e635ad0bcc9b6fd988299646",
+    "stage11": "ff3ff0721ffb429eeb184699eb760ae09ade3bda"
+  },
+  "pr_validation_text": "The final stack tip ff3ff072 passed root make check with only the exact MTTKRP-2 paper group filtered: nits, 1,167 Python tests, the ordinary Rust workspace suite (including 195 slotted proof fixtures with 2 existing exclusions), 511 paper groups, and 25 Vega tests. The actual MTTKRP-2 input then passed both encoded modes and both native nested policies separately. Native multipattern MTTKRP-2 was omitted per the requested scope; the repository ignore policy was unchanged. This is scoped final-tip validation, not an unfiltered full-suite claim for every intermediate commit. The substitution revision also passed 48 focused tests, 5 snapshots, 12 proof examples, and 24 emitted-program equivalence comparisons.",
+  "required_checks_scope": "Run root make check with only the exact MTTKRP2 paper group filtered, then run that same input with both encoded and both nested-native policies; native multipattern is outside user scope. Do not describe the scoped run as an unfiltered full-suite pass.",
+  "evidence": [
+    {
+      "path": "/tmp/slotted-mmm-implementation/validation-nested/validation.json",
+      "sha256": "sha256:6b67168ae9293cfa2e4938d3746276f80e7000fa67de2542fe036ad934cb4e52"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/validation-nested/make-check.log",
+      "sha256": "sha256:7188476ef8499cafa1ab632bac1a2c622a5dd260893533ab3b7b3bf47709371e"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/validation-nested/mttkrp2-scoped.log",
+      "sha256": "sha256:50c8679a303bdd68575786f6feaf7fcf4224bc621a8526de8135bed54acf0222"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/validation-nested/paper-binary.log",
+      "sha256": "sha256:0ff4012202e4fd7e307281cf9812a37ffaa31c874438aa23427c9883a75f6e2a"
+    },
+    {
+      "path": "/tmp/slotted-mmm-implementation/validate-nested.py",
+      "sha256": "sha256:b1705c3c9e6c2fe26c5193c0c869e394feeaddd30887ab3ff8031a1dd1533024"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/validation-summary.json",
+      "sha256": "sha256:8f69ba25c897f280ee59c46a87624075d96b428619570b84410f1e4dd416db53"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/emission-equivalence.json",
+      "sha256": "sha256:99298632e540da54ac6dd32273680442da6e3e8e27f4919d21918cce1270dcac"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/focused-tests.log",
+      "sha256": "sha256:b295be9962329bf146b1e6e74b4ebbe56dade3cfb8e09050d638da370f24e9e3"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/snapshot-tests.log",
+      "sha256": "sha256:f68af49f9786a392cbc7b73a102269744c737a752c86798a6f394ad11ea13187"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/proof-tests.log",
+      "sha256": "sha256:41f47b53f386dc380098f8fb2e2428a8f286c969f15c31ed264f701a9c48973d"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/format.log",
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/check-emission.py",
+      "sha256": "sha256:7b144432bad9b2d01096fcd9d1d8637dbba5ede185f0de6a690d4029ee28696d"
+    },
+    {
+      "path": "/tmp/slotted-mmm-nested-validation/check-emission.rs",
+      "sha256": "sha256:7c9287ad25f98f15edf523cba809ed7fbc4df844c670eea234136a0a93bc0066"
+    }
+  ],
+  "validation_run_path": "/tmp/slotted-mmm-implementation/validation-nested/validation.json"
+}

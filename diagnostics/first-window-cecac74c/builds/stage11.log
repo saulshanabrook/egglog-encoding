@@ -1,0 +1,13 @@
+   Compiling egglog-numeric-id v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/numeric-id)
+   Compiling egglog-reports v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/egglog-reports)
+   Compiling egglog-concurrency v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/concurrency)
+   Compiling egglog-union-find v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/union-find)
+   Compiling egglog-core-relations v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/core-relations)
+   Compiling egglog v2.0.0 (/tmp/slotted-mmm-bench-11/egglog)
+   Compiling egglog-ast v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/egglog-ast)
+   Compiling egglog-add-primitive v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/src/sort/add_primitive)
+   Compiling egraph-isomorphism v0.1.0 (/tmp/slotted-mmm-bench-11/egraph-isomorphism)
+   Compiling egglog-bridge v2.0.0 (/tmp/slotted-mmm-bench-11/egglog/egglog-bridge)
+   Compiling benchmark-memory v0.1.0 (/tmp/slotted-mmm-bench-11/benchmark-memory)
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-mmm-bench-11/egglog-experimental)
+    Finished `release` profile [optimized] target(s) in 3m 00s

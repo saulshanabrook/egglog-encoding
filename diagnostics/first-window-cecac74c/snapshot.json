@@ -1,0 +1,450 @@
+{
+  "window": "first-window-cecac74c",
+  "timing_closed_at": "2026-11-12T12:45:29.570252+00:00",
+  "collector_exit_code": 0,
+  "source_tip": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+  "collection_manifest_sha256": "sha256:40470c91aa008c173408429e430a65a873e990e97597ac628be2ab98694aaf55",
+  "rendering_manifest_sha256": "sha256:e385e650d28ad06652318d0a107b5c13f1921f4dc7227c3e77575bd6d282c5e3",
+  "grouped_sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f",
+  "selected_conditions": 118,
+  "selected_observations": 354,
+  "retained_observations": 354,
+  "retained_status_counts": {
+    "success": 354
+  },
+  "raw_jsonl_copied": false,
+  "files": [
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/manifest.json",
+      "frozen_path": "collection-manifest.json",
+      "sha256": "sha256:40470c91aa008c173408429e430a65a873e990e97597ac628be2ab98694aaf55",
+      "bytes": 3920
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/report-grouped.json",
+      "frozen_path": "report-grouped.json",
+      "sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f",
+      "bytes": 907789
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/protocol.txt",
+      "frozen_path": "protocol.txt",
+      "sha256": "sha256:fa9753b9570a898c7e2cdbf0324c32bd857ee988441c8fe8885f12f900a3d963",
+      "bytes": 6964
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/pr-plan.json",
+      "frozen_path": "pr-plan.json",
+      "sha256": "sha256:ee32519dd6d2f71604e5a0d6da320a084ff9a5581257676715fea162064e328b",
+      "bytes": 3532
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/toolchain.json",
+      "frozen_path": "toolchain.json",
+      "sha256": "sha256:2962defa97f4c28eca595b4c7a37bde5f827501d57d8ac1758fdc1a0f940294b",
+      "bytes": 706
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/publication-metadata.json",
+      "frozen_path": "publication-metadata.json",
+      "sha256": "sha256:5dd388aef1ad41009b7ca93c33528d113565a02fc94fd9b330eab7ec4bcfb9ba",
+      "bytes": 3484
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/collection-plan.json",
+      "frozen_path": "collection-plan.json",
+      "sha256": "sha256:3568391a8687692cbfdd9d388c708f887c23775e3326a0f8b58b164844e78122",
+      "bytes": 17541
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/collection.log",
+      "frozen_path": "collection.log",
+      "sha256": "sha256:e4bcb22001bddf186d1c1873b8ca850bd82f44769f9e9ac49627e7743ae0c0a2",
+      "bytes": 2154
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/collect.py",
+      "frozen_path": "collect.py",
+      "sha256": "sha256:5cbf0a7f6d0661f70eb07b87bc9d1758295c48b2105a66530563bdca5df9fa53",
+      "bytes": 7042
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/audit-artifacts.py",
+      "frozen_path": "audit-artifacts.py",
+      "sha256": "sha256:a8e6c30e46ba44eab09c55ab262e5978bb4b72a78f44ff27cecb0f59abd2ff72",
+      "bytes": 8644
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/stack-figures.py",
+      "frozen_path": "stack-figures.py",
+      "sha256": "sha256:be7a2d27fe54bba0c2bf3237a945d3c3ac96b7a54f10e6f977f4f8fb09480a4c",
+      "bytes": 26936
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/prepare-publication.py",
+      "frozen_path": "prepare-publication.py",
+      "sha256": "sha256:6ffd8f8f88ad86b337485ba7a341175cbb3fd6cf674ba6f6c17dff486420a9ae",
+      "bytes": 17719
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/resize-previews.py",
+      "frozen_path": "resize-previews.py",
+      "sha256": "sha256:d259270ff8a3b29bd1515748319321444c9f4f86aa2e998e109a3ca0048673af",
+      "bytes": 668
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/commit-artifacts.py",
+      "frozen_path": "commit-artifacts.py",
+      "sha256": "sha256:e372160314f2088e88d5cd4942853f12956805dac44f0e40c5ed4e645df49c90",
+      "bytes": 3581
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage07.log",
+      "frozen_path": "builds/stage07.log",
+      "sha256": "sha256:980b783a797212963d1dc75e8290638d0c59812ab8976d8ca593fbc0d7780c50",
+      "bytes": 558
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/main.ready.json",
+      "frozen_path": "builds/main.ready.json",
+      "sha256": "sha256:dce20dfbb067a1b784369aa94f08ed5143a0562304a6feb18db4297df74f4fb5",
+      "bytes": 523
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/native.ready.json",
+      "frozen_path": "builds/native.ready.json",
+      "sha256": "sha256:d5e8678dcf36907edbd0ee483ed2610ee3de574503732663caa726b5b18fac1f",
+      "bytes": 456
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage09.ready.json",
+      "frozen_path": "builds/stage09.ready.json",
+      "sha256": "sha256:5e80025114e074b8e6087872344907f88a705937c6f50d7b59ca84861d7c7ada",
+      "bytes": 524
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage08.ready.json",
+      "frozen_path": "builds/stage08.ready.json",
+      "sha256": "sha256:a5d2572797bf11fa0bdb9d0c51fd891ed8a6ad20a35756e24aeb471ee5856716",
+      "bytes": 523
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage09.log",
+      "frozen_path": "builds/stage09.log",
+      "sha256": "sha256:611d8c7659760a7d01901ff5fea1090fb9398e9a5adb890827c604466613fbd6",
+      "bytes": 1071
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/main.log",
+      "frozen_path": "builds/main.log",
+      "sha256": "sha256:3b64fa441bbf5c6929ab13c9bf533b03d3e429e9d1c93aa7516fc9fe690fed0e",
+      "bytes": 1095
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage11.log",
+      "frozen_path": "builds/stage11.log",
+      "sha256": "sha256:8e2a333573240c03e1aa4df02bd2cab83e06dfd9b4a4bd539c64833cc71b93d0",
+      "bytes": 1071
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage10.log",
+      "frozen_path": "builds/stage10.log",
+      "sha256": "sha256:8feaea2ce0d735308eadea7fdda9a37c758aca315a45f5c1cb0dd791ccd68d0b",
+      "bytes": 1071
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage10.ready.json",
+      "frozen_path": "builds/stage10.ready.json",
+      "sha256": "sha256:6a158a6c0731a81eefa5f0622b1c93fc7898632b2a045cb1935db6195127a3a6",
+      "bytes": 524
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage11.ready.json",
+      "frozen_path": "builds/stage11.ready.json",
+      "sha256": "sha256:5440858842d5e6852a6fdf155aedc9a12e37a6a39e1904792971022e53c6b8e2",
+      "bytes": 523
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage07.ready.json",
+      "frozen_path": "builds/stage07.ready.json",
+      "sha256": "sha256:a91a2642c0918fa93db3082ed88cb0a85f4ab591e61b6fc228d6de2a8c893614",
+      "bytes": 524
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/builds/stage08.log",
+      "frozen_path": "builds/stage08.log",
+      "sha256": "sha256:0693d5456a60521554064a623eff8c2048b6278d2c891f0990c92fd74227ac15",
+      "bytes": 558
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/stage09-slotted-multipattern-runtime.log",
+      "sha256": "sha256:7f5b3373af4aab8b46470be35e3fd42048f7132b80e9f58f56c8d0bb43baea5b",
+      "bytes": 2749
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-runtime.log",
+      "frozen_path": "logs/stage10-slotted-runtime.log",
+      "sha256": "sha256:5d22e1c2caa7b7e3f7508a7edf702f7ba5c7d8eb671a36ea2ebff80a59ce4871",
+      "bytes": 3679
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-runtime.log",
+      "frozen_path": "logs/stage08-slotted-runtime.log",
+      "sha256": "sha256:479cfd7067760da9bd05d978bdc97ae56874c1c873b328a95fe5fef1c7b51f75",
+      "bytes": 3677
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-runtime.md",
+      "frozen_path": "logs/stage10-slotted-runtime.md",
+      "sha256": "sha256:88a535f8c53a2954c0905a8d3c94f8fa6fcfb82ed5ee3a14fed66a90998d3407",
+      "bytes": 3407
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/stage07-slotted-multipattern-runtime.md",
+      "sha256": "sha256:27e115afd6d5ef2b433f6cf8ba10c2131efa197cfbe31bdaa6e9126d3310b043",
+      "bytes": 2879
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-runtime.md",
+      "frozen_path": "logs/stage07-slotted-runtime.md",
+      "sha256": "sha256:c29bc7998656e60131535d451e6009b42fab446f526ea07636d0c03d7cf86fd6",
+      "bytes": 3407
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-runtime-delta.md",
+      "frozen_path": "logs/stage07-slotted-runtime-delta.md",
+      "sha256": "sha256:686cea5cf7ecb1a782dda9dc92195e1edfc677cb5ddb3eea28eb70fa6f9ef486",
+      "bytes": 3344
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-runtime.md",
+      "frozen_path": "logs/stage09-slotted-runtime.md",
+      "sha256": "sha256:5eea45f08a388b2b07830aee044b13b3611fef8bc79755e17191d69f57cb44d4",
+      "bytes": 3407
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/main-slotted-runtime.log",
+      "frozen_path": "logs/main-slotted-runtime.log",
+      "sha256": "sha256:3f565b7265ab9c05d2f56ed72cbef35eeff6a4f73ed29a7782e4cbd3cfc2808f",
+      "bytes": 7005
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-runtime.log",
+      "frozen_path": "logs/stage11-slotted-runtime.log",
+      "sha256": "sha256:ea286dd98211e48edc35d0f33fab2134c397d163ebf96bc7e3b6c85026eddde8",
+      "bytes": 3680
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-runtime-delta.log",
+      "frozen_path": "logs/stage10-slotted-runtime-delta.log",
+      "sha256": "sha256:8c815402e1c60250efec5d7305a2e55af4ab8b558a1d0d1277f7defb15b46420",
+      "bytes": 291
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-runtime-delta.md",
+      "frozen_path": "logs/stage11-slotted-runtime-delta.md",
+      "sha256": "sha256:1a23b9eb23725c40d5435628153cfb77b5599fdfba925e05d7c7dbd7f89f42f5",
+      "bytes": 3367
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/stage11-slotted-multipattern-runtime.md",
+      "sha256": "sha256:e96286f115751441e906176582470625f65d83391aaffb0f095aef1ea0e8c035",
+      "bytes": 2906
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-multipattern-runtime-delta.md",
+      "frozen_path": "logs/stage11-slotted-multipattern-runtime-delta.md",
+      "sha256": "sha256:e96286f115751441e906176582470625f65d83391aaffb0f095aef1ea0e8c035",
+      "bytes": 2906
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-multipattern-runtime-delta.md",
+      "frozen_path": "logs/stage09-slotted-multipattern-runtime-delta.md",
+      "sha256": "sha256:1892c3062ab5f5bcd986909ffde7bb2eb04d38e0c63a0d17ea2676395aa078f5",
+      "bytes": 2876
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/main-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/main-slotted-multipattern-runtime.md",
+      "sha256": "sha256:8722c9d98ab5fc8b31845d3c2b87e8c3bfe1d17afc314b9c55107c24279e0bb0",
+      "bytes": 2837
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/stage11-slotted-multipattern-runtime.log",
+      "sha256": "sha256:ed2a3a5d802651a41b77ff1f24f4ef40833e185ee22de120377bce76ffe3a2f7",
+      "bytes": 2750
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-multipattern-runtime-delta.md",
+      "frozen_path": "logs/stage08-slotted-multipattern-runtime-delta.md",
+      "sha256": "sha256:3207e1bd45caf2e15aafc00e362677c04546843d530e212c38d00ce4439a159d",
+      "bytes": 2866
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-multipattern-runtime-delta.md",
+      "frozen_path": "logs/stage10-slotted-multipattern-runtime-delta.md",
+      "sha256": "sha256:469a6f0202657f412785d29bf2e6fc6aae0c15765f670b50dad0fb0a0c53a053",
+      "bytes": 2837
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/stage09-slotted-multipattern-runtime.md",
+      "sha256": "sha256:1892c3062ab5f5bcd986909ffde7bb2eb04d38e0c63a0d17ea2676395aa078f5",
+      "bytes": 2876
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/main-slotted-runtime.md",
+      "frozen_path": "logs/main-slotted-runtime.md",
+      "sha256": "sha256:51d06acd973d55f478e280e7f516a6e9a528c96038b1ba2e9a3f0c4d8b45126e",
+      "bytes": 3413
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-runtime.log",
+      "frozen_path": "logs/stage07-slotted-runtime.log",
+      "sha256": "sha256:2ad970b15255f00d14cf81af4fe859cd710f0d7ebee0fdd262d9f3adee0097b6",
+      "bytes": 3680
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-runtime.log",
+      "frozen_path": "logs/stage09-slotted-runtime.log",
+      "sha256": "sha256:39d500f44ffe08f24e13379bb9551144370ae953ac318053dc7745eb0454455c",
+      "bytes": 3679
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/stage08-slotted-multipattern-runtime.md",
+      "sha256": "sha256:3207e1bd45caf2e15aafc00e362677c04546843d530e212c38d00ce4439a159d",
+      "bytes": 2866
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/stage08-slotted-multipattern-runtime.log",
+      "sha256": "sha256:b4cc1d028eea1125c7d31ae7353acd71076aa12def0bc79b71379a519891cb16",
+      "bytes": 2748
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-multipattern-runtime-delta.md",
+      "frozen_path": "logs/stage07-slotted-multipattern-runtime-delta.md",
+      "sha256": "sha256:27e115afd6d5ef2b433f6cf8ba10c2131efa197cfbe31bdaa6e9126d3310b043",
+      "bytes": 2879
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/stage10-slotted-multipattern-runtime.log",
+      "sha256": "sha256:103cec6c21eaecd4f633a90de3bb1d9e70cd8c1ab82be60d2f9a87d9cb6937fa",
+      "bytes": 2750
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-runtime-delta.log",
+      "frozen_path": "logs/stage09-slotted-runtime-delta.log",
+      "sha256": "sha256:fda5c3a74f875666f1195dbb98556aa5a6b2a3a6d5c3490302e70a9095877810",
+      "bytes": 291
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-runtime-delta.md",
+      "frozen_path": "logs/stage10-slotted-runtime-delta.md",
+      "sha256": "sha256:5fe1d4395d427d9b9387b1a8c9a00c069fc1e7216b7315328f58b795681ab05f",
+      "bytes": 3337
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-runtime-delta.log",
+      "frozen_path": "logs/stage11-slotted-runtime-delta.log",
+      "sha256": "sha256:2301018b0f6517a6e65b655228528da5937331ee2cd4d77c811bb22134089a5e",
+      "bytes": 291
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/main-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/main-slotted-multipattern-runtime.log",
+      "sha256": "sha256:f7a6785251606c376afa325b855e13fdb12baf038661f895043b9ce1a1bd540e",
+      "bytes": 2666
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-runtime-delta.log",
+      "frozen_path": "logs/stage07-slotted-runtime-delta.log",
+      "sha256": "sha256:72342ca179ec0f346e181c89a876bd1a1d8ac513d83a7fcf730075bfdaa49c3d",
+      "bytes": 288
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage09-slotted-runtime-delta.md",
+      "frozen_path": "logs/stage09-slotted-runtime-delta.md",
+      "sha256": "sha256:12f547137b2b12f32120f1ecd8a3d90222db0de11740173a3513855d500a1a83",
+      "bytes": 3370
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-runtime.md",
+      "frozen_path": "logs/stage08-slotted-runtime.md",
+      "sha256": "sha256:86d56c9b7390f0813ece927406c1475042b1e67b2ed016e2b1cf888d547d37c8",
+      "bytes": 3407
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage11-slotted-runtime.md",
+      "frozen_path": "logs/stage11-slotted-runtime.md",
+      "sha256": "sha256:870bf8bfe04266fd23ededf7bb6d8c4c8fa2a49fa8015357e8c65f08e62e1bc3",
+      "bytes": 3406
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage10-slotted-multipattern-runtime.md",
+      "frozen_path": "logs/stage10-slotted-multipattern-runtime.md",
+      "sha256": "sha256:469a6f0202657f412785d29bf2e6fc6aae0c15765f670b50dad0fb0a0c53a053",
+      "bytes": 2837
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/collection-20261112T111213Z.json",
+      "frozen_path": "logs/collection-20261112T111213Z.json",
+      "sha256": "sha256:cc60755613825d651aec854cba9da1e984c1db17c95a50d4b5b7403707881c80",
+      "bytes": 28142
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage07-slotted-multipattern-runtime.log",
+      "frozen_path": "logs/stage07-slotted-multipattern-runtime.log",
+      "sha256": "sha256:4f4cd0d8c8c283d2270a8c9be00261eefd429afd5f36c79752275b12b5d89873",
+      "bytes": 2746
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-runtime-delta.md",
+      "frozen_path": "logs/stage08-slotted-runtime-delta.md",
+      "sha256": "sha256:0b97d7fbbd4a79588f59dc14a3548a2a149fcfe0c5ae9b88ea0d3f00a2a18d76",
+      "bytes": 3338
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/logs/stage08-slotted-runtime-delta.log",
+      "frozen_path": "logs/stage08-slotted-runtime-delta.log",
+      "sha256": "sha256:28c0829f99ceaad8dffcd8d9b04e930d07b564b71fa964e2608d950e4dad0615",
+      "bytes": 291
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/pr-stack/publication-validation.json",
+      "frozen_path": "validation/publication-validation.json",
+      "sha256": "sha256:31d6f5d866523f1e35c8fe480a0d0054ccc671e9fe10ee147ec96e0c11ee7bc9",
+      "bytes": 2126
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/validation.json",
+      "frozen_path": "validation/validation.json",
+      "sha256": "sha256:811e65f757e236b63eef4c3f648911476b45bb2ba1bcccb1353208ca9b4796c6",
+      "bytes": 1244
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/make-check.log",
+      "frozen_path": "validation/make-check.log",
+      "sha256": "sha256:2ea1aa27d2e02ddd0adf09d81fe20eaebf97357e3449771e17cd15c7a4931fae",
+      "bytes": 920548
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/mttkrp2-scoped.log",
+      "frozen_path": "validation/mttkrp2-scoped.log",
+      "sha256": "sha256:50c8679a303bdd68575786f6feaf7fcf4224bc621a8526de8135bed54acf0222",
+      "bytes": 119
+    },
+    {
+      "original_path": "/tmp/slotted-mmm-implementation/paper-binary.log",
+      "frozen_path": "validation/paper-binary.log",
+      "sha256": "sha256:13ea80776db9b3c31859dc1f1cc9b337c1842ed448c086d92a4b7ff91445f5f3",
+      "bytes": 59
+    }
+  ]
+}

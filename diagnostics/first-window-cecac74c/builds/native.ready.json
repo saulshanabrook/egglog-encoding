@@ -1,0 +1,11 @@
+{
+  "label": "native",
+  "path": "/tmp/slotted-stack-bench-00-main",
+  "git_sha": "155b6812c334bca00f91d8ecc33ac14acf873c86",
+  "elapsed_sec": 163.28697538375854,
+  "binaries": {
+    "egglog-experimental": "06725194f585d94b58ee9abbde2bc70f4a16e4748400ad76666f6a06538e06ea",
+    "slotted-reference": "b2f62fe48e17abb6dc5ef8ffbf9118cbfdfb8f8544de9bb6239608de167ef14e"
+  },
+  "reused_build_marker": "/tmp/slotted-perf-pr203/pr-stack/builds/main.ready.json"
+}

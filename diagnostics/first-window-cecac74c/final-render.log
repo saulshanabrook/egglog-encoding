@@ -1,0 +1,34 @@
+Prepared stage07-slotted-comparison
+Prepared stage08-slotted-comparison
+Prepared stage09-slotted-comparison
+Prepared stage10-slotted-comparison
+Prepared stage11-slotted-comparison
+{
+  "outputs": [
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.bound.vl.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.pdf",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.png",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.results.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.svg",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.bound.vl.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.pdf",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.png",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.results.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.svg",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.bound.vl.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.pdf",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.png",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.results.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.svg",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.bound.vl.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.pdf",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.png",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.results.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.svg",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.bound.vl.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.pdf",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.png",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.results.json",
+    "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.svg"
+  ]
+}

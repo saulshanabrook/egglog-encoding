@@ -1,0 +1,715 @@
+{
+  "candidate_binary": "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+  "candidate_binary_sha256": "d265859b7687c56587bab1a1db46b0b10d16d4eb5b92f5a279f3b142bde16cde",
+  "baseline_stage09": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+  "old_stage10": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+  "validation": "compile-only; no workload execution or performance measurements",
+  "results": [
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+      "source_sha256": "a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "6eeec3d5266d3d1d6eb5d8699aa90372429f337509564d226dcda547b27df146",
+      "candidate_emitted_sha256": "6eeec3d5266d3d1d6eb5d8699aa90372429f337509564d226dcda547b27df146",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg",
+      "source_sha256": "672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "b74f62d408328a4fb628f438ae865a05e9b91c7a79292d4d5017b69cf62b898c",
+      "candidate_emitted_sha256": "b74f62d408328a4fb628f438ae865a05e9b91c7a79292d4d5017b69cf62b898c",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+      "source_sha256": "f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "9e0af136fd7db05f4d634d5818dda2e433e142d4ba94df2e36bd6c1a4f922ce3",
+      "candidate_emitted_sha256": "9e0af136fd7db05f4d634d5818dda2e433e142d4ba94df2e36bd6c1a4f922ce3",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+      "source_sha256": "7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "37e886717ce735b84446e11e80eb51aa73ea4e1087019a2a689a4b845fa37ee1",
+      "candidate_emitted_sha256": "37e886717ce735b84446e11e80eb51aa73ea4e1087019a2a689a4b845fa37ee1",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+      "source_sha256": "918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "71a28af6fa3dabb704e07e4b3c7237f6da26d8386e64ef44484d848f9f8f5135",
+      "candidate_emitted_sha256": "71a28af6fa3dabb704e07e4b3c7237f6da26d8386e64ef44484d848f9f8f5135",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+      "source_sha256": "d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "14f1af661a33675c990455d6edb09f4198a62e435d3dec0fbbad3be7ff3a7e22",
+      "candidate_emitted_sha256": "14f1af661a33675c990455d6edb09f4198a62e435d3dec0fbbad3be7ff3a7e22",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+      "source_sha256": "78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "a3d004946b0b293916b32eaa34fc1c9cbd8aa7ae62dedebf8ce24de42e4794ca",
+      "candidate_emitted_sha256": "a3d004946b0b293916b32eaa34fc1c9cbd8aa7ae62dedebf8ce24de42e4794ca",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+      "source_sha256": "a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "e6fd38c876f59959b97f15d1b5104b194c66e3ba5e6c856a9ffe16f49e438dae",
+      "candidate_emitted_sha256": "e6fd38c876f59959b97f15d1b5104b194c66e3ba5e6c856a9ffe16f49e438dae",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+      "source_sha256": "cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "c7a5a8dfeeb28f624f675417739adcc0e3d2c0db8548c3d5496b5037923673de",
+      "candidate_emitted_sha256": "c7a5a8dfeeb28f624f675417739adcc0e3d2c0db8548c3d5496b5037923673de",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "multipattern",
+      "source": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+      "source_sha256": "dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "f9f0f9b2238f6676122f4e808bbc9320ae83f11916f5765256f661fd0edff1c6",
+      "candidate_emitted_sha256": "f9f0f9b2238f6676122f4e808bbc9320ae83f11916f5765256f661fd0edff1c6",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+      "source_sha256": "a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "d1d873f481e7f51cd301cda5a8d3722cd77c7a0c847e6601b7b0da3ac733e98e",
+      "candidate_emitted_sha256": "d1d873f481e7f51cd301cda5a8d3722cd77c7a0c847e6601b7b0da3ac733e98e",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg",
+      "source_sha256": "672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "5063436274eab84f4552766cf88bab20aa6ed153c5ae58cc2d30c798528c2307",
+      "candidate_emitted_sha256": "5063436274eab84f4552766cf88bab20aa6ed153c5ae58cc2d30c798528c2307",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+      "source_sha256": "f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "4fa69b61ab7529876b034c857dd20446ddd49ca2ebb9b5d1741579d370a698ef",
+      "candidate_emitted_sha256": "4fa69b61ab7529876b034c857dd20446ddd49ca2ebb9b5d1741579d370a698ef",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+      "source_sha256": "7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "a681980c2d192d45887641250b2b1fc06cc2c094a86397a045977b7d82dcf840",
+      "candidate_emitted_sha256": "a681980c2d192d45887641250b2b1fc06cc2c094a86397a045977b7d82dcf840",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+      "source_sha256": "918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "a848890e1b57554a615f9c80fe793f88c83fa4bf80884fff5f8694e1526fd32d",
+      "candidate_emitted_sha256": "a848890e1b57554a615f9c80fe793f88c83fa4bf80884fff5f8694e1526fd32d",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+      "source_sha256": "d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "847b238807aff23d040e92290e2023d84cc441d4933a330831bd3c1bdaff663a",
+      "candidate_emitted_sha256": "847b238807aff23d040e92290e2023d84cc441d4933a330831bd3c1bdaff663a",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+      "source_sha256": "78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "ecd6f5881d21c64d2fe93dcc20864070bdb8c7dfcc105ddbc4b192e0448e2419",
+      "candidate_emitted_sha256": "ecd6f5881d21c64d2fe93dcc20864070bdb8c7dfcc105ddbc4b192e0448e2419",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+      "source_sha256": "a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "afdf4abb00141988a753673a88c6116068389168af8198f5353a95facc336a90",
+      "candidate_emitted_sha256": "afdf4abb00141988a753673a88c6116068389168af8198f5353a95facc336a90",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+      "source_sha256": "cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "eb590502f1bad207ca78eaab2d9dee26681b61bb2efca715fbeed4be6485f7ee",
+      "candidate_emitted_sha256": "eb590502f1bad207ca78eaab2d9dee26681b61bb2efca715fbeed4be6485f7ee",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "nested",
+      "source": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+      "source_sha256": "dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+      "baseline_binary": "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+      "baseline_binary_sha256": "668877f2dada0be17fd8a41457e5f1c314e8b03b76c0b4d79987f9318007fc7a",
+      "baseline_emitted_sha256": "d830e5da598f206cc0b456c3229e91c87820f4ffab13c45d22f23eb9f0afb57d",
+      "candidate_emitted_sha256": "d830e5da598f206cc0b456c3229e91c87820f4ffab13c45d22f23eb9f0afb57d",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 999,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-10/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-nested-substitution/benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "proof-check-multipattern",
+      "source": "/tmp/slotted-mmm-production/mixed-round-snapshot.egg",
+      "source_sha256": "ed75e4e8bd9c14f59a6d25d94fd3ae61e85b378891054ee26a8e25d527f4c847",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "454d318826661321bcf6f14a92e07db51b189518cf39532b2c8d8aa579c499fc",
+      "candidate_emitted_sha256": "454d318826661321bcf6f14a92e07db51b189518cf39532b2c8d8aa579c499fc",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 663,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-proof-checks",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-proof-checks",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "proof-check-nested",
+      "source": "/tmp/slotted-mmm-production/mixed-round-snapshot.egg",
+      "source_sha256": "ed75e4e8bd9c14f59a6d25d94fd3ae61e85b378891054ee26a8e25d527f4c847",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "0955057c5bbd0ed17073a1f4a0d722b60cd696afab4c98c54a9c0e509f917113",
+      "candidate_emitted_sha256": "0955057c5bbd0ed17073a1f4a0d722b60cd696afab4c98c54a9c0e509f917113",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 663,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-proof-checks",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--slotted-proof-checks",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "proof-prove-multipattern",
+      "source": "/tmp/slotted-mmm-production/mixed-round-snapshot.egg",
+      "source_sha256": "ed75e4e8bd9c14f59a6d25d94fd3ae61e85b378891054ee26a8e25d527f4c847",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "eb027f6eb2e522d330dbd7f927be1b9b31be52715eaed17b796c491ed5abe866",
+      "candidate_emitted_sha256": "eb027f6eb2e522d330dbd7f927be1b9b31be52715eaed17b796c491ed5abe866",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 668,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--proofs",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--proofs",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ]
+      ]
+    },
+    {
+      "mode": "proof-prove-nested",
+      "source": "/tmp/slotted-mmm-production/mixed-round-snapshot.egg",
+      "source_sha256": "ed75e4e8bd9c14f59a6d25d94fd3ae61e85b378891054ee26a8e25d527f4c847",
+      "baseline_binary": "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+      "baseline_binary_sha256": "00e6a3029bac4f3f0c9523f988a850ce9a5b8a86434706ae9e2cf536ad2dece1",
+      "baseline_emitted_sha256": "bfc7d951431a67b78e64f9b976d56da47b06686d5f86f5294df3a26907345226",
+      "candidate_emitted_sha256": "bfc7d951431a67b78e64f9b976d56da47b06686d5f86f5294df3a26907345226",
+      "emitted_bytes_identical": true,
+      "parsed_canonical_commands_identical": true,
+      "command_count": 668,
+      "commands": [
+        [
+          "/tmp/slotted-mmm-bench-09/target/release/egglog-experimental",
+          "--slotted",
+          "--proofs",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ],
+        [
+          "/tmp/slotted-mmm-nested-substitution/target/release/egglog-experimental",
+          "--slotted",
+          "--proofs",
+          "--slotted-no-aliasing",
+          "--mode",
+          "desugar",
+          "/tmp/slotted-mmm-production/mixed-round-snapshot.egg"
+        ]
+      ]
+    }
+  ],
+  "candidate_commit": "33c4a35dfbe041b9e635ad0bcc9b6fd988299646",
+  "candidate_tree": "a845aa8c2ac1111af9e10ad9f500224994e411db"
+}

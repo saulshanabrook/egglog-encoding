@@ -1,0 +1,7 @@
+   Compiling egglog-concurrency v2.0.0 (/tmp/slotted-mmm-bench-07/egglog/concurrency)
+   Compiling egglog-union-find v2.0.0 (/tmp/slotted-mmm-bench-07/egglog/union-find)
+   Compiling egglog-core-relations v2.0.0 (/tmp/slotted-mmm-bench-07/egglog/core-relations)
+   Compiling egglog-bridge v2.0.0 (/tmp/slotted-mmm-bench-07/egglog/egglog-bridge)
+   Compiling egglog v2.0.0 (/tmp/slotted-mmm-bench-07/egglog)
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-mmm-bench-07/egglog-experimental)
+    Finished `release` profile [optimized] target(s) in 2m 31s

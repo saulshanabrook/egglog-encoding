@@ -1,0 +1,38 @@
+{
+  "source_sha": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+  "excluded_configuration": "native multipattern MTTKRP second phase, per user",
+  "make_filter": "--skip paper/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+  "checks": [
+    {
+      "name": "make-check",
+      "source_sha": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+      "command": [
+        "taskset",
+        "-c",
+        "16-19",
+        "make",
+        "check"
+      ],
+      "exit_code": 0,
+      "elapsed_sec": 11094.587855703896,
+      "log": "/tmp/slotted-mmm-implementation/validation-nested/make-check.log"
+    },
+    {
+      "name": "mttkrp2-scoped",
+      "source_sha": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+      "command": [
+        "taskset",
+        "-c",
+        "16-19",
+        "/home/oflatt/work/egglog-encoding3/target/debug/deps/paper-7a8cdb3ce5a4e217",
+        "--memory-limit-bytes=17179869184",
+        "--paper-child",
+        "/home/oflatt/work/egglog-encoding3/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+        "slotted,slotted-no-aliasing,slotted-ref-nested,slotted-ref-nested-snapshot"
+      ],
+      "exit_code": 0,
+      "elapsed_sec": 126.03656937996857,
+      "log": "/tmp/slotted-mmm-implementation/validation-nested/mttkrp2-scoped.log"
+    }
+  ]
+}

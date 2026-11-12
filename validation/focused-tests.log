@@ -1,0 +1,97 @@
+   Compiling egglog-numeric-id v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/numeric-id)
+   Compiling egglog-reports v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/egglog-reports)
+   Compiling egglog-concurrency v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/concurrency)
+   Compiling egglog-union-find v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/union-find)
+   Compiling egglog-core-relations v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/core-relations)
+   Compiling egglog v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog)
+   Compiling egglog-ast v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/egglog-ast)
+   Compiling egglog-add-primitive v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/src/sort/add_primitive)
+   Compiling egraph-isomorphism v0.1.0 (/tmp/slotted-mmm-nested-substitution/egraph-isomorphism)
+   Compiling egglog-bridge v2.0.0 (/tmp/slotted-mmm-nested-substitution/egglog/egglog-bridge)
+   Compiling benchmark-memory v0.1.0 (/tmp/slotted-mmm-nested-substitution/benchmark-memory)
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-mmm-nested-substitution/egglog-experimental)
+    Finished `release` profile [optimized] target(s) in 2m 37s
+     Running tests/api_slotted_subst.rs (target/release/deps/api_slotted_subst-9cc1f262e23f2ae2)
+
+running 24 tests
+test a_class_with_no_finite_term_declines ... ok
+test a_container_payload_is_rejected ... ok
+test a_cyclic_class_uses_its_grounded_enode ... ok
+test a_naive_rule_performs_a_beta_step ... ok
+test a_payload_column_is_copied_through ... ok
+test a_reachable_constructor_without_layout_is_rejected ... ok
+test a_redundant_node_slot_survives_the_frame_change ... ok
+test a_slot_that_does_not_occur_is_a_no_op ... ok
+test accepts_an_explicit_free_vars_table ... ok
+test exact_tree_cost_excludes_cycles_above_machine_sizes ... ok
+test rejects_an_invalid_explicit_free_vars_table ... ok
+test rigid_binders_refresh_without_capturing_replacement_slots ... ok
+test rigid_slot_fields_require_exactly_the_singleton_domain ... ok
+test shared_closed_terms_do_not_reserve_expanded_private_slot_ranges ... ok
+test slotted_subst_frame_places_the_result_in_the_bodys_frame ... ok
+test substitutes_a_nested_occurrence ... ok
+test substitutes_an_occurring_slot ... ok
+test substitution_accepts_noncanonical_variable_occurrences ... ok
+test substitution_after_clone_uses_its_own_database ... ok
+test substitution_after_pop_uses_restored_database ... ok
+test substitution_memo_observes_result_shrink_without_changing_variable_frames ... ok
+test substitution_memo_reuses_invocations_after_physical_rows_move ... ok
+test substitution_memo_tracks_representatives_and_rolls_back ... ok
+test substitution_observes_free_vars_without_constructor_changes ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/slotted_frontend.rs (target/release/deps/slotted_frontend-f79ffeaf72bb3aab)
+
+running 3 tests
+test accepted_source_forms ... ok
+test refused_source_forms_have_diagnostics ... ok
+test repeated_compilation_preserves_scopes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests/slotted_maintenance.rs (target/release/deps/slotted_maintenance-3a9da41433c8b6d1)
+
+running 5 tests
+test child_unions_preserve_fresh_shapes_and_cosets ... ok
+test exporting_does_not_run_another_user_round ... ok
+test leader_reversals_preserve_identities_and_symmetries ... ok
+test shape_collisions_keep_the_selected_class_and_renaming_together ... ok
+test substitution_is_independent_of_table_order ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.24s
+
+     Running tests/slotted_queries.rs (target/release/deps/slotted_queries-e28ec0f465c0f7c3)
+
+running 9 tests
+test a_guard_excludes_capture_of_a_concrete_global ... ok
+test checks_do_not_insert_terms_or_run_user_rules ... ok
+test checks_use_the_selected_aliasing_policy ... ok
+test disequality_is_an_existential_guard ... ok
+test global_bindings_respect_symmetries_and_redundant_slots ... ok
+test globals_follow_leaders_in_checks_and_rewrites ... ok
+test guards_share_the_patterns_slot_assignment ... ok
+test maintenance_is_automatic_without_applying_user_rewrites ... ok
+test slots_are_local_to_each_check_and_globals_are_concrete ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/slotted_queues.rs (target/release/deps/slotted_queues-5f82c474c787961c)
+
+running 3 tests
+test identical_schemas_keep_each_rules_matches_separate ... ok
+test payload_and_carrier_sorts_distinguish_queues ... ok
+test queues_survive_incremental_inputs_and_restore_with_scopes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/slotted_substitution_phases.rs (target/release/deps/slotted_substitution_phases-369bba9cd82453fe)
+
+running 4 tests
+test extraction_changes_are_revisited_without_new_let_rows_and_follow_scopes ... ok
+test global_rules_preserve_the_round_snapshot_in_either_order ... ok
+test nested_substitution_stops_after_saturation ... ok
+test substitution_can_match_only_global_terms ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+

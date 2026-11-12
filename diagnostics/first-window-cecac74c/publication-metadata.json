@@ -1,0 +1,104 @@
+{
+  "publication_status": "awaiting validation, measurement release, collection, and artifact audit",
+  "layers": [
+    {
+      "label": "stage07",
+      "branch": "perf/slotted-07-empty-queries",
+      "git_sha": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "base_branch": "main",
+      "base_git_sha": "37b148e741755823f37ec29570b12f474821c278",
+      "title": "1. Skip per-round assembly for empty-table queries",
+      "artifact_stem": "stage07-slotted-comparison",
+      "formats": [
+        "png",
+        "svg",
+        "pdf",
+        "bound.vl.json",
+        "results.json"
+      ]
+    },
+    {
+      "label": "stage08",
+      "branch": "perf/slotted-08-match-queues",
+      "git_sha": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "base_branch": "perf/slotted-07-empty-queries",
+      "base_git_sha": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "title": "2. Share slotted match queues by schema",
+      "artifact_stem": "stage08-slotted-comparison",
+      "formats": [
+        "png",
+        "svg",
+        "pdf",
+        "bound.vl.json",
+        "results.json"
+      ]
+    },
+    {
+      "label": "stage09",
+      "branch": "perf/slotted-09-generated-code",
+      "git_sha": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "base_branch": "perf/slotted-08-match-queues",
+      "base_git_sha": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "title": "3. Emit generated code without redundant parsing",
+      "artifact_stem": "stage09-slotted-comparison",
+      "formats": [
+        "png",
+        "svg",
+        "pdf",
+        "bound.vl.json",
+        "results.json"
+      ]
+    },
+    {
+      "label": "stage10",
+      "branch": "perf/slotted-10-substitution-convergence",
+      "git_sha": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+      "base_branch": "perf/slotted-09-generated-code",
+      "base_git_sha": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "title": "4. Let slotted substitution rounds converge",
+      "artifact_stem": "stage10-slotted-comparison",
+      "formats": [
+        "png",
+        "svg",
+        "pdf",
+        "bound.vl.json",
+        "results.json"
+      ]
+    },
+    {
+      "label": "stage11",
+      "branch": "perf/slotted-11-core-lowering",
+      "git_sha": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+      "base_branch": "perf/slotted-10-substitution-convergence",
+      "base_git_sha": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+      "title": "5. Skip unused correspondence reconstruction during lowering",
+      "artifact_stem": "stage11-slotted-comparison",
+      "formats": [
+        "png",
+        "svg",
+        "pdf",
+        "bound.vl.json",
+        "results.json"
+      ]
+    }
+  ],
+  "baseline": {
+    "label": "main",
+    "source": "/tmp/slotted-mmm-bench-main",
+    "git_sha": "37b148e741755823f37ec29570b12f474821c278",
+    "branch": "main",
+    "title": "Main baseline (includes merged PR218)"
+  },
+  "native": {
+    "label": "native",
+    "source": "/tmp/slotted-stack-bench-00-main",
+    "git_sha": "155b6812c334bca00f91d8ecc33ac14acf873c86"
+  },
+  "cumulative_results": "cumulative-results.json",
+  "protocol": "protocol.txt",
+  "manifest": "manifest.json",
+  "expected_conditions": 118,
+  "expected_selected_observations": 354,
+  "mmm_focus_results": "mmm-focus-results.json",
+  "measurement_window": "After all implementation, builds, and validation finish; no concurrent builds, tests, graph rendering, or other heavy task work during collection. Lightweight progress monitoring is allowed."
+}

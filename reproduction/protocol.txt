@@ -1,0 +1,160 @@
+PR comparison pilot protocol — two collection windows; both timing windows closed
+
+The baseline is main commit 37b148e741755823f37ec29570b12f474821c278,
+including merged PR218. The closed direct-integer-slot experiment PR219 is
+absent from this baseline and every new stage. Five cumulative stages follow:
+07 empty-table query preparation, 08 shared match queues, 09 generated-code
+emission without redundant parsing, 10 nested substitution convergence, and 11
+omission of unused correspondence reconstruction during core lowering.
+Stage 11 does not claim complete inferred-core reuse or introduce a global cache.
+Both timing windows are closed. Final revised stage10/11 source SHAs are
+bound below. Final validation and prepared builds passed before explicit release
+of the second window; collection completed with all requested samples.
+
+Collection uses only the public ./bench.py entrypoint from the clean, fixed
+/tmp/slotted-mmm-bench-main checkout at the baseline SHA. Explicit source paths
+identify each cumulative stage; moving refs are never benchmark selectors.
+The native reference remains the fixed /tmp/slotted-stack-bench-00-main checkout
+at 155b6812c334bca00f91d8ecc33ac14acf873c86. Its freshly measured nested
+observations are reused across all five comparisons through public cache labels.
+
+All workload processes are pinned to CPU 22, with three observations per
+condition, a 500-second watchdog, and a 16 GiB allocator/address-space cap
+specified by --memory-limit-gib 16. This is a capped PR comparison pilot, not
+final paper collection. The shared runner owns whole-process wall time and
+peak RSS; RSS is measured independently of the cap. The report started fresh outside the repository for window 1. Window 2 uses
+the same tool-owned cache to reuse compatible, unchanged observations; no
+measurements from earlier campaigns are imported.
+
+Each window begins only after its implementation, prebuilds, and validation
+finish and the root agent releases that collection window. All prepared source
+and binary hashes are checked before the first launch. Prebuilds use CPUs 30–31
+and two Cargo jobs; they do not overlap timing. Collection runs serially. Window 1 measured main, then 07, 08, 09, original
+10 and 11. Window 2 measures revised 10 and 11; nested precedes multipattern
+within each stage.
+Concurrent builds, tests, graph rendering, and other heavy task work are
+excluded during both timed collection windows. Lightweight progress monitoring is allowed.
+The host remains shared rather than exclusively reserved. Three-sample pilot
+intervals do not account for every possible host or temporal effect, including
+drift between the two windows.
+
+The first window completed unchanged and closed at
+2026-11-12T12:45:29.570252+00:00, with 354 successful selected observations and
+no retries or exclusions. Original stage10 full-query substitution improved
+nested startup but regressed encoded multipattern, including TTM 2nd at about
+5.82 times the parent runtime. Root therefore requested a matcher-aware
+revision of stages 10/11 before publication. This is a source change followed
+by a separate collection window, not a favorable rerun of the same binary.
+
+The original source is preserved as perf/slotted-full-query-diagnostic at
+cecac74c2a2a4fcdc9400b3e6fadf560b51aed89. Complete original evidence is frozen
+under history/first-window-cecac74c and published under
+diagnostics/first-window-cecac74c. Its collection-manifest.json preserves the
+original binding byte for byte; manifest.json is a separately hashed derived
+rendering binding. snapshot.json records original absolute paths and hashes,
+and artifact-files.json checksums the complete diagnostic publication bundle.
+The public grouped export, all five plots, cumulative/focus results, visual/font
+audit, and exact original validation logs remain accessible. Raw JSONL was not
+manually read, edited, or copied.
+
+Window 2 reuses 246 observations from unchanged main/native/stages 07–09 and
+collects 108 observations for revised stages 10/11. Binary/input/treatment cache
+identities and all resource settings remain unchanged for reused conditions.
+The final selection remains 354 observations; the final grouped export should
+retain 462 observations, including 108 historical original-stage10/11 rows.
+The audit checks that every original row remains byte-equivalent as decoded
+public grouped data, identifies reused/fresh selected row indices, and verifies
+that revised stages select only the new-window observations. Cross-window
+comparison provenance is explicit; no statistical adjustment for host drift is
+claimed. Revised source hashes, matching build markers, and validation were verified
+before release. The second window closed at 2026-11-12T16:32:26.004594+00:00
+with collector exit 0 and all 108 fresh observations successful. Its original
+collection-manifest.json and closure snapshot.json are published under
+reproduction/second-window; the final rendering manifest separately records
+the closed-window metadata. All 462 retained observations succeeded.
+
+The revised stage10 uses direct substitution only for the existing ordinary
+nested matcher setting. Multipattern keeps queued refinements to avoid repeated
+large joins; proof lowering remains unchanged. Emission checks cover all ten
+actual SDQL inputs: multipattern matches stage09 byte for byte, nested matches
+original stage10 byte for byte, and the four proof-mode/matcher combinations
+retain their prior commands. Focused evidence is recorded under
+/tmp/slotted-mmm-nested-validation; final-tip validation is separate under
+/tmp/slotted-mmm-implementation/validation-nested. Stage11 replays the unchanged
+core-lowering patch on this revised parent. Earlier measurements, including
+the observed stage09 multipattern regression, remain in the final selection.
+
+Scope follows the unchanged paper catalog: all ten nested SDQL workloads with
+slotted-no-aliasing versus slotted-ref-nested, plus parent-to-child comparisons
+of those ten workloads and the eight multipattern slotted workloads. The
+catalog omits BATAX 2nd and MTTKRP 2nd from its multipattern figure.
+Native multipattern comparison is omitted at the user's explicit request.
+This is scope selection, not a benchmark ignore rule; no exclusions change.
+Expected coverage is 118 conditions / 354 selected observations:
+six encoded stages × (10 nested + 8 multipattern), plus 10 native nested.
+
+Baseline multipattern collection is seeded through a public comparison against
+its already-cached nested treatment; this seeding pair is not an optimization
+comparison. Later multipattern collection compares each stage with its cached
+parent. Nested parent-to-child reports are generated through cache-only target
+labels after both endpoints have complete selected coverage. Neither these
+delta reports nor rendering triggers additional timed launches.
+
+The collector checks clean source commits and prepared binary hashes, then
+verifies measured hashes and selected provenance in the public grouped export.
+CLI plans, collection environment, build logs, and Markdown reports are retained.
+Only ./bench.py reads and writes raw report.jsonl. The plotter reads the public
+grouped export using the repository codec, newest-N selector, frozen exclusions,
+arithmetic means, and independent Fieller 95% intervals. Selected failures or
+incomplete conditions block publication; no favorable reruns or exclusions are
+introduced. Any retry follows the repository's normal cache policy and requires
+an explicitly documented protocol decision.
+
+Each PR receives PNG, SVG, PDF, bound Vega-Lite, and results JSON. The three
+panels show parent and child against native nested Slotted, nested child/parent,
+and multipattern child/parent. Runtime ratios below 1 indicate less runtime.
+The top panel sorts ascending by the child's native ratio and uses a symlog
+scale; lower panels show linear close-ups. A 1× guide marks equal runtime.
+Unbounded intervals remain explicitly labeled; intervals crossing 1 do not
+establish a directional gain. Selected row indices, source/binary/physical
+input hashes, guards, wall/RSS observations, and exclusions are retained.
+
+All final bundles and the main-to-stage11 cumulative-results.json export use
+one final grouped snapshot. Its exact captured-byte SHA is recorded, avoiding
+a race with later export writes. Cumulative suite and per-workload changes use
+the same shared comparison implementation and do not require new measurements.
+Each actual PNG is inspected near 800 pixels wide; PDF font embedding is checked.
+
+Rendering uses Node 22.14.0, Vega 6.4.0, Vega-Lite 6.4.3, Vega CLI 6.4.0, and
+Canvas 3.2.3. Requested bundles replace their destinations only after all
+requested conditions and formats succeed. Publication is handled by root.
+
+Commands (run with the existing repository .venv/bin/python):
+  collect.py --manifest manifest.template.json
+      Print the draft exact plan without builds, cache reads, or measurements.
+  collect.py --only stage10 --only stage11 --run
+      After revised source binding and root release, verify all prepared builds
+      and collect serially through ./bench.py, reusing unchanged cached rows.
+  stack-figures.py render
+      Render all five complete comparisons from the public grouped export.
+  stack-figures.py cumulative
+      Export main-to-stage11 suite and per-workload changes beside the manifest,
+      plus mmm-focus-results.json with four nested ΣMMM/MMM rows, mean milliseconds,
+      candidate/baseline ratios and intervals, and their selected observations.
+  audit-artifacts.py --prepare-previews
+      Recheck all selected conditions against the final public grouped export,
+      verify PDF fonts, and resize the actual PNGs to 800 pixels using Pillow
+      11.3.0. Write a pending audit; this does not claim visual inspection.
+  audit-artifacts.py --inspected stage07 --inspected stage08 --inspected stage09
+      --inspected stage10 --inspected stage11
+      Only after actually viewing every current preview, record the completed
+      visual audit and recheck all bundle/source/snapshot hashes.
+
+Bound source revisions:
+  main: 37b148e741755823f37ec29570b12f474821c278
+  stage07: b5a6dcde472117c3a77458ccdaaffe01412be660
+  stage08: bfa0d2f76d7006c24a53bb3c14831e9f049d2f53
+  stage09: bf13e3ac9d6c548244e3ac937eb4a13b62c3e142
+  stage10: 33c4a35dfbe041b9e635ad0bcc9b6fd988299646
+  stage11: ff3ff0721ffb429eeb184699eb760ae09ade3bda
+  native: 155b6812c334bca00f91d8ecc33ac14acf873c86

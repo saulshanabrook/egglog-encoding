@@ -1,0 +1,488 @@
+{
+  "validated_at": "2026-11-12T12:51:37.974024+00:00",
+  "grouped_sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f",
+  "manifest_sha256": "sha256:e385e650d28ad06652318d0a107b5c13f1921f4dc7227c3e77575bd6d282c5e3",
+  "script_sha256": "sha256:be7a2d27fe54bba0c2bf3237a945d3c3ac96b7a54f10e6f977f4f8fb09480a4c",
+  "selected_conditions": 118,
+  "selected_observations": 354,
+  "selected_status": "all success",
+  "retained_observations": 354,
+  "retained_status_counts": {
+    "success": 354
+  },
+  "stages": [
+    {
+      "label": "stage07",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.png",
+          "sha256": "sha256:59ae0358b3cf76e3fbd914bd455eaea1ad4b15e19b4f2b34c10010482d70acf1"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.svg",
+          "sha256": "sha256:83eb8bb96b2ecffaf90b154aacc2807d63208c2b243e469d890c92968501c7a7"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.pdf",
+          "sha256": "sha256:5150eb8619e1843ff621e32532d1f96f3337a0a903b6c547675ce2faaea81f2f"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:de7da858c7f93d32b8e4a47aa78df21c5d93b2321836c14858753d1abd794eb8"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage07-slotted-comparison.results.json",
+          "sha256": "sha256:440144d30deb20d097f4ed3a5729f21e8aa4411e7e5eb6e70ed1adb71eed8eae"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:f0817af2aebc27d6acb239e4141e81481c77791f2edca4a3f60f27240f25683a",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/previews/stage07-800.png",
+      "preview_sha256": "sha256:b76042435515ff85ea4470bb79c57135cdc6d530b73ab37601d0322b169c1826",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0186951437132776,
+            "ci_low": 0.980040547656909,
+            "ci_high": 1.0592380316882388
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9706589800266336,
+              "ci_low": 0.959892408567171,
+              "ci_high": 0.9814376404661826,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 0.8912744191446729,
+              "ci_low": 0.8667896367595097,
+              "ci_high": 0.9170895481768154,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9378652753946278,
+              "ci_low": 0.9158839385042703,
+              "ci_high": 0.9607926797051156,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 0.9926386693810604,
+            "ci_low": 0.9397377857543504,
+            "ci_high": 1.0468059402642356
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.979868706728697,
+              "ci_low": 0.9612110109723345,
+              "ci_high": 0.9990779022040707,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9611070029954133,
+              "ci_low": 0.931362165330887,
+              "ci_high": 0.9926144698328154,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9808376032931301,
+              "ci_low": 0.9651079685378036,
+              "ci_high": 0.9969717105839012,
+              "result_class": "lower"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage08",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.png",
+          "sha256": "sha256:3c2521ff2920960125c78f4214a9fa832529c98aa7911a7cfff3abb6847372fa"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.svg",
+          "sha256": "sha256:28e44f335cfc8c2c8707c196ad2021289c64cb5dca3643e2a187ad2e3223be45"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.pdf",
+          "sha256": "sha256:1d076da159cdf479f03207e86fea79ff825fdacf0436624da1206d5b0cae473c"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:2482389c531cbaf311fee4e8fc7f7e5f2a7819773522fd54bc34732aa179248f"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage08-slotted-comparison.results.json",
+          "sha256": "sha256:f510fa4ef8985a183038a7391f6c654fd9e1dff9d08164a112b317f330be8ddd"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:ab9adcc42790725fb09c5fae6968028de2d58ffb4caf405cbcb42982eaa9d876",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/previews/stage08-800.png",
+      "preview_sha256": "sha256:cc73618cff4a949556680e5a09041ae481889cf3cee1c3e0485a3f64884d77da",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0046903146756179,
+            "ci_low": 0.9637452285763144,
+            "ci_high": 1.0468071831728427
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9804587583876349,
+              "ci_low": 0.9687814755999629,
+              "ci_high": 0.9923653839290583,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 1.0281096030921377,
+              "ci_low": 1.001778227280549,
+              "ci_high": 1.0545424439155069,
+              "result_class": "higher"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 0.9771161630504064,
+            "ci_low": 0.932218491086012,
+            "ci_high": 1.0264577150070577
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.96574179183215,
+              "ci_low": 0.9398894905842254,
+              "ci_high": 0.9917714894786605,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 1.0122157809600807,
+              "ci_low": 1.002846592464113,
+              "ci_high": 1.0217015784033945,
+              "result_class": "higher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage09",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.png",
+          "sha256": "sha256:055abfa19f0c75db9181c0aa8417180aa63d6e8bb6e11ce44e1b2b15a4ce1ed1"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.svg",
+          "sha256": "sha256:0075a4bb9da4a26560e9b01ef9cfbb23bc18ef5c2f84bf5f8cfcd88b4f7f2660"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.pdf",
+          "sha256": "sha256:172c92438f0bf353a49c421c4698edb1aa78340e065208769f0cffd14d869c2d"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:f55de0253532807a01e6e1a82657e474becc23c8e9960fd79865e6b101411db7"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage09-slotted-comparison.results.json",
+          "sha256": "sha256:30650d64a9c6188e433b8113a7e0e953b7170f5f47e4a9b21e1aaead9a0d7cab"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:a0f0297fd91515ec5112044cdf5eb14e7fcb8f47a8b760fc7f74161c22fa25a2",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/previews/stage09-800.png",
+      "preview_sha256": "sha256:f7ca2afddcafb55eab4d6c2461a6279facc11b3b16d46f222458c765040b33ff",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.013200396466718,
+            "ci_low": 0.9609626432062492,
+            "ci_high": 1.0677196126500144
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9570784665840539,
+              "ci_low": 0.9322423753507335,
+              "ci_high": 0.9819675323937508,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.0235675898161458,
+            "ci_low": 1.0111114716090748,
+            "ci_high": 1.0361183270487764
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+              "ratio": 1.028047745905035,
+              "ci_low": 1.0137048082870177,
+              "ci_high": 1.0424799704212948,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9628333856191287,
+              "ci_low": 0.9519007641479185,
+              "ci_high": 0.9738989468548149,
+              "result_class": "lower"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage10",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.png",
+          "sha256": "sha256:4eb887db3ad964b751eb9e1e992f49d71caac17abe9f03d63853f071644064ec"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.svg",
+          "sha256": "sha256:c520c7ced9ffddc0409484fe897408c06cea79a4857c53d9591a74a1155e747f"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.pdf",
+          "sha256": "sha256:41599ce647a6b59fa59f7a8424ccc83bd8362ed6b33cbbc15e6b43a314dd3395"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:753f21e2cd2689d55ab3cb5903a901d66e618389b0209b706df1965b99c6b733"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage10-slotted-comparison.results.json",
+          "sha256": "sha256:69e46c2a276eee2c3d20fb07f986b0c50d8ea98c9d945ed5249ba18274c12d96"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:fbc3b2115f4dd65f6b9794c7a4c244316d4c3f74b4c28ec2ffad466aa782e5f6",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/previews/stage10-800.png",
+      "preview_sha256": "sha256:5b7e1d466b4b6a585449e856d5c7b332542234a6772c0da6649383d8d689885c",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 0.9947049027604415,
+            "ci_low": 0.9416372174889414,
+            "ci_high": 1.0510535785900312
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 0.9138050804024404,
+              "ci_low": 0.8938031847492682,
+              "ci_high": 0.934540489874591,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+              "ratio": 0.9620856142690293,
+              "ci_low": 0.9402107301822936,
+              "ci_high": 0.9844281981244726,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9449293572829817,
+              "ci_low": 0.9195423516713855,
+              "ci_high": 0.9715401592159535,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+              "ratio": 0.9527611490478515,
+              "ci_low": 0.9207411229510843,
+              "ci_high": 0.9857941081857345,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 0.9127614121150601,
+              "ci_low": 0.8863623379350576,
+              "ci_high": 0.9407451411390508,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 0.9237113422294322,
+              "ci_low": 0.8936031264421626,
+              "ci_high": 0.9552435867195331,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.7994687404095318,
+            "ci_low": 1.776307004319315,
+            "ci_high": 1.823001177285687
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+              "ratio": 1.1914458630488896,
+              "ci_low": 1.1718057669216464,
+              "ci_high": 1.2114492327692423,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+              "ratio": 1.0987793653189772,
+              "ci_low": 1.0773839967961065,
+              "ci_high": 1.1203948687859284,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+              "ratio": 3.3520587609186974,
+              "ci_low": 3.1661274717790207,
+              "ci_high": 3.5435407453518053,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+              "ratio": 0.9483658463615063,
+              "ci_low": 0.931162599207869,
+              "ci_high": 0.9656856653375493,
+              "result_class": "lower"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+              "ratio": 2.4011277548732277,
+              "ci_low": 2.3657835575226964,
+              "ci_high": 2.4365381595664126,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 1.1627444410979266,
+              "ci_low": 1.1041905247779402,
+              "ci_high": 1.2213242443290837,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+              "ratio": 1.2221481367470828,
+              "ci_low": 1.1842816403104797,
+              "ci_high": 1.2615215899019967,
+              "result_class": "higher"
+            },
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+              "ratio": 5.819928713926364,
+              "ci_low": 5.782265300756894,
+              "ci_high": 5.857757886849514,
+              "result_class": "higher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "stage11",
+      "files": {
+        "png": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.png",
+          "sha256": "sha256:13d7332aa2a5605dbee2c19617253a323d2601b3f3c5864b45de62c0809bfbc6"
+        },
+        "svg": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.svg",
+          "sha256": "sha256:ac6e7c144da25cd3fe8465d753ccc6bac343f24123ad19b12713004df6e85e20"
+        },
+        "pdf": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.pdf",
+          "sha256": "sha256:a235f0baad639a319ac0cb7e281c1961573ee278d611c7b815b7d7d4b4cabebc"
+        },
+        "bound.vl.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.bound.vl.json",
+          "sha256": "sha256:7b6e7838217bee5eaa2478375ac9ddcedf22f0a4b3f181c78ebe50f57168b803"
+        },
+        "results.json": {
+          "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/artifacts/stage11-slotted-comparison.results.json",
+          "sha256": "sha256:258c0b4e1fd1f2c5e53e020c5709372bb3dde0f8375ed0642e7fed023a2ecfe4"
+        }
+      },
+      "pdf_fonts_embedded": true,
+      "font_count": 3,
+      "font_report_sha256": "sha256:d2a3ca8d41f1f7c95d467130a3d1a387cbabc1ad0fdb8e9c3a01eba575f0f2c2",
+      "preview": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/previews/stage11-800.png",
+      "preview_sha256": "sha256:3ed82bf081eb0c73cb98b49a93bc3611394580ee2f962287b47732751038a338",
+      "visually_inspected_at_approximately_800px": true,
+      "suites": [
+        {
+          "name": "slotted-runtime",
+          "runtime_ratio": {
+            "point": 1.0306524701672695,
+            "ci_low": 0.9094471197685663,
+            "ci_high": 1.1546871834502679
+          },
+          "directional_files": [
+            {
+              "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+              "ratio": 0.9758695122572802,
+              "ci_low": 0.9704795473321366,
+              "ci_high": 0.9812958478709253,
+              "result_class": "lower"
+            }
+          ]
+        },
+        {
+          "name": "slotted-multipattern-runtime",
+          "runtime_ratio": {
+            "point": 1.0254790922923462,
+            "ci_low": 0.9798119892272658,
+            "ci_high": 1.0712801639414742
+          },
+          "directional_files": []
+        }
+      ]
+    }
+  ],
+  "cumulative_results": {
+    "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/cumulative-results.json",
+    "sha256": "sha256:e337b69e504e6576d397a788c25e376ad7b6379470589f5cefcac6155ed4e62c"
+  },
+  "mmm_focus_results": {
+    "path": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c/mmm-focus-results.json",
+    "sha256": "sha256:bcc63bb82e372c70e66038824789a56f4273cf7f330f8aebb0a783319dff0faf"
+  },
+  "all_plots_visually_inspected": true,
+  "preview_renderer": {
+    "pillow": "11.3.0",
+    "preview_width": 800
+  }
+}

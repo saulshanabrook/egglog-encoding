@@ -1,0 +1,9 @@
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-mmm-nested-substitution/egglog-experimental)
+    Finished `release` profile [optimized] target(s) in 3.10s
+     Running tests/slotted_proofs.rs (target/release/deps/slotted_proofs-7c7391479cb65151)
+
+running 1 test
+test demo_proof_snapshots ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.95s
+

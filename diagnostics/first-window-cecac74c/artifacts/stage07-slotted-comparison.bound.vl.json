@@ -1,0 +1,1544 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "background": "white",
+  "title": {
+    "text": "1. Skip per-round assembly for empty-table queries",
+    "anchor": "start",
+    "fontSize": 19,
+    "subtitle": [
+      "PR comparison pilot · 3 observations per condition · CPU 22 · 16 GiB allocator cap",
+      "Diagnostic first window: retained regression evidence; 500 s watchdog per workload process.",
+      "Arithmetic-mean whole-process time; independent Fieller 95% intervals; lower ratios mean less runtime.",
+      "Parent 37b148e74175 → this PR b5a6dcde4721; native 155b6812c334.",
+      "Multipattern: parent-to-child changes only; native multipattern omitted at user request.",
+      "Multipattern follows the paper catalog: BATAX 2nd and MTTKRP 2nd omitted; no exclusion changes."
+    ],
+    "subtitleFontSize": 11,
+    "subtitlePadding": 7
+  },
+  "vconcat": [
+    {
+      "title": {
+        "text": "Nested SDQL · 10 workloads · native comparison",
+        "anchor": "start"
+      },
+      "width": 795,
+      "height": 320,
+      "data": {
+        "values": [
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+            "logical_id": "sha256:a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 55.0061050693815,
+              "ci_low": 54.806191674171906,
+              "ci_high": 55.20601846459109
+            },
+            "candidate": {
+              "point": 81.147581416027,
+              "ci_low": 76.78674017602054,
+              "ci_high": 85.50842265603345
+            },
+            "ratio": 1.4752468169428132,
+            "ci_low": 1.3958054588310413,
+            "ci_high": 1.5547271479274158,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "BATAX · 1st",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg",
+            "logical_id": "sha256:672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 86.28065161003421,
+              "ci_low": 85.54917824724778,
+              "ci_high": 87.01212497282064
+            },
+            "candidate": {
+              "point": 45.19956224768733,
+              "ci_low": 44.55906504545532,
+              "ci_high": 45.840059449919345
+            },
+            "ratio": 0.523866723352733,
+            "ci_low": 0.5152534435809559,
+            "ci_high": 0.5325553130507101,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "BATAX · 2nd",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+            "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.0765761393122375,
+              "ci_low": 0.0756499214871019,
+              "ci_high": 0.0775023571373731
+            },
+            "candidate": {
+              "point": 0.3252099526580423,
+              "ci_low": 0.3214239828477315,
+              "ci_high": 0.32899592246835313
+            },
+            "ratio": 4.246883632145595,
+            "ci_low": 4.176201867413048,
+            "ci_high": 4.318808202569737,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "MMM · 1st",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+            "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 3.244084827369079,
+              "ci_low": 3.224733214070368,
+              "ci_high": 3.26343644066779
+            },
+            "candidate": {
+              "point": 2.120262335985899,
+              "ci_low": 2.0800417991381353,
+              "ci_high": 2.1604828728336627
+            },
+            "ratio": 0.6535779576717823,
+            "ci_low": 0.6406042982802603,
+            "ci_high": 0.6665981320388591,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "MMM · 2nd",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+            "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.010495843055347601,
+              "ci_low": 0.010465943576077115,
+              "ci_high": 0.010525742534618087
+            },
+            "candidate": {
+              "point": 0.16719252872280777,
+              "ci_low": 0.16677531171024731,
+              "ci_high": 0.16760974573536822
+            },
+            "ratio": 15.929404416696539,
+            "ci_low": 15.86920681691312,
+            "ci_high": 15.989860555234063,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "ΣMMM · 1st",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+            "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.3257658800575882,
+              "ci_low": 0.32194451866925133,
+              "ci_high": 0.3295872414459251
+            },
+            "candidate": {
+              "point": 0.5626056006488701,
+              "ci_low": 0.5554713086253965,
+              "ci_high": 0.5697398926723437
+            },
+            "ratio": 1.7270243297100785,
+            "ci_low": 1.6974256952779967,
+            "ci_high": 1.7570983138669993,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "ΣMMM · 2nd",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+            "logical_id": "sha256:78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.279716995311901,
+              "ci_low": 0.2787693481704888,
+              "ci_high": 0.28066464245331313
+            },
+            "candidate": {
+              "point": 0.6419531116262078,
+              "ci_low": 0.624422260610117,
+              "ci_high": 0.6594839626422987
+            },
+            "ratio": 2.2950093215122385,
+            "ci_low": 2.2318813162809312,
+            "ci_high": 2.358190010294463,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "MTTKRP · 1st",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+            "logical_id": "sha256:a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 28.36379836856698,
+              "ci_low": 28.101810146280418,
+              "ci_high": 28.62578659085354
+            },
+            "candidate": {
+              "point": 10.046281002927572,
+              "ci_low": 9.980148015743495,
+              "ci_high": 10.112413990111648
+            },
+            "ratio": 0.3541937815374175,
+            "ci_low": 0.35020630259292096,
+            "ci_high": 0.3582417030264533,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "MTTKRP · 2nd",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+            "logical_id": "sha256:cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.17658384066695967,
+              "ci_low": 0.1733806872832015,
+              "ci_high": 0.17978699405071785
+            },
+            "candidate": {
+              "point": 0.43640586563075584,
+              "ci_low": 0.4266074264542485,
+              "ci_high": 0.4462043048072632
+            },
+            "ratio": 2.4713805293986395,
+            "ci_low": 2.400842328498675,
+            "ci_high": 2.5435456499160165,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "TTM · 1st",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+            "logical_id": "sha256:dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 10.186094885381559,
+              "ci_low": 10.147254770113307,
+              "ci_high": 10.224935000649811
+            },
+            "candidate": {
+              "point": 4.236632349668071,
+              "ci_low": 4.177719451704992,
+              "ci_high": 4.295545247631149
+            },
+            "ratio": 0.41592311846105207,
+            "ci_low": 0.4099319610761859,
+            "ci_high": 0.4219263705418994,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "TTM · 2nd",
+            "series": "Parent"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+            "logical_id": "sha256:a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 55.0061050693815,
+              "ci_low": 54.806191674171906,
+              "ci_high": 55.20601846459109
+            },
+            "candidate": {
+              "point": 83.11573183326982,
+              "ci_low": 80.22314470860603,
+              "ci_high": 86.00831895793361
+            },
+            "ratio": 1.5110273982939253,
+            "ci_low": 1.4581743774856684,
+            "ci_high": 1.5639203372216193,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "BATAX · 1st",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg",
+            "logical_id": "sha256:672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 86.28065161003421,
+              "ci_low": 85.54917824724778,
+              "ci_high": 87.01212497282064
+            },
+            "candidate": {
+              "point": 46.07640292161765,
+              "ci_low": 44.0022840773319,
+              "ci_high": 48.1505217659034
+            },
+            "ratio": 0.5340293804208948,
+            "ci_low": 0.5096050255855642,
+            "ci_high": 0.5585305061436197,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "BATAX · 2nd",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+            "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.0765761393122375,
+              "ci_low": 0.0756499214871019,
+              "ci_high": 0.0775023571373731
+            },
+            "candidate": {
+              "point": 0.3171503087505698,
+              "ci_low": 0.30778872425552944,
+              "ci_high": 0.3265118932456102
+            },
+            "ratio": 4.141633563653509,
+            "ci_low": 4.0101110635847395,
+            "ci_high": 4.274368069091688,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "MMM · 1st",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+            "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 3.244084827369079,
+              "ci_low": 3.224733214070368,
+              "ci_high": 3.26343644066779
+            },
+            "candidate": {
+              "point": 2.11934976434956,
+              "ci_low": 2.1046787669537927,
+              "ci_high": 2.134020761745327
+            },
+            "ratio": 0.653296654412188,
+            "ci_low": 0.6473499165590474,
+            "ci_high": 0.6592898872206027,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "MMM · 2nd",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+            "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.010495843055347601,
+              "ci_low": 0.010465943576077115,
+              "ci_high": 0.010525742534618087
+            },
+            "candidate": {
+              "point": 0.16228692939815423,
+              "ci_low": 0.1605319541479841,
+              "ci_high": 0.16404190464832435
+            },
+            "ratio": 15.462019443542415,
+            "ci_low": 15.289233260584574,
+            "ci_high": 15.635056579463615,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "ΣMMM · 1st",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+            "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.3257658800575882,
+              "ci_low": 0.32194451866925133,
+              "ci_high": 0.3295872414459251
+            },
+            "candidate": {
+              "point": 0.5590646696121743,
+              "ci_low": 0.5545337139642755,
+              "ci_high": 0.563595625260073
+            },
+            "ratio": 1.7161547719894543,
+            "ci_low": 1.6919194991015885,
+            "ci_high": 1.74086240284276,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "ΣMMM · 2nd",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+            "logical_id": "sha256:78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.279716995311901,
+              "ci_low": 0.2787693481704888,
+              "ci_high": 0.28066464245331313
+            },
+            "candidate": {
+              "point": 0.5721563866827637,
+              "ci_low": 0.5681372989684776,
+              "ci_high": 0.5761754743970497
+            },
+            "ratio": 2.04548309996243,
+            "ci_low": 2.0295542302067284,
+            "ci_high": 2.061458925219374,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "MTTKRP · 1st",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+            "logical_id": "sha256:a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 28.36379836856698,
+              "ci_low": 28.101810146280418,
+              "ci_high": 28.62578659085354
+            },
+            "candidate": {
+              "point": 10.047213212354109,
+              "ci_low": 9.909707914991577,
+              "ci_high": 10.18471850971664
+            },
+            "ratio": 0.3542266477076823,
+            "ci_low": 0.3484078225722274,
+            "ci_high": 0.36010592099623034,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "MTTKRP · 2nd",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+            "logical_id": "sha256:cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 0.17658384066695967,
+              "ci_low": 0.1733806872832015,
+              "ci_high": 0.17978699405071785
+            },
+            "candidate": {
+              "point": 0.40928990735361975,
+              "ci_low": 0.4059010059741315,
+              "ci_high": 0.412678808733108
+            },
+            "ratio": 2.3178219808093763,
+            "ci_low": 2.272353758401415,
+            "ci_high": 2.364816034632367,
+            "issue": null,
+            "result_class": "higher",
+            "workload": "TTM · 1st",
+            "series": "This PR"
+          },
+          {
+            "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+            "logical_id": "sha256:dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+            "metric": "wall_sec",
+            "baseline": {
+              "point": 10.186094885381559,
+              "ci_low": 10.147254770113307,
+              "ci_high": 10.224935000649811
+            },
+            "candidate": {
+              "point": 4.21366181736812,
+              "ci_low": 4.127185864662659,
+              "ci_high": 4.300137770073581
+            },
+            "ratio": 0.4136680312506515,
+            "ci_low": 0.4050390843517451,
+            "ci_high": 0.42230900726949133,
+            "issue": null,
+            "result_class": "lower",
+            "workload": "TTM · 2nd",
+            "series": "This PR"
+          }
+        ]
+      },
+      "encoding": {
+        "x": {
+          "type": "quantitative",
+          "scale": {
+            "type": "symlog",
+            "constant": 0.1,
+            "domain": [
+              0,
+              17.26904939965279
+            ],
+            "nice": false
+          },
+          "axis": {
+            "title": "extlog / native Slotted (lower is faster)",
+            "labelExpr": "format(datum.value,',~f') + '×'",
+            "values": [
+              -64,
+              -16,
+              -4,
+              -1,
+              0,
+              0.1,
+              0.25,
+              0.5,
+              1,
+              2,
+              4,
+              8,
+              16,
+              32,
+              64,
+              128,
+              256
+            ],
+            "labelOverlap": "greedy",
+            "grid": true
+          }
+        },
+        "y": {
+          "field": "workload",
+          "type": "nominal",
+          "sort": [
+            "MTTKRP · 2nd",
+            "TTM · 2nd",
+            "BATAX · 2nd",
+            "MMM · 2nd",
+            "BATAX · 1st",
+            "ΣMMM · 2nd",
+            "MTTKRP · 1st",
+            "TTM · 1st",
+            "MMM · 1st",
+            "ΣMMM · 1st"
+          ],
+          "title": null,
+          "axis": {
+            "labelLimit": 130,
+            "minExtent": 100
+          }
+        },
+        "yOffset": {
+          "field": "series",
+          "sort": [
+            "Parent",
+            "This PR"
+          ],
+          "scale": {
+            "domain": [
+              "Parent",
+              "This PR"
+            ]
+          }
+        },
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": null,
+          "scale": {
+            "domain": [
+              "Parent",
+              "This PR"
+            ],
+            "range": [
+              "#999999",
+              "#111111"
+            ]
+          },
+          "legend": {
+            "orient": "top",
+            "symbolType": "square"
+          }
+        }
+      },
+      "layer": [
+        {
+          "mark": {
+            "type": "rule",
+            "color": "#89919b",
+            "strokeDash": [
+              4,
+              3
+            ]
+          },
+          "encoding": {
+            "x": {
+              "datum": 1
+            },
+            "y": {
+              "value": 0
+            },
+            "y2": {
+              "value": 320
+            },
+            "yOffset": {
+              "value": 0
+            },
+            "color": {
+              "value": "#89919b"
+            }
+          },
+          "transform": [
+            {
+              "aggregate": [
+                {
+                  "op": "count",
+                  "as": "n"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "mark": {
+            "type": "rule",
+            "strokeWidth": 1.2
+          },
+          "encoding": {
+            "x": {
+              "field": "ci_low"
+            },
+            "x2": {
+              "field": "ci_high"
+            }
+          },
+          "transform": [
+            {
+              "filter": "isValid(datum.ci_low) && isValid(datum.ci_high)"
+            }
+          ]
+        },
+        {
+          "mark": {
+            "type": "tick",
+            "orient": "vertical",
+            "size": 7,
+            "thickness": 1.2
+          },
+          "encoding": {
+            "x": {
+              "field": "ci_low"
+            }
+          },
+          "transform": [
+            {
+              "filter": "isValid(datum.ci_low)"
+            }
+          ]
+        },
+        {
+          "mark": {
+            "type": "tick",
+            "orient": "vertical",
+            "size": 7,
+            "thickness": 1.2
+          },
+          "encoding": {
+            "x": {
+              "field": "ci_high"
+            }
+          },
+          "transform": [
+            {
+              "filter": "isValid(datum.ci_high)"
+            }
+          ]
+        },
+        {
+          "mark": {
+            "type": "point",
+            "filled": true,
+            "shape": "square",
+            "size": 30
+          },
+          "encoding": {
+            "x": {
+              "field": "ratio"
+            },
+            "tooltip": [
+              {
+                "field": "workload"
+              },
+              {
+                "field": "series"
+              },
+              {
+                "field": "ratio"
+              },
+              {
+                "field": "ci_low"
+              },
+              {
+                "field": "ci_high"
+              },
+              {
+                "field": "issue"
+              }
+            ]
+          }
+        },
+        {
+          "mark": {
+            "type": "text",
+            "align": "left",
+            "dx": 7,
+            "fontSize": 9
+          },
+          "encoding": {
+            "x": {
+              "field": "ratio"
+            },
+            "text": {
+              "field": "issue"
+            }
+          },
+          "transform": [
+            {
+              "filter": "isValid(datum.issue) && datum.issue !== ''"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "hconcat": [
+        {
+          "title": {
+            "text": "Nested SDQL · incremental change",
+            "anchor": "start"
+          },
+          "width": 330,
+          "height": 320,
+          "data": {
+            "values": [
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+                "logical_id": "sha256:a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 81.147581416027,
+                  "ci_low": 76.78674017602054,
+                  "ci_high": 85.50842265603345
+                },
+                "candidate": {
+                  "point": 83.11573183326982,
+                  "ci_low": 80.22314470860603,
+                  "ci_high": 86.00831895793361
+                },
+                "ratio": 1.0242539627540164,
+                "ci_low": 0.9614814261311008,
+                "ci_high": 1.0929596185903054,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "BATAX · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg",
+                "logical_id": "sha256:672f41d86108caebad81453f4e5a294e3f6902364e2d1dc98caa4a33fd863fec",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 45.19956224768733,
+                  "ci_low": 44.55906504545532,
+                  "ci_high": 45.840059449919345
+                },
+                "candidate": {
+                  "point": 46.07640292161765,
+                  "ci_low": 44.0022840773319,
+                  "ci_high": 48.1505217659034
+                },
+                "ratio": 1.019399317832446,
+                "ci_low": 0.9714907991165638,
+                "ci_high": 1.0677173117131846,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "BATAX · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+                "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.3252099526580423,
+                  "ci_low": 0.3214239828477315,
+                  "ci_high": 0.32899592246835313
+                },
+                "candidate": {
+                  "point": 0.3171503087505698,
+                  "ci_low": 0.30778872425552944,
+                  "ci_high": 0.3265118932456102
+                },
+                "ratio": 0.9752171056217729,
+                "ci_low": 0.944402723371718,
+                "ci_high": 1.0062958606929628,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "MMM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+                "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 2.120262335985899,
+                  "ci_low": 2.0800417991381353,
+                  "ci_high": 2.1604828728336627
+                },
+                "candidate": {
+                  "point": 2.11934976434956,
+                  "ci_low": 2.1046787669537927,
+                  "ci_high": 2.134020761745327
+                },
+                "ratio": 0.999569594940753,
+                "ci_low": 0.9797380617489263,
+                "ci_high": 1.0201207690837675,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "MMM · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+                "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.16719252872280777,
+                  "ci_low": 0.16677531171024731,
+                  "ci_high": 0.16760974573536822
+                },
+                "candidate": {
+                  "point": 0.16228692939815423,
+                  "ci_low": 0.1605319541479841,
+                  "ci_high": 0.16404190464832435
+                },
+                "ratio": 0.9706589800266336,
+                "ci_low": 0.959892408567171,
+                "ci_high": 0.9814376404661826,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "ΣMMM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+                "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.5626056006488701,
+                  "ci_low": 0.5554713086253965,
+                  "ci_high": 0.5697398926723437
+                },
+                "candidate": {
+                  "point": 0.5590646696121743,
+                  "ci_low": 0.5545337139642755,
+                  "ci_high": 0.563595625260073
+                },
+                "ratio": 0.9937061930549359,
+                "ci_low": 0.9789092128676806,
+                "ci_high": 1.00882280615704,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "ΣMMM · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+                "logical_id": "sha256:78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.6419531116262078,
+                  "ci_low": 0.624422260610117,
+                  "ci_high": 0.6594839626422987
+                },
+                "candidate": {
+                  "point": 0.5721563866827637,
+                  "ci_low": 0.5681372989684776,
+                  "ci_high": 0.5761754743970497
+                },
+                "ratio": 0.8912744191446729,
+                "ci_low": 0.8667896367595097,
+                "ci_high": 0.9170895481768154,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "MTTKRP · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+                "logical_id": "sha256:a2ec4397f62ca91b6d4f01038a2272fd5eaa1580958e515397abdaf7bbdd6066",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 10.046281002927572,
+                  "ci_low": 9.980148015743495,
+                  "ci_high": 10.112413990111648
+                },
+                "candidate": {
+                  "point": 10.047213212354109,
+                  "ci_low": 9.909707914991577,
+                  "ci_high": 10.18471850971664
+                },
+                "ratio": 1.0000927914943116,
+                "ci_low": 0.9849475626234314,
+                "ci_high": 1.0153246995362495,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "MTTKRP · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+                "logical_id": "sha256:cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.43640586563075584,
+                  "ci_low": 0.4266074264542485,
+                  "ci_high": 0.4462043048072632
+                },
+                "candidate": {
+                  "point": 0.40928990735361975,
+                  "ci_low": 0.4059010059741315,
+                  "ci_high": 0.412678808733108
+                },
+                "ratio": 0.9378652753946278,
+                "ci_low": 0.9158839385042703,
+                "ci_high": 0.9607926797051156,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "TTM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+                "logical_id": "sha256:dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 4.236632349668071,
+                  "ci_low": 4.177719451704992,
+                  "ci_high": 4.295545247631149
+                },
+                "candidate": {
+                  "point": 4.21366181736812,
+                  "ci_low": 4.127185864662659,
+                  "ci_high": 4.300137770073581
+                },
+                "ratio": 0.9945781152566259,
+                "ci_low": 0.9701116433183228,
+                "ci_high": 1.0194292959740203,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "TTM · 2nd",
+                "series": "This PR / parent"
+              }
+            ]
+          },
+          "encoding": {
+            "x": {
+              "type": "quantitative",
+              "scale": {
+                "type": "linear",
+                "domain": [
+                  0.8367896367595097,
+                  1.1229596185903055
+                ],
+                "nice": false
+              },
+              "axis": {
+                "title": "This PR / parent (lower is faster)",
+                "labelExpr": "format(datum.value,',~f') + '×'",
+                "labelOverlap": "greedy",
+                "grid": true,
+                "tickCount": 7
+              }
+            },
+            "y": {
+              "field": "workload",
+              "type": "nominal",
+              "sort": [
+                "MTTKRP · 2nd",
+                "TTM · 2nd",
+                "BATAX · 2nd",
+                "MMM · 2nd",
+                "BATAX · 1st",
+                "ΣMMM · 2nd",
+                "MTTKRP · 1st",
+                "TTM · 1st",
+                "MMM · 1st",
+                "ΣMMM · 1st"
+              ],
+              "title": null,
+              "axis": {
+                "labelLimit": 130,
+                "minExtent": 100
+              }
+            },
+            "color": {
+              "value": "#111111"
+            }
+          },
+          "layer": [
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#89919b",
+                "strokeDash": [
+                  4,
+                  3
+                ]
+              },
+              "encoding": {
+                "x": {
+                  "datum": 1
+                },
+                "y": {
+                  "value": 0
+                },
+                "y2": {
+                  "value": 320
+                },
+                "yOffset": {
+                  "value": 0
+                },
+                "color": {
+                  "value": "#89919b"
+                }
+              },
+              "transform": [
+                {
+                  "aggregate": [
+                    {
+                      "op": "count",
+                      "as": "n"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "strokeWidth": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_low"
+                },
+                "x2": {
+                  "field": "ci_high"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_low) && isValid(datum.ci_high)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "tick",
+                "orient": "vertical",
+                "size": 7,
+                "thickness": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_low"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_low)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "tick",
+                "orient": "vertical",
+                "size": 7,
+                "thickness": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_high"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_high)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "point",
+                "filled": true,
+                "shape": "square",
+                "size": 30
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio"
+                },
+                "tooltip": [
+                  {
+                    "field": "workload"
+                  },
+                  {
+                    "field": "series"
+                  },
+                  {
+                    "field": "ratio"
+                  },
+                  {
+                    "field": "ci_low"
+                  },
+                  {
+                    "field": "ci_high"
+                  },
+                  {
+                    "field": "issue"
+                  }
+                ]
+              }
+            },
+            {
+              "mark": {
+                "type": "text",
+                "align": "left",
+                "dx": 7,
+                "fontSize": 9
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio"
+                },
+                "text": {
+                  "field": "issue"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.issue) && datum.issue !== ''"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": {
+            "text": "Multipattern SDQL · incremental change",
+            "anchor": "start"
+          },
+          "width": 330,
+          "height": 256,
+          "data": {
+            "values": [
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/batax_1st-44rules.egg",
+                "logical_id": "sha256:a54ad7e75e98f1e8e03f3cd6930d96e882fb9111af797b6474cdb3423f804bcf",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 79.1630459796482,
+                  "ci_low": 77.44670553084865,
+                  "ci_high": 80.87938642844776
+                },
+                "candidate": {
+                  "point": 78.95310595794581,
+                  "ci_low": 74.31404359321441,
+                  "ci_high": 83.59216832267721
+                },
+                "ratio": 0.9973480047526675,
+                "ci_low": 0.9353370191620755,
+                "ci_high": 1.0602970766526354,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "BATAX · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_1st-44rules.egg",
+                "logical_id": "sha256:f1a4e04893e22ebe1e75028b0458b41a6bfc4375a598bfdfdc3014f2d33524b6",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.41162011089424294,
+                  "ci_low": 0.4047159772221393,
+                  "ci_high": 0.41852424456634657
+                },
+                "candidate": {
+                  "point": 0.40333366572546464,
+                  "ci_low": 0.39946847063395785,
+                  "ci_high": 0.40719886081697143
+                },
+                "ratio": 0.979868706728697,
+                "ci_low": 0.9612110109723345,
+                "ci_high": 0.9990779022040707,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "MMM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_2nd-44rules.egg",
+                "logical_id": "sha256:7a6b9da8fd10903379abd51ebc36b350c4237ed3e855bd5d2ba9ac437dd0998a",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 5.479186744662002,
+                  "ci_low": 5.415233156004484,
+                  "ci_high": 5.54314033331952
+                },
+                "candidate": {
+                  "point": 5.420233866665512,
+                  "ci_low": 5.258828264422705,
+                  "ci_high": 5.581639468908319
+                },
+                "ratio": 0.9892405788041586,
+                "ci_low": 0.9577328785084082,
+                "ci_high": 1.0210178597543837,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "MMM · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_1st-44rules.egg",
+                "logical_id": "sha256:918887cd59eed90681b1a2c9e320d8aa945df69df8712a79c7545c766943fd90",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.17885678308084607,
+                  "ci_low": 0.17344318517698176,
+                  "ci_high": 0.18427038098471038
+                },
+                "candidate": {
+                  "point": 0.1719005067522327,
+                  "ci_low": 0.17020311650625783,
+                  "ci_high": 0.17359789699820757
+                },
+                "ratio": 0.9611070029954133,
+                "ci_low": 0.931362165330887,
+                "ci_high": 0.9926144698328154,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "ΣMMM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mmm_sum_2nd-44rules.egg",
+                "logical_id": "sha256:d72a2dec36974b60f39b8b47c2801b6fb2ccc5f709e5012a20d335c26e7d3534",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.8178563249918321,
+                  "ci_low": 0.8088482465931776,
+                  "ci_high": 0.8268644033904867
+                },
+                "candidate": {
+                  "point": 0.8170123193413019,
+                  "ci_low": 0.8058645047856741,
+                  "ci_high": 0.8281601338969298
+                },
+                "ratio": 0.9989680269935692,
+                "ci_low": 0.9815704742963944,
+                "ci_high": 1.0166079863544382,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "ΣMMM · 2nd",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/mttkrp_1st-44rules.egg",
+                "logical_id": "sha256:78ba1df06cfada4d79a719cc6c4d87116a65da1e83802b8e83cf8cbaefc96c3f",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 1.0199735447143514,
+                  "ci_low": 0.9959056688134225,
+                  "ci_high": 1.0440414206152804
+                },
+                "candidate": {
+                  "point": 1.0013217022642493,
+                  "ci_low": 0.9935822198681473,
+                  "ci_high": 1.0090611846603514
+                },
+                "ratio": 0.9817134056596285,
+                "ci_low": 0.9578712483087283,
+                "ci_high": 1.0066494042951073,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "MTTKRP · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/ttm_1st-44rules.egg",
+                "logical_id": "sha256:cc81a3b928cf05fe2b52d6cd5bb13d7ab4fdab385216713c62bd1a705c63a0f2",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 0.5349905882806828,
+                  "ci_low": 0.527309330491827,
+                  "ci_high": 0.5426718460695386
+                },
+                "candidate": {
+                  "point": 0.5247388863936067,
+                  "ci_low": 0.5207564840993443,
+                  "ci_high": 0.528721288687869
+                },
+                "ratio": 0.9808376032931301,
+                "ci_low": 0.9651079685378036,
+                "ci_high": 0.9969717105839012,
+                "issue": null,
+                "result_class": "lower",
+                "workload": "TTM · 1st",
+                "series": "This PR / parent"
+              },
+              {
+                "file_path": "benchmarks/slotted/inputs/sdql/ttm_2nd-44rules.egg",
+                "logical_id": "sha256:dc2baf8706632e5e67d813fb05c8560a35caca32d6e4a26cdd83a8ddf36451a1",
+                "metric": "wall_sec",
+                "baseline": {
+                  "point": 10.584333299969634,
+                  "ci_low": 8.796759909534003,
+                  "ci_high": 12.371906690405265
+                },
+                "candidate": {
+                  "point": 10.175408423412591,
+                  "ci_low": 10.096606532186085,
+                  "ci_high": 10.254210314639097
+                },
+                "ratio": 0.9613650794086184,
+                "ci_low": 0.8222902014940878,
+                "ci_high": 1.156892918338497,
+                "issue": null,
+                "result_class": "unclear",
+                "workload": "TTM · 2nd",
+                "series": "This PR / parent"
+              }
+            ]
+          },
+          "encoding": {
+            "x": {
+              "type": "quantitative",
+              "scale": {
+                "type": "linear",
+                "domain": [
+                  0.7922902014940878,
+                  1.186892918338497
+                ],
+                "nice": false
+              },
+              "axis": {
+                "title": "This PR / parent (lower is faster)",
+                "labelExpr": "format(datum.value,',~f') + '×'",
+                "labelOverlap": "greedy",
+                "grid": true,
+                "tickCount": 7
+              }
+            },
+            "y": {
+              "field": "workload",
+              "type": "nominal",
+              "sort": [
+                "ΣMMM · 1st",
+                "TTM · 2nd",
+                "MMM · 1st",
+                "TTM · 1st",
+                "MTTKRP · 1st",
+                "MMM · 2nd",
+                "BATAX · 1st",
+                "ΣMMM · 2nd"
+              ],
+              "title": null,
+              "axis": {
+                "labelLimit": 130,
+                "minExtent": 100
+              }
+            },
+            "color": {
+              "value": "#111111"
+            }
+          },
+          "layer": [
+            {
+              "mark": {
+                "type": "rule",
+                "color": "#89919b",
+                "strokeDash": [
+                  4,
+                  3
+                ]
+              },
+              "encoding": {
+                "x": {
+                  "datum": 1
+                },
+                "y": {
+                  "value": 0
+                },
+                "y2": {
+                  "value": 256
+                },
+                "yOffset": {
+                  "value": 0
+                },
+                "color": {
+                  "value": "#89919b"
+                }
+              },
+              "transform": [
+                {
+                  "aggregate": [
+                    {
+                      "op": "count",
+                      "as": "n"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "rule",
+                "strokeWidth": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_low"
+                },
+                "x2": {
+                  "field": "ci_high"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_low) && isValid(datum.ci_high)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "tick",
+                "orient": "vertical",
+                "size": 7,
+                "thickness": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_low"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_low)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "tick",
+                "orient": "vertical",
+                "size": 7,
+                "thickness": 1.2
+              },
+              "encoding": {
+                "x": {
+                  "field": "ci_high"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.ci_high)"
+                }
+              ]
+            },
+            {
+              "mark": {
+                "type": "point",
+                "filled": true,
+                "shape": "square",
+                "size": 30
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio"
+                },
+                "tooltip": [
+                  {
+                    "field": "workload"
+                  },
+                  {
+                    "field": "series"
+                  },
+                  {
+                    "field": "ratio"
+                  },
+                  {
+                    "field": "ci_low"
+                  },
+                  {
+                    "field": "ci_high"
+                  },
+                  {
+                    "field": "issue"
+                  }
+                ]
+              }
+            },
+            {
+              "mark": {
+                "type": "text",
+                "align": "left",
+                "dx": 7,
+                "fontSize": 9
+              },
+              "encoding": {
+                "x": {
+                  "field": "ratio"
+                },
+                "text": {
+                  "field": "issue"
+                }
+              },
+              "transform": [
+                {
+                  "filter": "isValid(datum.issue) && datum.issue !== ''"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "spacing": 35
+    }
+  ],
+  "spacing": 38,
+  "resolve": {
+    "scale": {
+      "color": "shared"
+    }
+  },
+  "config": {
+    "font": "Arial",
+    "view": {
+      "stroke": null
+    },
+    "axis": {
+      "labelFontSize": 11,
+      "titleFontSize": 11,
+      "titleFontWeight": "normal",
+      "gridColor": "#e6e8eb"
+    },
+    "title": {
+      "fontSize": 13
+    },
+    "legend": {
+      "labelFontSize": 11
+    }
+  }
+}

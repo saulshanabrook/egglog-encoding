@@ -1,0 +1,72 @@
+{
+  "repository": "saulshanabrook/egglog-encoding",
+  "base_commit": "37b148e741755823f37ec29570b12f474821c278",
+  "native_commit": "155b6812c334bca00f91d8ecc33ac14acf873c86",
+  "artifact_branch": "perf/slotted-startup-results-main37b",
+  "pull_requests": [
+    {
+      "stage": "stage07",
+      "head": "perf/slotted-07-empty-queries",
+      "base": "main",
+      "sha": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "title": "[1/5] Skip per-round assembly for empty-table queries",
+      "description": "Rules whose required positive tables are empty cannot produce matches. This change skips their per-round query assembly while leaving their timestamps unchanged, so later input and restored snapshots can still activate them. Initial cached-plan validation remains in place, and pending database writes retain the existing execution/merge path."
+    },
+    {
+      "stage": "stage08",
+      "head": "perf/slotted-08-match-queues",
+      "base": "perf/slotted-07-empty-queries",
+      "sha": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "title": "[2/5] Share ordinary slotted match queues by schema",
+      "description": "Ordinary slotted rewrites with the same ordered column sorts now share a typed match queue and one drain rule. A rule-id column keeps their matches separate while preserving the existing source/apply barrier. The queue registry follows compiler scopes and rollback; proof modes keep their existing per-rule queues."
+    },
+    {
+      "stage": "stage09",
+      "head": "perf/slotted-09-generated-code",
+      "base": "perf/slotted-08-match-queues",
+      "sha": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "title": "[3/5] Avoid reparsing generated slotted machinery",
+      "description": "Generated slotted machinery previously passed through a parser to namespace its variables and through another parse to reserve generated declaration names. The emitter now writes the namespace directly and carries declaration metadata alongside the text. Final program parsing and diagnostics remain, and the map-backed slot representation is unchanged."
+    },
+    {
+      "stage": "stage10",
+      "head": "perf/slotted-10-substitution-convergence",
+      "base": "perf/slotted-09-generated-code",
+      "sha": "33c4a35dfbe041b9e635ad0bcc9b6fd988299646",
+      "title": "[4/5] Let nested slotted substitution rounds converge",
+      "description": "An unchanged nested substitution round used to insert and drain temporary match rows, reporting changes even when substitution added nothing. Ordinary nested substitution now seeds refinement indices and runs its full apply query without that queue. Naive rematching still reacts when extraction improves without a new left-hand-side tuple. Multipattern retains queued refinements to avoid repeated large joins; proof lowering is unchanged. The existing matcher flag selects the strategy, preserving source/apply ordering.",
+      "performance_note": "The first full-query implementation regressed encoded multipattern and was revised before publication. This version retains the nested path while restoring queued multipattern lowering; the complete original comparison remains linked below."
+    },
+    {
+      "stage": "stage11",
+      "head": "perf/slotted-11-core-lowering",
+      "base": "perf/slotted-10-substitution-convergence",
+      "sha": "ff3ff0721ffb429eeb184699eb760ae09ade3bda",
+      "title": "[5/5] Skip unused correspondence trees during core lowering",
+      "description": "Executable core lowering constructed nested correspondence trees and immediately discarded them. The shared lowering algorithm now omits those trees when only flat atoms/actions are needed; type inference retains the mapped form it uses. Fresh-name allocation, global references, union-to-set optimization, and declaration-time errors keep the existing path. This removes unused reconstruction without adding a cross-command cache."
+    }
+  ],
+  "diagnostic_window": {
+    "id": "first-window-cecac74c",
+    "status": "closed",
+    "timing_closed_at": "2026-11-12T12:45:29.570252+00:00",
+    "source_tip": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89",
+    "source_ref": "perf/slotted-full-query-diagnostic",
+    "source_commits": {
+      "main": "37b148e741755823f37ec29570b12f474821c278",
+      "stage07": "b5a6dcde472117c3a77458ccdaaffe01412be660",
+      "stage08": "bfa0d2f76d7006c24a53bb3c14831e9f049d2f53",
+      "stage09": "bf13e3ac9d6c548244e3ac937eb4a13b62c3e142",
+      "stage10": "fb04877229a0f720d9198cb68c5bf4468aca53dc",
+      "stage11": "cecac74c2a2a4fcdc9400b3e6fadf560b51aed89"
+    },
+    "collection_manifest_sha256": "sha256:40470c91aa008c173408429e430a65a873e990e97597ac628be2ab98694aaf55",
+    "rendering_manifest_sha256": "sha256:e385e650d28ad06652318d0a107b5c13f1921f4dc7227c3e77575bd6d282c5e3",
+    "grouped_sha256": "sha256:25d7be3e90ccaa23d1a41b7aaa26000ab16f55b7f2ed843232d447a64bdf8f0f",
+    "selected_observations": 354,
+    "diagnostic_directory": "/tmp/slotted-mmm-implementation/pr-stack/history/first-window-cecac74c",
+    "artifact_prefix": "diagnostics/first-window-cecac74c",
+    "artifact_index_sha256": "sha256:6958dec125a8a5abeb966d7c2c591d8e4ef7651650521a415de4caf4a9fd39da",
+    "reason_retained": "Original full-query substitution improved nested startup but regressed encoded multipattern; revision follows complete unchanged collection."
+  }
+}

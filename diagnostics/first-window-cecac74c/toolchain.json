@@ -1,0 +1,12 @@
+{
+  "recorded_at": "2026-11-12T04:44:37.237602+00:00",
+  "versions": {
+    "rustc -Vv": "rustc 1.91.0 (f8297e351 2025-10-28)\nbinary: rustc\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\ncommit-date: 2025-10-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.91.0\nLLVM version: 21.1.2",
+    "cargo -V": "cargo 1.91.0 (ea2d97820 2025-10-10)",
+    "uv --version": "uv 0.13.7 (x86_64-unknown-linux-gnu)",
+    "/home/oflatt/work/egglog-encoding3/.venv/bin/python --version": "Python 3.12.3",
+    "git --version": "git version 2.43.0"
+  },
+  "rust_toolchain_toml": "[toolchain]\nchannel = \"1.91.0\"\ncomponents = [\"rust-analyzer\"]",
+  "renderer_node": "v22.14.0 (pinned separately in manifest.json)"
+}

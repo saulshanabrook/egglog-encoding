@@ -1,0 +1,72 @@
+Preparing repository
+Loading cache /tmp/slotted-mmm-implementation/pr-stack/report.jsonl
+Resolving inputs
+Resolving targets
+Building stage09
+    Finished `release` profile [optimized] target(s) in 0.15s
+native: 30/30 runs cached · nothing to collect
+stage09: 0/30 runs cached · collecting 30 fresh · 3 samples/condition · timeout 
+500s
+Checking executables
+  [1/30] stage09 · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+83.788s · ETA ~0:06:15
+  [2/30] stage09 · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+47.366s · ETA ~0:05:18
+  [3/30] stage09 · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.302s · ETA ~0:05:18
+  [4/30] stage09 · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.149s · ETA ~0:05:15
+  [5/30] stage09 · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.152s · ETA ~0:05:15
+  [6/30] stage09 · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.556s · ETA ~0:05:15
+  [7/30] stage09 · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded after
+0.576s · ETA ~0:05:14
+  [8/30] stage09 · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded after
+10.014s · ETA ~0:05:04
+  [9/30] stage09 · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.407s · ETA ~0:05:04
+  [10/30] stage09 · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.347s · ETA ~0:05:00
+  [11/30] stage09 · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after
+81.969s · ETA ~0:03:35
+  [12/30] stage09 · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after
+51.519s · ETA ~0:02:50
+  [13/30] stage09 · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.304s · ETA ~0:02:50
+  [14/30] stage09 · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.168s · ETA ~0:02:47
+  [15/30] stage09 · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.151s · ETA ~0:02:47
+  [16/30] stage09 · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.561s · ETA ~0:02:47
+  [17/30] stage09 · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.590s · ETA ~0:02:46
+  [18/30] stage09 · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded 
+after 9.988s · ETA ~0:02:36
+  [19/30] stage09 · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.400s · ETA ~0:02:36
+  [20/30] stage09 · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.231s · ETA ~0:02:31
+  [21/30] stage09 · batax_1st-44rules.egg · slotted-no-aliasing: succeeded after
+81.286s · ETA ~0:01:08
+  [22/30] stage09 · batax_2nd-44rules.egg · slotted-no-aliasing: succeeded after
+49.181s · ETA ~0:00:19
+  [23/30] stage09 · mmm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.307s · ETA ~0:00:19
+  [24/30] stage09 · mmm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+2.176s · ETA ~0:00:16
+  [25/30] stage09 · mmm_sum_1st-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.154s · ETA ~0:00:16
+  [26/30] stage09 · mmm_sum_2nd-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.566s · ETA ~0:00:16
+  [27/30] stage09 · mttkrp_1st-44rules.egg · slotted-no-aliasing: succeeded 
+after 0.583s · ETA ~0:00:15
+  [28/30] stage09 · mttkrp_2nd-44rules.egg · slotted-no-aliasing: succeeded 
+after 10.155s · ETA ~0:00:05
+  [29/30] stage09 · ttm_1st-44rules.egg · slotted-no-aliasing: succeeded after 
+0.409s · ETA ~0:00:05
+  [30/30] stage09 · ttm_2nd-44rules.egg · slotted-no-aliasing: succeeded after 
+4.371s · ETA ~0:00:00
+2 targets: collected 30 fresh runs · 30 successful
+Writing /tmp/slotted-mmm-implementation/pr-stack/report-grouped.json
