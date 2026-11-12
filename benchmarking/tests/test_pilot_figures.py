@@ -474,7 +474,7 @@ def test_source_validation_requires_parity_and_verified_certificates_for_every_i
         snapshot["files"] = []
     source = pilot_results.coverage_tables(snapshot)["corpus-sources.table.tex"]
     assert " & Validated " in source
-    assert (r"$\checkmark$" in source) == (missing_evidence is None)
+    assert (r"\ding{51}" in source) == (missing_evidence is None)
     assert (r"\textbf{TODO}" in source) == (missing_evidence is not None)
 
 
@@ -504,7 +504,39 @@ def test_compact_capability_counts_execution_separately_from_timing_and_proof_va
     assert "not compared" in details and "known difference" in details
     assert "math-proofs / ours & 0/1 & unknown & unknown & unknown & unknown & unknown 1/1" in details
     assert "math-proofs & 1 & 0 & 1 & 0 & 0" in details
-    assert "Tiny workload & 1/1; 1/1 & unknown & unavailable" in tables["composition-coverage.table.tex"]
+    assert r"Tiny workload & \textbf{TODO} & \textbf{TODO}" in tables["composition-coverage.table.tex"]
+
+
+@pytest.mark.parametrize(
+    "proof_evidence",
+    ("passed", "unknown", "failed", "missing-summary", "no-source-checks", "partial-certificates", "excluded"),
+)
+def test_composition_main_keeps_discoveries_pending_and_qualifies_source_proofs(proof_evidence: str) -> None:
+    snapshot = snapshot_fixture()
+    comparison = next(row for row in snapshot["comparisons"] if row["scope"] == "composition")
+    comparison["label"] = "batax_2nd-44rules"
+    validation = snapshot["conditions"][2]["validation"]
+    if proof_evidence == "missing-summary":
+        validation["summary"] = None
+    elif proof_evidence == "no-source-checks":
+        validation["summary"]["check_requests"] = 0
+    elif proof_evidence == "partial-certificates":
+        validation["summary"]["verified_certificates"] = 1
+    else:
+        validation["status"] = proof_evidence
+    tables = pilot_results.coverage_tables(snapshot)
+    main = tables["composition-coverage.table.tex"]
+    marker = (
+        r"\ding{51}"
+        if proof_evidence == "passed"
+        else "Excluded*"
+        if proof_evidence == "excluded"
+        else r"\textbf{TODO}"
+    )
+    assert r"BATAX / 2nd & \textbf{TODO} & " + marker in main
+    assert "Overhead" not in main and "Executed" not in main
+    assert "Overhead" in tables["composition-coverage-details.table.tex"]
+    assert ("* Reviewed source-proof omissions: BATAX / 2nd." in main) == (proof_evidence == "excluded")
 
 
 def test_coverage_retains_reference_certificates_and_known_partial_counter_denominators() -> None:

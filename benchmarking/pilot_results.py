@@ -418,8 +418,8 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
     )
     details = timing + [r"\par\medskip"] + counter_header + detail_rows + [r"\end{tabular}", counter_note]
     composition = [
-        r"\begin{tabular}{llll}",
-        r"Complete Slotted case & Executed (off; proofs) & Proof validation & Overhead [95\% CI] \\",
+        r"\begin{tabular}{@{}lcc@{}}",
+        r"Case & Additional goals & \shortstack{Checked source\\proof} \\",
         r"\hline",
     ]
     composition_details = [
@@ -428,6 +428,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         r"\hline",
     ]
     composition_counter_rows = []
+    omitted_source_proofs = []
     for row in pilot_results(snapshot, "composition")["comparisons"]:
         values = []
         for metric in (
@@ -441,12 +442,29 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
                 else f"{metric['mean']:.4g}"
                 + (f" [{metric['ci_low']:.4g}, {metric['ci_high']:.4g}]" if metric["ci_low"] is not None else "")
             )
-        execution = [f"{_coverage_evidence([row[role]])['executed']}/1" for role in ("reference", "ours")]
+        kernel, separator, phase = row["label"].removesuffix("-44rules").rpartition("_")
+        publication = {"batax": "BATAX", "mmm": "MMM", "mmm_sum": "ΣMMM", "mttkrp": "MTTKRP", "ttm": "TTM"}
+        case_label = f"{publication.get(kernel, kernel)} / {phase}" if separator else row["label"]
+        case_tex = tex_escape(case_label).replace("Σ", r"$\Sigma$")
         validation = row["ours"]["validation"]
-        status = validation["status"] if validation is not None else "unknown"
-        composition.append(
-            f"{tex_escape(row['label'])} & {'; '.join(execution)} & {tex_escape(status)} & {values[2]} " + r"\\"
+        summary = validation["summary"] if validation is not None else None
+        proof_marker = (
+            r"\ding{51}"
+            if validation is not None
+            and validation["status"] == "passed"
+            and summary is not None
+            and summary["success"]
+            and summary["check_requests"] > 0
+            and 0 < summary["produced_certificates"] == summary["verified_certificates"]
+            else "Excluded*"
+            if validation is not None and validation["status"] == "excluded"
+            else r"\textbf{TODO}"
         )
+        if validation is not None and validation["status"] == "excluded":
+            omitted_source_proofs.append(case_tex)
+        # Current snapshots have no paired semantic observations of additional
+        # goals; graph size, execution and proof counters cannot supply them.
+        composition.append(f"{case_tex} & " + r"\textbf{TODO}" + f" & {proof_marker} " + r"\\")
         composition_details.append(
             f"{tex_escape(row['label'])} & {tex_escape(row['state'])} & {' & '.join(values)} " + r"\\"
         )
@@ -454,8 +472,14 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
     composition.extend(
         (
             r"\end{tabular}",
-            r"\par\smallskip{\footnotesize Executed inputs and separate certificate-validation outcomes "
-            r"are reported independently.}",
+            r"\par\smallskip{\footnotesize Additional goals await restricted/complete semantic comparisons. "
+            r"\ding{51} denotes a separate successful source-check launch with every produced certificate verified. "
+            + (
+                "* Reviewed source-proof omissions: " + ", ".join(omitted_source_proofs) + ". "
+                if omitted_source_proofs
+                else ""
+            )
+            + "}",
         )
     )
     composition_details += [
@@ -512,7 +536,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         # compared with ordinary egglog under both c and cp. Execution and checked
         # certificates alone do not establish this ordinary-output parity.
         validation_marker = (
-            r"$\checkmark$"
+            r"\ding{51}"
             if inputs
             and all(
                 f["ordinary_output_parity"] == "passed-c-and-cp" and (project, f["logical_id"]) in checked_inputs
