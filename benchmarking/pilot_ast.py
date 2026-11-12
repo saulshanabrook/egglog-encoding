@@ -207,7 +207,7 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
         "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
     }
     guides: list[dict[str, Any]] = []
-    for factor in (1, 10, 100):
+    for factor in (1, 5, 10, 100):
         low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
         if low < high:
             guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor}×"})
@@ -278,8 +278,10 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {
                 "labelFontSize": 10,
                 "titleFontSize": 11,
+                "titleFontWeight": "normal",
                 "grid": False,
             },
+            "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
             "view": {"stroke": None},
         },
     }

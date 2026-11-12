@@ -275,6 +275,7 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
     assert set(color["domain"]) == {"corelog+c", "egglog+p", "egglog+d", "egglog+dp", "egglog+s", "egglog+sp"}
     assert all("extlog_" not in point["series"] for point in runtime["points"])
     axes = spec["layer"][-1]["encoding"]
+    assert axes["y"]["title"] == "Our runtime (s)"
     assert axes["color"]["field"] == "configuration"
     assert axes["x"]["scale"]["domain"] != axes["y"]["scale"]["domain"]
     for axis in ("x", "y"):
@@ -292,6 +293,7 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
         assert guide["x"] < label["x"] < guide["x2"]
         assert label["x"] ** 2 > guide["x"] * guide["x2"]
         assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
+    assert "5×" in {guide["factor"] for guide in spec["layer"][0]["data"]["values"]}
 
 
 @pytest.mark.parametrize("scope", ["extensions", "applications-proof"])
@@ -307,7 +309,7 @@ def test_memory_views_reuse_runtime_observations_with_mib_axes_tables_and_number
     spec = pilot_figures.bound_spec(memory)
     assert spec["layer"][-1]["encoding"]["x"]["title"].endswith("peak RSS (MiB)")
     assert spec["layer"][-1]["encoding"]["y"]["title"] == (
-        "egglog+p peak RSS (MiB)" if scope == "applications-proof" else "Transformed peak RSS (MiB)"
+        "egglog+p peak RSS (MiB)" if scope == "applications-proof" else "Our peak RSS (MiB)"
     )
     assert spec["layer"][-1]["encoding"]["color"] == pilot_figures.bound_spec(runtime)["layer"][-1]["encoding"]["color"]
     numbers, table = pilot_results.pilot_tex(memory)

@@ -386,16 +386,19 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {"values": log_major_ticks(y_domain), "grid": False},
             "title": "Speedup (reference / candidate)"
             if speedup
-            else f"{'egglog+p' if applications else 'Transformed'} {measurement}",
+            else f"{'egglog+p' if applications else 'Our'} {measurement}",
         },
     }
     layers: list[dict[str, Any]] = []
     guides: list[dict[str, Any]] = []
     if speedup:
-        if y_domain[0] <= 1 <= y_domain[1]:
-            guides.append({"x": x_domain[0], "x2": x_domain[1], "y": 1, "y2": 1, "factor": "1×"})
+        for factor in (0.5, 1, 2, 5, 10):
+            if y_domain[0] <= factor <= y_domain[1]:
+                guides.append(
+                    {"x": x_domain[0], "x2": x_domain[1], "y": factor, "y2": factor, "factor": f"{factor:g}×"}
+                )
     else:
-        for factor in (0.5, 1, 2, 10):
+        for factor in (0.5, 1, 2, 5, 10):
             low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
             if low < high:
                 guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor:g}×"})
@@ -528,8 +531,10 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {
                 "labelFontSize": 10,
                 "titleFontSize": 11,
+                "titleFontWeight": "normal",
                 "grid": False,
             },
+            "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
             "view": {"stroke": None},
         },
     }
@@ -550,7 +555,15 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         panel.pop("$schema")
         panel.pop("config")
         panel.update(
-            width=205, height=185, title={"text": title, "subtitle": subtitle, "fontSize": 14, "subtitleFontSize": 12.5}
+            width=205,
+            height=185,
+            title={
+                "text": title,
+                "subtitle": subtitle,
+                "fontSize": 11,
+                "fontWeight": "normal",
+                "subtitleFontSize": 9.5,
+            },
         )
         for layer in panel["layer"]:
             for axis in ("x", "y"):
@@ -564,11 +577,11 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
                     "title": None,
                     "orient": "bottom",
                     "columns": 3,
-                    "labelFontSize": 12.5,
+                    "labelFontSize": 9.5,
                     "symbolSize": 35,
                 }
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=12.5, dy=-7)
+                layer["mark"].update(fontSize=9.5, dy=-5)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 20
     return {
@@ -581,7 +594,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 12.5, "titleFontSize": 14, "grid": False},
+            "axis": {"labelFontSize": 9.5, "titleFontSize": 11, "titleFontWeight": "normal", "grid": False},
             "view": {"stroke": None},
         },
     }
