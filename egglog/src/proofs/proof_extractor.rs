@@ -118,6 +118,7 @@ impl EqStage {
                     }
                 },
             );
+            // Sorting makes the chosen row independent of storage and index order.
             rows.sort_unstable();
             self.rows = rows.into_iter();
         }
