@@ -195,6 +195,22 @@ def test_graph_has_equal_log_domains_and_no_confidence_intervals(compiler_case: 
     spec = pilot_ast.translation_program_size_spec(result)
     assert len(result["points"]) == 1 and len(result["rows"]) == 2
     assert result["points"][0]["growth"] == 10
+    assert result["points"][0]["series"] == "Math (extlog_c)"
+    marks = spec["layer"][-1]
+    assert marks["mark"]["type"] == "circle" and marks["mark"]["filled"]
+    assert "shape" not in marks["encoding"]
+    color = marks["encoding"]["color"]
+    assert color["legend"]["columns"] == 2
+    assert dict(zip(color["scale"]["domain"], color["scale"]["range"], strict=True)) == {
+        "Math (extlog_c)": "#0072b2",
+        "Math + proofs (extlog_cp)": "#56b4e9",
+        "Slotted restricted (extlog_s)": "#e69f00",
+        "Slotted restricted + proofs (extlog_scp)": "#b59b00",
+        "Disequality (extlog_d)": "#d55e00",
+        "Disequality + proofs (extlog_dcp)": "#cc79a7",
+        "Congruence (extlog_c)": "#6a51a3",
+        "Application proofs (extlog_cp)": "#9e9ac8",
+    }
     for layer in spec["layer"]:
         assert layer["encoding"]["x"]["scale"] == layer["encoding"]["y"]["scale"]
     assert spec["layer"][-1]["encoding"]["x"]["scale"]["type"] == "log"

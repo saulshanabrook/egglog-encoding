@@ -17,7 +17,16 @@ from .slotted_ast import COLUMNS, PIPELINE, export_slotted_ast, slotted_ast_reco
 from .translation_ast import PIPELINE as TRANSLATION_PIPELINE
 from .translation_ast import PROFILES, SAFETY_STATUSES, TranslationRequest, translation_ast_records
 
-PHASE_COLORS = ("#0072b2", "#56b4e9", "#d55e00", "#cc79a7", "#e69f00", "#b59b00")
+TRANSLATION_SERIES = {
+    ("Math", "c"): ("Math (extlog_c)", "#0072b2"),
+    ("Math", "cp"): ("Math + proofs (extlog_cp)", "#56b4e9"),
+    ("Slotted restricted", "s"): ("Slotted restricted (extlog_s)", "#e69f00"),
+    ("Slotted restricted", "scp"): ("Slotted restricted + proofs (extlog_scp)", "#b59b00"),
+    ("Disequality", "d"): ("Disequality (extlog_d)", "#d55e00"),
+    ("Disequality", "dcp"): ("Disequality + proofs (extlog_dcp)", "#cc79a7"),
+    ("Applications", "c"): ("Congruence (extlog_c)", "#6a51a3"),
+    ("Applications", "cp"): ("Application proofs (extlog_cp)", "#9e9ac8"),
+}
 TRANSLATION_NOTE = (
     "Whole-program S-expression nodes: each list, atom, and literal counts once. "
     "The denominator is self-contained raw source; emitted scaffolding remains in the output. "
@@ -120,7 +129,16 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
         x, y = row["source_ast_nodes"], row["output_ast_nodes"]
         if row["status"] == "ok" and x is not None and y is not None and x > 0 and y > 0:
             row["growth"] = y / x
-            points.append({**row, "x": x, "y": y, "configuration": planned["profile"], "workload": planned["file"]})
+            points.append(
+                {
+                    **row,
+                    "x": x,
+                    "y": y,
+                    "configuration": planned["profile"],
+                    "series": TRANSLATION_SERIES[(planned["family"], planned["profile"])][0],
+                    "workload": planned["file"],
+                }
+            )
         rows.append(row)
     coverage = [
         {
@@ -168,10 +186,13 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
         },
     }
     color = {
-        "field": "configuration",
+        "field": "series",
         "type": "nominal",
-        "scale": {"domain": list(PROFILES), "range": list(PHASE_COLORS)},
-        "legend": {"title": "Configuration", "orient": "bottom", "columns": 6},
+        "scale": {
+            "domain": [label for label, _ in TRANSLATION_SERIES.values()],
+            "range": [color for _, color in TRANSLATION_SERIES.values()],
+        },
+        "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
     }
     guides: list[dict[str, Any]] = [
         {"x": domain[0], "x2": domain[1] / factor, "y": domain[0] * factor, "y2": domain[1], "label": f"{factor}×"}
@@ -206,7 +227,7 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
             {
                 "data": {"values": results["points"]},
                 "mark": {
-                    "type": "point",
+                    "type": "circle",
                     "filled": True,
                     "opacity": 0.7,
                     "size": 35,
@@ -216,19 +237,11 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "encoding": {
                     **axes,
                     "color": color,
-                    "shape": {
-                        "field": "family",
-                        "type": "nominal",
-                        "scale": {
-                            "domain": ["Applications", "Math", "Disequality", "Slotted restricted"],
-                            "range": ["circle", "diamond", "square", "triangle-up"],
-                        },
-                        "legend": {"title": None, "orient": "bottom", "columns": 2},
-                    },
                     "tooltip": [
                         {"field": key}
                         for key in (
                             "workload",
+                            "series",
                             "configuration",
                             "family",
                             "project",
