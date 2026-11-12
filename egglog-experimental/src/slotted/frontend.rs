@@ -23,6 +23,8 @@ pub enum ProofMode {
     Check,
     /// Translate and verify supported equality checks; run ordinary checks for others.
     Prove,
+    /// Materialize and simplify source proofs without verifying their derivations.
+    Extract,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -137,7 +139,8 @@ impl Compiler {
         Self {
             options,
             state: State {
-                proofs: (options.proof_mode == ProofMode::Prove).then(ProofCompiler::default),
+                proofs: matches!(options.proof_mode, ProofMode::Prove | ProofMode::Extract)
+                    .then(ProofCompiler::default),
                 ..Default::default()
             },
             ..Default::default()
@@ -494,7 +497,10 @@ impl Compiler {
                     .map(|(name, id)| format!("(slot {id} {})", syntax::quote(name)))
                     .collect::<Vec<_>>()
                     .join(" ");
-                let command = if self.options.proof_mode == ProofMode::Prove {
+                let command = if matches!(
+                    self.options.proof_mode,
+                    ProofMode::Prove | ProofMode::Extract
+                ) {
                     let id = self.next_proof;
                     self.next_proof += 1;
                     self.state
@@ -945,7 +951,10 @@ impl Compiler {
                 name: Some(&source.name),
                 ordinal: self.state.rules,
                 nested: self.options.no_aliasing,
-                proofs: self.options.proof_mode == ProofMode::Prove,
+                proofs: matches!(
+                    self.options.proof_mode,
+                    ProofMode::Prove | ProofMode::Extract
+                ),
             },
             flattened.names,
         )?;
@@ -1055,6 +1064,7 @@ impl Compiler {
             flattened,
             names: proofs.names.clone(),
             claims,
+            verify: self.options.proof_mode == ProofMode::Prove,
         })
     }
 
@@ -1096,7 +1106,10 @@ impl Compiler {
             return self.check(&args[0], !negated);
         }
         if !negated
-            && self.options.proof_mode == ProofMode::Prove
+            && matches!(
+                self.options.proof_mode,
+                ProofMode::Prove | ProofMode::Extract
+            )
             && let Some(proof) = self.proof_claim(args)?
         {
             return Ok(proof);

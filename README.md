@@ -145,6 +145,12 @@ the corresponding proof-testing treatment provides the strict validity check.
 
 ### Common comparisons
 
+`--threads N` selects the requested worker budget (default: one).
+The baseline uses the same budget unless `--compare-threads N` overrides it.
+Egglog/extlog endpoints use the selected workers; serial native references use
+one effective worker and retain the requested budget in provenance.
+The Comparison table reports effective workers and any differing requested budget.
+
 Checked proof overhead in the current checkout is the default:
 
 ```bash
@@ -454,9 +460,11 @@ Use `./bench.py --help` for the complete option reference.
 
 ### Engine timing
 
-Every successful benchmark observation records timing from the same measured
-process. Timing collection is always enabled; requesting a detailed report does
-not rerun a diagnostic process or change the cache key.
+Successful benchmark observations record wall time and available peak RSS from the
+measured process. Serial endpoints with timing-summary support also record phase
+timings from that process. Multiworker egglog/extlog endpoints collect wall time
+and peak RSS without phase instrumentation. Requesting a detailed report does
+not rerun a diagnostic process.
 
 The versioned timing summary stores seven fixed process counters, one typed row
 per named ruleset with its Program or Equality role and five exclusive own-work
@@ -470,8 +478,9 @@ that a rebuild triggered by a top-level action such as `(union ...)` remains in
 Commands/Actions. The captions printed next to `--detail phases` and
 `--detail rulesets` are the source of truth for grouping and display rules.
 
-Benchmarks run single-threaded. This keeps Search and Apply attribution
-additive for egglog's interleaved executor.
+The default worker count is one. Search and Apply attribution is additive for
+egglog's serial interleaved executor; phase attribution is unavailable for
+multiworker comparisons.
 
 ### Interactive report
 
@@ -582,7 +591,8 @@ The snapshot is refreshed even when all requested observations are cached.
 Unchanged output keeps its modification time. For another report path, `.jsonl`
 becomes `-grouped.json`; other names gain `-grouped.json`.
 
-Cache reuse is keyed by binary SHA-256, physical input file SHA-256, and treatment.
+Cache reuse is keyed by binary SHA-256, physical input file SHA-256, treatment,
+and effective worker count. Different worker counts select separate observations.
 Target source, path, revision, dirty state, labels,
 and display paths are provenance. Time and memory guards are per-attempt limits,
 not cache identities. Allocator startup settings stay fixed with or without a cap.
@@ -624,7 +634,7 @@ Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
 details. A top-level report schema version covers both the persisted shape and
 measurement semantics, so methodology changes cannot silently reuse stale
-measurements. Successful observations from engines with timing-summary support
+measurements. Successful serial observations from engines with timing-summary support
 also contain the version-4 timing summary: fixed process counters, a typed list of named ruleset timings, and one
 global native-Rebuild counter. Changes to timing coverage or meaning require a
 schema-version change so stale measurements cannot be reused silently.

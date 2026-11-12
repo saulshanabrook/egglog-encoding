@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from benchmarking import slotted_ast
+from benchmarking import pilot_ast, slotted_ast
 from benchmarking.models import FileSpec
 from benchmarking.targets import sha256_file
 
@@ -90,6 +90,52 @@ def test_warm_cached_render_needs_no_inputs_or_compiler(
     )
     assert len(outputs) == 5 and not (tmp_path / "out/slotted-runtime.ast-programs.json").exists()
     assert case["cache"].read_bytes() == original
+
+
+def test_pilot_program_sizes_keep_fresh_records_and_replay_under_new_names(
+    ast_case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = ast_case
+    case["measured"].update(
+        proof_congruence_ast_nodes=16,
+        proof_congruence_error=None,
+        proof_congruence_error_debug=None,
+        proof_congruence_error_stage=None,
+    )
+    case["measured"]["programs"]["proof_congruence"] = "(sort Proof)"
+    records = slotted_ast.slotted_ast_records([case["file"]], case["cache"], collect=True, compiler=case["compiler"])
+    calls = []
+
+    def select(files: tuple[FileSpec, ...], cache: Path, *, collect: bool) -> tuple[dict[str, Any], ...]:
+        calls.append((files, cache, collect))
+        return records
+
+    monkeypatch.setattr(pilot_ast, "slotted_ast_records", select)
+    snapshot = pilot_ast.program_size_snapshot((case["file"],), case["cache"], collect=True)
+    assert calls == [((case["file"],), case["cache"], True)]
+    case["compiler"].unlink()
+    case["file"].absolute_path.unlink()
+    outputs = pilot_ast.export_program_size(snapshot, tmp_path / "pilot")
+    assert len(outputs) == 5
+    table = (tmp_path / "pilot/slotted-program-size.table.tex").read_text()
+    assert "16" in table and "Unsupported" not in table
+    report = json.loads((tmp_path / "pilot/slotted-program-size.results.json").read_text())
+    assert report["figure"] == "slotted-program-size"
+    assert report["program_size_snapshot"] == snapshot
+    assert report["rows"][0]["program_sha256"]["proof_congruence"]
+    assert report["rows"][0]["measurement_source"]["source_revision"] == "recorded-source-revision"
+    assert not list((tmp_path / "pilot").glob("slotted-runtime.*"))
+
+
+def test_missing_pilot_size_cache_is_pending_without_building(
+    ast_case: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(slotted_ast.subprocess, "run", lambda *_a, **_k: pytest.fail("pending export built a compiler"))
+    snapshot = pilot_ast.program_size_snapshot((ast_case["file"],), ast_case["cache"], collect=False)
+    assert snapshot["status"] == "pending" and not snapshot["records"]
+    pilot_ast.export_program_size(snapshot, tmp_path / "pilot")
+    table = (tmp_path / "pilot/slotted-program-size.table.tex").read_text()
+    assert "pending" in table and "Unsupported" not in table
 
 
 @pytest.mark.parametrize("changed", ["input", "compiler", "options", "version"])

@@ -41,6 +41,7 @@ slotted-egraphs = { git = "https://github.com/oflatt-claude/slotted-egraphs.git"
 # after the checked workspace phase, preserving this boundary without another suite.
 default = ["checks"]
 checks = ["slotted-egraphs/checks"]
+explanations = ["slotted-egraphs/explanations"]
 
 [dev-dependencies]
 tempfile = "3"

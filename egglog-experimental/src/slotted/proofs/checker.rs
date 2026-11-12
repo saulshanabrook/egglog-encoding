@@ -155,6 +155,16 @@ pub(super) fn check_claim_in_program(
     root: ProofId,
 ) -> Result<Renaming, SlottedCheckError> {
     let proven = check_proof_in_program(store, program, root)?;
+    claim_renaming(store, program, claim, &proven)
+}
+
+/// Align the constructed root with its requested claim without checking derivations.
+pub(in crate::slotted) fn claim_renaming(
+    store: &mut SlottedProofStore,
+    program: &ProofContext,
+    claim: &Claim,
+    proven: &Proposition,
+) -> Result<Renaming, SlottedCheckError> {
     let lhs = program.refresh_binders(&mut store.term_dag, claim.lhs);
     let rhs = program.refresh_binders(&mut store.term_dag, claim.rhs);
     if proven.lhs == lhs {
@@ -178,7 +188,7 @@ pub(super) fn check_claim_in_program(
             ClaimKind::Eq => "=".into(),
             ClaimKind::RenamingEq => "renaming-=".into(),
         },
-        proven: store.proposition_to_string(&proven),
+        proven: store.proposition_to_string(proven),
         claim: store.proposition_to_string(&Proposition::new(claim.lhs, claim.rhs)),
     })
 }

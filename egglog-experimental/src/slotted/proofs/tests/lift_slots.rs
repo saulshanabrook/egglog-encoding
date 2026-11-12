@@ -691,3 +691,146 @@ fn equal_decoded_endpoints_preserve_a_nontrivial_class_equality() {
     let (mut store, proof) = lifter.out.finish(oriented);
     super::super::checker::check_proof_in_program(&mut store, &program, proof).unwrap();
 }
+
+#[test]
+fn shape_congruence_transports_completed_binder() {
+    let mut program = ProofContext::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
+    program.add_constructor("Get", vec![ColumnKind::Child; 2]);
+    program.add_constructor("Mult", vec![ColumnKind::Child; 2]);
+    program.add_constructor(
+        "Let",
+        vec![ColumnKind::Child, ColumnKind::Binder, ColumnKind::Child],
+    );
+    program.add_constructor("Wrap", vec![ColumnKind::Child]);
+    program.add_constructor("Done", vec![]);
+    let mut dag = TermDag::default();
+    program
+        .add_union(
+            &mut dag,
+            "(Let (Get (V $0) (V $4)) $2 (Mult (V $3) (V $2)))",
+            "(Done)",
+        )
+        .unwrap();
+    let child = program.unions[0].lhs;
+    let done = program.unions[0].rhs;
+    let parent = dag.app("Wrap".into(), vec![child]);
+    let expected = dag.app("Wrap".into(), vec![done]);
+    program.lets.insert("parent".into(), parent);
+    let names = EncodingNames::default();
+    let egg = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+    let mut lifter = SlotLifter::new(
+        &program,
+        dag,
+        &names,
+        NativeProofs {
+            store: &egg,
+            program: &[],
+        },
+    );
+    // An encoded edge mentions only the free ports. Its completion must also
+    // freshen this child's bound slot, just as the failing Let shape path does.
+    let completion = lifter.complete(&[(0, 0), (3, 3), (4, 4)].into_iter().collect(), child);
+    let completed = rename(&mut lifter.out.term_dag, &completion, child);
+    assert_ne!(child, completed);
+    assert!(program.alpha_eq(&mut lifter.out.term_dag, child, completed));
+    let premise = lifter.out.fiat(child, done);
+    let reverse = lifter.out.sym(premise);
+    let proof = lifter.out.proof(reverse);
+    let proof = lifter.out.alpha(proof, completed);
+    let reverse = lifter.out.plain(proof);
+    let premise = lifter.out.sym(reverse);
+    let base = lifter.out.fiat(parent, parent);
+    // Literal congruence itself must remain strict even after the repair.
+    assert!(matches!(
+        lifter.out.congr(base, 0, premise),
+        Err(super::super::format::MalformedStep::ChildMismatch { .. })
+    ));
+    let derived = lifter
+        .congr_child(base, 0, premise)
+        .expect("a valid completed child needs a checked alpha bridge");
+    let plain_proof = lifter.out.proof(derived);
+    // The parent keeps its ordinary proof while its RHS is reframed. The
+    // premise must move into those child coordinates before transport.
+    let swap = Renaming::new([(0, 10), (10, 0), (2, 11), (11, 2)]).unwrap();
+    let reframed = lifter.out.reframe(base, swap.clone());
+    let renamed_premise = lifter.out.equivariance(premise, &swap);
+    assert!(!lifter.out.edge(reframed).renaming.is_identity());
+    assert!(!lifter.out.edge(renamed_premise).renaming.is_identity());
+    assert!(matches!(
+        lifter.out.congr(reframed, 0, renamed_premise),
+        Err(super::super::format::MalformedStep::ChildMismatch { .. })
+    ));
+    let derived = lifter
+        .congr_child(reframed, 0, renamed_premise)
+        .expect("alpha transport must preserve nonidentity parent and child views");
+    let (mut store, proof) = lifter.out.finish(derived);
+    super::super::checker::check_proof_in_program(&mut store, &program, plain_proof).unwrap();
+    super::super::checker::check_proof_in_program(&mut store, &program, proof).unwrap();
+    assert_eq!(
+        store.proposition(plain_proof),
+        &Proposition::new(parent, expected)
+    );
+    assert_eq!(
+        store.proposition(proof),
+        &Proposition::new(parent, expected)
+    );
+}
+
+#[test]
+fn shape_congruence_rejects_non_alpha_child() {
+    let mut program = ProofContext::default();
+    program.add_constructor("V", vec![ColumnKind::Var]);
+    program.add_constructor("Get", vec![ColumnKind::Child; 2]);
+    program.add_constructor("Mult", vec![ColumnKind::Child; 2]);
+    program.add_constructor(
+        "Let",
+        vec![ColumnKind::Child, ColumnKind::Binder, ColumnKind::Child],
+    );
+    program.add_constructor("Wrap", vec![ColumnKind::Child]);
+    program.add_constructor("Done", vec![]);
+    let mut dag = TermDag::default();
+    program
+        .add_union(
+            &mut dag,
+            "(Let (Get (V $0) (V $4)) $2 (Mult (V $3) (V $2)))",
+            "(Done)",
+        )
+        .unwrap();
+    program
+        .add_union(
+            &mut dag,
+            "(Let (Get (V $0) (V $4)) $2 (Mult (V $5) (V $2)))",
+            "(Done)",
+        )
+        .unwrap();
+    let child = program.unions[0].lhs;
+    let wrong = program.unions[1].lhs;
+    let done = program.unions[1].rhs;
+    let parent = dag.app("Wrap".into(), vec![child]);
+    program.lets.insert("parent".into(), parent);
+    let names = EncodingNames::default();
+    let egg = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+    let mut lifter = SlotLifter::new(
+        &program,
+        dag,
+        &names,
+        NativeProofs {
+            store: &egg,
+            program: &[],
+        },
+    );
+    assert!(!program.alpha_eq(&mut lifter.out.term_dag, child, wrong));
+    let premise = lifter.out.fiat(wrong, done);
+    let base = lifter.out.fiat(parent, parent);
+    assert!(lifter.out.congr(base, 0, premise).is_err());
+    assert!(lifter.congr_child(base, 0, premise).is_err());
+    // An unchecked Alpha node cannot turn this free-variable mismatch into a
+    // certificate: the independent semantic checker must still reject it.
+    let projected = lifter.out.project(base, 0).unwrap();
+    let proof = lifter.out.proof(projected);
+    let forged = lifter.out.alpha(proof, wrong);
+    let forged = lifter.out.plain(forged);
+    let (mut store, proof) = lifter.out.finish(forged);
+    assert!(super::super::checker::check_proof_in_program(&mut store, &program, proof).is_err());
+}

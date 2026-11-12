@@ -20,7 +20,7 @@ fn main() {
     let options: Vec<_> = args.iter().skip(1).take_while(|arg| *arg != "--").collect();
     if options.iter().any(|arg| *arg == "--help" || *arg == "-h") {
         println!(
-            "Experimental options:\n  --slotted              Transform slotted source before evaluation\n  --slotted-encoded      Evaluate already lowered slotted code\n  --slotted-source PATH  Original source for replaying encoded proofs\n  --slotted-no-aliasing  Restrict matching to the nested reference\n  --proofs               With --slotted: translate and check proofs of equality claims\n  --slotted-proof-checks Run the proof-compatible encoding with ordinary checks\n  --memory-limit-bytes <N>       Bound native address space\n"
+            "Experimental options:\n  --slotted              Transform slotted source before evaluation\n  --slotted-encoded      Evaluate already lowered slotted code\n  --slotted-source PATH  Original source for replaying encoded proofs\n  --slotted-no-aliasing  Restrict matching to the nested reference\n  --proofs               With --slotted: translate and check proofs of equality claims\n  --proof-extraction     With --slotted: materialize and simplify source proofs without verification\n  --slotted-proof-checks Run the proof-compatible encoding with ordinary checks\n  --memory-limit-bytes <N>       Bound native address space\n"
         );
     }
     let proof_mode = options.iter().any(|arg| {
@@ -38,7 +38,7 @@ fn main() {
     );
     if slotted || encoded {
         egglog_experimental::slotted::register(&mut egraph);
-        if slotted_proofs == ProofMode::Prove {
+        if matches!(slotted_proofs, ProofMode::Prove | ProofMode::Extract) {
             egraph = egglog_experimental::slotted::with_proofs(egraph);
         }
     }
@@ -61,7 +61,7 @@ fn main() {
             let mut compiler = egglog_experimental::slotted::Compiler::new(
                 egglog_experimental::slotted::Options {
                     no_aliasing,
-                    proof_mode: ProofMode::Prove,
+                    proof_mode: slotted_proofs,
                 },
             );
             Ok(compiler.compile_program(Some(path.to_string_lossy().into_owned()), &source)?)
@@ -91,7 +91,7 @@ fn extract_slotted_args(args: impl IntoIterator<Item = OsString>) -> Result<Slot
     let (mut slotted, mut encoded, mut no_aliasing) = (false, false, false);
     let mut filtered = Vec::new();
     let mut positional = false;
-    let (mut proofs, mut checks) = (false, false);
+    let (mut proofs, mut checks, mut extraction) = (false, false, false);
     let mut args = args.into_iter();
     let mut source = None;
     while let Some(arg) = args.next() {
@@ -134,22 +134,32 @@ fn extract_slotted_args(args: impl IntoIterator<Item = OsString>) -> Result<Slot
             if !positional && a == "--proofs" {
                 proofs = true;
                 false
+            } else if !positional && a == "--proof-extraction" {
+                extraction = true;
+                false
             } else {
                 true
             }
         });
     }
-    if proofs && checks {
-        return Err("--proofs and --slotted-proof-checks are mutually exclusive".into());
+    if usize::from(proofs) + usize::from(checks) + usize::from(extraction) > 1 {
+        return Err(
+            "--proofs, --proof-extraction and --slotted-proof-checks are mutually exclusive".into(),
+        );
     }
-    if source.is_some() && (!encoded || !proofs) {
-        return Err("--slotted-source requires --slotted-encoded --proofs".into());
+    if source.is_some() && (!encoded || !(proofs || extraction)) {
+        return Err(
+            "--slotted-source requires --slotted-encoded with --proofs or --proof-extraction"
+                .into(),
+        );
     }
-    if encoded && proofs && source.is_none() {
+    if encoded && (proofs || extraction) && source.is_none() {
         return Err("encoded proofs require --slotted-source <original.egg>".into());
     }
     let proof_mode = if proofs {
         ProofMode::Prove
+    } else if extraction {
+        ProofMode::Extract
     } else if checks {
         ProofMode::Check
     } else {
@@ -163,4 +173,31 @@ fn extract_slotted_args(args: impl IntoIterator<Item = OsString>) -> Result<Slot
         proof_mode,
         args: filtered,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slotted_production_consumes_the_core_flag_and_preserves_worker_arguments() {
+        let args = extract_slotted_args(
+            ["engine", "--slotted", "--proof-extraction", "-j", "4"].map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(args.proof_mode, ProofMode::Extract);
+        assert_eq!(args.args, ["engine", "-j", "4"].map(OsString::from));
+        assert!(
+            extract_slotted_args(
+                ["engine", "--slotted", "--proof-extraction", "--proofs"].map(OsString::from)
+            )
+            .is_err()
+        );
+        let ordinary =
+            extract_slotted_args(["engine", "--proof-extraction"].map(OsString::from)).unwrap();
+        assert_eq!(
+            ordinary.args,
+            ["engine", "--proof-extraction"].map(OsString::from)
+        );
+    }
 }

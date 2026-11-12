@@ -58,12 +58,13 @@ pub fn register(graph: &mut EGraph) {
         .unwrap();
 }
 
-/// An e-graph that lifts encoded slotted proofs and checks them against the source.
+/// An e-graph prepared to lift source proofs, with verification selected by the compiler.
 pub fn new_egraph_with_proofs() -> EGraph {
     with_proofs(new_egraph())
 }
 
-/// Enable proof translation and checking on a registered slotted e-graph.
+/// Enable proof translation on a registered slotted e-graph.
+/// [`ProofMode::Prove`] verifies certificates; [`ProofMode::Extract`] only produces them.
 pub fn with_proofs(mut graph: EGraph) -> EGraph {
     proofs::pipeline::register(&mut graph);
     graph.with_proofs_for_translation()

@@ -11,6 +11,7 @@ mod exec_state;
 pub mod extract;
 pub mod prelude;
 mod process_program;
+pub mod proof_summary;
 mod proofs;
 
 pub mod scheduler;
@@ -799,8 +800,9 @@ impl EGraph {
 
     /// Extract unsimplified proofs for translation by an extension.
     ///
-    /// The extension must verify its translated proof: the ordinary checker and
-    /// simplifier are skipped so the original rule premises remain available.
+    /// The ordinary checker and simplifier are skipped so the original rule
+    /// premises remain available. Extensions own translated proof validation;
+    /// production-only executions may defer it to a separate checked run.
     pub fn with_proofs_for_translation(mut self) -> Self {
         self = self.with_proofs_enabled();
         self.proof_state.verify_proofs = false;

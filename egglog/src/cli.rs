@@ -73,6 +73,9 @@ struct Args {
     /// and therefore cannot be reported as additive wall-clock phases.
     #[clap(long)]
     timing_summary: Option<PathBuf>,
+    /// Write dynamic source-request and completed-certificate counts as JSON.
+    #[clap(long)]
+    proof_summary: Option<PathBuf>,
     /// Treat missing `$` prefixes on globals as errors instead of warnings
     #[clap(long = "strict-mode")]
     strict_mode: bool,
@@ -177,6 +180,11 @@ fn cli_with_preprocessor_impl<I, T, P: CliProgram>(
         .init();
 
     let args = Args::parse_from(args);
+    let proof_summary = args.proof_summary.as_ref().map(|_| {
+        egraph
+            .extension_state_or_default::<crate::proof_summary::ProofSummary>()
+            .clone()
+    });
 
     if args.timing_summary.is_some() && args.threads != 1 {
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");
@@ -243,7 +251,14 @@ fn cli_with_preprocessor_impl<I, T, P: CliProgram>(
                 &mut preprocess,
             ) {
                 Ok(None) => {}
-                _ => std::process::exit(1),
+                _ => {
+                    if let (Some(summary), Some(path)) = (&proof_summary, &args.proof_summary)
+                        && let Err(error) = summary.write(path, false)
+                    {
+                        log::error!("failed to write proof summary: {error}");
+                    }
+                    std::process::exit(1)
+                }
             }
 
             if args.to_json || args.to_dot || args.to_svg {
@@ -329,6 +344,13 @@ fn cli_with_preprocessor_impl<I, T, P: CliProgram>(
         file.write_all(b"\n")
             .expect("Failed to finish writing timing summary");
         log::info!("Saved timing summary to {summary_path:?}");
+    }
+
+    if let (Some(summary), Some(path)) = (&proof_summary, &args.proof_summary) {
+        summary.write(path, true).unwrap_or_else(|error| {
+            log::error!("failed to write proof summary: {error}");
+            std::process::exit(1)
+        });
     }
 
     // no need to drop the egraph if we are going to exit

@@ -19,13 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES = ("source", "slotted", "proof_congruence")
 CACHE_VERSION = 1
 PIPELINE = {"no_aliasing": True, "proof_mode": "Prove", "count": "sexp-list-atom-literal-v1"}
-COLUMNS = ("Benchmark", "Input", "Input → Slotted", "Input → Slotted → Proofs")
+COLUMNS = ("Benchmark", "Input", "Slotted (s′)", "Slotted + proofs (s′p)")
 NOTE = (
     "Whole-program S-expression AST nodes: each list, atom, and literal counts once; "
     "comments and whitespace do not count. These sizes describe the recorded input and compiler "
     "identities, not the checkout at rendering time. Compare their hashes separately with the timing "
     "figure. The second column of sizes is the recorded restricted-aliasing "
-    "Slotted compiler output. The final column first applies the public Slotted source proof "
+    "Slotted compiler output with proofs disabled. The output columns are independently compiled "
+    "configurations, not consecutive intermediates. The final column first applies the public Slotted source proof "
     "profile (Compiler::compile_program with ProofMode::Prove), then lowers accepted output through "
     "core congruence and proof instrumentation. Each cached outcome retains that compiler's result "
     "and diagnostic. Counts cover emitted commands, excluding retained source programs and Rust "
@@ -160,8 +161,7 @@ def export_slotted_ast(records: Sequence[dict[str, Any]], destination: Path) -> 
     latex = [
         r"\begin{tabular}{lrrr}",
         r"\toprule",
-        r"Benchmark & Input & \shortstack{Input $\rightarrow$\\ Slotted} & "
-        r"\shortstack{Input $\rightarrow$ Slotted\\ $\rightarrow$ Proofs} \\",
+        r"Benchmark & Input & Slotted ($s^\prime$) & Slotted + proofs ($s^\prime p$) \\",
         r"\midrule",
     ]
     for row in rows:
