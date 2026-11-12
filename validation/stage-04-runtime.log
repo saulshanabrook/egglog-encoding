@@ -1,0 +1,45 @@
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-pr-stack-validation/egglog-experimental)
+    Finished `test` profile [optimized] target(s) in 1m 32s
+     Running unittests src/lib.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/egglog_experimental-2d72139005e2950a)
+
+running 37 tests
+test slotted::runtime::frame::global_tests::concrete_slots_can_match_pattern_slot_literals ... ok
+test slotted::runtime::frame::global_tests::different_global_coordinates_stay_apart ... ok
+test slotted::runtime::frame::global_tests::global_aliases_share_their_concrete_coordinate ... ok
+test slotted::runtime::frame::tests::a_node_cannot_have_two_of_its_slots_identified ... ok
+test slotted::runtime::frame::tests::atoms_rooted_at_one_variable_are_distinct_nodes ... ok
+test slotted::runtime::frame::tests::binding_terms_round_trip ... ok
+test slotted::runtime::frame::tests::conditions_and_mints_read_the_refined_frame ... ok
+test slotted::runtime::frame::tests::frame_terms_round_trip ... ok
+test slotted::runtime::frame::tests::join_is_commutative_and_identifies_shared_variables ... ok
+test slotted::runtime::frame::tests::name_hash_collisions_do_not_identify_spellings ... ok
+test slotted::runtime::frame::tests::names_terms_round_trip ... ok
+test slotted::runtime::frame::tests::nested_matching_keeps_fresh_slots_apart_from_outer_slots ... ok
+test slotted::runtime::frame::tests::nested_matching_preserves_sharing_already_in_an_edge ... ok
+test slotted::runtime::frame::tests::nested_matching_rejects_aliasing_forced_by_a_repeated_literal ... ok
+test slotted::runtime::frame::tests::refinement_enumerates_all_six_slot_partitions ... ok
+test slotted::runtime::frame::tests::refinement_merges_only_what_the_pattern_left_open ... ok
+test slotted::runtime::frame::tests::refinement_replay_keeps_the_selected_group_element_and_direction ... ok
+test slotted::runtime::frame::tests::two_literals_never_become_one_slot ... ok
+test slotted::runtime::group::tests::closure_generates_identity_and_inverse ... ok
+test slotted::runtime::group::tests::closure_of_noncommuting_generators_and_their_full_group_agree ... ok
+test slotted::runtime::group::tests::closure_preserves_all_products_of_partial_bijections ... ok
+test slotted::runtime::group::tests::cosets_distinguish_only_the_pinned_action ... ok
+test slotted::runtime::group::tests::readings_cover_every_preimage_of_a_pinned_slot ... ok
+test slotted::runtime::primitives::restriction_tests::restriction_predicate_matches_materialized_compositions ... ok
+test slotted::runtime::renaming::shape_tests::a_shared_slot_is_a_different_node ... ok
+test slotted::runtime::renaming::shape_tests::private_slots_of_one_column_may_be_permuted ... ok
+test slotted::runtime::renaming::shape_tests::renamed_nodes_share_a_shape_and_back_undoes_it ... ok
+test slotted::runtime::frame::global_tests::unicode_global_labels_work_in_frames_and_source_queries ... ok
+test slotted::runtime::renaming::tests::compact_constraint_solver_matches_generic_partial_maps ... ok
+test slotted::runtime::renaming::tests::proof_tracing_preserves_canonical_shapes_and_symmetries ... ok
+test slotted::runtime::renaming::tests::tied_shapes_retain_the_selected_reading_and_back_map ... ok
+test slotted::runtime::subst::template::tests::ancestor_names_are_numbered_when_first_seen_in_a_descendant ... ok
+test slotted::runtime::subst::template::tests::large_shared_tree_is_stored_and_compared_without_expansion ... ok
+test slotted::runtime::subst::template::tests::repeated_children_refresh_private_slots_and_compose_public_names ... ok
+test slotted::runtime::terms::tests::renamings_and_groups_round_trip_canonically ... ok
+test slotted::runtime::types::tests::compact_maps_preserve_order_domains_updates_and_proof_json ... ok
+test slotted::runtime::subst::template::tests::byte_order_matches_expanded_strings_including_decimal_slot_numbers ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 136 filtered out; finished in 0.02s
+

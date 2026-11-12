@@ -1,0 +1,62 @@
+{
+  "repository": "saulshanabrook/egglog-encoding",
+  "base_commit": "155b6812c334bca00f91d8ecc33ac14acf873c86",
+  "original_optimized_commit": "3db5146119a883b1b6fb42bbcb96b639841d80aa",
+  "artifact_branch": "perf/slotted-optimization-results-pr203",
+  "pull_requests": [
+    {
+      "stage": "stage01",
+      "head": "perf/slotted-01-leader",
+      "base": "main",
+      "sha": "acbe3a91b4d3da9d079c82fb795fee1be652a641",
+      "title": "[1/6] Avoid temporary maps in slotted leader reconciliation",
+      "description": "Leader reconciliation constructed two composed maps to check whether a renaming respects the current domain and range. The new `map-restriction-eq` predicate checks the entries directly, removing those temporary maps from the pairwise leader rule. The proof validator checks the same restriction equation."
+    },
+    {
+      "stage": "stage02",
+      "head": "perf/slotted-02-substitution",
+      "base": "perf/slotted-01-leader",
+      "sha": "e9a2c07334e1d40e13132554026ac9679a03bfa9",
+      "title": "[2/6] Reuse slotted substitutions across application phases",
+      "description": "Repeated application phases rebuilt the same selected substitution even when its representative DAG and public slots had not changed. Cache those materialized results in graph-owned tables keyed by the selected DAG, current slots, layouts, and invocation arguments. The cache follows clone/pop and native unions and refreshes constructor frames when result slots shrink. Regression tests also cover variable replacement frames. Proof mode continues through its certified substitution path. Memo entries remain in graph-owned tables for the graph lifetime, trading retained storage for less repeated reconstruction.",
+      "performance_note": "All seven non-BATAX encoded multipattern workloads show 23–36% lower runtime, with 95% intervals below 1. BATAX-1 dominates the suite total and has an inconclusive directional change, so the aggregate direction is inconclusive in this pilot."
+    },
+    {
+      "stage": "stage03",
+      "head": "perf/slotted-03-parser",
+      "base": "perf/slotted-02-substitution",
+      "sha": "cfc7c8a0982bca0f66592007fd1e2403b8a50c9e",
+      "title": "[3/6] Reuse the execution graph parser for slotted compilation",
+      "description": "The slotted CLI initialized a second e-graph solely to obtain a parser for generated code. Add `Compiler::for_egraph` and use the execution graph's parser, removing that duplicate initialization from every invocation. Standalone compiler construction remains available through `Compiler::new`.",
+      "performance_note": "Every per-workload interval includes 1. Nested mean suite time is 2.6% lower and multipattern mean suite time is 11.5% higher, both inconclusive. The change removes duplicate initialization work, but this whole-process pilot does not establish a runtime gain."
+    },
+    {
+      "stage": "stage04",
+      "head": "perf/slotted-04-renaming",
+      "base": "perf/slotted-03-parser",
+      "sha": "83dac3f0a4ac7149816f90fb5a8c8a91ac553799",
+      "title": "[4/6] Store native slotted renamings in compact sorted maps",
+      "description": "Native slotted helpers used tree maps for the small renamings created throughout matching, substitution, and shape calculations. Store these maps as sorted small vectors with four inline entries. Regression coverage preserves signed key order and explicit partial domains; conversion at the egglog storage boundary retains the existing map and proof representation.",
+      "performance_note": "The clearest per-workload changes are BATAX-2 nested (8.9% lower runtime) and BATAX-1 multipattern (20.7% lower), with both 95% intervals below 1. The other workload intervals include 1."
+    },
+    {
+      "stage": "stage05",
+      "head": "perf/slotted-05-shape",
+      "base": "perf/slotted-04-renaming",
+      "sha": "2d2a3dac4b444abc4ee835b195c23e5688bdced4",
+      "title": "[5/6] Fast-path slotted shapes with identity child groups",
+      "description": "Shape normalization used the general group algorithm even when every child group was the identity. Normalize those cases directly and keep the minimum callback required for proof reconstruction. Shape calculations continue to use the current graph contents, including after cloning or popping a graph.",
+      "performance_note": "Nested BATAX-2 shows 12.4% lower runtime, and multipattern MMM-1 shows 3.1% lower runtime, with both 95% intervals below 1. Both suite-total intervals cross 1, so their aggregate direction is inconclusive."
+    },
+    {
+      "stage": "stage06",
+      "head": "perf/slotted-06-direct-slots",
+      "base": "perf/slotted-05-shape",
+      "sha": "06f9387ec51e7c7723e8f3ae9aab87c33815a7d8",
+      "title": "[6/6] Store slotted variables and binders directly as integer columns",
+      "description": "Variable and binder columns represented a single slot using a singleton renaming map. Store the slot as an `i64` throughout compilation, maintenance, substitution, extraction, export, and proof lifting. Child-edge frames retain their renamings, with scalar-to-map adapters for algorithms that require map views. This changes the physical encoded layout: saved programs using `--slotted-encoded` must be regenerated from source.",
+      "draft": true,
+      "performance_note": "**Draft: measured performance tradeoff.** Nested BATAX-2 is 12.1% slower (ratio 1.121, 95% CI 1.051–1.194), and multipattern ΣMMM-1 is 4.1% slower (1.041, CI 1.001–1.084). Nested MTTKRP-1 improves by 11.0%, TTM-1 by 5.2%, and MMM-2 by 1.1%, with intervals below 1. Both suite-total directions remain inconclusive. This layer should be assessed separately from the preceding five optimizations."
+    }
+  ]
+}

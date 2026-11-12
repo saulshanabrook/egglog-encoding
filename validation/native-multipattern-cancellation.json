@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-11-12T02:19:56.205390+00:00",
+  "pid": 3220035,
+  "command": "/home/oflatt/work/egglog-encoding3/target/debug/deps/paper-7a8cdb3ce5a4e217 --memory-limit-bytes=17179869184 --paper-child /home/oflatt/work/egglog-encoding3/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg slotted,slotted-no-aliasing,slotted-ref-multi,slotted-ref-nested,slotted-ref-nested-snapshot ",
+  "signal": "SIGTERM",
+  "reason": "Apply the user instruction not to worry about native multipattern to the sole remaining long paper comparison. The active mode is confirmed by captured stderr. No ignore entry or semantic-failure reclassification is added.",
+  "captured_stderr": "Validating slotted\nValidating slotted-no-aliasing\nValidating slotted-ref-multi\n",
+  "full_make_claim": "Partial run, not a full pass. 511 other paper cases passed; this combined case is manually cancelled. A focused rerun will keep both encoded treatments and both nested native policies, omitting only slotted-ref-multi."
+}

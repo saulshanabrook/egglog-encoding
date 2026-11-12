@@ -1,0 +1,50 @@
+# Benchmark Report
+
+## Comparison
+
+| Role | Target | Git | Treatment |
+| --- | --- | --- | --- |
+| Baseline | stage05 | 2d2a3dac4b44 | slotted |
+| Candidate | stage06 | 06f9387ec51e | slotted |
+
+*8 file(s): batax_1st-44rules.egg, mmm_1st-44rules.egg, mmm_2nd-44rules.egg, mmm_sum_1st-44rules.egg, mmm_sum_2nd-44rules.egg, mttkrp_1st-44rules.egg, ttm_1st-44rules.egg, ttm_2nd-44rules.egg · 3 round(s) per endpoint/file · 500 s timeout per run · Allocator: 16 GiB cap · Report: /tmp/slotted-perf-pr203/pr-stack/report.jsonl*
+
+## Summary — stage06 slotted vs stage05 slotted
+
+| Metric | Scope | File(s) | Ratio (95% CI) | Result |
+| --- | --- | --- | ---: | --- |
+| Wall time | Suite total | 8 files | 0.915–1.03x | CI includes 1 |
+| Wall time | Lowest-ratio file | batax_1st-44rules.egg | 0.901–1.04x | CI includes 1 |
+| Wall time | Highest-ratio file | mmm_sum_1st-44rules.egg | 1.00–1.08x | slower |
+| Peak RSS | Lowest-ratio file | ttm_2nd-44rules.egg | 0.995–1.00x | CI includes 1 |
+| Peak RSS | Highest-ratio file | ttm_1st-44rules.egg | 1.01–1.01x | higher RSS |
+
+*Ratios are candidate / baseline; below 1 is lower and above 1 is higher.*
+
+## Per-file results
+
+### Wall time
+
+| File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+| --- | ---: | ---: | ---: | --- |
+| batax_1st-44rules.egg | 75.9–87.3 s | 77.0–81.0 s | 0.901–1.04x | CI includes 1 |
+| mmm_1st-44rules.egg | 415–433 ms | 415–430 ms | 0.968–1.03x | CI includes 1 |
+| mmm_2nd-44rules.egg | 5.39–5.78 s | 5.35–5.61 s | 0.940–1.02x | CI includes 1 |
+| mmm_sum_1st-44rules.egg | 173–187 ms | 185–190 ms | 1.00–1.08x | slower |
+| mmm_sum_2nd-44rules.egg | 795–905 ms | 818–839 ms | 0.914–1.04x | CI includes 1 |
+| mttkrp_1st-44rules.egg | 0.985–1.12 s | 1.04–1.08 s | 0.943–1.08x | CI includes 1 |
+| ttm_1st-44rules.egg | 524–578 ms | 528–572 ms | 0.938–1.06x | CI includes 1 |
+| ttm_2nd-44rules.egg | 10.2–10.9 s | 10.1–10.3 s | 0.938–1.00x | CI includes 1 |
+
+### Peak RSS
+
+| File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+| --- | ---: | ---: | ---: | --- |
+| batax_1st-44rules.egg | 1.7–1.8 GiB | 1.7–1.7 GiB | 0.998–1.00x | CI includes 1 |
+| mmm_1st-44rules.egg | 105.9–105.9 MiB | 106.6–106.6 MiB | 1.01–1.01x | higher RSS |
+| mmm_2nd-44rules.egg | 310.5–310.7 MiB | 311.1–311.2 MiB | 1.00–1.00x | higher RSS |
+| mmm_sum_1st-44rules.egg | 105.9–105.9 MiB | 106.6–106.6 MiB | 1.01–1.01x | higher RSS |
+| mmm_sum_2nd-44rules.egg | 105.9–105.9 MiB | 106.6–106.6 MiB | 1.01–1.01x | higher RSS |
+| mttkrp_1st-44rules.egg | 105.9–105.9 MiB | 106.6–106.6 MiB | 1.01–1.01x | higher RSS |
+| ttm_1st-44rules.egg | 105.9–105.9 MiB | 106.6–106.6 MiB | 1.01–1.01x | higher RSS |
+| ttm_2nd-44rules.egg | 531.5–533.2 MiB | 530.0–532.7 MiB | 0.995–1.00x | CI includes 1 |

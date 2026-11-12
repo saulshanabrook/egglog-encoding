@@ -1,0 +1,83 @@
+{
+  "renderer_root": "/tmp/slotted-figure-pr203",
+  "report_path": "/tmp/slotted-perf-pr203/pr-stack/report.jsonl",
+  "grouped_path": "/tmp/slotted-perf-pr203/pr-stack/report-grouped.json",
+  "output_dir": "/tmp/slotted-perf-pr203/pr-stack/artifacts",
+  "scope": {
+    "nested_native_comparison": true,
+    "nested_parent_child": true,
+    "multipattern_parent_child": true,
+    "native_multipattern_comparison": false,
+    "native_multipattern_omission_reason": "Omitted at user request; not a benchmark ignore rule. Existing observations are retained, and no native multipattern retry is planned."
+  },
+  "node_package": "node@22.14.0",
+  "node_version": "v22.14.0",
+  "renderer_cpu": 24,
+  "prebuild": {
+    "cpus": "28-31",
+    "cargo_jobs": 2,
+    "concurrent_with_earlier_stage_collection": true
+  },
+  "concurrent_work": [
+    {"task": "Original full make check", "cpus": "16-19", "paper_workers": 2},
+    {"task": "Intermediate focused Rust tests, followed by package Clippy", "cpus": "26-27", "cargo_jobs": 2},
+    {"task": "Rebased nits, Python, and figure validation", "cpus": "32-33", "cargo_jobs": 1},
+    {"task": "Sequential stage prebuilds", "cpus": "28-31", "cargo_jobs": 2}
+  ],
+  "protocol": {
+    "purpose": "Capped PR comparison pilot; not final paper measurements",
+    "cpu": 22,
+    "rounds": 3,
+    "timeout_sec": 500,
+    "memory_limit_bytes": 17179869184
+  },
+  "native": {
+    "label": "native",
+    "source": "/tmp/slotted-stack-bench-00-main",
+    "git_sha": "155b6812c334bca00f91d8ecc33ac14acf873c86"
+  },
+  "stages": [
+    {
+      "label": "main",
+      "source": "/tmp/slotted-stack-bench-00-main",
+      "git_sha": "155b6812c334bca00f91d8ecc33ac14acf873c86",
+      "title": "Main baseline"
+    },
+    {
+      "label": "stage01",
+      "source": "/tmp/slotted-stack-bench-01",
+      "git_sha": "acbe3a91b4d3da9d079c82fb795fee1be652a641",
+      "title": "1. Avoid temporary maps in leader reconciliation"
+    },
+    {
+      "label": "stage02",
+      "source": "/tmp/slotted-stack-bench-02",
+      "git_sha": "e9a2c07334e1d40e13132554026ac9679a03bfa9",
+      "title": "2. Memoize substitution application"
+    },
+    {
+      "label": "stage03",
+      "source": "/tmp/slotted-stack-bench-03",
+      "git_sha": "cfc7c8a0982bca0f66592007fd1e2403b8a50c9e",
+      "title": "3. Reuse the execution graph parser"
+    },
+    {
+      "label": "stage04",
+      "source": "/tmp/slotted-stack-bench-04",
+      "git_sha": "83dac3f0a4ac7149816f90fb5a8c8a91ac553799",
+      "title": "4. Compact slot renamings"
+    },
+    {
+      "label": "stage05",
+      "source": "/tmp/slotted-stack-bench-05",
+      "git_sha": "2d2a3dac4b444abc4ee835b195c23e5688bdced4",
+      "title": "5. Fast path identity shapes"
+    },
+    {
+      "label": "stage06",
+      "source": "/tmp/slotted-stack-bench-06",
+      "git_sha": "06f9387ec51e7c7723e8f3ae9aab87c33815a7d8",
+      "title": "6. Store Var and binder slots as integers"
+    }
+  ]
+}

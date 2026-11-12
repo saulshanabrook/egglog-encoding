@@ -1,0 +1,141 @@
+{
+  "2": {
+    "commit": "e9a2c07334e1d40e13132554026ac9679a03bfa9",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-tests.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-02-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 35,
+      "integration": 54,
+      "snapshots": 5
+    },
+    "clippy": {
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/tmp/slotted-perf-pr203/pr-stack/stage-02-clippy.log"
+    }
+  },
+  "1": {
+    "commit": "acbe3a91b4d3da9d079c82fb795fee1be652a641",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-api.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-01-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 35,
+      "integration": 27,
+      "snapshots": 5
+    },
+    "clippy": {
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/tmp/slotted-perf-pr203/pr-stack/stage-01-clippy.log"
+    }
+  },
+  "3": {
+    "commit": "cfc7c8a0982bca0f66592007fd1e2403b8a50c9e",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-api.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-03-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 35,
+      "integration": 36,
+      "snapshots": 5
+    },
+    "clippy": {
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/tmp/slotted-perf-pr203/pr-stack/stage-03-clippy.log"
+    }
+  },
+  "4": {
+    "commit": "83dac3f0a4ac7149816f90fb5a8c8a91ac553799",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-api.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-04-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 37,
+      "integration": 30,
+      "snapshots": 5
+    },
+    "clippy": {
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/tmp/slotted-perf-pr203/pr-stack/stage-04-clippy.log"
+    }
+  },
+  "5": {
+    "commit": "2d2a3dac4b444abc4ee835b195c23e5688bdced4",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-api.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-05-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 38,
+      "integration": 31,
+      "snapshots": 5
+    },
+    "clippy": {
+      "status": "passed",
+      "exit_code": 0,
+      "log": "/tmp/slotted-perf-pr203/pr-stack/stage-05-clippy.log"
+    }
+  },
+  "6": {
+    "commit": "06f9387ec51e7c7723e8f3ae9aab87c33815a7d8",
+    "logs": [
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-fmt.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-runtime.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-api.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-snapshot-1.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-snapshot-2.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-snapshot-3.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-snapshot-4.log",
+      "/tmp/slotted-perf-pr203/pr-stack/stage-06-snapshot-5.log"
+    ],
+    "status": "passed",
+    "passed_tests": {
+      "runtime": 38,
+      "integration": 47,
+      "snapshots": 5
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "label": "stage05",
+  "path": "/tmp/slotted-stack-bench-05",
+  "git_sha": "2d2a3dac4b444abc4ee835b195c23e5688bdced4",
+  "elapsed_sec": 152.03426480293274,
+  "binaries": {
+    "egglog-experimental": "033d10eebb0dbe9ff040a1d608ef0f7626c8f3989ce28a12b3ba004bfeb47e04"
+  }
+}

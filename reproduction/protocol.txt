@@ -1,0 +1,81 @@
+PR comparison pilot protocol
+
+Collection: the public ./bench.py entrypoint in clean main commit
+155b6812c334bca00f91d8ecc33ac14acf873c86, invoked from
+/tmp/slotted-figure-pr203. The manifest identifies all seven clean source
+commits and their fixed worktrees. Each stage is cumulative over its parent.
+
+All workload processes are pinned to CPU 22, use three observations per
+condition, a 500-second timeout, and a 16 GiB allocator/address-space cap.
+This is a capped PR comparison pilot, not final paper collection. Whole-process
+wall time and peak RSS come from the shared benchmark runner. Peak RSS is
+measured independently of the allocation cap.
+
+Scope follows the unchanged paper catalog: all ten nested SDQL inputs using
+slotted-no-aliasing versus slotted-ref-nested, plus parent-to-child comparisons
+for those ten inputs and the eight multipattern slotted inputs. The catalog
+omits BATAX 2nd and MTTKRP 2nd from the multipattern figure.
+
+Native multipattern comparison is omitted at the user's explicit request.
+That request canceled the initial native multipattern batch, including its
+active TTM 2nd run. Completed observations remain in the append-only cache;
+the recorded native BATAX 1st timeout at 500 seconds is not hidden or removed.
+No native multipattern retry will run. This scope change is not an ignore rule,
+and no benchmark exclusions were added or modified.
+
+The nested native reference is built and measured only from the fixed main
+worktree. Its completed observations are reused for every stage by public cache labels.
+Parent-versus-child comparisons reuse the same completed encoding observations.
+No older measurement cache or observations were imported into this collection.
+Main's multipattern observations are seeded through a public comparison against
+its already-cached nested treatment; that collection pair is not an optimization
+comparison. Each later multipattern CLI comparison directly uses its parent.
+
+Prebuilds run on CPUs 28-31 with two Cargo jobs. Later stages may build while
+earlier stages are measured on CPU 22; build time is outside measured launches.
+Other concurrent work on this shared host includes the original full make check
+on CPUs 16-19 with two paper workers, focused intermediate Rust tests followed
+by package Clippy on CPUs 26-27 with two Cargo jobs, and rebased nits/Python/figure validation on CPUs 32-33
+with one Cargo job. CPU affinity separates the processes but does not provide
+dedicated host isolation. Three-sample pilot intervals do not account for every
+possible shared-host or temporal effect; small or neutral changes require care.
+The collector verifies source commits,
+clean worktrees, and prepared binary hashes before invoking ./bench.py, then
+checks the measured binary hashes in its public grouped export. CLI commands,
+environment information, build logs, and public Markdown reports are retained.
+
+The raw report.jsonl is owned exclusively by ./bench.py. The temporary plotter
+reads only the public report-grouped.json export through the shared report
+codec. It uses the same latest-N observation selector, frozen exclusions,
+arithmetic means, and independent Fieller 95% intervals as the ordinary report.
+Selected failures or incomplete conditions stop publication rather than being
+discarded. Results JSON preserves selected row indices, source/binary/physical
+input hashes, resource guards, wall/RSS measurements, and exclusions.
+
+Each PR graph has three panels: parent and child against nested native Slotted,
+the nested child/parent ratio, and the multipattern child/parent ratio. The top
+panel uses the paper figure's ascending runtime-ratio ordering and symlog scale.
+The lower panels use linear close-ups; nested retains the top panel's workload
+order, and multipattern sorts by its child/parent ratio. Smaller ratios
+mean less runtime. A 1x guide marks equal runtime. Unbounded Fieller intervals
+are explicitly labeled. Three-sample uncertainty must be considered when
+interpreting small changes; CIs crossing 1 do not establish a directional gain.
+
+Artifact rendering uses Vega 6.4.0, Vega-Lite 6.4.3, Vega CLI 6.4.0, Canvas 3.2.3,
+and Node 22.14.0. PNG, SVG, PDF, bound Vega-Lite, and results JSON are generated
+together. All requested conditions and formats must succeed before replacing
+the requested artifact bundle. PDF fonts are checked for embedding.
+
+Commands:
+  .venv/bin/python /tmp/slotted-perf-pr203/pr-stack/collect.py
+      Print the exact collection plan; no builds or measurements.
+  .venv/bin/python /tmp/slotted-perf-pr203/pr-stack/collect.py --run
+      Wait for prepared build markers, then collect through ./bench.py.
+  .venv/bin/python /tmp/slotted-perf-pr203/pr-stack/stack-figures.py render
+      Render completed observations without builds or measurements.
+  .venv/bin/python /tmp/slotted-perf-pr203/pr-stack/stack-figures.py render --only stage01
+      Render one complete PR comparison bundle.
+  .venv/bin/python /tmp/slotted-perf-pr203/pr-stack/stack-figures.py cumulative
+      Export main-to-stage06 suite and per-workload changes from the same final
+      grouped snapshot to cumulative-results.json beside the manifest, without
+      builds or measurements.

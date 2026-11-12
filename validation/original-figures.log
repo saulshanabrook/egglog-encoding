@@ -1,0 +1,136 @@
+cd figures && npx --yes --package=vega@6.4.0 --package=vega-lite@6.4.3 --package=vega-cli@6.4.0 --package=canvas@3.2.3 node --test eval.test.mjs
+TAP version 13
+# Subtest: Math standard boxes preserve condition labels and selected arithmetic-mean ratio statistics
+ok 1 - Math standard boxes preserve condition labels and selected arithmetic-mean ratio statistics
+  ---
+  duration_ms: 399.197055
+  ...
+# Subtest: failed and missing Math endpoints retain every condition and explicit unavailable status
+ok 2 - failed and missing Math endpoints retain every condition and explicit unavailable status
+  ---
+  duration_ms: 190.836793
+  ...
+# Subtest: missing or zero RSS and strict validation veto only affected boxes and estimates
+ok 3 - missing or zero RSS and strict validation veto only affected boxes and estimates
+  ---
+  duration_ms: 128.566471
+  ...
+# Subtest: all figure designs preserve missing conditions and render without warnings
+ok 4 - all figure designs preserve missing conditions and render without warnings
+  ---
+  duration_ms: 442.09752
+  ...
+# Subtest: disequality standard boxes show only native 1.5-IQR outliers, retaining DE and extlog
+ok 5 - disequality standard boxes show only native 1.5-IQR outliers, retaining DE and extlog
+  ---
+  duration_ms: 41.763608
+  ...
+# Subtest: disequality selection and incomplete/quarantined conditions never create misleading boxes
+ok 6 - disequality selection and incomplete/quarantined conditions never create misleading boxes
+  ---
+  duration_ms: 138.189162
+  ...
+# Subtest: Slotted aligns runtime/RSS ratio panels with uniform black estimates and capped intervals
+ok 7 - Slotted aligns runtime/RSS ratio panels with uniform black estimates and capped intervals
+  ---
+  duration_ms: 39.574607
+  ...
+# Subtest: complete SDQL ratios pair the native multipattern fork with Egglog
+ok 8 - complete SDQL ratios pair the native multipattern fork with Egglog
+  ---
+  duration_ms: 32.268383
+  ...
+# Subtest: complete multipattern figure retains the selected original SDQL rows
+ok 9 - complete multipattern figure retains the selected original SDQL rows
+  ---
+  duration_ms: 42.788281
+  ...
+# Subtest: Slotted retains failed, missing-metric, excluded and unbounded outcomes separately
+ok 10 - Slotted retains failed, missing-metric, excluded and unbounded outcomes separately
+  ---
+  duration_ms: 276.504608
+  ...
+# Subtest: CDF recording aliases retain strict vetoes and baseline-wall cohort with missing RSS
+ok 11 - CDF recording aliases retain strict vetoes and baseline-wall cohort with missing RSS
+  ---
+  duration_ms: 388.114863
+  ...
+# Subtest: CDF overview appears only for metrics with tails and never changes ranks or denominator
+ok 12 - CDF overview appears only for metrics with tails and never changes ranks or denominator
+  ---
+  duration_ms: 248.170019
+  ...
+# Subtest: CDF overviews retain metric columns when just one has a tail
+ok 13 - CDF overviews retain metric columns when just one has a tail
+  ---
+  duration_ms: 286.084527
+  ...
+# Subtest: CDF quarantines preserve coverage without measured points or altered denominator
+ok 14 - CDF quarantines preserve coverage without measured points or altered denominator
+  ---
+  duration_ms: 66.720037
+  ...
+# Subtest: executed Vega Slotted statistics match the shared export fixture
+ok 15 - executed Vega Slotted statistics match the shared export fixture
+  ---
+  duration_ms: 81.009422
+  ...
+# Subtest: CDF empty, zero, single-run and failed samples retain finite reference-containing dynamic domains
+ok 16 - CDF empty, zero, single-run and failed samples retain finite reference-containing dynamic domains
+  ---
+  duration_ms: 405.844552
+  ...
+# Subtest: Math N1 and unbounded Fieller estimates remain explicit; finite endpoints retain bounds
+ok 17 - Math N1 and unbounded Fieller estimates remain explicit; finite endpoints retain bounds
+  ---
+  duration_ms: 123.825804
+  ...
+# Subtest: Slotted interval/point alignment and status glyphs stay inside their workload rows
+ok 18 - Slotted interval/point alignment and status glyphs stay inside their workload rows
+  ---
+  duration_ms: 132.054537
+  ...
+# Subtest: CDF domains fit each metric, magnify compact data and separate heavy tails without changing ranks
+ok 19 - CDF domains fit each metric, magnify compact data and separate heavy tails without changing ranks
+  ---
+  duration_ms: 280.072647
+  ...
+# Subtest: executed corpus coverage and bound SVG layout match the shared paper-export fixture
+ok 20 - executed corpus coverage and bound SVG layout match the shared paper-export fixture
+  ---
+  duration_ms: 105.921048
+  ...
+# Subtest: CDF titles distinguish congruence, recording-only and full checked proof work
+ok 21 - CDF titles distinguish congruence, recording-only and full checked proof work
+  ---
+  duration_ms: 347.016814
+  ...
+# Subtest: the catalog retains separate congruence, recording-only and full-proof CDFs
+ok 22 - the catalog retains separate congruence, recording-only and full-proof CDFs
+  ---
+  duration_ms: 170.445985
+  ...
+# Subtest: Math absolute panels show only native outliers beyond the standard boxes
+ok 23 - Math absolute panels show only native outliers beyond the standard boxes
+  ---
+  duration_ms: 62.074824
+  ...
+# Subtest: capped asymmetric Fieller whiskers retain negative endpoints and align with uniform estimates
+ok 24 - capped asymmetric Fieller whiskers retain negative endpoints and align with uniform estimates
+  ---
+  duration_ms: 120.325208
+  ...
+# Subtest: native boxplot components stay monochrome and whisker caps remain shorter than row bands
+ok 25 - native boxplot components stay monochrome and whisker caps remain shorter than row bands
+  ---
+  duration_ms: 88.453771
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5130.85274

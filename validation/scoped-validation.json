@@ -1,0 +1,50 @@
+[
+  {
+    "name": "mttkrp2-scoped",
+    "command": [
+      "taskset",
+      "-c",
+      "16-19",
+      "/home/oflatt/work/egglog-encoding3/target/debug/deps/paper-7a8cdb3ce5a4e217",
+      "--memory-limit-bytes=17179869184",
+      "--paper-child",
+      "/home/oflatt/work/egglog-encoding3/benchmarks/slotted/inputs/sdql/mttkrp_2nd-44rules.egg",
+      "slotted,slotted-no-aliasing,slotted-ref-nested,slotted-ref-nested-snapshot"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 133.08520830911584,
+    "log": "mttkrp2-scoped.log"
+  },
+  {
+    "name": "remaining-paper-package",
+    "command": [
+      "taskset",
+      "-c",
+      "16-19",
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "paper-tests",
+      "--",
+      "--skip",
+      "paper/"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 244.57543431106023,
+    "log": "remaining-paper-package.log"
+  },
+  {
+    "name": "original-figures",
+    "command": [
+      "taskset",
+      "-c",
+      "16-19",
+      "make",
+      "test-figures"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 6.026572640053928,
+    "log": "original-figures.log"
+  }
+]

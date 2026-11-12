@@ -1,0 +1,240 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.46
+   Compiling autocfg v1.5.1
+   Compiling libc v0.2.186
+   Compiling syn v2.0.118
+   Compiling cfg-if v1.0.4
+   Compiling num-traits v0.2.19
+   Compiling memchr v2.8.2
+   Compiling bitflags v2.13.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling serde_core v1.0.228
+   Compiling cc v1.2.65
+   Compiling rustix v1.1.4
+   Compiling linux-raw-sys v0.12.1
+   Compiling crossbeam-utils v0.8.21
+   Compiling serde v1.0.228
+   Compiling serde_derive v1.0.228
+   Compiling utf8parse v0.2.2
+   Compiling zmij v1.0.21
+   Compiling equivalent v1.0.2
+   Compiling anstyle-parse v1.0.0
+   Compiling getrandom v0.3.4
+   Compiling serde_json v1.0.150
+   Compiling anstyle-query v1.1.5
+   Compiling hashbrown v0.17.1
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling itoa v1.0.18
+   Compiling colorchoice v1.0.5
+   Compiling zerocopy v0.8.52
+   Compiling anstream v1.0.0
+   Compiling indexmap v2.14.0
+   Compiling crossbeam-epoch v0.9.18
+   Compiling terminal_size v0.4.4
+   Compiling once_cell v1.21.4
+   Compiling clap_lex v1.1.0
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling clap_derive v4.6.1
+   Compiling clap_builder v4.6.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling crossbeam-deque v0.8.6
+   Compiling rand_core v0.9.5
+   Compiling ucd-trie v0.1.7
+   Compiling getrandom v0.4.3
+   Compiling rustversion v1.0.22
+   Compiling anyhow v1.0.103
+   Compiling clap v4.6.1
+   Compiling pest v2.8.6
+   Compiling rand_chacha v0.9.0
+   Compiling num-integer v0.1.46
+   Compiling syn v1.0.109
+   Compiling smallvec v1.15.2
+   Compiling dot-structures v0.1.2
+   Compiling object v0.39.1
+   Compiling rand v0.9.4
+   Compiling pest_meta v2.8.6
+   Compiling crossbeam-queue v0.3.12
+   Compiling crossbeam-channel v0.5.15
+   Compiling aho-corasick v1.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling parking_lot_core v0.9.12
+   Compiling fastrand v2.4.1
+   Compiling thiserror v2.0.18
+   Compiling tempfile v3.27.0
+   Compiling regex-automata v0.4.14
+   Compiling crossbeam v0.8.4
+   Compiling arc-swap v1.9.2
+   Compiling pest_generator v2.8.6
+   Compiling into-attr v0.1.1
+   Compiling dot-generator v0.2.0
+   Compiling num-bigint v0.4.7
+   Compiling ordered-float v5.3.0
+   Compiling libmimalloc-sys v0.1.49
+   Compiling thiserror-impl v2.0.18
+   Compiling egglog-numeric-id v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/numeric-id)
+   Compiling bumpalo v3.20.3
+   Compiling foldhash v0.2.0
+   Compiling scopeguard v1.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling log v0.4.33
+   Compiling hashbrown v0.16.1
+   Compiling lock_api v0.4.14
+   Compiling egglog-concurrency v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/concurrency)
+   Compiling num-rational v0.4.2
+   Compiling into-attr-derive v0.2.1
+   Compiling ar_archive_writer v0.5.3
+   Compiling pest_derive v2.8.6
+   Compiling regex v1.12.4
+   Compiling num-iter v0.1.45
+   Compiling num-complex v0.4.6
+   Compiling cfg_aliases v0.2.1
+   Compiling rustc-hash v2.1.3
+   Compiling version_check v0.9.5
+   Compiling web-time v1.1.0
+   Compiling rayon-core v1.13.0
+   Compiling typenum v1.20.1
+   Compiling hashbrown v0.14.5
+   Compiling lazy_static v1.5.0
+   Compiling bitmaps v2.1.0
+   Compiling dashmap v6.2.1
+   Compiling im-rc v15.1.0
+   Compiling egglog-reports v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/egglog-reports)
+   Compiling nix v0.31.3
+   Compiling num v0.4.3
+   Compiling graphviz-rust v0.9.8
+   Compiling chrono v0.4.45
+   Compiling psm v0.1.32
+   Compiling egglog-union-find v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/union-find)
+   Compiling rand_core v0.6.4
+   Compiling dyn-clone v1.0.20
+   Compiling winnow v1.0.3
+   Compiling fixedbitset v0.5.7
+   Compiling egglog-core-relations v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/core-relations)
+   Compiling toml_parser v1.1.2+spec-1.1.0
+   Compiling rand_xoshiro v0.6.0
+   Compiling mimalloc v0.1.52
+   Compiling egglog v2.0.0 (/tmp/slotted-pr-stack-validation/egglog)
+   Compiling egraph-serialize v0.3.0
+   Compiling sized-chunks v0.6.5
+   Compiling env_filter v2.0.0
+   Compiling codspeed v4.7.0
+   Compiling stacker v0.1.25
+   Compiling enum-map-derive v0.17.0
+   Compiling approx v0.5.1
+   Compiling csv-core v0.1.13
+   Compiling jiff v0.2.31
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling either v1.16.0
+   Compiling ryu v1.0.23
+   Compiling csv v1.4.0
+   Compiling rayon v1.12.0
+   Compiling toml_edit v0.25.12+spec-1.1.0
+   Compiling env_logger v0.11.11
+   Compiling statrs v0.18.0
+   Compiling enum-map v2.7.3
+   Compiling egglog-bridge v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/egglog-bridge)
+   Compiling colored v2.2.0
+   Compiling egglog-ast v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/egglog-ast)
+   Compiling divan-macros v0.1.17
+   Compiling egglog-add-primitive v2.0.0 (/tmp/slotted-pr-stack-validation/egglog/src/sort/add_primitive)
+   Compiling getrandom v0.2.17
+   Compiling glob v0.3.3
+   Compiling itertools v0.14.0
+   Compiling proc-macro-crate v3.5.0
+   Compiling egraph-isomorphism v0.1.0 (/tmp/slotted-pr-stack-validation/egraph-isomorphism)
+   Compiling benchmark-memory v0.1.0 (/tmp/slotted-pr-stack-validation/benchmark-memory)
+   Compiling rand_mt v6.1.0
+   Compiling regex-lite v0.1.9
+   Compiling codspeed-divan-compat v4.7.0
+   Compiling condtype v1.3.0
+   Compiling codspeed-divan-compat-walltime v4.7.0
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-pr-stack-validation/egglog-experimental)
+   Compiling codspeed-divan-compat-macros v4.7.0
+   Compiling console v0.16.4
+   Compiling escape8259 v0.5.3
+   Compiling similar v2.7.0
+   Compiling insta v1.48.0
+   Compiling libtest-mimic v0.8.2
+    Finished `test` profile [optimized] target(s) in 4m 18s
+     Running tests/api_slotted_primitives.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/api_slotted_primitives-9fd0152d70b4f13e)
+
+running 6 tests
+test class_slot_bindings_reject_non_identity_maps ... ok
+test coset_reps_are_a_group_with_ordered_elements ... ok
+test renaming_primitives ... ok
+test group_element_indices_are_independent_of_interning_order ... ok
+test restriction_predicate_checks_recorded_proofs ... ok
+test runtime_registration_is_isolated_from_ordinary_egglog ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/api_slotted_subst.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/api_slotted_subst-f121f70b013f6e23)
+
+running 24 tests
+test a_container_payload_is_rejected ... ok
+test a_class_with_no_finite_term_declines ... ok
+test a_cyclic_class_uses_its_grounded_enode ... ok
+test a_naive_rule_performs_a_beta_step ... ok
+test a_payload_column_is_copied_through ... ok
+test a_reachable_constructor_without_layout_is_rejected ... ok
+test a_slot_that_does_not_occur_is_a_no_op ... ok
+test a_redundant_node_slot_survives_the_frame_change ... ok
+test accepts_an_explicit_free_vars_table ... ok
+test rejects_an_invalid_explicit_free_vars_table ... ok
+test rigid_binders_refresh_without_capturing_replacement_slots ... ok
+test exact_tree_cost_excludes_cycles_above_machine_sizes ... ok
+test rigid_slot_fields_require_exactly_the_singleton_domain ... ok
+test slotted_subst_frame_places_the_result_in_the_bodys_frame ... ok
+test shared_closed_terms_do_not_reserve_expanded_private_slot_ranges ... ok
+test substitutes_an_occurring_slot ... ok
+test substitutes_a_nested_occurrence ... ok
+test substitution_accepts_noncanonical_variable_occurrences ... ok
+test substitution_after_clone_uses_its_own_database ... ok
+test substitution_after_pop_uses_restored_database ... ok
+test substitution_memo_observes_result_shrink_without_changing_variable_frames ... ok
+test substitution_memo_reuses_invocations_after_physical_rows_move ... ok
+test substitution_memo_tracks_representatives_and_rolls_back ... ok
+test substitution_observes_free_vars_without_constructor_changes ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/slotted.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/slotted-aa4440f4b3bcbdfe)
+
+running 19 tests
+test binder_columns_require_slots ... ok
+test checks_and_rule_guards_agree_on_free_names ... ok
+test cli_explains_flags_and_rejects_incompatible_modes ... ok
+test cli_recovers_compiler_and_egraph_after_failed_inputs ... ok
+test cli_reuses_files_includes_serialization_and_timing_reports ... ok
+test cli_transforms_complete_stdin_commands ... ok
+test compatibility_cli_uses_the_same_matching_policy_for_checks_and_rules ... ok
+test compilation_errors_are_transactional_and_located ... ok
+test matching_policy_changes_aliasing ... ok
+test named_slots_persist_across_inputs_and_scopes ... ok
+test proofs_keep_reused_rule_names_distinct_across_scopes ... ok
+test rule_comparisons_require_two_bound_variables ... ok
+test scopes_restore_declarations_globals_and_rules ... ok
+test side_patterns_can_bind_the_rewrite_root ... ok
+test slots_work_in_every_carrier_with_distinct_variable_constructors ... ok
+test sorts_can_have_only_a_variable_constructor ... ok
+test string_payloads_preserve_quotes_and_backslashes ... ok
+test transformation_emits_ordinary_egglog ... ok
+test checks_and_rule_guards_agree_on_equality ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s
+
+     Running tests/slotted_maintenance.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/slotted_maintenance-49f7ca2055b172a6)
+
+running 5 tests
+test exporting_does_not_run_another_user_round ... ok
+test child_unions_preserve_fresh_shapes_and_cosets ... ok
+test shape_collisions_keep_the_selected_class_and_renaming_together ... ok
+test leader_reversals_preserve_identities_and_symmetries ... ok
+test substitution_is_independent_of_table_order ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.42s
+

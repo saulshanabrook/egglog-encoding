@@ -1,0 +1,81 @@
+   Compiling num-bigint v0.4.7
+   Compiling ordered-float v5.3.0
+   Compiling ahash v0.7.8
+   Compiling parking_lot_core v0.9.12
+   Compiling getrandom v0.2.17
+   Compiling dashmap v6.2.1
+   Compiling num-rational v0.4.2
+   Compiling num v0.4.3
+   Compiling egraph-serialize v0.3.0
+   Compiling egglog-core-relations v2.0.0 (/home/oflatt/work/egglog-encoding3/egglog/core-relations)
+   Compiling hashbrown v0.12.3
+   Compiling benchmark-memory v0.1.0 (/home/oflatt/work/egglog-encoding3/benchmark-memory)
+   Compiling inplace-vec-builder v0.1.1
+   Compiling binary-merge v0.1.2
+   Compiling sorted-iter v0.1.11
+   Compiling vec-collections v0.4.3
+   Compiling egglog-bridge v2.0.0 (/home/oflatt/work/egglog-encoding3/egglog/egglog-bridge)
+   Compiling symbol_table v0.3.0
+   Compiling egraph-isomorphism v0.1.0 (/home/oflatt/work/egglog-encoding3/egraph-isomorphism)
+   Compiling egglog-ast v2.0.0 (/home/oflatt/work/egglog-encoding3/egglog/egglog-ast)
+   Compiling slotted-egraphs-derive v0.0.36
+   Compiling egg v0.11.0 (https://github.com/egraphs-good/egg?rev=73975c9819efb4af2f3c6c1b44fa53f8c5742574#73975c98)
+   Compiling egglog v2.0.0 (/home/oflatt/work/egglog-encoding3/egglog)
+   Compiling slotted-egraphs v0.0.36 (https://github.com/oflatt-claude/slotted-egraphs.git?rev=4480b8f3085b61d93a576ea3eb5e2390ac6a507f#4480b8f3)
+   Compiling egglog-experimental v3.0.0 (/home/oflatt/work/egglog-encoding3/egglog-experimental)
+   Compiling libtest-mimic v0.8.2
+   Compiling slotted-reference v0.1.0 (/home/oflatt/work/egglog-encoding3/slotted-reference)
+   Compiling egg-math-benchmark v2.0.0 (/home/oflatt/work/egglog-encoding3/egg-math-benchmark)
+   Compiling paper-tests v0.1.0 (/home/oflatt/work/egglog-encoding3/benchmarks/paper-tests)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3m 58s
+     Running tests/paper.rs (target/debug/deps/paper-875b4717d64d4b5c)
+Paper native reference internal checks: false
+Excluded paper/benchmarks/disequality/parameter-analysis.egg/proof-testing: resource: Strict NEE proofs for the full parameter-analysis input exceed the local 10 GiB allocator/address-space cap in a fresh process. This configuration is deferred from the artifact correctness claim across profiles; uncapped validation has not been established. A smaller input does not certify this workload. [2026-10-31 fresh CLI exit 86 after 370.01 s; peak RSS 6001508352 bytes; binary sha256:ec35c542b3cd098e039aa1524a922f6cc2a915da86e109a1f9ca28403818975a; input sha256:5aa2025d8c0056378264a0609f0651af442ea958c3cd2ae1ea31f91f958961bd. Saved capture: benchmarks/local/validation/parameter-strict-isolation-probe.json. Remove this entry only after validating the full configuration on a suitable machine. A fresh release CLI probe also exited86 after344.01s, peakRSS4614504448B, binarysha256:987a778042da6ac8529764015983e7e0e35dd04d676beb9528906d8b957ddd05; same input/cap. Saved capture: benchmarks/local/validation/parameter-strict-production-probe.json. This is diagnostic evidence, not a paper timing observation.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic.egg/slotted-no-aliasing: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic.egg/slotted-ref-nested: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic.egg/slotted-ref-nested-snapshot: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic2.egg/slotted-no-aliasing: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic2.egg/slotted-ref-nested: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/logic/first-order-logic2.egg/slotted-ref-nested-snapshot: unsupported: The logic fixtures use multipattern side conditions unsupported by the nested matcher. [The corresponding frozen .ref files have nested=null and record this translation limit.]
+Excluded paper/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg/slotted: resource: The second BATAX phase exceeds the local 10 GiB cap in encoded multipattern mode. Uncapped validation is unestablished, so this source/native Multi-Snapshot count pair is deferred across profiles. [Fresh actual paper test exits86 after52.94s under10737418240B; capture benchmarks/local/validation/batax2-repro.json, binary5610de2337d2a2dcfc8c41136849a4871de94b9b23b29c16dc61d2add0e2bada. Fresh release CLI also exits86 after66.54s, peakRSS5722030080B, binaryd93be0578aaa0feead5e0836bd75f17620a6b985efc415c15be9316fc312cabd; capture benchmarks/local/validation/batax2-production-cap-probe.json. Source input87277868e931935c2f885433d8135bd3ca01618f911356dd46b2a16e53197cc1; pairedref902232ad6185e35f865cb27b1726b385ce35d93a4d7281f43b359c89064d43ff. These are correctness diagnostics, not paper timing observations. The native Multi/Snapshot comparison is explicitly deferred with its unavailable encoded count oracle; a goal-only run cannot replace that check. Nested timing and matched-count treatments remain registered separately. Remove only after validating the full pair on a suitable machine.]
+Excluded paper/benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg/slotted-ref-multi: resource: The second BATAX phase exceeds the local 10 GiB cap in encoded multipattern mode. Uncapped validation is unestablished, so this source/native Multi-Snapshot count pair is deferred across profiles. [Fresh actual paper test exits86 after52.94s under10737418240B; capture benchmarks/local/validation/batax2-repro.json, binary5610de2337d2a2dcfc8c41136849a4871de94b9b23b29c16dc61d2add0e2bada. Fresh release CLI also exits86 after66.54s, peakRSS5722030080B, binaryd93be0578aaa0feead5e0836bd75f17620a6b985efc415c15be9316fc312cabd; capture benchmarks/local/validation/batax2-production-cap-probe.json. Source input87277868e931935c2f885433d8135bd3ca01618f911356dd46b2a16e53197cc1; pairedref902232ad6185e35f865cb27b1726b385ce35d93a4d7281f43b359c89064d43ff. These are correctness diagnostics, not paper timing observations. The native Multi/Snapshot comparison is explicitly deferred with its unavailable encoded count oracle; a goal-only run cannot replace that check. Nested timing and matched-count treatments remain registered separately. Remove only after validating the full pair on a suitable machine.]
+Paper coverage: 1575 runnable configurations; expected failures: 3; excluded: 9; benchmarks/ignore.json
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 512 filtered out; finished in 0.00s
+
+     Running tests/paper_support.rs (target/debug/deps/paper_support-eb792a393644bc3c)
+
+running 21 tests
+test container_children_keep_their_contextual_sorts_during_extraction_checks ... ok
+test alternate_best_term_is_checked_at_the_original_extraction_boundary ... ok
+test extraction::tests::extraction_checks_reject_missing_terms_without_inserting_them ... ok
+test extraction::tests::equal_root_membership_does_not_replace_the_exact_returned_term_certificate ... ok
+test extraction::tests::nested_container_lookup_respects_custom_union_find_layouts ... ok
+test extraction::tests::membership_lookup_canonicalizes_nested_containers_without_insertion ... ok
+test extraction::tests::proof_feature_automatically_checks_returned_extraction_certificates ... ok
+test extraction::tests::nullary_function_roots_are_captured_in_ordinary_and_encoded_graphs ... ok
+test extraction::tests::stateful_variant_count_runs_once_before_membership_is_captured ... ok
+test extraction::tests::zero_argument_function_root_is_captured_before_a_stateful_count ... ok
+test figure_globs_exclude_pairs_and_allow_ordered_reinclusion ... ok
+test figure_globs_reject_unmatched_non_file_and_empty_selections ... ok
+test included_extractions_preserve_comparison_output_alignment ... ok
+test extraction::tests::shared_extracted_dags_do_not_expand_into_trees_during_checks ... ok
+test only_verified_equal_cost_best_term_ties_are_normalized ... ok
+test literal_terms_variants_and_source_root_certificates_survive_encoding ... ok
+test paper_registration_rejects_unmapped_oracles_and_missing_companions ... ok
+test recording_catalog_modes_register_strict_oracles_and_exclusion_names ... ok
+test ordinary_root_check_rejects_a_candidate_only_extraction_tie ... ok
+test table_xfail_accepts_only_the_recorded_bug_and_rejects_xpass ... ok
+test source_constructor_root_can_be_materialized_without_leaking_validation_bindings ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/slotted_differential.rs (target/debug/deps/slotted_differential-d08ab33e2f335923)
+
+running 1 test
+test frozen_semantic_pairs_have_reference_partitions_and_validated_counts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.62s
+

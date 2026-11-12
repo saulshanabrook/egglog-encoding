@@ -1,0 +1,44 @@
+   Compiling egglog-experimental v3.0.0 (/tmp/slotted-pr-stack-validation/egglog-experimental)
+    Finished `test` profile [optimized] target(s) in 1m 27s
+     Running tests/api_slotted_primitives.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/api_slotted_primitives-9fd0152d70b4f13e)
+
+running 6 tests
+test class_slot_bindings_reject_non_identity_maps ... ok
+test coset_reps_are_a_group_with_ordered_elements ... ok
+test renaming_primitives ... ok
+test restriction_predicate_checks_recorded_proofs ... ok
+test runtime_registration_is_isolated_from_ordinary_egglog ... ok
+test group_element_indices_are_independent_of_interning_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/api_slotted_subst.rs (/tmp/slotted-pr-stack-validation-target/debug/deps/api_slotted_subst-f121f70b013f6e23)
+
+running 24 tests
+test a_container_payload_is_rejected ... ok
+test a_class_with_no_finite_term_declines ... ok
+test a_cyclic_class_uses_its_grounded_enode ... ok
+test a_naive_rule_performs_a_beta_step ... ok
+test a_payload_column_is_copied_through ... ok
+test a_reachable_constructor_without_layout_is_rejected ... ok
+test a_redundant_node_slot_survives_the_frame_change ... ok
+test a_slot_that_does_not_occur_is_a_no_op ... ok
+test accepts_an_explicit_free_vars_table ... ok
+test rejects_an_invalid_explicit_free_vars_table ... ok
+test rigid_binders_refresh_without_capturing_replacement_slots ... ok
+test exact_tree_cost_excludes_cycles_above_machine_sizes ... ok
+test rigid_slot_fields_require_exactly_the_singleton_domain ... ok
+test shared_closed_terms_do_not_reserve_expanded_private_slot_ranges ... ok
+test substitutes_a_nested_occurrence ... ok
+test substitutes_an_occurring_slot ... ok
+test slotted_subst_frame_places_the_result_in_the_bodys_frame ... ok
+test substitution_accepts_noncanonical_variable_occurrences ... ok
+test substitution_after_pop_uses_restored_database ... ok
+test substitution_after_clone_uses_its_own_database ... ok
+test substitution_memo_observes_result_shrink_without_changing_variable_frames ... ok
+test substitution_memo_reuses_invocations_after_physical_rows_move ... ok
+test substitution_memo_tracks_representatives_and_rolls_back ... ok
+test substitution_observes_free_vars_without_constructor_changes ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
