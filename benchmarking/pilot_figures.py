@@ -103,9 +103,10 @@ def load_experiments(path: Path) -> tuple[dict[str, Any], dict[str, FileSpec]]:
         "slotted-complete-proofs",
         "disequality",
         "disequality-proofs",
+        "disequality-reference-proof-overhead",
         "corpus-congruence",
     }:
-        raise ValueError("pilot catalog must name all nine experiments")
+        raise ValueError("pilot catalog must name all ten experiments")
     files: dict[str, FileSpec] = {}
     for experiment in config["experiments"]:
         if experiment["candidate"] not in TREATMENTS or (
@@ -240,7 +241,7 @@ def make_snapshot(
     for experiment in config["experiments"]:
         pairs = [(experiment.get("scope", "extensions"), experiment["reference"], experiment["candidate"])]
         if experiment["id"] == "corpus-congruence":
-            pairs.append(("applications", "off", "proof-extraction"))
+            pairs.append(("applications", "term", "proof-extraction"))
         for scope, reference, candidate in pairs:
             for display in experiment["files"]:
                 file = files[display]
@@ -309,7 +310,7 @@ def make_snapshot(
                         "candidate_label": ("egglog+p" if candidate == "proof-extraction" else "corelog+c")
                         if scope == "applications"
                         else experiment["candidate_label"],
-                        "reference_label": experiment["reference_label"],
+                        "reference_label": "corelog+c" if scope == "applications" else experiment["reference_label"],
                         "baseline": endpoints[0],
                         "candidate": endpoints[1],
                     }
@@ -339,6 +340,7 @@ def make_snapshot(
             "source_blockers": inventory["unavailable_cases"],
             "proof_timing": "recording, extraction, materialization and simplification; no verifier or serialization",
             "proof_validation": "best-effort separate strict replay; remote runs supply validity evidence only",
+            "proof_corpus_baseline": "term",
             "disequality_proof_scope": (
                 "encoded/generated-name equality axioms and disequality witness; no source lifting"
             ),
@@ -371,21 +373,26 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
     ]
     x_domain = [min(xs) / 1.3, max(xs) * 1.3] if xs else [0.001, 1000]
     y_domain = [min(ys) / 1.3, max(ys) * 1.3] if ys else ([0.01, 100] if speedup else [0.001, 1000])
-    labels = ["egglog+p", "egglog+sp"] if applications else list(PASS_COLORS)
+    proof_colors = {
+        **{project["label"]: project["color"] for project in results["pilot_snapshot"]["projects"].values()},
+        "Math": "#595959",
+        "SDQL": "#56b4e9",
+        "Parameter analysis": "#8c564b",
+    }
+    palette = proof_colors if applications else PASS_COLORS
+    labels = list(palette)
     color: dict[str, Any] = {
-        "field": "configuration",
+        "field": "use_case" if applications else "configuration",
         "type": "nominal",
-        "scale": {"domain": labels, "range": [PASS_COLORS[label] for label in labels]},
+        "scale": {"domain": labels, "range": [palette[label] for label in labels]},
         "legend": {
             "title": None,
             "orient": "bottom",
             "direction": "horizontal",
-            "columns": 2 if applications else 4,
+            "columns": 3 if applications else 4,
             "labelFontSize": 10,
         },
     }
-    if applications:
-        color["legend"]["labelExpr"] = "datum.label === 'egglog+p' ? 'egglog corpus: egglog+p' : 'SDQL: egglog+sp'"
     axes = {
         "x": {
             "field": "x",
@@ -489,6 +496,8 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
                         {"field": key}
                         for key in (
                             "series",
+                            "implementation",
+                            "use_case",
                             "configuration",
                             "baseline_configuration",
                             "source_type",
@@ -527,6 +536,51 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
                 "grid": False,
             },
             "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
+            "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
+            "view": {"stroke": None},
+        },
+    }
+
+
+def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
+    """Compare proof overheads within our engines and within native references."""
+    panels = []
+    for implementation, title in (("ours", "(a) Our passes"), ("reference", "(b) Native references")):
+        points = [p for p in results["points"] if p["implementation"] == implementation]
+        planned = [p for p in results["comparisons"] if p["implementation"] == implementation]
+        panel = bound_spec({**results, "points": points}, width=205, height=175)
+        panel.pop("$schema")
+        panel.pop("config")
+        panel["title"] = {
+            "text": title,
+            "subtitle": f"{len(points)}/{len(planned)} comparisons",
+            "fontSize": 11,
+            "fontWeight": "normal",
+            "subtitleFontSize": 9.5,
+        }
+        for layer in panel["layer"]:
+            for axis in ("x", "y"):
+                axis_spec = layer["encoding"][axis]["axis"]
+                ticks = axis_spec["values"]
+                axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
+            if "color" in layer["encoding"]:
+                layer["encoding"]["color"]["legend"].update(labelFontSize=9.5, symbolSize=35)
+            if layer["mark"]["type"] == "text":
+                layer["mark"].update(fontSize=9.5, dy=-5)
+            elif layer["mark"]["type"] == "circle":
+                layer["mark"]["size"] = 12
+        panels.append(panel)
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+        "hconcat": panels,
+        "spacing": 24,
+        "resolve": {
+            "scale": {"x": "independent", "y": "independent", "color": "shared"},
+            "legend": {"color": "shared"},
+        },
+        "config": {
+            "font": "Arial",
+            "axis": {"labelFontSize": 9.5, "titleFontSize": 11, "titleFontWeight": "normal", "grid": False},
             "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
@@ -608,7 +662,7 @@ def export_pilot(
         for name in BUNDLE_NAMES:
             result = pilot_results(snapshot, name)
             result["renderer"] = renderer
-            spec = bound_spec(result)
+            spec = proof_cost_spec(result) if name.startswith("applications-") else bound_spec(result)
             numbers, table = pilot_tex(result)
             for suffix, value in (
                 ("results.json", json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"),
@@ -723,6 +777,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if min(args.rounds, args.threads, args.timeout_sec) < 1 or str(args.report) == "-":
         parser.error("rounds, threads and timeout must be positive; --report requires a filesystem path")
+    if args.proof_source_receipt is not None and not args.proof_source_receipt.is_file():
+        parser.error(f"--proof-source-receipt does not name a file: {args.proof_source_receipt}")
     console = Console(stderr=True)
     try:
         if args.reuse_from is not None:
@@ -768,23 +824,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             memory_limit_bytes=args.memory_limit_bytes,
         )
         requests = []
+        experiments = {experiment["id"]: experiment for experiment in config["experiments"]}
         for experiment in config["experiments"]:
             treatments: set[Treatment] = set()
+            selected_files = experiment["files"]
             if (extensions and experiment.get("scope", "extensions") == "extensions") or (
                 composition and experiment.get("scope") == "composition"
             ):
                 treatments.add(experiment["candidate"])
                 if not experiment.get("reference_pending"):
                     treatments.add(experiment["reference"])
-            if applications and experiment["id"] == "corpus-congruence":
-                treatments.update(("off", "term", "proof-extraction"))
+            if applications:
+                paired = {
+                    "math": "math-proofs",
+                    "math-proofs": "math",
+                    "slotted": "slotted-proofs",
+                    "slotted-proofs": "slotted",
+                    "disequality": "disequality-proofs",
+                    "disequality-proofs": "disequality",
+                }.get(experiment["id"])
+                if paired is not None:
+                    shared_files = [
+                        path for path in experiment["files"] if path in experiments.get(paired, {}).get("files", ())
+                    ]
+                    if not treatments:
+                        selected_files = shared_files
+                    if shared_files:
+                        treatments.add(experiment["candidate"])
+                        if not experiment["id"].startswith("disequality"):
+                            treatments.add(experiment["reference"])
+                elif experiment["id"] == "corpus-congruence":
+                    treatments.update(("term", "proof-extraction"))
+                elif experiment.get("scope") in ("composition", "proof-reference"):
+                    treatments.update((experiment["reference"], experiment["candidate"]))
             for treatment in sorted(treatments):
                 requests.append(
                     BenchmarkRequest(
                         EndpointRequest(
                             target_request, cast(Treatment, treatment), args.memory_limit_bytes, args.threads
                         ),
-                        tuple(files[path] for path in experiment["files"]),
+                        tuple(files[path] for path in selected_files),
                     )
                 )
         store = ReportStore(args.report.expanduser().resolve())

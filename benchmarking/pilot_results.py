@@ -97,8 +97,51 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     scope = (
         "composition" if name == "composition" else "applications" if name.startswith("applications-") else "extensions"
     )
-    for comparison in snapshot["comparisons"]:
-        if comparison["scope"] != scope and not (scope == "applications" and comparison["scope"] == "composition"):
+    source_comparisons = snapshot["comparisons"]
+    if scope == "applications":
+        # Pair proof modes within each implementation, rather than treating a
+        # prior-system comparison as the incremental cost of adding proofs.
+        indexed = {(c["experiment"], c["logical_id"]): c for c in source_comparisons}
+        proof_pairs = []
+        for row in source_comparisons:
+            if row["scope"] in ("applications", "composition", "proof-reference"):
+                proof_pairs.append(
+                    {
+                        **row,
+                        "scope": scope,
+                        "implementation": "reference" if row["scope"] == "proof-reference" else "ours",
+                    }
+                )
+            base_experiment = {
+                "math-proofs": "math",
+                "slotted-proofs": "slotted",
+                "disequality-proofs": "disequality",
+            }.get(row["experiment"])
+            base = indexed.get((base_experiment, row["logical_id"]))
+            if base is None:
+                continue
+            for implementation, side, label in (
+                ("ours", "candidate", "candidate_label"),
+                ("reference", "baseline", "reference_label"),
+            ):
+                # The existing disequality comparison is DE versus NEE+proofs.
+                # Its native proof-cost pair is supplied separately as NEE/NEE+proofs.
+                if implementation == "reference" and base_experiment == "disequality":
+                    continue
+                proof_pairs.append(
+                    {
+                        **row,
+                        "scope": scope,
+                        "implementation": implementation,
+                        "baseline": base[side],
+                        "candidate": row[side],
+                        "reference_label": base[label],
+                        "candidate_label": row[label],
+                    }
+                )
+        source_comparisons = proof_pairs
+    for comparison in source_comparisons:
+        if comparison["scope"] != scope:
             continue
         comparison = dict(comparison)
         for field in ("series", "candidate_label", "reference_label"):
@@ -110,18 +153,37 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         baseline = conditions[comparison["baseline"]]
         candidate = conditions[comparison["candidate"]]
         for field, condition in (("reference_label", baseline), ("candidate_label", candidate)):
-            if label := SLOTTED_TREATMENT_LABELS.get(condition["treatment"]):
+            if pass_label := SLOTTED_TREATMENT_LABELS.get(condition["treatment"]):
                 if field == "candidate_label":
-                    comparison["series"] = comparison["series"].replace(comparison[field], label)
-                comparison[field] = label
+                    comparison["series"] = comparison["series"].replace(comparison[field], pass_label)
+                comparison[field] = pass_label
         if scope == "applications":
-            expected = (
-                ("off", "proof-extraction")
-                if comparison["scope"] == "applications"
-                else ("slotted", "slotted-proof-extraction")
+            allowed = (
+                {
+                    "math-proofs": {("term", "proof-extraction")},
+                    "slotted-proofs": {("slotted-no-aliasing", "slotted-proof-extraction-no-aliasing")},
+                    "slotted-complete-proofs": {("slotted", "slotted-proof-extraction")},
+                    "disequality-proofs": {("off", "proof-extraction")},
+                    "corpus-congruence": {("term", "proof-extraction"), ("off", "proof-extraction")},
+                }.get(comparison["experiment"], set())
+                if comparison["implementation"] == "ours"
+                else {
+                    "math-proofs": {("egg", "egg-proof-extraction")},
+                    "slotted-proofs": {("slotted-ref-nested", "slotted-ref-nested-proofs")},
+                    "disequality-reference-proof-overhead": {("egg-nee", "egg-nee-proof-extraction")},
+                }.get(comparison["experiment"], set())
             )
-            if (baseline["treatment"], candidate["treatment"]) != expected:
+            if (baseline["treatment"], candidate["treatment"]) not in allowed:
                 continue
+            comparison["use_case"] = (
+                snapshot["projects"][comparison["project"]]["label"]
+                if comparison["project"]
+                else "Math"
+                if comparison["experiment"].startswith("math")
+                else "SDQL"
+                if comparison["experiment"].startswith("slotted")
+                else "Parameter analysis"
+            )
         issue = "; ".join(dict.fromkeys(x for x in (baseline["issue"], candidate["issue"]) if x)) or None
         ratios = {}
         overheads = {}
@@ -180,11 +242,13 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
                 "experiment": row["experiment"],
                 "series": row["series"],
                 "project": row["project"],
+                "implementation": row.get("implementation"),
+                "use_case": row.get("use_case"),
                 "treatment": c["treatment"],
                 "configuration": row["candidate_label"],
                 "baseline_configuration": row["reference_label"],
                 "source_type": "SDQL"
-                if row["scope"] == "composition"
+                if row["experiment"].startswith("slotted")
                 else "egglog corpus"
                 if row["project"]
                 else row["experiment"],
@@ -215,13 +279,18 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         )
     coverage = []
     groups = (
-        list(snapshot["projects"].values()) + [{"id": "", "label": "SDQL"}]
+        list(snapshot["projects"].values())
+        + [{"id": label, "label": label} for label in ("Math", "SDQL", "Parameter analysis")]
         if scope == "applications"
         else [item for item in snapshot["experiments"] if item.get("scope", "extensions") == scope]
     )
     for experiment in groups:
         identifier = experiment["id"]
-        rows = [row for row in comparisons if row["project" if scope == "applications" else "experiment"] == identifier]
+        rows = [
+            row
+            for row in comparisons
+            if (row["use_case"] == experiment["label"] if scope == "applications" else row["experiment"] == identifier)
+        ]
         counts = Counter(row["state"] for row in rows)
         coverage.append(
             {
@@ -278,7 +347,10 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
     ]
     for row in results["comparisons"]:
         logical = row["logical_id"].removeprefix("sha256:")
-        prefix = f"{name}/{row['experiment']}/{logical}"
+        prefix = f"{name}/{row['experiment']}"
+        if row.get("implementation"):
+            prefix += f"/{row['implementation']}"
+        prefix += f"/{logical}"
         for role in ("reference", "ours"):
             condition = row[role]
             numbers[f"{prefix}/{role}/n"] = condition["sample_n"]
@@ -298,7 +370,14 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
                 else f"{metric['mean']:.4g}"
                 + (f" [{metric['ci_low']:.4g}, {metric['ci_high']:.4g}]" if metric["ci_low"] is not None else "")
             )
-        label = tex_escape(f"{row['series']} / {row['label']}")
+        implementation = (
+            "Our passes / "
+            if row.get("implementation") == "ours"
+            else "Native reference / "
+            if row.get("implementation") == "reference"
+            else ""
+        )
+        label = tex_escape(f"{implementation}{row['series']} / {row['label']}")
         table.append(f"{label} & {tex_escape(row['state'])} & {values[0]} & {values[1]} " + r"\\")
     table.append(r"\end{tabular}")
     macros = [
@@ -384,7 +463,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         (item["label"], [row for row in result["comparisons"] if row["experiment"] == item["id"]])
         for item in result["coverage"]
     ]
-    groups.append(("Proof adoption (egglog corpus and SDQL)", applications["comparisons"]))
+    groups.append(("Proof overhead (our passes and native references)", applications["comparisons"]))
     headers = [
         r"\begin{tabular}{lrll}",
         r"Experiment & Inputs & Executed (ref; ours) & Checked (ref; ours) \\",

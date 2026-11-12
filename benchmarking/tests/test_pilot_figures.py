@@ -143,6 +143,19 @@ def snapshot_fixture() -> dict[str, Any]:
     }
 
 
+def test_explicit_missing_source_receipt_stops_before_loading_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unexpected_load(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("missing explicit provenance receipt must be rejected before loading inputs")
+
+    monkeypatch.setattr(pilot_figures, "load_experiments", unexpected_load)
+    with pytest.raises(SystemExit) as error:
+        pilot_figures.main(["--no-runs", "--proof-source-receipt", str(tmp_path / "missing.json")])
+    assert error.value.code == 2
+    assert "--proof-source-receipt does not name a file" in capsys.readouterr().err
+
+
 def test_worker_counts_are_part_of_real_cache_selection(tmp_path: Path) -> None:
     store = ReportStore(tmp_path / "report.jsonl")
     for threads, value in ((1, 1.0), (4, 0.4)):
@@ -508,10 +521,10 @@ def test_late_export_failure_preserves_all_existing_pilot_files(
     before = {path.name: path.read_bytes() for path in destination.iterdir()}
     original = pilot_figures.bound_spec
 
-    def fail_late(result: dict[str, Any]) -> dict[str, Any]:
+    def fail_late(result: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         if result["figure"] == "applications-proof-runtime":
             raise ValueError("late render failure")
-        return original(result)
+        return original(result, **kwargs)
 
     monkeypatch.setattr(pilot_figures, "bound_spec", fail_late)
     with pytest.raises(ValueError, match="late render failure"):
@@ -630,6 +643,7 @@ def test_source_validation_requires_parity_and_verified_certificates_for_every_i
 
 def test_application_proof_views_omit_term_control_even_in_an_older_snapshot() -> None:
     snapshot = snapshot_fixture()
+    snapshot["comparisons"] = [row for row in snapshot["comparisons"] if row["scope"] == "applications"]
     snapshot["comparisons"].append({**snapshot["comparisons"][-1], "candidate": "1"})
     runtime = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
     speedup = pilot_results.pilot_results(snapshot, "applications-proof-speedup")
@@ -649,7 +663,7 @@ def test_compact_capability_counts_execution_separately_from_timing_and_proof_va
     main = tables["experiment-coverage.table.tex"]
     details = tables["experiment-coverage-details.table.tex"]
     assert "math-proofs & 1 & 1/1; 1/1 & N/A; 0/1" in main
-    assert "Proof adoption (egglog corpus and SDQL) & 1 & 1/1; 1/1 & N/A; 0/1" in main
+    assert "Proof overhead (our passes and native references) & 2 & 2/2; 2/2 & N/A; 0/2" in main
     assert "not compared" not in main and "not checked" not in main
     assert "not compared" in details and "known difference" in details
     assert "math-proofs / ours & 0/1 & unknown & unknown & unknown & unknown & unknown 1/1" in details
@@ -728,6 +742,9 @@ def test_emitted_zero_counters_are_distinct_from_absent_summaries() -> None:
 
 def test_proof_adoption_keeps_corpus_and_complete_slotted_baselines_separate() -> None:
     snapshot = snapshot_fixture()
+    snapshot["comparisons"] = [
+        row for row in snapshot["comparisons"] if row["scope"] in ("applications", "composition")
+    ]
     baseline = deepcopy(snapshot["conditions"][0])
     baseline.update(id="s", treatment="slotted", project="")
     candidate = deepcopy(snapshot["conditions"][2])
@@ -765,3 +782,139 @@ def test_runtime_ratio_guides_cover_large_overheads_without_changing_points() ->
     for guide in spec["layer"][0]["data"]["values"]:
         label = next(row for row in labels if row["label"] == guide["factor"])
         assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
+
+
+def test_proof_cost_pairs_implementations_and_keeps_both_slotted_policies() -> None:
+    snapshot = snapshot_fixture()
+    template = snapshot["conditions"][2]
+    treatments = {
+        "off": "off",
+        "c": "term",
+        "p": "proof-extraction",
+        "egg": "egg",
+        "eggp": "egg-proof-extraction",
+        "sr": "slotted-no-aliasing",
+        "srp": "slotted-proof-extraction-no-aliasing",
+        "s": "slotted",
+        "sp": "slotted-proof-extraction",
+        "nested": "slotted-ref-nested",
+        "nestedp": "slotted-ref-nested-proofs",
+        "de": "egg-de",
+        "nee": "egg-nee",
+        "neep": "egg-nee-proof-extraction",
+    }
+    snapshot["conditions"] = []
+    for multiplier, (identifier, treatment) in enumerate(treatments.items(), 1):
+        condition = deepcopy(template)
+        condition.update(id=identifier, treatment=treatment, binary_sha256="sha256:" + identifier)
+        for observation in condition["observations"]:
+            observation.update(
+                treatment=treatment,
+                binary_sha256=condition["binary_sha256"],
+                wall_sec=observation["wall_sec"] * multiplier,
+            )
+        snapshot["conditions"].append(condition)
+    pairs = [
+        ("math", "extensions", "egg", "c", "egg", "corelog+c"),
+        ("math-proofs", "extensions", "eggp", "p", "egg + proofs", "egglog+p"),
+        ("slotted", "extensions", "nested", "sr", "Slotted nested", "egglog+s′"),
+        ("slotted-proofs", "extensions", "nestedp", "srp", "Slotted nested + proofs", "egglog+s′p"),
+        ("slotted-complete-proofs", "composition", "s", "sp", "egglog+s", "egglog+sp"),
+        ("disequality", "extensions", "de", "off", "DE", "egglog+d"),
+        ("disequality-proofs", "extensions", "neep", "p", "NEE + proofs", "egglog+dp"),
+        ("disequality-reference-proof-overhead", "proof-reference", "nee", "neep", "NEE", "NEE + proofs"),
+        ("corpus-congruence", "applications", "c", "p", "corelog+c", "egglog+p"),
+    ]
+    snapshot["comparisons"] = [
+        {
+            "experiment": name,
+            "scope": scope,
+            "baseline": base,
+            "candidate": candidate,
+            "reference_label": base_label,
+            "candidate_label": candidate_label,
+            "logical_id": "sha256:file",
+            "label": "case",
+            "series": name,
+            "project": "demo" if scope == "applications" else "",
+        }
+        for name, scope, base, candidate, base_label, candidate_label in pairs
+    ]
+    result = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
+    assert len(result["points"]) == 8
+    numbers, table = pilot_results.pilot_tex(result)
+    for implementation, baseline_mean, proof_mean in (("ours", 0.0066, 0.0099), ("reference", 0.0132, 0.0165)):
+        prefix = f"applications-proof-runtime/math-proofs/{implementation}/file"
+        for role, value in (("reference", baseline_mean), ("ours", proof_mean)):
+            assert f"egglogfigure@{prefix}/{role}/runtime/mean\\endcsname{{{value:.12g}}}" in numbers
+            assert f"egglogfigure@{prefix}/{role}/runtime/ci-low" in numbers
+            assert f"egglogfigure@{prefix}/{role}/runtime/ci-high" in numbers
+        assert f"egglogfigure@{prefix}/speedup/mean\\endcsname{{{baseline_mean / proof_mean:.12g}}}" in numbers
+    assert "Our passes / math-proofs / case" in table
+    assert "Native reference / math-proofs / case" in table
+    native = [c for c in result["comparisons"] if c["implementation"] == "reference"]
+    assert {(c["reference"]["treatment"], c["ours"]["treatment"]) for c in native} == {
+        ("egg", "egg-proof-extraction"),
+        ("slotted-ref-nested", "slotted-ref-nested-proofs"),
+        ("egg-nee", "egg-nee-proof-extraction"),
+    }
+    own_sdql = [c for c in result["comparisons"] if c["implementation"] == "ours" and c["use_case"] == "SDQL"]
+    assert {c["candidate_label"] for c in own_sdql} == {"egglog+s′p", "egglog+sp"}
+    spec = pilot_figures.proof_cost_spec(result)
+    assert [len(panel["data"]["values"]) for panel in spec["hconcat"]] == [5, 3]
+    assert spec["resolve"]["scale"]["color"] == "shared"
+    for panel in spec["hconcat"]:
+        assert panel["layer"][-1]["encoding"]["color"]["field"] == "use_case"
+        assert panel["layer"][-1]["encoding"]["x"]["title"] == "Without proofs: runtime (s)"
+    restricted = next(c for c in snapshot["conditions"] if c["id"] == "srp")
+    restricted["observations"][1].update(status="failure", error_message="proof construction consistency failure")
+    failed = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
+    assert len(failed["comparisons"]) == 8 and len(failed["points"]) == 7
+    assert any(c["candidate"] == "srp" and c["state"] == "failed" for c in failed["comparisons"])
+
+
+def test_applications_only_cli_requests_all_proof_pairs_and_respects_file_subsets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = json.loads(pilot_figures.DEFAULT_CONFIG.read_bytes())
+    selectors = {"math": "math", "slotted": "sdql", "disequality": "parameter", "corpus": "corpus"}
+    for experiment in config["experiments"]:
+        experiment["files"] = [
+            next(value for prefix, value in selectors.items() if experiment["id"].startswith(prefix))
+        ]
+        if experiment["id"] == "slotted":
+            experiment["files"].append("unpaired-sdql")
+    files = {
+        name: models.FileSpec(name, tmp_path / (name + ".egg"), "sha256:" + name)
+        for name in (*selectors.values(), "unpaired-sdql")
+    }
+    monkeypatch.setattr(pilot_figures, "load_experiments", lambda _path: (config, files))
+    monkeypatch.setattr(pilot_figures, "program_size_snapshot", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(pilot_figures, "translation_program_size_snapshot", lambda *_args, **_kwargs: {})
+    captured = []
+
+    def stop_before_builds(requests: Any, *_args: Any, **_kwargs: Any) -> Any:
+        captured.extend(requests)
+        raise ValueError("request selection captured before any build or measurement")
+
+    monkeypatch.setattr(pilot_figures, "resolve_requests", stop_before_builds)
+    assert pilot_figures.main(["applications-proof-runtime", "--report", str(tmp_path / "report.jsonl")]) == 2
+    selected = {(r.endpoint.treatment, tuple(f.display_path for f in r.files)) for r in captured}
+    assert selected == {
+        ("term", ("math",)),
+        ("proof-extraction", ("math",)),
+        ("egg", ("math",)),
+        ("egg-proof-extraction", ("math",)),
+        ("slotted-no-aliasing", ("sdql",)),
+        ("slotted-proof-extraction-no-aliasing", ("sdql",)),
+        ("slotted-ref-nested", ("sdql",)),
+        ("slotted-ref-nested-proofs", ("sdql",)),
+        ("slotted", ("sdql",)),
+        ("slotted-proof-extraction", ("sdql",)),
+        ("off", ("parameter",)),
+        ("proof-extraction", ("parameter",)),
+        ("egg-nee", ("parameter",)),
+        ("egg-nee-proof-extraction", ("parameter",)),
+        ("term", ("corpus",)),
+        ("proof-extraction", ("corpus",)),
+    }

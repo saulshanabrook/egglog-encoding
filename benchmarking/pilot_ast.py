@@ -79,7 +79,15 @@ def ratio_guide_factors(ratios: Sequence[float]) -> list[float]:
     )
     lower = max(v for v in candidates if v <= low)
     upper = min(v for v in candidates if v >= high)
-    return sorted({lower, 0.5, 1.0, 2.0, 5.0, *[v for v in candidates if 10 <= v <= upper]})
+    factors = {lower, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0}
+    factors = {v for v in factors if v <= upper}
+    extras = [v for v in candidates if 50 <= v <= upper]
+    if len(factors) + len(extras) <= 10:
+        factors.update(extras)
+    else:
+        factors.update(v for v in extras if math.log10(v).is_integer())
+        factors.add(upper)
+    return sorted(factors)
 
 
 def ratio_guide_labels(
