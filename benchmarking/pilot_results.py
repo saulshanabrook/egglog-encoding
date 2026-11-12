@@ -19,7 +19,7 @@ from typing import Any
 from scipy import stats
 
 from .engines import PROOF_ORACLES
-from .pilot_ast import LEGACY_PASS_LABELS
+from .pilot_ast import LEGACY_PASS_LABELS, SLOTTED_TREATMENT_LABELS
 from .proof_validation import is_semantic_proof_failure
 from .reports.analysis import _ratio_estimate, _sample_estimate
 
@@ -98,7 +98,7 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "composition" if name == "composition" else "applications" if name.startswith("applications-") else "extensions"
     )
     for comparison in snapshot["comparisons"]:
-        if comparison["scope"] != scope:
+        if comparison["scope"] != scope and not (scope == "applications" and comparison["scope"] == "composition"):
             continue
         comparison = dict(comparison)
         for field in ("series", "candidate_label", "reference_label"):
@@ -109,8 +109,19 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
             )
         baseline = conditions[comparison["baseline"]]
         candidate = conditions[comparison["candidate"]]
-        if scope == "applications" and (baseline["treatment"] != "off" or candidate["treatment"] != "proof-extraction"):
-            continue
+        for field, condition in (("reference_label", baseline), ("candidate_label", candidate)):
+            if label := SLOTTED_TREATMENT_LABELS.get(condition["treatment"]):
+                if field == "candidate_label":
+                    comparison["series"] = comparison["series"].replace(comparison[field], label)
+                comparison[field] = label
+        if scope == "applications":
+            expected = (
+                ("off", "proof-extraction")
+                if comparison["scope"] == "applications"
+                else ("slotted", "slotted-proof-extraction")
+            )
+            if (baseline["treatment"], candidate["treatment"]) != expected:
+                continue
         issue = "; ".join(dict.fromkeys(x for x in (baseline["issue"], candidate["issue"]) if x)) or None
         ratios = {}
         overheads = {}
@@ -171,6 +182,12 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
                 "project": row["project"],
                 "treatment": c["treatment"],
                 "configuration": row["candidate_label"],
+                "baseline_configuration": row["reference_label"],
+                "source_type": "SDQL"
+                if row["scope"] == "composition"
+                else "egglog corpus"
+                if row["project"]
+                else row["experiment"],
                 "workload": row["label"],
                 "logical_id": row["logical_id"],
                 "x": x["mean"],
@@ -197,11 +214,12 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
             }
         )
     coverage = []
-    for experiment in (
-        snapshot["projects"].values()
+    groups = (
+        list(snapshot["projects"].values()) + [{"id": "", "label": "SDQL"}]
         if scope == "applications"
         else [item for item in snapshot["experiments"] if item.get("scope", "extensions") == scope]
-    ):
+    )
+    for experiment in groups:
         identifier = experiment["id"]
         rows = [row for row in comparisons if row["project" if scope == "applications" else "experiment"] == identifier]
         counts = Counter(row["state"] for row in rows)
@@ -366,7 +384,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         (item["label"], [row for row in result["comparisons"] if row["experiment"] == item["id"]])
         for item in result["coverage"]
     ]
-    groups.append(("Existing programs + proofs", applications["comparisons"]))
+    groups.append(("Proof adoption (egglog corpus and SDQL)", applications["comparisons"]))
     headers = [
         r"\begin{tabular}{lrll}",
         r"Experiment & Inputs & Executed (ref; ours) & Checked (ref; ours) \\",
@@ -619,5 +637,6 @@ def tex_escape(text: str) -> str:
         "}": r"\}",
         "~": r"\textasciitilde{}",
         "^": r"\textasciicircum{}",
+        "′": r"$^\prime$",
     }
-    return re.sub(r"[\\&%$#_{}~^]", lambda match: replacements[match.group()], text)
+    return re.sub(r"[\\&%$#_{}~^′]", lambda match: replacements[match.group()], text)

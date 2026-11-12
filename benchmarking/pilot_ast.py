@@ -16,7 +16,7 @@ from .config import DEFAULT_MEMORY_LIMIT_BYTES, DEFAULT_TIMEOUT_SEC
 from .models import FileSpec
 from .slotted_ast import COLUMNS, PIPELINE, export_slotted_ast, slotted_ast_records
 from .translation_ast import PIPELINE as TRANSLATION_PIPELINE
-from .translation_ast import PROFILES, SAFETY_STATUSES, TranslationRequest, translation_ast_records
+from .translation_ast import SAFETY_STATUSES, TranslationRequest, translation_ast_records
 
 PASS_LABELS = {
     "c": "corelog+c",
@@ -27,9 +27,23 @@ PASS_LABELS = {
     "scp": "egglog+sp",
 }
 LEGACY_PASS_LABELS = {f"extlog_{profile}": label for profile, label in PASS_LABELS.items()}
-PASS_COLORS = dict(
-    zip(PASS_LABELS.values(), ("#0072b2", "#56b4e9", "#d55e00", "#cc79a7", "#e69f00", "#b59b00"), strict=True)
-)
+RESTRICTED_PASS_LABELS = {"s": "egglog+s′", "scp": "egglog+s′p"}
+PASS_COLORS = {
+    "corelog+c": "#0072b2",
+    "egglog+p": "#d55e00",
+    "egglog+d": "#009e73",
+    "egglog+dp": "#cc79a7",
+    "egglog+s′": "#e69f00",
+    "egglog+s′p": "#6a3d9a",
+    "egglog+s": "#56b4e9",
+    "egglog+sp": "#8c564b",
+}
+SLOTTED_TREATMENT_LABELS = {
+    "slotted-no-aliasing": RESTRICTED_PASS_LABELS["s"],
+    "slotted-proof-extraction-no-aliasing": RESTRICTED_PASS_LABELS["scp"],
+    "slotted": PASS_LABELS["s"],
+    "slotted-proof-extraction": PASS_LABELS["scp"],
+}
 TRANSLATION_NOTE = (
     "Whole-program S-expression nodes: each list, atom, and literal counts once. "
     "The denominator is self-contained raw source; emitted scaffolding remains in the output. "
@@ -52,6 +66,65 @@ def log_major_ticks(domain: Sequence[float]) -> list[float]:
     return ticks[:: max(1, math.ceil(len(ticks) / 6))]
 
 
+def ratio_guide_factors(ratios: Sequence[float]) -> list[float]:
+    """Bracket observed ratios with conventional multiples while retaining orientation guides."""
+    values = [r for r in ratios if math.isfinite(r) and r > 0]
+    low, high = min([0.5, *values]), max([10.0, *values])
+    candidates = sorted(
+        {
+            m * 10.0**p
+            for p in range(math.floor(math.log10(low)) - 1, math.ceil(math.log10(high)) + 1)
+            for m in (1, 2, 5)
+        }
+    )
+    lower = max(v for v in candidates if v <= low)
+    upper = min(v for v in candidates if v >= high)
+    return sorted({lower, 0.5, 1.0, 2.0, 5.0, *[v for v in candidates if 10 <= v <= upper]})
+
+
+def ratio_guide_labels(
+    guides: Sequence[dict[str, Any]],
+    x_domain: Sequence[float],
+    y_domain: Sequence[float],
+    width: float,
+    height: float,
+    points: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Place ratio labels on their lines, avoiding labels and mean points at the actual panel size."""
+    x0, x1 = map(math.log, x_domain)
+    y0, y1 = map(math.log, y_domain)
+    occupied = [
+        (
+            width * (math.log(p["x"]) - x0) / (x1 - x0) - 3,
+            height * (y1 - math.log(p["y"])) / (y1 - y0) - 3,
+            width * (math.log(p["x"]) - x0) / (x1 - x0) + 3,
+            height * (y1 - math.log(p["y"])) / (y1 - y0) + 3,
+        )
+        for p in points
+    ]
+    labels = []
+    for guide in guides:
+        label = str(guide.get("factor", guide.get("label")))
+        candidates = []
+        for fraction in (0.92, 0.84, 0.76, 0.68, 0.60, 0.54):
+            x = guide["x"] * (guide["x2"] / guide["x"]) ** fraction
+            y = guide["y"] * (guide["y2"] / guide["y"]) ** fraction
+            px, py = width * (math.log(x) - x0) / (x1 - x0), height * (y1 - math.log(y)) / (y1 - y0)
+            box = (px - 6 * len(label), py - 16, px + 1, py - 3)
+            outside = max(0, -box[0]) + max(0, -box[1]) + max(0, box[2] - width) + max(0, box[3] - height)
+            overlap = sum(
+                max(0, min(box[2], b[2]) - max(box[0], b[0])) * max(0, min(box[3], b[3]) - max(box[1], b[1]))
+                for b in occupied
+            )
+            candidates.append((outside * 10000 + overlap, x, y, box))
+            if outside == overlap == 0:
+                break
+        _, x, y, box = min(candidates, key=lambda c: c[0])
+        labels.append({"x": x, "y": y, "label": label})
+        occupied.append(box)
+    return labels
+
+
 def translation_program_size_snapshot(
     config: dict[str, Any],
     files: dict[str, FileSpec],
@@ -65,20 +138,17 @@ def translation_program_size_snapshot(
     """Freeze broad source/configuration coverage separately from legacy Slotted rows."""
     experiments = {experiment["id"]: experiment for experiment in config["experiments"]}
     requests = []
-    for name, profiles, family in (
-        ("corpus-congruence", ("c", "cp"), "Applications"),
-        ("math", ("c", "cp"), "Math"),
-        ("disequality", ("d", "dcp"), "Disequality"),
-        ("slotted", ("s", "scp"), "Slotted restricted"),
+    for name, profiles, family, no_aliasing in (
+        ("corpus-congruence", ("c", "cp"), "egglog corpus", None),
+        ("math", ("c", "cp"), "Math", None),
+        ("disequality", ("d", "dcp"), "Disequality", None),
+        ("slotted", ("s", "scp"), "Slotted restricted", True),
+        ("slotted-complete", ("s", "scp"), "Slotted complete", False),
     ):
         for display in experiments.get(name, {}).get("files", []):
-            project = Path(display).parent.name if family == "Applications" else ""
+            project = Path(display).parent.name if family == "egglog corpus" else ""
             for profile in profiles:
-                requests.append(
-                    TranslationRequest(
-                        files[display], profile, family, project, True if profile in ("s", "scp") else None
-                    )
-                )
+                requests.append(TranslationRequest(files[display], profile, family, project, no_aliasing))
     records = translation_ast_records(
         requests,
         cache,
@@ -121,6 +191,7 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
         row = {
             **planned,
             "status": record["status"] if record else "pending",
+            "configuration": (RESTRICTED_PASS_LABELS if planned["no_aliasing"] else PASS_LABELS)[planned["profile"]],
             "source_ast_nodes": None,
             "normalized_source_ast_nodes": None,
             "output_ast_nodes": None,
@@ -149,22 +220,34 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
                     **row,
                     "x": x,
                     "y": y,
-                    "configuration": PASS_LABELS[planned["profile"]],
                     "workload": planned["file"],
                 }
             )
         rows.append(row)
-    coverage = [
-        {
-            "profile": profile,
-            "planned": sum(row["profile"] == profile for row in rows),
-            **{
-                status: sum(row["profile"] == profile and row["status"] == status for row in rows)
-                for status in ("ok", "pending", "error", "failure", "timed-out", "memory-limited", "safety-failure")
-            },
-        }
-        for profile in PROFILES
-    ]
+    coverage = []
+    for profile, no_aliasing in (
+        ("c", None),
+        ("cp", None),
+        ("d", None),
+        ("dcp", None),
+        ("s", True),
+        ("scp", True),
+        ("s", False),
+        ("scp", False),
+    ):
+        matching = [row for row in rows if row["profile"] == profile and row["no_aliasing"] == no_aliasing]
+        coverage.append(
+            {
+                "profile": profile,
+                "no_aliasing": no_aliasing,
+                "configuration": (RESTRICTED_PASS_LABELS if no_aliasing else PASS_LABELS)[profile],
+                "planned": len(matching),
+                **{
+                    status: sum(row["status"] == status for row in matching)
+                    for status in ("ok", "pending", "error", "failure", "timed-out", "memory-limited", "safety-failure")
+                },
+            }
+        )
     return {
         "figure": "program-size",
         "metric": TRANSLATION_NOTE,
@@ -175,7 +258,7 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
+def translation_program_size_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) -> dict[str, Any]:
     """Fit each log axis to its deterministic counts and clip multiplier guides."""
     xs = [point["x"] for point in results["points"]]
     ys = [point["y"] for point in results["points"]]
@@ -204,25 +287,17 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
             "domain": list(PASS_COLORS),
             "range": list(PASS_COLORS.values()),
         },
-        "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
+        "legend": {"title": None, "orient": "bottom", "direction": "horizontal", "columns": 4, "labelFontSize": 10},
     }
     guides: list[dict[str, Any]] = []
-    for factor in (1, 5, 10, 100):
+    for factor in ratio_guide_factors([p["y"] / p["x"] for p in results["points"]]):
         low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
         if low < high:
-            guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor}×"})
-    complete, total = len(results["points"]), len(results["rows"])
+            guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor:g}×"})
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-        "width": 460,
-        "height": 350,
-        "title": {
-            "text": "Compiler output program size",
-            "subtitle": [
-                f"{complete}/{total} input/configurations available; deterministic compile-only counts",
-                "Whole-program representation, including emitted scaffolding; failed/pending cases remain in coverage.",
-            ],
-        },
+        "width": width,
+        "height": height,
         "layer": [
             {
                 "data": {"values": guides},
@@ -230,16 +305,7 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "encoding": {**axes, "x2": {"field": "x2"}, "y2": {"field": "y2"}},
             },
             {
-                "data": {
-                    "values": [
-                        {
-                            "x": row["x2"] * (row["x"] / row["x2"]) ** 0.08,
-                            "y": row["y2"] * (row["y"] / row["y2"]) ** 0.08,
-                            "label": row["label"],
-                        }
-                        for row in guides
-                    ]
-                },
+                "data": {"values": ratio_guide_labels(guides, x_domain, y_domain, width, height, results["points"])},
                 "mark": {"type": "text", "align": "right", "dy": -7, "fontSize": 10, "color": "#555555"},
                 "encoding": {**axes, "text": {"field": "label"}},
             },
@@ -248,10 +314,10 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "mark": {
                     "type": "circle",
                     "filled": True,
-                    "opacity": 0.7,
-                    "size": 35,
+                    "opacity": 0.55,
+                    "size": 18,
                     "stroke": "#333333",
-                    "strokeWidth": 0.45,
+                    "strokeWidth": 0.3,
                 },
                 "encoding": {
                     **axes,
@@ -282,6 +348,7 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "grid": False,
             },
             "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
+            "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
     }
@@ -293,6 +360,8 @@ def export_translation_program_size(snapshot: dict[str, Any], destination: Path)
     columns = (
         "file",
         "profile",
+        "no_aliasing",
+        "configuration",
         "family",
         "project",
         "status",
@@ -321,12 +390,9 @@ def export_translation_program_size(snapshot: dict[str, Any], destination: Path)
         "| --- | ---: | ---: | ---: |",
     ]
     for row in results["coverage"]:
-        coverage.append(
-            f"{PASS_LABELS[row['profile']]} & {row['planned']} & {row['ok']} & {row['planned'] - row['ok']}" + r" \\"
-        )
-        markdown.append(
-            f"| {PASS_LABELS[row['profile']]} | {row['planned']} | {row['ok']} | {row['planned'] - row['ok']} |"
-        )
+        label = row["configuration"].replace("′", r"$^\prime$")
+        coverage.append(f"{label} & {row['planned']} & {row['ok']} & {row['planned'] - row['ok']}" + r" \\")
+        markdown.append(f"| {row['configuration']} | {row['planned']} | {row['ok']} | {row['planned'] - row['ok']} |")
     coverage.extend((r"\bottomrule", r"\end{tabular}", ""))
     if snapshot.get("issue"):
         markdown.extend(("", snapshot["issue"]))
@@ -336,7 +402,9 @@ def export_translation_program_size(snapshot: dict[str, Any], destination: Path)
         "csv": output.getvalue(),
         "table.tex": "\n".join(coverage),
         "md": "\n".join(markdown) + "\n",
-        "files.txt": "".join(f"{row['file']}\t{row['profile']}\t{row['file_sha256']}\n" for row in results["rows"]),
+        "files.txt": "".join(
+            f"{row['file']}\t{row['profile']}\t{row['no_aliasing']}\t{row['file_sha256']}\n" for row in results["rows"]
+        ),
         "numbers.tex": (
             f"\\newcommand{{\\ProgramSizePlanned}}{{{len(results['rows'])}}}\n"
             f"\\newcommand{{\\ProgramSizeAvailable}}{{{len(results['points'])}}}\n"

@@ -170,13 +170,17 @@ def test_broad_plan_keeps_all_486_applications_plus_extension_configurations(
             {"id": "math", "files": ["math.egg"]},
             {"id": "disequality", "files": ["parameter.egg"]},
             {"id": "slotted", "files": slotted},
+            {"id": "slotted-complete", "files": slotted},
         ]
     }
     monkeypatch.setattr(pilot_ast, "translation_ast_records", lambda *_args, **_kwargs: ())
     snapshot = pilot_ast.translation_program_size_snapshot(config, files, tmp_path / "missing", collect=False)
     result = pilot_ast.translation_program_size_results(snapshot)
-    assert len(result["rows"]) == 996 and result["points"] == []
-    assert [row["planned"] for row in result["coverage"]] == [487, 487, 1, 1, 10, 10]
+    assert len(result["rows"]) == 1016 and result["points"] == []
+    assert [row["planned"] for row in result["coverage"]] == [487, 487, 1, 1, 10, 10, 10, 10]
+    assert len({(row["file_sha256"], row["profile"], row["no_aliasing"]) for row in result["rows"]}) == 1016
+    assert {row["configuration"] for row in result["rows"] if row["no_aliasing"] is True} == {"egglog+s′", "egglog+s′p"}
+    assert {row["configuration"] for row in result["rows"] if row["no_aliasing"] is False} == {"egglog+s", "egglog+sp"}
     assert all(row["status"] == "pending" for row in result["rows"])
 
 
@@ -200,15 +204,8 @@ def test_graph_fits_each_log_axis_and_clips_guides_without_confidence_intervals(
     assert marks["mark"]["type"] == "circle" and marks["mark"]["filled"]
     assert "shape" not in marks["encoding"]
     color = marks["encoding"]["color"]
-    assert color["legend"]["columns"] == 2
-    assert dict(zip(color["scale"]["domain"], color["scale"]["range"], strict=True)) == {
-        "corelog+c": "#0072b2",
-        "egglog+p": "#56b4e9",
-        "egglog+d": "#d55e00",
-        "egglog+dp": "#cc79a7",
-        "egglog+s": "#e69f00",
-        "egglog+sp": "#b59b00",
-    }
+    assert color["legend"]["direction"] == "horizontal"
+    assert len(color["scale"]["domain"]) == len(set(color["scale"]["range"])) == 8
     x_domain = marks["encoding"]["x"]["scale"]["domain"]
     y_domain = marks["encoding"]["y"]["scale"]["domain"]
     assert x_domain != y_domain
@@ -285,7 +282,7 @@ def test_portable_bundle_redraws_ast_without_collectors_inputs_or_cache(
     assert spec["resolve"]["scale"] == {"x": "independent", "y": "independent", "color": "shared"}
     left, right = spec["hconcat"]
     assert left["layer"][-1]["encoding"]["color"] == right["layer"][-1]["encoding"]["color"]
-    assert left["layer"][-1]["encoding"]["color"]["legend"]["columns"] == 3
+    assert left["layer"][-1]["encoding"]["color"]["legend"]["columns"] == 4
     assert all("x_low" in point for point in left["data"]["values"])
     assert all("x_low" not in point for point in right["layer"][-1]["data"]["values"])
     assert "extlog_" not in json.dumps(spec)

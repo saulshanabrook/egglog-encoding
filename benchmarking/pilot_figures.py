@@ -44,6 +44,8 @@ from .pilot_ast import (
     export_translation_program_size,
     log_major_ticks,
     program_size_snapshot,
+    ratio_guide_factors,
+    ratio_guide_labels,
     translation_program_size_results,
     translation_program_size_snapshot,
     translation_program_size_spec,
@@ -348,9 +350,8 @@ def make_snapshot(
     }
 
 
-def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
+def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) -> dict[str, Any]:
     """Bind a shared declarative scatter template to the selected pilot points."""
-    snapshot = results["pilot_snapshot"]
     applications = results["figure"].startswith("applications-")
     speedup = results["figure"].endswith("-speedup")
     memory = results["metric"] == "memory"
@@ -370,25 +371,28 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
     ]
     x_domain = [min(xs) / 1.3, max(xs) * 1.3] if xs else [0.001, 1000]
     y_domain = [min(ys) / 1.3, max(ys) * 1.3] if ys else ([0.01, 100] if speedup else [0.001, 1000])
-    if applications:
-        labels = [info["label"] for info in snapshot["projects"].values()]
-        colors = [info["color"] for info in snapshot["projects"].values()]
-    else:
-        labels = list(PASS_COLORS)
-        colors = list(PASS_COLORS.values())
-    color = {
-        "field": "series" if applications else "configuration",
+    labels = ["egglog+p", "egglog+sp"] if applications else list(PASS_COLORS)
+    color: dict[str, Any] = {
+        "field": "configuration",
         "type": "nominal",
-        "scale": {"domain": labels, "range": colors},
-        "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
+        "scale": {"domain": labels, "range": [PASS_COLORS[label] for label in labels]},
+        "legend": {
+            "title": None,
+            "orient": "bottom",
+            "direction": "horizontal",
+            "columns": 2 if applications else 4,
+            "labelFontSize": 10,
+        },
     }
+    if applications:
+        color["legend"]["labelExpr"] = "datum.label === 'egglog+p' ? 'egglog corpus: egglog+p' : 'SDQL: egglog+sp'"
     axes = {
         "x": {
             "field": "x",
             "type": "quantitative",
             "scale": {"type": "log", "domain": x_domain},
             "axis": {"values": log_major_ticks(x_domain), "grid": False},
-            "title": f"egglog {measurement}" if applications else f"Reference {measurement}",
+            "title": f"Without proofs: {measurement}" if applications else f"Reference {measurement}",
         },
         "y": {
             "field": "y",
@@ -397,19 +401,20 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {"values": log_major_ticks(y_domain), "grid": False},
             "title": "Speedup (reference / candidate)"
             if speedup
-            else f"{'egglog+p' if applications else 'Our'} {measurement}",
+            else f"{'With proofs:' if applications else 'Our'} {measurement}",
         },
     }
     layers: list[dict[str, Any]] = []
     guides: list[dict[str, Any]] = []
+    factors = ratio_guide_factors([point["y"] if speedup else point["y"] / point["x"] for point in points])
     if speedup:
-        for factor in (0.5, 1, 2, 5, 10):
+        for factor in factors:
             if y_domain[0] <= factor <= y_domain[1]:
                 guides.append(
                     {"x": x_domain[0], "x2": x_domain[1], "y": factor, "y2": factor, "factor": f"{factor:g}×"}
                 )
     else:
-        for factor in (0.5, 1, 2, 5, 10):
+        for factor in factors:
             low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
             if low < high:
                 guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor:g}×"})
@@ -426,14 +431,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             },
         }
     )
-    guide_labels = [
-        {
-            "x": row["x2"] * (row["x"] / row["x2"]) ** 0.08,
-            "y": row["y2"] * (row["y"] / row["y2"]) ** 0.08,
-            "label": row["factor"],
-        }
-        for row in guides
-    ]
+    guide_labels = ratio_guide_labels(guides, x_domain, y_domain, width, height, points)
     layers.append(
         {
             "data": {
@@ -479,10 +477,10 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "mark": {
                     "type": "circle",
                     "filled": True,
-                    "opacity": 0.75,
-                    "size": 30,
+                    "opacity": 0.55,
+                    "size": 18,
                     "stroke": "#333333",
-                    "strokeWidth": 0.45,
+                    "strokeWidth": 0.3,
                 },
                 "encoding": {
                     **axes,
@@ -492,6 +490,8 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                         for key in (
                             "series",
                             "configuration",
+                            "baseline_configuration",
+                            "source_type",
                             "workload",
                             "x",
                             "x_low",
@@ -512,31 +512,10 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             },
         ]
     )
-    complete = len(points)
-    total = len(results["comparisons"])
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
-        "width": 460,
-        "height": 350,
-        "title": {
-            "text": "Proofs for existing egglog programs"
-            if applications
-            else "Compiler passes versus integrated systems",
-            "subtitle": [
-                f"{results['rounds']} observations per configuration; {complete}/{total} comparisons available",
-                "95% mean-runtime and Fieller ratio intervals; pending and failed cases remain in coverage."
-                if speedup
-                else f"Marginal 95% mean {'peak-RSS' if memory else 'runtime'} intervals; "
-                "pending and failed cases remain in coverage.",
-            ]
-            + (
-                ["CI limits at or below zero are clipped to the log-axis boundary."]
-                if any(
-                    point[field] is not None and point[field] <= 0 for point in points for field in ("x_low", "y_low")
-                )
-                else []
-            ),
-        },
+        "width": width,
+        "height": height,
         "data": {"values": points},
         "layer": layers,
         "config": {
@@ -548,6 +527,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                 "grid": False,
             },
             "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
+            "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
     }
@@ -555,13 +535,13 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
 
 def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> dict[str, Any]:
     """Place runtime and representation growth beside one shared pass legend."""
-    panels = [bound_spec(runtime), translation_program_size_spec(sizes)]
+    panels = [bound_spec(runtime, width=205, height=175), translation_program_size_spec(sizes, width=205, height=175)]
     for panel, title, subtitle in zip(
         panels,
         ("(a) Runtime", "(b) Program size"),
         (
-            f"{len(runtime['points'])}/{len(runtime['comparisons'])} pairs; mean and 95% CI",
-            f"{len(sizes['points'])}/{len(sizes['rows'])} configurations; deterministic",
+            f"{len(runtime['points'])}/{len(runtime['comparisons'])} comparisons",
+            f"{len(sizes['points'])}/{len(sizes['rows'])} configurations",
         ),
         strict=True,
     ):
@@ -569,7 +549,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         panel.pop("config")
         panel.update(
             width=205,
-            height=185,
+            height=175,
             title={
                 "text": title,
                 "subtitle": subtitle,
@@ -589,14 +569,15 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
                 layer["encoding"]["color"]["legend"] = {
                     "title": None,
                     "orient": "bottom",
-                    "columns": 3,
+                    "direction": "horizontal",
+                    "columns": 4,
                     "labelFontSize": 9.5,
                     "symbolSize": 35,
                 }
             if layer["mark"]["type"] == "text":
                 layer["mark"].update(fontSize=9.5, dy=-5)
             elif layer["mark"]["type"] == "circle":
-                layer["mark"]["size"] = 20
+                layer["mark"]["size"] = 12
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "hconcat": panels,
@@ -608,6 +589,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         "config": {
             "font": "Arial",
             "axis": {"labelFontSize": 9.5, "titleFontSize": 11, "titleFontWeight": "normal", "grid": False},
+            "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
     }

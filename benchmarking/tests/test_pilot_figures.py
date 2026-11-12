@@ -272,7 +272,17 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
     spec = pilot_figures.bound_spec(runtime)
     color = spec["layer"][-1]["encoding"]["color"]["scale"]
     assert {point["configuration"] for point in runtime["points"]} <= set(color["domain"])
-    assert set(color["domain"]) == {"corelog+c", "egglog+p", "egglog+d", "egglog+dp", "egglog+s", "egglog+sp"}
+    assert set(color["domain"]) == {
+        "corelog+c",
+        "egglog+p",
+        "egglog+d",
+        "egglog+dp",
+        "egglog+s′",
+        "egglog+s′p",
+        "egglog+s",
+        "egglog+sp",
+    }
+    assert len(set(color["range"])) == len(color["domain"])
     assert all("extlog_" not in point["series"] for point in runtime["points"])
     axes = spec["layer"][-1]["encoding"]
     assert axes["y"]["title"] == "Our runtime (s)"
@@ -309,7 +319,7 @@ def test_memory_views_reuse_runtime_observations_with_mib_axes_tables_and_number
     spec = pilot_figures.bound_spec(memory)
     assert spec["layer"][-1]["encoding"]["x"]["title"].endswith("peak RSS (MiB)")
     assert spec["layer"][-1]["encoding"]["y"]["title"] == (
-        "egglog+p peak RSS (MiB)" if scope == "applications-proof" else "Our peak RSS (MiB)"
+        "With proofs: peak RSS (MiB)" if scope == "applications-proof" else "Our peak RSS (MiB)"
     )
     assert spec["layer"][-1]["encoding"]["color"] == pilot_figures.bound_spec(runtime)["layer"][-1]["encoding"]["color"]
     numbers, table = pilot_results.pilot_tex(memory)
@@ -639,7 +649,7 @@ def test_compact_capability_counts_execution_separately_from_timing_and_proof_va
     main = tables["experiment-coverage.table.tex"]
     details = tables["experiment-coverage-details.table.tex"]
     assert "math-proofs & 1 & 1/1; 1/1 & N/A; 0/1" in main
-    assert "Existing programs + proofs & 1 & 1/1; 1/1 & N/A; 0/1" in main
+    assert "Proof adoption (egglog corpus and SDQL) & 1 & 1/1; 1/1 & N/A; 0/1" in main
     assert "not compared" not in main and "not checked" not in main
     assert "not compared" in details and "known difference" in details
     assert "math-proofs / ours & 0/1 & unknown & unknown & unknown & unknown & unknown 1/1" in details
@@ -714,3 +724,44 @@ def test_emitted_zero_counters_are_distinct_from_absent_summaries() -> None:
     }
     detail = pilot_results.coverage_tables(snapshot)["experiment-coverage-details.table.tex"]
     assert "math-proofs / ours & 1/1 & 0 & 0 & 0 & 0 & failed 1/1" in detail
+
+
+def test_proof_adoption_keeps_corpus_and_complete_slotted_baselines_separate() -> None:
+    snapshot = snapshot_fixture()
+    baseline = deepcopy(snapshot["conditions"][0])
+    baseline.update(id="s", treatment="slotted", project="")
+    candidate = deepcopy(snapshot["conditions"][2])
+    candidate.update(id="sp", treatment="slotted-proof-extraction", project="")
+    for condition in (baseline, candidate):
+        for row in condition["observations"]:
+            row["treatment"] = condition["treatment"]
+    snapshot["conditions"].extend([baseline, candidate])
+    comparison = next(c for c in snapshot["comparisons"] if c["scope"] == "composition")
+    comparison.update(baseline="s", candidate="sp", project="")
+    result = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
+    assert len(result["comparisons"]) == len(result["points"]) == 2
+    assert {(p["source_type"], p["baseline_configuration"], p["configuration"]) for p in result["points"]} == {
+        ("egglog corpus", "egglog", "egglog+p"),
+        ("SDQL", "egglog+s", "egglog+sp"),
+    }
+    candidate["observations"][1]["status"] = "failure"
+    candidate["observations"][1]["error_message"] = "proof construction consistency failure"
+    result = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
+    assert len(result["comparisons"]) == 2
+    assert len(result["points"]) == 1
+    assert result["points"][0]["source_type"] == "egglog corpus"
+
+
+def test_runtime_ratio_guides_cover_large_overheads_without_changing_points() -> None:
+    result = pilot_results.pilot_results(snapshot_fixture(), "extensions-runtime")
+    x = result["points"][0]["x"]
+    result["points"][0].update(y=98 * x, y_low=97 * x, y_high=99 * x)
+    before = deepcopy(result["points"])
+    spec = pilot_figures.bound_spec(result, width=205, height=175)
+    factors = [float(g["factor"].removesuffix("×")) for g in spec["layer"][0]["data"]["values"]]
+    assert 20 in factors and max(factors) >= 100
+    assert spec["data"]["values"] == before
+    labels = spec["layer"][1]["data"]["values"]
+    for guide in spec["layer"][0]["data"]["values"]:
+        label = next(row for row in labels if row["label"] == guide["factor"])
+        assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
