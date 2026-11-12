@@ -496,6 +496,11 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         r"Project & Acquisition & Replays & \shortstack{Input LOC\\median [range]} & Validated \\",
         r"\hline",
     ]
+    provenance_sources = [
+        r"\begin{tabular}{@{}lp{0.32\linewidth}rr@{}}",
+        r"Project & Acquisition & Replays & \shortstack{Input LOC\\median [range]} \\",
+        r"\hline",
+    ]
     source_runtime = [
         r"\begin{tabular}{@{}llrlr@{}}",
         r"Project & Configuration & Timed & \shortstack{Runtime (s)\\median [range]} & Checked \\",
@@ -545,10 +550,9 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
             )
             else r"\textbf{TODO}"
         )
-        sources.append(
-            f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description} & {validation_marker} "
-            + r"\\"
-        )
+        provenance_row = f"{project_link} & {tex_escape(info['capture'])} & {len(inputs)} & {description}"
+        sources.append(provenance_row + f" & {validation_marker} " + r"\\")
+        provenance_sources.append(provenance_row + r" \\")
         for treatment in ("off", "proof-extraction"):
             timing_values = times[treatment]
             runtime = (
@@ -563,6 +567,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
                 + r"\\"
             )
     sources.append(r"\end{tabular}")
+    provenance_sources.append(r"\end{tabular}")
     source_runtime.append(r"\end{tabular}")
     return {
         "experiment-coverage.table.tex": "\n".join(headers) + "\n",
@@ -570,6 +575,7 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         "experiment-coverage-details.table.tex": "\n".join(details) + "\n",
         "composition-coverage-details.table.tex": "\n".join(composition_details) + "\n",
         "corpus-sources.table.tex": "\n".join(sources) + "\n",
+        "corpus-provenance.table.tex": "\n".join(provenance_sources) + "\n",
         "corpus-runtime-details.table.tex": "\n".join(source_runtime) + "\n",
     }
 
