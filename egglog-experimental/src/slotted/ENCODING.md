@@ -927,12 +927,17 @@ slots, so the frame finds the one element that fits, or none, at no cost to the 
 
 egglog joins a body's table atoms first and runs its primitives afterwards, once per
 matched row. The plain rule joins `Idx` beside the frame primitives, so every frame is
-built once per index. So the generator emits one relation and three
-rules per rewrite: the first finds a match and stores its refinements and the classes
+built once per index. The ordinary generator shares a match relation and one drain
+rule among rewrites with the same ordered column sorts. An integer rule discriminator
+keeps their matches separate; carrier and payload sorts are part of the schema.
+Each rewrite still has two rules: the first finds a match and stores its refinements and the classes
 the action reads; the second, in the `slotted-apply` ruleset, joins the stored row
-with `Idx`, reads one refinement, checks the conditions and acts; and the third deletes
+with `Idx`, reads one refinement, checks the conditions and acts. The shared drain deletes
 the row once that phase has read it (C13). Frame computation is therefore shared
-by all refinements of a match.
+by all refinements of a match. Queue declarations follow compiler push/pop scopes,
+so later inputs can reuse an installed queue without retaining a popped schema.
+Proof-compatible lowering retains its per-rewrite queues and companion rule names.
+The single-rewrite notation below omits the shared queue's discriminator.
 
 The first rule seeds `Idx(length, 0)` for each nonempty refinement vector. Before
 the apply phase, `slotted-refine` fills the indices for each length: each index

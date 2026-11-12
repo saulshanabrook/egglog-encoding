@@ -83,6 +83,7 @@ struct State {
     reserved: BTreeSet<String>,
     declared: BTreeSet<String>,
     substitutions: Vec<rewrite::SubstitutionRequest>,
+    match_queues: rewrite::MatchQueues,
 }
 
 impl Default for State {
@@ -110,6 +111,7 @@ impl Default for State {
             .collect(),
             declared: BTreeSet::new(),
             substitutions: Vec::new(),
+            match_queues: rewrite::MatchQueues::default(),
         }
     }
 }
@@ -948,6 +950,8 @@ impl Compiler {
                 proofs: self.options.proof_mode == ProofMode::Prove,
             },
             flattened.names,
+            (self.options.proof_mode == ProofMode::Disabled)
+                .then_some(&mut self.state.match_queues),
         )?;
         if let Some(substitution) = substitution {
             if self.state.substitutions.is_empty() {

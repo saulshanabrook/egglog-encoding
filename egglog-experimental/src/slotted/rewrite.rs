@@ -311,11 +311,55 @@ pub(super) struct SubstitutionRequest {
     pub slot: String,
 }
 
+/// Match queues share their storage and drain rule when their ordered column
+/// sorts agree. The discriminator keeps matches from different rewrites apart.
+/// This registry lives in compiler scope state, alongside the installed rules.
+#[derive(Clone, Default)]
+pub(super) struct MatchQueues(std::collections::BTreeMap<Vec<String>, usize>);
+
+impl MatchQueues {
+    fn row(&mut self, sorts: &[String], columns: Vec<String>, ordinal: usize) -> (String, String) {
+        let (queue, fresh) = match self.0.get(sorts) {
+            Some(queue) => (*queue, false),
+            None => {
+                self.0.insert(sorts.to_vec(), ordinal);
+                (ordinal, true)
+            }
+        };
+        let relation = format!("_slotted_match_queue_{queue}");
+        let row = call(
+            &relation,
+            std::iter::once(ordinal.to_string()).chain(columns),
+        );
+        let declaration = if fresh {
+            let generic_row = call(
+                &relation,
+                (0..=sorts.len()).map(|i| format!("_queue_col{i}")),
+            );
+            format!(
+                "(relation {relation} (i64 {}))\n{}",
+                sorts.join(" "),
+                rule(
+                    std::slice::from_ref(&generic_row),
+                    &[format!("(delete {generic_row})")],
+                    false,
+                    Some("slotted-apply"),
+                    Some(&format!("slotted/drain-matches/{queue}")),
+                ),
+            )
+        } else {
+            String::new()
+        };
+        (row, declaration)
+    }
+}
+
 /// Lower a rewrite together with the names needed to reconstruct its proofs.
 pub(super) fn compile(
     lang: &Language,
     mut r: Rewrite<'_>,
     mut names: query::ProofNames,
+    queues: Option<&mut MatchQueues>,
 ) -> Result<(String, query::ProofNames, Option<SubstitutionRequest>), String> {
     let mut rhs = r.rhs.clone();
     lang.refresh_shadowed(&mut rhs);
@@ -428,7 +472,6 @@ pub(super) fn compile(
             substitution,
         ));
     };
-    let relation = format!("_slotted_match_{}", r.ordinal);
     let mut columns = vec![q.refined.clone(), q.length.clone()];
     let mut sorts = vec!["Frames".to_owned(), "i64".to_owned()];
     for (pv, c) in &q.classes {
@@ -441,16 +484,34 @@ pub(super) fn compile(
         columns.push(v.clone());
         sorts.push(s.clone());
     }
-    let row = call(&relation, columns);
-    let mut apply_body = vec![row.clone()];
-    apply_body.extend_from_slice(&q.body[split..]);
     let apply_ruleset = if substitution.is_some() {
         "slotted-subst-apply"
     } else {
         "slotted-apply"
     };
+    let (row, queue_declaration, drain) = if let Some(queues) = queues {
+        let (row, declaration) = queues.row(&sorts, columns, r.ordinal);
+        (row, declaration, String::new())
+    } else {
+        let relation = format!("_slotted_match_{}", r.ordinal);
+        let row = call(&relation, columns);
+        let drain = rule(
+            std::slice::from_ref(&row),
+            &[format!("(delete {row})")],
+            false,
+            Some(apply_ruleset),
+            r.name.map(|n| format!("{n}/drain")).as_deref(),
+        );
+        (
+            row,
+            format!("(relation {relation} ({}))", sorts.join(" ")),
+            drain,
+        )
+    };
+    let mut apply_body = vec![row.clone()];
+    apply_body.extend_from_slice(&q.body[split..]);
     let code = [
-        format!("(relation {relation} ({}))", sorts.join(" ")),
+        queue_declaration,
         rule(
             &q.body[..split],
             &[row.clone(), format!("(Idx {} 0)", q.length)],
@@ -465,14 +526,11 @@ pub(super) fn compile(
             Some(apply_ruleset),
             r.name.map(|n| format!("{n}/apply")).as_deref(),
         ),
-        rule(
-            std::slice::from_ref(&row),
-            &[format!("(delete {row})")],
-            false,
-            Some(apply_ruleset),
-            r.name.map(|n| format!("{n}/drain")).as_deref(),
-        ),
+        drain,
     ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
     .join("\n");
     Ok((format!("{declaration}{code}"), names, substitution))
 }
