@@ -180,7 +180,7 @@ def test_broad_plan_keeps_all_486_applications_plus_extension_configurations(
     assert all(row["status"] == "pending" for row in result["rows"])
 
 
-def test_graph_has_equal_log_domains_and_no_confidence_intervals(compiler_case: dict[str, Any]) -> None:
+def test_graph_fits_each_log_axis_and_clips_guides_without_confidence_intervals(compiler_case: dict[str, Any]) -> None:
     case = compiler_case
     records = translation_ast.translation_ast_records(
         [TranslationRequest(case["file"], "c", "Math")],
@@ -195,27 +195,36 @@ def test_graph_has_equal_log_domains_and_no_confidence_intervals(compiler_case: 
     spec = pilot_ast.translation_program_size_spec(result)
     assert len(result["points"]) == 1 and len(result["rows"]) == 2
     assert result["points"][0]["growth"] == 10
-    assert result["points"][0]["series"] == "Math (extlog_c)"
+    assert result["points"][0]["configuration"] == "extlog_c"
     marks = spec["layer"][-1]
     assert marks["mark"]["type"] == "circle" and marks["mark"]["filled"]
     assert "shape" not in marks["encoding"]
     color = marks["encoding"]["color"]
     assert color["legend"]["columns"] == 2
     assert dict(zip(color["scale"]["domain"], color["scale"]["range"], strict=True)) == {
-        "Math (extlog_c)": "#0072b2",
-        "Math + proofs (extlog_cp)": "#56b4e9",
-        "Slotted restricted (extlog_s)": "#e69f00",
-        "Slotted restricted + proofs (extlog_scp)": "#b59b00",
-        "Disequality (extlog_d)": "#d55e00",
-        "Disequality + proofs (extlog_dcp)": "#cc79a7",
-        "Congruence (extlog_c)": "#6a51a3",
-        "Application proofs (extlog_cp)": "#9e9ac8",
+        "extlog_c": "#0072b2",
+        "extlog_cp": "#56b4e9",
+        "extlog_d": "#d55e00",
+        "extlog_dcp": "#cc79a7",
+        "extlog_s": "#e69f00",
+        "extlog_scp": "#b59b00",
     }
+    x_domain = marks["encoding"]["x"]["scale"]["domain"]
+    y_domain = marks["encoding"]["y"]["scale"]["domain"]
+    assert x_domain != y_domain
+    assert x_domain[0] < 4 < x_domain[1] and y_domain[0] < 40 < y_domain[1]
     for layer in spec["layer"]:
-        assert layer["encoding"]["x"]["scale"] == layer["encoding"]["y"]["scale"]
+        for axis in ("x", "y"):
+            assert not layer["encoding"][axis]["axis"]["grid"]
+            assert len(layer["encoding"][axis]["axis"]["values"]) <= 6
     assert spec["layer"][-1]["encoding"]["x"]["scale"]["type"] == "log"
     assert "x_low" not in json.dumps(spec) and "y_low" not in json.dumps(spec)
-    assert [row["label"] for row in spec["layer"][0]["data"]["values"]] == ["1×", "10×"]
+    assert [row["label"] for row in spec["layer"][0]["data"]["values"]] == ["10×"]
+    for guide in spec["layer"][0]["data"]["values"]:
+        for x_key, y_key in (("x", "y"), ("x2", "y2")):
+            assert x_domain[0] <= guide[x_key] <= x_domain[1]
+            assert y_domain[0] <= guide[y_key] <= y_domain[1]
+            assert guide[y_key] / guide[x_key] == pytest.approx(float(guide["label"].removesuffix("×")))
 
 
 def test_portable_bundle_redraws_ast_without_collectors_inputs_or_cache(

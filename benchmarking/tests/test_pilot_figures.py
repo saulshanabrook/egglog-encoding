@@ -271,10 +271,22 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
     assert all(point["y_low"] < point["y"] < point["y_high"] for point in speedup["points"])
     spec = pilot_figures.bound_spec(runtime)
     color = spec["layer"][-1]["encoding"]["color"]["scale"]
-    assert {point["series"] for point in runtime["points"]} == set(color["domain"])
-    assert (
-        spec["layer"][-1]["encoding"]["x"]["scale"]["domain"] == spec["layer"][-1]["encoding"]["y"]["scale"]["domain"]
-    )
+    assert {point["configuration"] for point in runtime["points"]} <= set(color["domain"])
+    assert set(color["domain"]) == {"extlog_c", "extlog_cp", "extlog_d", "extlog_dcp", "extlog_s", "extlog_scp"}
+    axes = spec["layer"][-1]["encoding"]
+    assert axes["color"]["field"] == "configuration"
+    assert axes["x"]["scale"]["domain"] != axes["y"]["scale"]["domain"]
+    for axis in ("x", "y"):
+        domain = axes[axis]["scale"]["domain"]
+        values = [point[field] for point in runtime["points"] for field in (axis, f"{axis}_low", f"{axis}_high")]
+        assert domain[0] < min(values) < max(values) < domain[1]
+        assert axes[axis]["axis"]["grid"] is False
+        assert len(axes[axis]["axis"]["values"]) <= 6
+    for guide in spec["layer"][0]["data"]["values"]:
+        for axis in ("x", "y"):
+            low, high = axes[axis]["scale"]["domain"]
+            assert low <= guide[axis] <= guide[f"{axis}2"] <= high
+        assert guide["y"] / guide["x"] == pytest.approx(float(guide["factor"].removesuffix("×")))
 
 
 @pytest.mark.parametrize("scope", ["extensions", "applications-proof"])

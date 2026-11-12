@@ -11,6 +11,7 @@ import argparse
 import glob
 import gzip
 import json
+import math
 import os
 import re
 import shlex
@@ -39,8 +40,10 @@ from .figures import ROOT, VEGA_PACKAGES, _figure_inventory, renderer_metadata
 from .models import BenchmarkEndpoint, BuiltBinary, EndpointRequest, FileSpec, ResolvedTarget
 from .native_memory import add_memory_limit_options
 from .pilot_ast import (
+    PASS_COLORS,
     export_program_size,
     export_translation_program_size,
+    log_major_ticks,
     program_size_snapshot,
     translation_program_size_snapshot,
 )
@@ -353,22 +356,16 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
         for field in ("y", "y_low", "y_high")
         if point[field] is not None and point[field] > 0
     ]
-    if not speedup:
-        xs = ys = xs + ys
     x_domain = [min(xs) / 1.3, max(xs) * 1.3] if xs else [0.001, 1000]
-    y_domain = [min(ys + [1]) / 1.3, max(ys + [1]) * 1.3] if speedup and ys else ([0.01, 100] if speedup else x_domain)
+    y_domain = [min(ys) / 1.3, max(ys) * 1.3] if ys else ([0.01, 100] if speedup else [0.001, 1000])
     if applications:
         labels = [info["label"] for info in snapshot["projects"].values()]
         colors = [info["color"] for info in snapshot["projects"].values()]
     else:
-        labels = [
-            f"{info['label']} ({info['candidate_label']})"
-            for info in snapshot["experiments"]
-            if info.get("scope", "extensions") == "extensions"
-        ]
-        colors = [info["color"] for info in snapshot["experiments"] if info.get("scope", "extensions") == "extensions"]
+        labels = list(PASS_COLORS)
+        colors = list(PASS_COLORS.values())
     color = {
-        "field": "series",
+        "field": "series" if applications else "configuration",
         "type": "nominal",
         "scale": {"domain": labels, "range": colors},
         "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
@@ -378,30 +375,27 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "field": "x",
             "type": "quantitative",
             "scale": {"type": "log", "domain": x_domain},
+            "axis": {"values": log_major_ticks(x_domain), "grid": False},
             "title": f"egglog {measurement}" if applications else f"Reference {measurement}",
         },
         "y": {
             "field": "y",
             "type": "quantitative",
             "scale": {"type": "log", "domain": y_domain},
+            "axis": {"values": log_major_ticks(y_domain), "grid": False},
             "title": "Speedup (reference / extlog)" if speedup else f"extlog {measurement}",
         },
     }
     layers: list[dict[str, Any]] = []
-    guides = (
-        [{"x": x_domain[0], "x2": x_domain[1], "y": 1, "y2": 1, "factor": "1×"}]
-        if speedup
-        else [
-            {
-                "x": x_domain[0],
-                "x2": x_domain[1],
-                "y": x_domain[0] * factor,
-                "y2": x_domain[1] * factor,
-                "factor": f"{factor:g}×",
-            }
-            for factor in (0.5, 1, 2, 10)
-        ]
-    )
+    guides: list[dict[str, Any]] = []
+    if speedup:
+        if y_domain[0] <= 1 <= y_domain[1]:
+            guides.append({"x": x_domain[0], "x2": x_domain[1], "y": 1, "y2": 1, "factor": "1×"})
+    else:
+        for factor in (1, 2, 10):
+            low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
+            if low < high:
+                guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor}×"})
     layers.append(
         {
             "data": {"values": guides},
@@ -415,18 +409,10 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             },
         }
     )
-    guide_labels: list[dict[str, Any]] = (
-        [
-            {
-                "x": min(x_domain[1], y_domain[1] / factor) / 1.4,
-                "y": min(x_domain[1] * factor, y_domain[1]) / 1.4,
-                "label": f"{factor:g}×",
-            }
-            for factor in (0.5, 1, 2, 10)
-        ]
-        if not speedup
-        else [{"x": x_domain[1] / 1.4, "y": 1, "label": "1×"}]
-    )
+    guide_labels = [
+        {"x": math.sqrt(row["x"] * row["x2"]), "y": math.sqrt(row["y"] * row["y2"]), "label": row["factor"]}
+        for row in guides
+    ]
     layers.append(
         {
             "data": {
@@ -470,7 +456,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             },
             {
                 "mark": {
-                    "type": "point",
+                    "type": "circle",
                     "filled": True,
                     "opacity": 0.75,
                     "size": 30,
@@ -535,9 +521,7 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {
                 "labelFontSize": 10,
                 "titleFontSize": 11,
-                "tickCount": 6,
-                "gridColor": "#e5e5e5",
-                "gridWidth": 0.5,
+                "grid": False,
             },
             "view": {"stroke": None},
         },

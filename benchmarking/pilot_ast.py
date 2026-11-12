@@ -8,6 +8,7 @@ import json
 import math
 import os
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +18,13 @@ from .slotted_ast import COLUMNS, PIPELINE, export_slotted_ast, slotted_ast_reco
 from .translation_ast import PIPELINE as TRANSLATION_PIPELINE
 from .translation_ast import PROFILES, SAFETY_STATUSES, TranslationRequest, translation_ast_records
 
-TRANSLATION_SERIES = {
-    ("Math", "c"): ("Math (extlog_c)", "#0072b2"),
-    ("Math", "cp"): ("Math + proofs (extlog_cp)", "#56b4e9"),
-    ("Slotted restricted", "s"): ("Slotted restricted (extlog_s)", "#e69f00"),
-    ("Slotted restricted", "scp"): ("Slotted restricted + proofs (extlog_scp)", "#b59b00"),
-    ("Disequality", "d"): ("Disequality (extlog_d)", "#d55e00"),
-    ("Disequality", "dcp"): ("Disequality + proofs (extlog_dcp)", "#cc79a7"),
-    ("Applications", "c"): ("Congruence (extlog_c)", "#6a51a3"),
-    ("Applications", "cp"): ("Application proofs (extlog_cp)", "#9e9ac8"),
+PASS_COLORS = {
+    "extlog_c": "#0072b2",
+    "extlog_cp": "#56b4e9",
+    "extlog_d": "#d55e00",
+    "extlog_dcp": "#cc79a7",
+    "extlog_s": "#e69f00",
+    "extlog_scp": "#b59b00",
 }
 TRANSLATION_NOTE = (
     "Whole-program S-expression nodes: each list, atom, and literal counts once. "
@@ -35,6 +34,18 @@ TRANSLATION_NOTE = (
     "Counts are deterministic; missing and failed cases remain in coverage, not at zero. "
     "Compiler/input identities are independent of timing endpoints."
 )
+
+
+def log_major_ticks(domain: Sequence[float]) -> list[float]:
+    """Choose at most six explicit major ticks, without logarithmic minor marks."""
+    low, high = domain
+    powers = range(math.floor(math.log10(low)), math.ceil(math.log10(high)) + 1)
+    ticks = [10.0**power for power in powers if low <= 10.0**power <= high]
+    if len(ticks) < 2:
+        ticks = [
+            factor * 10.0**power for power in powers for factor in (1, 2, 5) if low <= factor * 10.0**power <= high
+        ]
+    return ticks[:: max(1, math.ceil(len(ticks) / 6))]
 
 
 def translation_program_size_snapshot(
@@ -134,8 +145,7 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
                     **row,
                     "x": x,
                     "y": y,
-                    "configuration": planned["profile"],
-                    "series": TRANSLATION_SERIES[(planned["family"], planned["profile"])][0],
+                    "configuration": f"extlog_{planned['profile']}",
                     "workload": planned["file"],
                 }
             )
@@ -162,43 +172,41 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
 
 
 def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
-    """Compare source and emitted sizes on equal log domains, with no statistical intervals."""
-    values = [point[field] for point in results["points"] for field in ("x", "y")]
-    domain = (
-        [10 ** math.floor(math.log10(min(values))), 10 ** math.ceil(math.log10(max(values)))]
-        if values
-        else [1, 1000000]
-    )
-    if domain[0] == domain[1]:
-        domain[1] *= 10
+    """Fit each log axis to its deterministic counts and clip multiplier guides."""
+    xs = [point["x"] for point in results["points"]]
+    ys = [point["y"] for point in results["points"]]
+    x_domain = [min(xs) / 1.3, max(xs) * 1.3] if xs else [1, 1000000]
+    y_domain = [min(ys) / 1.3, max(ys) * 1.3] if ys else [1, 1000000]
     axes = {
         "x": {
             "field": "x",
             "type": "quantitative",
             "title": "Input AST nodes",
-            "scale": {"type": "log", "domain": domain},
+            "scale": {"type": "log", "domain": x_domain},
+            "axis": {"values": log_major_ticks(x_domain), "grid": False},
         },
         "y": {
             "field": "y",
             "type": "quantitative",
             "title": "Generated AST nodes",
-            "scale": {"type": "log", "domain": domain},
+            "scale": {"type": "log", "domain": y_domain},
+            "axis": {"values": log_major_ticks(y_domain), "grid": False},
         },
     }
     color = {
-        "field": "series",
+        "field": "configuration",
         "type": "nominal",
         "scale": {
-            "domain": [label for label, _ in TRANSLATION_SERIES.values()],
-            "range": [color for _, color in TRANSLATION_SERIES.values()],
+            "domain": list(PASS_COLORS),
+            "range": list(PASS_COLORS.values()),
         },
         "legend": {"title": None, "orient": "bottom", "columns": 2, "labelLimit": 270, "labelFontSize": 10},
     }
-    guides: list[dict[str, Any]] = [
-        {"x": domain[0], "x2": domain[1] / factor, "y": domain[0] * factor, "y2": domain[1], "label": f"{factor}×"}
-        for factor in (1, 10, 100)
-        if domain[0] * factor < domain[1]
-    ]
+    guides: list[dict[str, Any]] = []
+    for factor in (1, 10, 100):
+        low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
+        if low < high:
+            guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor}×"})
     complete, total = len(results["points"]), len(results["rows"])
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
@@ -219,7 +227,14 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
             },
             {
                 "data": {
-                    "values": [{"x": row["x2"] / 1.25, "y": row["y2"] / 1.25, "label": row["label"]} for row in guides]
+                    "values": [
+                        {
+                            "x": math.sqrt(row["x"] * row["x2"]),
+                            "y": math.sqrt(row["y"] * row["y2"]),
+                            "label": row["label"],
+                        }
+                        for row in guides
+                    ]
                 },
                 "mark": {"type": "text", "align": "right", "dy": -7, "fontSize": 10, "color": "#555555"},
                 "encoding": {**axes, "text": {"field": "label"}},
@@ -241,7 +256,6 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
                         {"field": key}
                         for key in (
                             "workload",
-                            "series",
                             "configuration",
                             "family",
                             "project",
@@ -260,9 +274,7 @@ def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
             "axis": {
                 "labelFontSize": 10,
                 "titleFontSize": 11,
-                "tickCount": 6,
-                "gridColor": "#e5e5e5",
-                "gridWidth": 0.5,
+                "grid": False,
             },
             "view": {"stroke": None},
         },
