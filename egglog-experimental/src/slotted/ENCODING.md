@@ -930,7 +930,7 @@ matched row. The plain rule joins `Idx` beside the frame primitives, so every fr
 built once per index. The ordinary generator shares a match relation and one drain
 rule among rewrites with the same ordered column sorts. An integer rule discriminator
 keeps their matches separate; carrier and payload sorts are part of the schema.
-Each rewrite still has two rules: the first finds a match and stores its refinements and the classes
+Each non-substitution rewrite still has two rules: the first finds a match and stores its refinements and the classes
 the action reads; the second, in the `slotted-apply` ruleset, joins the stored row
 with `Idx`, reads one refinement, checks the conditions and acts. The shared drain deletes
 the row once that phase has read it (C13). Frame computation is therefore shared
@@ -983,9 +983,17 @@ refinement passed the conditions; a match that recurs after the machinery has ch
 its nodes is found afresh.
 
 Substitution also depends on the body's extracted representative, which can improve
-without changing the matched `Let` row. Both its match-producing rule and its apply
-rule use `:naive`, so each user round revisits those matches even when their explicit
-query inputs are unchanged.
+without changing the matched `Let` row. Ordinary substitution therefore keeps both
+queries `:naive`: the source-phase query only seeds refinement indices, and its apply
+rule recomputes the complete query against the same graph before invoking substitution.
+It does not insert or drain a temporary match row, so revisiting an unchanged result
+does not prevent the normal schedule from stopping at a fixed point.
+
+Every accepted source rewrite has a constructor pattern or a term-global binding.
+Both produce a frame and split matching from application, including rules whose
+patterns contain only globals. Thus the source phase only prepares match rows and
+indices; semantic graph updates begin in the apply phase, whose reads share the
+round-start snapshot. Proof-compatible substitution keeps its existing staged path.
 
 ## Build below the root canonically
 
