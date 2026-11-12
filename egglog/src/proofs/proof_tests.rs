@@ -530,13 +530,12 @@ mod tests {
                 "(datatype N (Z) (S N) (Pair N N)) (sort V (Vec N)) (sort SN (Set N))",
             )
             .unwrap();
-        for (source, sort, bound) in [
-            ("x", "N", true),
-            ("x", "N", false),
-            ("(Pair x (Pair x x))", "N", true),
-            ("(vec-get (vec-of x x) 0)", "N", true),
-            ("(set-insert (set-of x x) (Z))", "SN", true),
-            ("(vec-get (vec-of x) 3)", "N", true),
+        for (source, sort) in [
+            ("x", "N"),
+            ("(Pair x (Pair x x))", "N"),
+            ("(vec-get (vec-of x x) 0)", "N"),
+            ("(set-insert (set-of x x) (Z))", "SN"),
+            ("(vec-get (vec-of x) 3)", "N"),
         ] {
             let expr = egraph.parser.get_expr_from_string(None, source).unwrap();
             let n = egraph.get_sort_by_name("N").unwrap().clone();
@@ -558,37 +557,12 @@ mod tests {
                 x = dag.app("S".into(), vec![x]);
                 expected.push(x);
             }
-            let bindings = if bound {
-                [("x".into(), x)].into_iter().collect()
-            } else {
-                HashMap::default()
-            };
-            let mut no_props_dag = dag.clone();
-            let result =
-                eval_expr_with_subst::<true>("subterm-closure", &expr, &mut dag, &bindings);
-            let no_props = eval_expr_with_subst::<false>(
-                "subterm-closure",
-                &expr,
-                &mut no_props_dag,
-                &bindings,
-            );
-            assert_eq!(dag, no_props_dag, "{source}");
-            assert_eq!(
-                result
-                    .as_ref()
-                    .map(|(term, _)| *term)
-                    .map_err(ToString::to_string),
-                no_props
-                    .as_ref()
-                    .map(|(term, _)| *term)
-                    .map_err(ToString::to_string),
-                "{source}"
-            );
-            if !bound || source == "(vec-get (vec-of x) 3)" {
+            let bindings = [("x".into(), x)].into_iter().collect();
+            let result = eval_expr_with_subst("subterm-closure", &expr, &mut dag, &bindings);
+            if source == "(vec-get (vec-of x) 3)" {
                 assert!(result.is_err());
                 continue;
             }
-            assert!(no_props.unwrap().1.is_empty());
             let (term, propositions) = result.unwrap();
             let root = match source {
                 "x" => x,
@@ -1170,7 +1144,7 @@ mod tests {
             bindings: &HashMap<String, TermId>,
             store: &mut ProofStore,
         ) -> TermId {
-            eval_expr_with_subst::<true>(rule_name, expr, &mut store.term_dag, bindings)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, bindings)
                 .unwrap_or_else(|e| panic!("rule '{rule_name}' head did not evaluate: {e}"))
                 .0
         }

@@ -111,7 +111,7 @@ pub(crate) fn eval_merge_expr(
             value.map(|value| (var.name, value))
         })
         .collect();
-    eval_expr_with_subst::<true>("merge_function", expr, term_dag, &subst)
+    eval_expr_with_subst("merge_function", expr, term_dag, &subst)
 }
 
 /// Given a sequence of actions, computes:
@@ -134,16 +134,16 @@ pub(crate) fn process_actions(
             GenericAction::Let(_, var, expr) => {
                 // Evaluate the expression and collect propositions
                 let (term_id, new_props) =
-                    eval_expr_with_subst::<true>(rule_name, expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, expr, term_dag, &bindings)?;
                 bindings.insert(var.name.clone(), term_id);
                 propositions.extend(new_props);
             }
             GenericAction::Union(_, lhs_expr, rhs_expr) => {
                 // Union creates ground equalities
                 let (lhs_term, lhs_props) =
-                    eval_expr_with_subst::<true>(rule_name, lhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, lhs_expr, term_dag, &bindings)?;
                 let (rhs_term, rhs_props) =
-                    eval_expr_with_subst::<true>(rule_name, rhs_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, rhs_expr, term_dag, &bindings)?;
 
                 // Collect propositions from evaluating both sides
                 propositions.extend(lhs_props);
@@ -158,13 +158,12 @@ pub(crate) fn process_actions(
                 all_args.push(rhs.clone());
                 let call_expr = ResolvedExpr::Call(crate::ast::Span::Panic, func.clone(), all_args);
                 let (_term, new_props) =
-                    eval_expr_with_subst::<true>(rule_name, &call_expr, term_dag, &bindings)?;
+                    eval_expr_with_subst(rule_name, &call_expr, term_dag, &bindings)?;
                 propositions.extend(new_props);
             }
             GenericAction::Expr(_, expr) => {
                 // Expr creates reflexive equality for its result
-                let (_, new_props) =
-                    eval_expr_with_subst::<true>(rule_name, expr, term_dag, &bindings)?;
+                let (_, new_props) = eval_expr_with_subst(rule_name, expr, term_dag, &bindings)?;
                 propositions.extend(new_props);
             }
             GenericAction::Panic(_, _) => {
@@ -184,10 +183,9 @@ pub(crate) fn process_actions(
 
 /// Evaluate an expression under a substitution.
 /// Returns Ok((TermId, propositions)) if successful, where propositions include
-/// all reflexive equalities for the term and its subterms when `COLLECT` is true.
-/// With `COLLECT = false`, evaluation is unchanged and the proposition set is empty.
+/// all reflexive equalities for the term and its subterms.
 /// Returns Err(()) if evaluation fails.
-pub(crate) fn eval_expr_with_subst<const COLLECT: bool>(
+pub(crate) fn eval_expr_with_subst(
     rule_name: &str,
     expr: &ResolvedExpr,
     dag: &mut TermDag,
@@ -208,12 +206,9 @@ pub(crate) fn eval_expr_with_subst<const COLLECT: bool>(
             ResolvedCall::Func(_func_type) => {
                 let mut arg_terms = Vec::new();
                 for arg in args {
-                    let (arg_term, arg_props) =
-                        eval_expr_with_subst::<COLLECT>(rule_name, arg, dag, subst)?;
+                    let (arg_term, arg_props) = eval_expr_with_subst(rule_name, arg, dag, subst)?;
                     arg_terms.push(arg_term);
-                    if COLLECT {
-                        propositions.extend(arg_props);
-                    }
+                    propositions.extend(arg_props);
                 }
                 dag.app(head.name().to_string(), arg_terms)
             }
@@ -221,12 +216,9 @@ pub(crate) fn eval_expr_with_subst<const COLLECT: bool>(
                 // run validator, throwing error if it fails
                 let mut arg_terms = Vec::new();
                 for arg in args {
-                    let (arg_term, arg_props) =
-                        eval_expr_with_subst::<COLLECT>(rule_name, arg, dag, subst)?;
+                    let (arg_term, arg_props) = eval_expr_with_subst(rule_name, arg, dag, subst)?;
                     arg_terms.push(arg_term);
-                    if COLLECT {
-                        propositions.extend(arg_props);
-                    }
+                    propositions.extend(arg_props);
                 }
                 // checked by earlier code showing this program supports proofs
                 let validator = specialized_primitive
@@ -243,9 +235,7 @@ pub(crate) fn eval_expr_with_subst<const COLLECT: bool>(
     };
 
     // Add reflexive equality for this term and all its subterms
-    if COLLECT {
-        add_subterm_reflexive_equalities(term_id, dag, &mut propositions);
-    }
+    add_subterm_reflexive_equalities(term_id, dag, &mut propositions);
 
     Ok((term_id, propositions))
 }
@@ -1084,7 +1074,7 @@ impl ProofStore {
             // A bare container-primitive fact binds nothing, but must still
             // evaluate under the substitution for the premise to hold.
             ResolvedFact::Fact(expr) => {
-                eval_expr_with_subst::<true>(rule_name, expr, &mut self.term_dag, subst)?;
+                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
                 return Ok(());
             }
         };
@@ -1130,8 +1120,7 @@ impl ProofStore {
         match expr {
             ResolvedExpr::Var(_, v) => Ok(subst.get(&v.name).copied()),
             _ => {
-                let (term, _) =
-                    eval_expr_with_subst::<true>(rule_name, expr, &mut self.term_dag, subst)?;
+                let (term, _) = eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
                 Ok(Some(term))
             }
         }
