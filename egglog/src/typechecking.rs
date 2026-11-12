@@ -447,7 +447,7 @@ impl<'a> TypeInfoView<'a> {
         // A closed constructor action has no overload or local-scope choices.
         // Keep this inside ordinary typing and return the same resolved tree.
         // Other contexts, bindings, multi-action blocks and source signatures
-        // retain the constraint solver and its capability checks/diagnostics.
+        // continue through action typing below, with its capability checks/diagnostics.
         if !self.source_terms
             && binding.is_empty()
             && matches!(context, Context::Full)
