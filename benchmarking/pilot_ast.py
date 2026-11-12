@@ -66,73 +66,6 @@ def log_major_ticks(domain: Sequence[float]) -> list[float]:
     return ticks[:: max(1, math.ceil(len(ticks) / 6))]
 
 
-def ratio_guide_factors(ratios: Sequence[float]) -> list[float]:
-    """Bracket observed ratios with conventional multiples while retaining orientation guides."""
-    values = [r for r in ratios if math.isfinite(r) and r > 0]
-    low, high = min([0.5, *values]), max([10.0, *values])
-    candidates = sorted(
-        {
-            m * 10.0**p
-            for p in range(math.floor(math.log10(low)) - 1, math.ceil(math.log10(high)) + 1)
-            for m in (1, 2, 5)
-        }
-    )
-    lower = max(v for v in candidates if v <= low)
-    upper = min(v for v in candidates if v >= high)
-    factors = {lower, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0}
-    factors = {v for v in factors if v <= upper}
-    extras = [v for v in candidates if 50 <= v <= upper]
-    if len(factors) + len(extras) <= 10:
-        factors.update(extras)
-    else:
-        factors.update(v for v in extras if math.log10(v).is_integer())
-        factors.add(upper)
-    return sorted(factors)
-
-
-def ratio_guide_labels(
-    guides: Sequence[dict[str, Any]],
-    x_domain: Sequence[float],
-    y_domain: Sequence[float],
-    width: float,
-    height: float,
-    points: Sequence[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Place ratio labels on their lines, avoiding labels and mean points at the actual panel size."""
-    x0, x1 = map(math.log, x_domain)
-    y0, y1 = map(math.log, y_domain)
-    occupied = [
-        (
-            width * (math.log(p["x"]) - x0) / (x1 - x0) - 3,
-            height * (y1 - math.log(p["y"])) / (y1 - y0) - 3,
-            width * (math.log(p["x"]) - x0) / (x1 - x0) + 3,
-            height * (y1 - math.log(p["y"])) / (y1 - y0) + 3,
-        )
-        for p in points
-    ]
-    labels = []
-    for guide in guides:
-        label = str(guide.get("factor", guide.get("label")))
-        candidates = []
-        for fraction in (0.92, 0.84, 0.76, 0.68, 0.60, 0.54):
-            x = guide["x"] * (guide["x2"] / guide["x"]) ** fraction
-            y = guide["y"] * (guide["y2"] / guide["y"]) ** fraction
-            px, py = width * (math.log(x) - x0) / (x1 - x0), height * (y1 - math.log(y)) / (y1 - y0)
-            box = (px - 6 * len(label), py - 16, px + 1, py - 3)
-            outside = max(0, -box[0]) + max(0, -box[1]) + max(0, box[2] - width) + max(0, box[3] - height)
-            overlap = sum(
-                max(0, min(box[2], b[2]) - max(box[0], b[0])) * max(0, min(box[3], b[3]) - max(box[1], b[1]))
-                for b in occupied
-            )
-            candidates.append((outside * 10000 + overlap, x, y, box))
-            if outside == overlap == 0:
-                break
-        _, x, y, box = min(candidates, key=lambda c: c[0])
-        labels.append({"x": x, "y": y, "label": label})
-        occupied.append(box)
-    return labels
-
-
 def translation_program_size_snapshot(
     config: dict[str, Any],
     files: dict[str, FileSpec],
@@ -295,13 +228,15 @@ def translation_program_size_spec(results: dict[str, Any], *, width: int = 420, 
             "domain": list(PASS_COLORS),
             "range": list(PASS_COLORS.values()),
         },
-        "legend": {"title": None, "orient": "bottom", "direction": "horizontal", "columns": 4, "labelFontSize": 10},
+        "legend": {"title": None, "orient": "bottom", "direction": "horizontal", "columns": 4, "labelFontSize": 12},
     }
     guides: list[dict[str, Any]] = []
-    for factor in ratio_guide_factors([p["y"] / p["x"] for p in results["points"]]):
+    for factor in (0.1, 1, 10, 100):
         low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
         if low < high:
-            guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor:g}×"})
+            guides.append(
+                {"x": low, "x2": high, "y": low * factor, "y2": high * factor, "label": f"{factor:g}×", "ratio": factor}
+            )
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "width": width,
@@ -309,12 +244,35 @@ def translation_program_size_spec(results: dict[str, Any], *, width: int = 420, 
         "layer": [
             {
                 "data": {"values": guides},
-                "mark": {"type": "rule", "stroke": "#888888", "strokeDash": [4, 3], "strokeWidth": 0.7},
+                "mark": {
+                    "type": "rule",
+                    "stroke": {"expr": "datum.ratio === 1 ? '#555555' : '#b0b0b0'"},
+                    "strokeDash": {"expr": "datum.ratio === 1 ? [] : [5, 4]"},
+                    "strokeWidth": {"expr": "datum.ratio === 1 ? 1 : 0.5"},
+                },
                 "encoding": {**axes, "x2": {"field": "x2"}, "y2": {"field": "y2"}},
             },
             {
-                "data": {"values": ratio_guide_labels(guides, x_domain, y_domain, width, height, results["points"])},
-                "mark": {"type": "text", "align": "right", "dy": -7, "fontSize": 10, "color": "#555555"},
+                "data": {
+                    "values": [
+                        {
+                            "x": g["x2"],
+                            "y": g["y2"],
+                            "label": g["label"],
+                            "edge": "right" if math.isclose(g["x2"], x_domain[1]) else "top",
+                        }
+                        for g in guides
+                    ]
+                },
+                "mark": {
+                    "type": "text",
+                    "fontSize": 12,
+                    "color": "#555555",
+                    "align": {"expr": "datum.edge === 'right' ? 'left' : 'center'"},
+                    "baseline": {"expr": "datum.edge === 'right' ? 'middle' : 'bottom'"},
+                    "dx": {"expr": "datum.edge === 'right' ? 5 : 0"},
+                    "dy": {"expr": "datum.edge === 'right' ? 0 : -5"},
+                },
                 "encoding": {**axes, "text": {"field": "label"}},
             },
             {
@@ -350,8 +308,8 @@ def translation_program_size_spec(results: dict[str, Any], *, width: int = 420, 
         "config": {
             "font": "Arial",
             "axis": {
-                "labelFontSize": 10,
-                "titleFontSize": 11,
+                "labelFontSize": 12,
+                "titleFontSize": 12,
                 "titleFontWeight": "normal",
                 "grid": False,
             },

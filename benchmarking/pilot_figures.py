@@ -11,6 +11,7 @@ import argparse
 import glob
 import gzip
 import json
+import math
 import os
 import re
 import shlex
@@ -44,8 +45,6 @@ from .pilot_ast import (
     export_translation_program_size,
     log_major_ticks,
     program_size_snapshot,
-    ratio_guide_factors,
-    ratio_guide_labels,
     translation_program_size_results,
     translation_program_size_snapshot,
     translation_program_size_spec,
@@ -390,10 +389,10 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
             "orient": "bottom",
             "direction": "horizontal",
             "columns": 3 if applications else 4,
-            "labelFontSize": 10,
+            "labelFontSize": 12,
         },
     }
-    axes = {
+    axes: dict[str, Any] = {
         "x": {
             "field": "x",
             "type": "quantitative",
@@ -413,22 +412,56 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
     }
     layers: list[dict[str, Any]] = []
     guides: list[dict[str, Any]] = []
-    factors = ratio_guide_factors([point["y"] if speedup else point["y"] / point["x"] for point in points])
+    factors: Sequence[float]
+    if applications:
+        factors = (
+            ((0.2, 0.5, 1) if results.get("implementation") == "reference" else (0.1, 1))
+            if speedup
+            else ((0.1, 1, 10) if results.get("implementation") == "reference" else (0.1, 1, 10, 100))
+        )
+    else:
+        factors = (0.1, 1, 10, 100) if memory else (0.01, 0.1, 1, 10, 100)
+    if speedup:
+        axes["y"]["axis"].update(
+            values=[f for f in factors if y_domain[0] <= f <= y_domain[1]], labelExpr="datum.value + '×'"
+        )
     if speedup:
         for factor in factors:
             if y_domain[0] <= factor <= y_domain[1]:
                 guides.append(
-                    {"x": x_domain[0], "x2": x_domain[1], "y": factor, "y2": factor, "factor": f"{factor:g}×"}
+                    {
+                        "x": x_domain[0],
+                        "x2": x_domain[1],
+                        "y": factor,
+                        "y2": factor,
+                        "factor": f"{factor:g}×",
+                        "ratio": factor,
+                    }
                 )
     else:
         for factor in factors:
             low, high = max(x_domain[0], y_domain[0] / factor), min(x_domain[1], y_domain[1] / factor)
             if low < high:
-                guides.append({"x": low, "x2": high, "y": low * factor, "y2": high * factor, "factor": f"{factor:g}×"})
+                guides.append(
+                    {
+                        "x": low,
+                        "x2": high,
+                        "y": low * factor,
+                        "y2": high * factor,
+                        "factor": f"{factor:g}×",
+                        "ratio": factor,
+                    }
+                )
     layers.append(
         {
             "data": {"values": guides},
-            "mark": {"type": "rule", "stroke": "#888888", "strokeDash": [4, 3], "strokeWidth": 0.7, "clip": True},
+            "mark": {
+                "type": "rule",
+                "clip": True,
+                "stroke": {"expr": "datum.ratio === 1 ? '#555555' : '#b0b0b0'"},
+                "strokeDash": {"expr": "datum.ratio === 1 ? [] : [5, 4]"},
+                "strokeWidth": {"expr": "datum.ratio === 1 ? 1 : 0.5"},
+            },
             "encoding": {
                 "x": axes["x"],
                 "x2": {"field": "x2"},
@@ -438,17 +471,30 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
             },
         }
     )
-    guide_labels = ratio_guide_labels(guides, x_domain, y_domain, width, height, points)
     layers.append(
         {
             "data": {
-                "values": [
-                    row
-                    for row in guide_labels
-                    if x_domain[0] <= row["x"] <= x_domain[1] and y_domain[0] <= row["y"] <= y_domain[1]
+                "values": []
+                if speedup
+                else [
+                    {
+                        "x": g["x2"],
+                        "y": g["y2"],
+                        "label": g["factor"],
+                        "edge": "right" if math.isclose(g["x2"], x_domain[1]) else "top",
+                    }
+                    for g in guides
                 ]
             },
-            "mark": {"type": "text", "align": "right", "dy": -7, "fontSize": 10, "color": "#555555"},
+            "mark": {
+                "type": "text",
+                "fontSize": 12,
+                "color": "#555555",
+                "align": {"expr": "datum.edge === 'right' ? 'left' : 'center'"},
+                "baseline": {"expr": "datum.edge === 'right' ? 'middle' : 'bottom'"},
+                "dx": {"expr": "datum.edge === 'right' ? 5 : 0"},
+                "dy": {"expr": "datum.edge === 'right' ? 0 : -5"},
+            },
             "encoding": {"x": axes["x"], "y": axes["y"], "text": {"field": "label"}},
         }
     )
@@ -530,8 +576,8 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
         "config": {
             "font": "Arial",
             "axis": {
-                "labelFontSize": 10,
-                "titleFontSize": 11,
+                "labelFontSize": 12,
+                "titleFontSize": 13.5,
                 "titleFontWeight": "normal",
                 "grid": False,
             },
@@ -548,13 +594,12 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
     for implementation, title in (("ours", "(a) Our passes"), ("reference", "(b) Native references")):
         points = [p for p in results["points"] if p["implementation"] == implementation]
         planned = [p for p in results["comparisons"] if p["implementation"] == implementation]
-        panel = bound_spec({**results, "points": points}, width=205, height=175)
+        panel = bound_spec({**results, "points": points, "implementation": implementation}, width=245, height=205)
         panel.pop("$schema")
         panel.pop("config")
         panel["title"] = {
-            "text": title,
-            "subtitle": f"{len(points)}/{len(planned)} comparisons",
-            "fontSize": 11,
+            "text": f"{title} · {len(points)}/{len(planned)}",
+            "fontSize": 14,
             "fontWeight": "normal",
             "subtitleFontSize": 9.5,
         }
@@ -564,9 +609,9 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
                 ticks = axis_spec["values"]
                 axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
             if "color" in layer["encoding"]:
-                layer["encoding"]["color"]["legend"].update(labelFontSize=9.5, symbolSize=35)
+                layer["encoding"]["color"]["legend"].update(labelFontSize=13.5, symbolSize=35, offset=8)
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=9.5, dy=-5)
+                layer["mark"].update(fontSize=13.5)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
         panels.append(panel)
@@ -580,7 +625,7 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 9.5, "titleFontSize": 11, "titleFontWeight": "normal", "grid": False},
+            "axis": {"labelFontSize": 13.5, "titleFontSize": 13.5, "titleFontWeight": "normal", "grid": False},
             "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
@@ -589,7 +634,7 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
 
 def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> dict[str, Any]:
     """Place runtime and representation growth beside one shared pass legend."""
-    panels = [bound_spec(runtime, width=205, height=175), translation_program_size_spec(sizes, width=205, height=175)]
+    panels = [bound_spec(runtime, width=245, height=205), translation_program_size_spec(sizes, width=245, height=205)]
     for panel, title, subtitle in zip(
         panels,
         ("(a) Runtime", "(b) Program size"),
@@ -602,12 +647,11 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         panel.pop("$schema")
         panel.pop("config")
         panel.update(
-            width=205,
-            height=175,
+            width=245,
+            height=205,
             title={
-                "text": title,
-                "subtitle": subtitle,
-                "fontSize": 11,
+                "text": f"{title} · {subtitle.split()[0]}",
+                "fontSize": 14,
                 "fontWeight": "normal",
                 "subtitleFontSize": 9.5,
             },
@@ -625,11 +669,12 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
                     "orient": "bottom",
                     "direction": "horizontal",
                     "columns": 4,
-                    "labelFontSize": 9.5,
+                    "labelFontSize": 13.5,
                     "symbolSize": 35,
+                    "offset": 8,
                 }
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=9.5, dy=-5)
+                layer["mark"].update(fontSize=13.5)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
     return {
@@ -642,7 +687,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 9.5, "titleFontSize": 11, "titleFontWeight": "normal", "grid": False},
+            "axis": {"labelFontSize": 13.5, "titleFontSize": 13.5, "titleFontWeight": "normal", "grid": False},
             "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },

@@ -223,8 +223,8 @@ def test_graph_fits_each_log_axis_and_clips_guides_without_confidence_intervals(
             assert y_domain[0] <= guide[y_key] <= y_domain[1]
             assert guide[y_key] / guide[x_key] == pytest.approx(float(guide["label"].removesuffix("×")))
         label = next(row for row in spec["layer"][1]["data"]["values"] if row["label"] == guide["label"])
-        assert guide["x"] < label["x"] < guide["x2"]
-        assert label["x"] ** 2 > guide["x"] * guide["x2"]
+        assert label["x"] == guide["x2"] and label["y"] == guide["y2"]
+        assert label["edge"] in ("top", "right")
         assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
 
 

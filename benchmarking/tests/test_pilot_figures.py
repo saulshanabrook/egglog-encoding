@@ -313,10 +313,10 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
             assert low <= guide[axis] <= guide[f"{axis}2"] <= high
         assert guide["y"] / guide["x"] == pytest.approx(float(guide["factor"].removesuffix("×")))
         label = next(row for row in spec["layer"][1]["data"]["values"] if row["label"] == guide["factor"])
-        assert guide["x"] < label["x"] < guide["x2"]
-        assert label["x"] ** 2 > guide["x"] * guide["x2"]
+        assert label["x"] == guide["x2"] and label["y"] == guide["y2"]
+        assert label["edge"] in ("top", "right")
         assert label["y"] / label["x"] == pytest.approx(guide["y"] / guide["x"])
-    assert "5×" in {guide["factor"] for guide in spec["layer"][0]["data"]["values"]}
+    assert "1×" in {guide["factor"] for guide in spec["layer"][0]["data"]["values"]}
 
 
 @pytest.mark.parametrize("scope", ["extensions", "applications-proof"])
@@ -773,10 +773,11 @@ def test_runtime_ratio_guides_cover_large_overheads_without_changing_points() ->
     result = pilot_results.pilot_results(snapshot_fixture(), "extensions-runtime")
     x = result["points"][0]["x"]
     result["points"][0].update(y=98 * x, y_low=97 * x, y_high=99 * x)
+    result["points"][1].update(x=1.0, x_low=0.9, x_high=1.1, y=0.02, y_low=0.019, y_high=0.021)
     before = deepcopy(result["points"])
     spec = pilot_figures.bound_spec(result, width=205, height=175)
     factors = [float(g["factor"].removesuffix("×")) for g in spec["layer"][0]["data"]["values"]]
-    assert 20 in factors and max(factors) >= 100
+    assert len(factors) <= 5 and 0.1 in factors and 10 in factors and max(factors) >= 100
     assert spec["data"]["values"] == before
     labels = spec["layer"][1]["data"]["values"]
     for guide in spec["layer"][0]["data"]["values"]:
