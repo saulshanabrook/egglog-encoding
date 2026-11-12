@@ -1087,7 +1087,8 @@ mod tests {
             ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
         let prog = vec![];
         let globals = HashMap::default();
-        let mut lifting = ProofLifter::new(&prog, &globals, raw);
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(&prog, &globals, raw, &mut proof_ids);
         let mut synthesis = Synthesis::default();
         let mut lift = |id| {
             let lifted = lifting.proof(
@@ -1315,8 +1316,9 @@ mod tests {
             HashMap::default(),
             HashSet::default(),
         );
+        let mut proof_ids = DenseIdMap::new();
         let mut synthesis = Synthesis::default();
-        ProofLifter::new(&[], &HashMap::default(), &firing.raw).proof(
+        ProofLifter::new(&[], &HashMap::default(), &firing.raw, &mut proof_ids).proof(
             &mut ProofBuilder {
                 store: &mut store,
                 synthesis: &mut synthesis,
