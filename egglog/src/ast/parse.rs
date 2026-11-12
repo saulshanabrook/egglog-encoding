@@ -391,6 +391,17 @@ impl Parser {
             || self.ensure_no_reserved_symbols && COMMAND_ONLY_KEYWORDS.contains(&head))
     }
 
+    /// Sharing generated terms changes how many internal expressions are parsed.
+    /// Keep the ordinary encoding when a parser hook could observe that change.
+    pub(crate) fn can_share_generated_terms(&self) -> bool {
+        self.exprs.is_empty()
+            && ["begin", "let", "set"].iter().all(|head| {
+                !self.commands.contains_key(*head)
+                    && !self.actions.contains_key(*head)
+                    && !self.user_defined.contains(*head)
+            })
+    }
+
     // currently only used for testing, but no reason it couldn't be used elsewhere later
     pub fn get_expr_from_string(
         &mut self,
