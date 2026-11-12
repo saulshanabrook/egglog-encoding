@@ -4,7 +4,7 @@ use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
 use crate::proofs::proof_fresh::{ExtractFunctionRoot, register_mint, register_view_primitives};
 use crate::{
-    core::{CoreActionContext, GenericActionsExt, ResolvedCall},
+    core::{AtomTerm, CoreAction, CoreActionContext, GenericActionsExt, ResolvedCall},
     *,
 };
 use ast::{
@@ -359,6 +359,81 @@ impl<'a> TypeInfoView<'a> {
         Some(Arc::new(source))
     }
 
+    /// Assign a block whose calls and operands determine every local in order.
+    /// No constraints, fresh symbols or runtime effects are produced on decline.
+    fn forward_action_types(
+        self,
+        actions: &[CoreAction],
+        context: Context,
+    ) -> Option<constraint::Assignment<AtomTerm, ArcSort>> {
+        // Change's ordinary constraints allocate dummy outputs with SymbolGen.
+        // Leave that entire block to inference, including those allocations.
+        if actions.iter().any(|a| matches!(a, CoreAction::Change(..))) {
+            return None;
+        }
+        let mut assignment = constraint::Assignment(Default::default());
+        let atom_sort =
+            |atom: &AtomTerm, assignment: &constraint::Assignment<AtomTerm, ArcSort>| match atom {
+                AtomTerm::Literal(_, lit) => Some(sort::literal_sort(lit)),
+                AtomTerm::Global(_, name) => self.get_global_sort(name).cloned(),
+                AtomTerm::Var(..) => assignment.0.get(atom).cloned(),
+            };
+        for action in actions {
+            match action {
+                CoreAction::Let(span, var, head, args) => {
+                    let mut signature = args
+                        .iter()
+                        .map(|arg| atom_sort(arg, &assignment))
+                        .collect::<Option<Vec<_>>>()?;
+                    let output = match (
+                        self.get_func_type(head),
+                        self.get_prims(head).unwrap_or(&[]),
+                    ) {
+                        (Some(func), []) if !func.is_tuple_output() => func.output().clone(),
+                        (None, [prim]) if prim.is_valid_in_context(context) => {
+                            prim.primitive.infer_action_output(args, self.types)?
+                        }
+                        _ => return None,
+                    };
+                    signature.push(output.clone());
+                    ResolvedCall::from_resolution(head, &signature, self, context, span).ok()?;
+                    assignment
+                        .0
+                        .insert(AtomTerm::Var(span.clone(), var.clone()), output);
+                }
+                CoreAction::LetAtomTerm(span, var, value) => {
+                    let output = atom_sort(value, &assignment)?;
+                    assignment
+                        .0
+                        .insert(AtomTerm::Var(span.clone(), var.clone()), output);
+                }
+                CoreAction::Set(span, head, args, values) => {
+                    let func = self.get_func_type(head)?;
+                    if func.subtype != FunctionSubtype::Custom
+                        || self.get_prims(head).is_some_and(|p| !p.is_empty())
+                    {
+                        return None;
+                    }
+                    let signature = args
+                        .iter()
+                        .chain(values)
+                        .map(|arg| atom_sort(arg, &assignment))
+                        .collect::<Option<Vec<_>>>()?;
+                    ResolvedCall::from_resolution(head, &signature, self, context, span).ok()?;
+                }
+                CoreAction::Union(_, left, right) => {
+                    if atom_sort(left, &assignment)?.name() != atom_sort(right, &assignment)?.name()
+                    {
+                        return None;
+                    }
+                }
+                CoreAction::Panic(..) => {}
+                CoreAction::Change(..) => unreachable!("declined before assigning locals"),
+            }
+        }
+        Some(assignment)
+    }
+
     /// Infer an action block using `binding` for locals and `context` for
     /// primitive capabilities. Top-level actions use [`Context::Full`]; merge
     /// expressions use [`Context::Write`].
@@ -372,7 +447,7 @@ impl<'a> TypeInfoView<'a> {
         // A closed constructor action has no overload or local-scope choices.
         // Keep this inside ordinary typing and return the same resolved tree.
         // Other contexts, bindings, multi-action blocks and source signatures
-        // retain the constraint solver and its capability checks/diagnostics.
+        // continue through action typing below, with its capability checks/diagnostics.
         if !self.source_terms
             && binding.is_empty()
             && matches!(context, Context::Full)
@@ -389,6 +464,21 @@ impl<'a> TypeInfoView<'a> {
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
         let (actions, mapped_action) = actions.to_core_actions(&mut ctx)?;
+        #[cfg(test)]
+        let forward_enabled = !test::FORCE_ACTION_SOLVER.get();
+        #[cfg(not(test))]
+        let forward_enabled = true;
+        if forward_enabled
+            && !self.source_terms
+            && binding.is_empty()
+            && context == Context::Full
+            && let Some(assignment) = self.forward_action_types(&actions.0, context)
+            && let Ok(annotated) = assignment.annotate_actions(&mapped_action, self, context)
+        {
+            #[cfg(test)]
+            test::FORWARD_ACTION_TYPES.with(|count| count.set(count.get() + 1));
+            return Ok(annotated);
+        }
         let mut problem = Problem::default();
 
         problem.add_actions(&actions, self, symbol_gen, context)?;
@@ -1987,6 +2077,8 @@ mod test {
 
     thread_local! {
         pub(super) static CLOSED_CONSTRUCTOR_TYPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static FORWARD_ACTION_TYPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        pub(super) static FORCE_ACTION_SOLVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     #[test]
@@ -2157,6 +2249,277 @@ mod test {
             actual.unwrap_err().to_string(),
             expected.unwrap_err().to_string()
         );
+    }
+
+    #[test]
+    fn forward_action_typing_matches_solver_and_fallback() {
+        #[derive(Clone)]
+        struct LegacyPrimitive;
+        impl Primitive for LegacyPrimitive {
+            fn name(&self) -> &str {
+                "legacy-only"
+            }
+            fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+                SimpleTypeConstraint::new(
+                    self.name(),
+                    vec![sort::I64Sort.to_arcsort()],
+                    span.clone(),
+                )
+                .into_box()
+            }
+        }
+        impl FullPrim for LegacyPrimitive {
+            fn apply(&self, _: FullState<'_, '_>, _: &[Value]) -> Option<Value> {
+                unreachable!()
+            }
+        }
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(
+                None,
+                "
+            (datatype T (A) (B) (Pair T T) (Num i64)) (datatype U (C))
+            (datatype Frozen (Cold))
+            (function table (T) T :no-merge)
+            (function tuple (T) (T T) :merge (values old0 old1))
+            (sort V (Vec T)) (let $global (A))
+        ",
+            )
+            .unwrap();
+        graph.type_info.non_unionable_sorts.insert("Frozen".into());
+        graph.add_full_primitive(LegacyPrimitive, None);
+        for (source, admits) in [
+            (
+                "(begin (let a (A)) (let b (Pair a $global)) (union b (B)))",
+                true,
+            ),
+            ("(begin (let a (get-fresh! \"T\")) (union a (A)))", true),
+            ("(begin (let a (get-fresh! \"i64\")) (Num a))", true),
+            ("(begin (let a (A)) (set (table a) (B)))", true),
+            ("(begin (set (tuple (A)) (values (A) (B))))", true),
+            ("(begin (let a (A)) (delete (table a)))", false),
+            ("(begin (let a (A)) (set (A) a))", false),
+            ("(begin (let a (A)) (union a (C)))", false),
+            ("(begin (union (Cold) (Cold)) (A))", false),
+            ("(begin (union 1 2) (A))", false),
+            ("(begin (let a (get-fresh! \"Unknown\")) (A))", false),
+            (
+                "(begin (let sort-name \"T\") (let a (get-fresh! sort-name)) (A))",
+                false,
+            ),
+            ("(begin (let a (get-fresh! \"T\" \"T\")) (A))", false),
+            ("(begin (let a (legacy-only)) (Num a))", false),
+            ("(begin (let a (+ 1 2)) (Num a))", false),
+            ("(begin (let v (vec-of (A) (B))) (A))", false),
+            ("(begin (let a (Num \"bad\")) (A))", false),
+            ("(begin (let a missing) (A))", false),
+        ] {
+            let program = graph
+                .parse_program(Some("forward-typing.egg".into()), source)
+                .unwrap();
+            let [Command::Actions(actions)] = program.as_slice() else {
+                panic!("expected one local block: {source}");
+            };
+            // Both paths use the same parsed tree, including all source spans.
+            let actions = actions.clone();
+            for source_terms in [false, true] {
+                let view = if source_terms {
+                    graph.type_info.source_types()
+                } else {
+                    TypeInfoView::from(&graph.type_info)
+                };
+                for context in Context::ALL {
+                    let mut fast_symbols = graph.parser.symbol_gen.clone();
+                    let mut solver_symbols = fast_symbols.clone();
+                    let before = FORWARD_ACTION_TYPES.get();
+                    let actual = view.typecheck_standalone_actions(
+                        &mut fast_symbols,
+                        &actions,
+                        &Default::default(),
+                        context,
+                    );
+                    assert_eq!(
+                        FORWARD_ACTION_TYPES.get() - before,
+                        usize::from(admits && !source_terms && context == Context::Full),
+                        "{source}, {context:?}, source_terms={source_terms}"
+                    );
+                    FORCE_ACTION_SOLVER.set(true);
+                    let expected = view.typecheck_standalone_actions(
+                        &mut solver_symbols,
+                        &actions,
+                        &Default::default(),
+                        context,
+                    );
+                    FORCE_ACTION_SOLVER.set(false);
+                    match (actual, expected) {
+                        (Ok(actual), Ok(expected)) => {
+                            assert_eq!(actual, expected, "{source}, {context:?}")
+                        }
+                        (Err(actual), Err(expected)) => assert_eq!(
+                            actual.to_string(),
+                            expected.to_string(),
+                            "{source}, {context:?}"
+                        ),
+                        results => panic!("typing differs for {source}, {context:?}: {results:?}"),
+                    }
+                    assert_eq!(
+                        fast_symbols, solver_symbols,
+                        "fresh state: {source}, {context:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn forward_action_typing_keeps_overloads_and_bindings_in_solver() {
+        #[derive(Clone)]
+        struct CollisionPrimitive {
+            name: &'static str,
+            input: Vec<ArcSort>,
+            output: ArcSort,
+        }
+        impl Primitive for CollisionPrimitive {
+            fn name(&self) -> &str {
+                self.name
+            }
+            fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+                let mut sorts = self.input.clone();
+                sorts.push(self.output.clone());
+                SimpleTypeConstraint::new(self.name, sorts, span.clone()).into_box()
+            }
+            fn infer_action_output(&self, _: &[AtomTerm], _: &TypeInfo) -> Option<ArcSort> {
+                panic!("an ambiguous registration must never be asked to infer")
+            }
+        }
+        impl FullPrim for CollisionPrimitive {
+            fn apply(&self, _: FullState<'_, '_>, _: &[Value]) -> Option<Value> {
+                unreachable!()
+            }
+        }
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(None, "(datatype T (A) (B))")
+            .unwrap();
+        let sort = graph.type_info.get_sort_by_name("T").unwrap().clone();
+        let compare =
+            |mut graph: EGraph, source: &str, binding: IndexMap<&str, (Span, ArcSort)>| {
+                let program = graph
+                    .parse_program(Some("forward-fallback.egg".into()), source)
+                    .unwrap();
+                let [Command::Actions(actions)] = program.as_slice() else {
+                    unreachable!()
+                };
+                let mut fast_symbols = graph.parser.symbol_gen.clone();
+                let mut solver_symbols = fast_symbols.clone();
+                let count = FORWARD_ACTION_TYPES.get();
+                let actual = graph.type_info.typecheck_standalone_actions(
+                    &mut fast_symbols,
+                    actions,
+                    &binding,
+                    Context::Full,
+                );
+                assert_eq!(FORWARD_ACTION_TYPES.get(), count);
+                FORCE_ACTION_SOLVER.set(true);
+                let expected = graph.type_info.typecheck_standalone_actions(
+                    &mut solver_symbols,
+                    actions,
+                    &binding,
+                    Context::Full,
+                );
+                FORCE_ACTION_SOLVER.set(false);
+                match (actual, expected) {
+                    (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
+                    (Err(actual), Err(expected)) => {
+                        assert_eq!(actual.to_string(), expected.to_string())
+                    }
+                    results => panic!("fallback differs: {results:?}"),
+                }
+                assert_eq!(fast_symbols, solver_symbols);
+            };
+        compare(
+            graph.clone(),
+            "(begin (let a (A)) (union a (B)))",
+            IndexMap::from_iter([("unused", (Span::Panic, sort.clone()))]),
+        );
+        for (name, input, source) in [
+            ("A", vec![], "(begin (let a (A)) (union a (B)))"),
+            (
+                "get-fresh!",
+                vec![sort::StringSort.to_arcsort()],
+                "(begin (let a (get-fresh! \"T\")) (union a (B)))",
+            ),
+        ] {
+            let mut overloaded = graph.clone();
+            overloaded.add_full_primitive(
+                CollisionPrimitive {
+                    name,
+                    input,
+                    output: sort.clone(),
+                },
+                None,
+            );
+            compare(overloaded, source, Default::default());
+        }
+    }
+
+    #[test]
+    fn generated_action_forward_typing_matches_solver() {
+        use std::io::BufRead;
+        let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../benchmarks/disequality/parameter-analysis.egg");
+        let mut parameter = std::io::BufReader::new(std::fs::File::open(input).unwrap())
+            .lines()
+            .map(Result::unwrap)
+            .filter(|line| line.starts_with("(datatype ") || line.starts_with("(union "))
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n");
+        parameter.push_str("\n(f (N1))");
+        for source in [
+            parameter.as_str(),
+            "
+            (datatype T (A) (B) (Pair T T)) (sort V (Vec T))
+            (function table (T) i64 :merge old) (let $global (A))
+            (set (table $global) 7)
+            (union (Pair $global (B)) (B)) (vec-of (A) (B))
+        ",
+        ] {
+            let mut fast = EGraph::new_with_proofs();
+            let mut legacy = EGraph::new_with_proofs();
+            let program = fast
+                .parse_program(Some("generated-forward-typing.egg".into()), source)
+                .unwrap();
+            legacy.parser = fast.parser.clone();
+            let before = FORWARD_ACTION_TYPES.get();
+            let actual = fast
+                .process_program_internal(
+                    crate::process_program::ProgramSource::from_commands(
+                        program.clone().into_iter(),
+                    ),
+                    false,
+                )
+                .unwrap();
+            let admitted = FORWARD_ACTION_TYPES.get() - before;
+            FORCE_ACTION_SOLVER.set(true);
+            let expected = legacy.process_program_internal(
+                crate::process_program::ProgramSource::from_commands(program.into_iter()),
+                false,
+            );
+            FORCE_ACTION_SOLVER.set(false);
+            let expected = expected.unwrap();
+            assert!(admitted > 0, "must exercise emitted action blocks");
+            assert_eq!(actual.resolved, expected.resolved);
+            assert_eq!(
+                actual.resolved_before_proofs,
+                expected.resolved_before_proofs
+            );
+            assert_eq!(fast.parser.symbol_gen, legacy.parser.symbol_gen);
+            assert_eq!(
+                fast.proof_state.global_actions_numbered,
+                legacy.proof_state.global_actions_numbered
+            );
+        }
     }
 
     #[test]
