@@ -656,10 +656,10 @@ mod tests {
         let recorded = graph.record_existing_terms(&terms, &requested).unwrap();
         let first = recorded.roots[1];
         let roots = [
-            recorded.roots[0],
             recorded.roots[2],
-            first,
             recorded.roots[0],
+            first,
+            recorded.roots[2],
         ];
         let program = &graph.proof_check_program[..recorded.program_len];
         let (mut proofs, initial_ids) = Proofs::from_raw(
@@ -693,8 +693,9 @@ mod tests {
             proofs.decoded.prim_value_constructors.clone(),
             None,
         );
-        // The next lifter builds fresh walks for another column of the first
-        // firing and for a second firing, retaining the store's interned keys.
+        // Resume the unseen firing first: losing the old namespace would reuse
+        // its compact firing ID for a different premise vector. Both fresh walks
+        // must retain the store's keys while decoding uncached raw columns.
         let (mut resumed, resumed_ids) = proofs.lift(&roots, None);
         assert!(resumed.rule_firing(&name, &premises) == firing);
         assert_eq!(resumed_ids[2], cached);
