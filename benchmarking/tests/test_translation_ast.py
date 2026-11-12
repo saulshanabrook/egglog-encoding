@@ -195,19 +195,19 @@ def test_graph_fits_each_log_axis_and_clips_guides_without_confidence_intervals(
     spec = pilot_ast.translation_program_size_spec(result)
     assert len(result["points"]) == 1 and len(result["rows"]) == 2
     assert result["points"][0]["growth"] == 10
-    assert result["points"][0]["configuration"] == "extlog_c"
+    assert result["points"][0]["configuration"] == "corelog+c"
     marks = spec["layer"][-1]
     assert marks["mark"]["type"] == "circle" and marks["mark"]["filled"]
     assert "shape" not in marks["encoding"]
     color = marks["encoding"]["color"]
     assert color["legend"]["columns"] == 2
     assert dict(zip(color["scale"]["domain"], color["scale"]["range"], strict=True)) == {
-        "extlog_c": "#0072b2",
-        "extlog_cp": "#56b4e9",
-        "extlog_d": "#d55e00",
-        "extlog_dcp": "#cc79a7",
-        "extlog_s": "#e69f00",
-        "extlog_scp": "#b59b00",
+        "corelog+c": "#0072b2",
+        "egglog+p": "#56b4e9",
+        "egglog+d": "#d55e00",
+        "egglog+dp": "#cc79a7",
+        "egglog+s": "#e69f00",
+        "egglog+sp": "#b59b00",
     }
     x_domain = marks["encoding"]["x"]["scale"]["domain"]
     y_domain = marks["encoding"]["y"]["scale"]["domain"]
@@ -274,3 +274,18 @@ def test_portable_bundle_redraws_ast_without_collectors_inputs_or_cache(
     assert (source / "program-size.bound.vl.json").read_bytes() == (
         destination / "program-size.bound.vl.json"
     ).read_bytes()
+    paired = json.loads((destination / "extensions-runtime-size.results.json").read_bytes())
+    spec = json.loads((destination / "extensions-runtime-size.bound.vl.json").read_bytes())
+    assert paired["pilot_snapshot"] == snapshot
+    assert (
+        paired["runtime"]["selection_sha256"]
+        == json.loads((destination / "extensions-runtime.results.json").read_bytes())["selection_sha256"]
+    )
+    assert len(paired["program_size"]["points"]) == 1
+    assert spec["resolve"]["scale"] == {"x": "independent", "y": "independent", "color": "shared"}
+    left, right = spec["hconcat"]
+    assert left["layer"][-1]["encoding"]["color"] == right["layer"][-1]["encoding"]["color"]
+    assert left["layer"][-1]["encoding"]["color"]["legend"]["columns"] == 3
+    assert all("x_low" in point for point in left["data"]["values"])
+    assert all("x_low" not in point for point in right["layer"][-1]["data"]["values"])
+    assert "extlog_" not in json.dumps(spec)

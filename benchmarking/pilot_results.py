@@ -18,6 +18,7 @@ from typing import Any
 from scipy import stats
 
 from .engines import PROOF_ORACLES
+from .pilot_ast import LEGACY_PASS_LABELS
 from .reports.analysis import _ratio_estimate, _sample_estimate
 
 PILOT_DATA_VERSION = 1
@@ -95,6 +96,13 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
     for comparison in snapshot["comparisons"]:
         if comparison["scope"] != scope:
             continue
+        comparison = dict(comparison)
+        for field in ("series", "candidate_label", "reference_label"):
+            comparison[field] = re.sub(
+                r"\bextlog_(?:dcp|scp|cp|c|d|s)\b",
+                lambda match: LEGACY_PASS_LABELS[match.group()],
+                comparison[field],
+            )
         baseline = conditions[comparison["baseline"]]
         candidate = conditions[comparison["candidate"]]
         if scope == "applications" and (baseline["treatment"] != "off" or candidate["treatment"] != "proof-extraction"):
@@ -241,7 +249,7 @@ def pilot_tex(results: dict[str, Any]) -> tuple[str, str]:
             numbers[f"{name}/coverage/{row['id']}/{field}"] = row[field]
     table = [
         r"\begin{tabular}{llrr}",
-        f"Experiment / workload & Status & Reference ({results['units']}) & extlog ({results['units']}) " + r"\\",
+        f"Experiment / workload & Status & Reference ({results['units']}) & Candidate ({results['units']}) " + r"\\",
         r"\hline",
     ]
     for row in results["comparisons"]:

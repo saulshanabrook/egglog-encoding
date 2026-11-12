@@ -272,7 +272,8 @@ def test_runtime_and_speedup_views_share_samples_and_keep_tiny_inputs() -> None:
     spec = pilot_figures.bound_spec(runtime)
     color = spec["layer"][-1]["encoding"]["color"]["scale"]
     assert {point["configuration"] for point in runtime["points"]} <= set(color["domain"])
-    assert set(color["domain"]) == {"extlog_c", "extlog_cp", "extlog_d", "extlog_dcp", "extlog_s", "extlog_scp"}
+    assert set(color["domain"]) == {"corelog+c", "egglog+p", "egglog+d", "egglog+dp", "egglog+s", "egglog+sp"}
+    assert all("extlog_" not in point["series"] for point in runtime["points"])
     axes = spec["layer"][-1]["encoding"]
     assert axes["color"]["field"] == "configuration"
     assert axes["x"]["scale"]["domain"] != axes["y"]["scale"]["domain"]
@@ -305,11 +306,13 @@ def test_memory_views_reuse_runtime_observations_with_mib_axes_tables_and_number
     assert all(point["x_low"] == point["x_high"] == 1 for point in memory["points"])
     spec = pilot_figures.bound_spec(memory)
     assert spec["layer"][-1]["encoding"]["x"]["title"].endswith("peak RSS (MiB)")
-    assert spec["layer"][-1]["encoding"]["y"]["title"] == "extlog peak RSS (MiB)"
+    assert spec["layer"][-1]["encoding"]["y"]["title"] == (
+        "egglog+p peak RSS (MiB)" if scope == "applications-proof" else "Transformed peak RSS (MiB)"
+    )
     assert spec["layer"][-1]["encoding"]["color"] == pilot_figures.bound_spec(runtime)["layer"][-1]["encoding"]["color"]
     numbers, table = pilot_results.pilot_tex(memory)
     assert "/reference/memory/mean" in numbers and "/reference/runtime/mean" not in numbers
-    assert "Reference (MiB) & extlog (MiB)" in table and "Reference (s)" not in table
+    assert "Reference (MiB) & Candidate (MiB)" in table and "Reference (s)" not in table
 
 
 @pytest.mark.parametrize("rss", [None, 0])

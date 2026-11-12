@@ -44,7 +44,9 @@ from .pilot_ast import (
     export_translation_program_size,
     log_major_ticks,
     program_size_snapshot,
+    translation_program_size_results,
     translation_program_size_snapshot,
+    translation_program_size_spec,
 )
 from .pilot_results import BUNDLE_NAMES, PILOT_DATA_VERSION, coverage_tables, pilot_results, pilot_tex
 from .reports.catalog import report_id
@@ -292,7 +294,7 @@ def make_snapshot(
                         "project": project,
                         "logical_id": file.sha256,
                         "label": info["label"],
-                        "candidate_label": ("extlog_cp" if candidate == "proof-extraction" else "extlog_c")
+                        "candidate_label": ("egglog+p" if candidate == "proof-extraction" else "corelog+c")
                         if scope == "applications"
                         else experiment["candidate_label"],
                         "reference_label": experiment["reference_label"],
@@ -382,7 +384,9 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
             "type": "quantitative",
             "scale": {"type": "log", "domain": y_domain},
             "axis": {"values": log_major_ticks(y_domain), "grid": False},
-            "title": "Speedup (reference / extlog)" if speedup else f"extlog {measurement}",
+            "title": "Speedup (reference / candidate)"
+            if speedup
+            else f"{'egglog+p' if applications else 'Transformed'} {measurement}",
         },
     }
     layers: list[dict[str, Any]] = []
@@ -531,6 +535,56 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> dict[str, Any]:
+    """Place runtime and representation growth beside one shared pass legend."""
+    panels = [bound_spec(runtime), translation_program_size_spec(sizes)]
+    for panel, title, subtitle in zip(
+        panels,
+        ("(a) Runtime", "(b) Program size"),
+        (
+            f"{len(runtime['points'])}/{len(runtime['comparisons'])} pairs; mean and 95% CI",
+            f"{len(sizes['points'])}/{len(sizes['rows'])} configurations; deterministic",
+        ),
+        strict=True,
+    ):
+        panel.pop("$schema")
+        panel.pop("config")
+        panel.update(
+            width=205, height=185, title={"text": title, "subtitle": subtitle, "fontSize": 10, "subtitleFontSize": 8.5}
+        )
+        for layer in panel["layer"]:
+            for axis in ("x", "y"):
+                axis_spec = layer["encoding"][axis]["axis"]
+                ticks = axis_spec["values"]
+                axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
+            if "color" in layer["encoding"]:
+                layer["encoding"]["color"]["legend"] = {
+                    "title": None,
+                    "orient": "bottom",
+                    "columns": 3,
+                    "labelFontSize": 9,
+                    "symbolSize": 35,
+                }
+            if layer["mark"]["type"] == "text":
+                layer["mark"].update(fontSize=8.5, dy=-5)
+            elif layer["mark"]["type"] == "circle":
+                layer["mark"]["size"] = 20
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+        "hconcat": panels,
+        "spacing": 24,
+        "resolve": {
+            "scale": {"x": "independent", "y": "independent", "color": "shared"},
+            "legend": {"color": "shared"},
+        },
+        "config": {
+            "font": "Arial",
+            "axis": {"labelFontSize": 8.5, "titleFontSize": 9.5, "grid": False},
+            "view": {"stroke": None},
+        },
+    }
+
+
 def export_pilot(
     snapshot: dict[str, Any], destination: Path, console: Console, *, images: bool = True
 ) -> tuple[Path, ...]:
@@ -584,16 +638,38 @@ def export_pilot(
                 folder,
             )
         )
+        runtime = pilot_results(snapshot, "extensions-runtime")
+        sizes = translation_program_size_results(
+            snapshot.get("translation_program_size", {"status": "pending", "inputs": [], "records": [], "issue": None})
+        )
+        paired = {
+            "figure": "extensions-runtime-size",
+            "runtime": {key: value for key, value in runtime.items() if key != "pilot_snapshot"},
+            "program_size": sizes,
+            "pilot_snapshot": snapshot,
+            "renderer": renderer,
+        }
+        for suffix, value in (
+            ("results.json", json.dumps(paired, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"),
+            (
+                "bound.vl.json",
+                json.dumps(paired_runtime_size_spec(runtime, sizes), ensure_ascii=False, allow_nan=False) + "\n",
+            ),
+        ):
+            path = folder / f"extensions-runtime-size.{suffix}"
+            path.write_text(value)
+            outputs.append(path.name)
         if images:
-            for extension in ("pdf", "svg", "png"):
-                path = folder / f"program-size.{extension}"
-                args = [*command, f"vl2{extension}", str(folder / "program-size.bound.vl.json"), str(path)]
-                if extension == "png":
-                    args.extend(("-s", "3"))
-                subprocess.run(args, cwd=ROOT, check=True, stdout=sys.stderr, stderr=sys.stderr)
-                if not path.is_file() or not path.stat().st_size:
-                    raise ValueError(f"pilot AST renderer produced no {extension}")
-                outputs.append(path.name)
+            for stem in ("program-size", "extensions-runtime-size"):
+                for extension in ("pdf", "svg", "png"):
+                    path = folder / f"{stem}.{extension}"
+                    args = [*command, f"vl2{extension}", str(folder / f"{stem}.bound.vl.json"), str(path)]
+                    if extension == "png":
+                        args.extend(("-s", "3"))
+                    subprocess.run(args, cwd=ROOT, check=True, stdout=sys.stderr, stderr=sys.stderr)
+                    if not path.is_file() or not path.stat().st_size:
+                        raise ValueError(f"pilot {stem} renderer produced no {extension}")
+                    outputs.append(path.name)
         for name in outputs:
             os.replace(folder / name, destination / name)
     console.print(f"Exported pilot ({snapshot['rounds']} observations requested) to {destination}", markup=False)

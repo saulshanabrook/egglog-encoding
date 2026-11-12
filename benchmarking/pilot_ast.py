@@ -18,14 +18,18 @@ from .slotted_ast import COLUMNS, PIPELINE, export_slotted_ast, slotted_ast_reco
 from .translation_ast import PIPELINE as TRANSLATION_PIPELINE
 from .translation_ast import PROFILES, SAFETY_STATUSES, TranslationRequest, translation_ast_records
 
-PASS_COLORS = {
-    "extlog_c": "#0072b2",
-    "extlog_cp": "#56b4e9",
-    "extlog_d": "#d55e00",
-    "extlog_dcp": "#cc79a7",
-    "extlog_s": "#e69f00",
-    "extlog_scp": "#b59b00",
+PASS_LABELS = {
+    "c": "corelog+c",
+    "cp": "egglog+p",
+    "d": "egglog+d",
+    "dcp": "egglog+dp",
+    "s": "egglog+s",
+    "scp": "egglog+sp",
 }
+LEGACY_PASS_LABELS = {f"extlog_{profile}": label for profile, label in PASS_LABELS.items()}
+PASS_COLORS = dict(
+    zip(PASS_LABELS.values(), ("#0072b2", "#56b4e9", "#d55e00", "#cc79a7", "#e69f00", "#b59b00"), strict=True)
+)
 TRANSLATION_NOTE = (
     "Whole-program S-expression nodes: each list, atom, and literal counts once. "
     "The denominator is self-contained raw source; emitted scaffolding remains in the output. "
@@ -145,7 +149,7 @@ def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]
                     **row,
                     "x": x,
                     "y": y,
-                    "configuration": f"extlog_{planned['profile']}",
+                    "configuration": PASS_LABELS[planned["profile"]],
                     "workload": planned["file"],
                 }
             )
@@ -315,8 +319,12 @@ def export_translation_program_size(snapshot: dict[str, Any], destination: Path)
         "| --- | ---: | ---: | ---: |",
     ]
     for row in results["coverage"]:
-        coverage.append(f"{row['profile']} & {row['planned']} & {row['ok']} & {row['planned'] - row['ok']}" + r" \\")
-        markdown.append(f"| {row['profile']} | {row['planned']} | {row['ok']} | {row['planned'] - row['ok']} |")
+        coverage.append(
+            f"{PASS_LABELS[row['profile']]} & {row['planned']} & {row['ok']} & {row['planned'] - row['ok']}" + r" \\"
+        )
+        markdown.append(
+            f"| {PASS_LABELS[row['profile']]} | {row['planned']} | {row['ok']} | {row['planned'] - row['ok']} |"
+        )
     coverage.extend((r"\bottomrule", r"\end{tabular}", ""))
     if snapshot.get("issue"):
         markdown.extend(("", snapshot["issue"]))
