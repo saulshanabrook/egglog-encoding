@@ -339,7 +339,10 @@ available. Checks use the same aliasing restriction.
 (run N)
 ```
 
-Performs `N` rounds of user rewrites. `N` must be a nonnegative integer.
+Performs up to `N` rounds of user rewrites. The ordinary encoding stops early
+when a round makes no database changes. Nested substitution supports this early
+termination; multipattern substitution's temporary match rows can keep a stable
+run active. `N` must be a nonnegative integer.
 `run-schedule` and `run-report` are unsupported.
 
 ### `check` and `fail`

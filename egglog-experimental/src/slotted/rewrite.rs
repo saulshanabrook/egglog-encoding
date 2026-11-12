@@ -472,6 +472,36 @@ pub(super) fn compile(
             substitution,
         ));
     };
+    if naive && r.nested && queues.is_some() {
+        // Every accepted source rewrite has constructor atoms or global values;
+        // both contribute frames and therefore take this split path. The source
+        // phase only stages matches/indices, so the full apply query reads the
+        // same semantic graph. Global-only patterns obey this barrier too.
+        // Keep rematching naive: extraction can improve without a new LHS tuple.
+        // Seeding indices without a temporary match row also lets an unchanged
+        // substitution round report no database changes and stop normally.
+        // Multipattern matching keeps its queued refinements, avoiding repeated
+        // frame construction for each matching index in the apply query.
+        let prepare = rule(
+            &q.body[..split],
+            &[format!("(Idx {} 0)", q.length)],
+            true,
+            None,
+            r.name,
+        );
+        let apply = rule(
+            &q.body,
+            &actions,
+            true,
+            Some("slotted-apply"),
+            r.name.map(|n| format!("{n}/apply")).as_deref(),
+        );
+        return Ok((
+            format!("{declaration}{prepare}\n{apply}"),
+            names,
+            substitution,
+        ));
+    }
     let mut columns = vec![q.refined.clone(), q.length.clone()];
     let mut sorts = vec!["Frames".to_owned(), "i64".to_owned()];
     for (pv, c) in &q.classes {
