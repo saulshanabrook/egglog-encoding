@@ -48,6 +48,7 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
             args.memory_limit_bytes,
             rewrite_rounds=args.rewrite_rounds,
             threads=args.threads,
+            policy_file=args.policy_file,
         )
     )
     documents, optimizer = collected.successful, collected.report
@@ -221,6 +222,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--timeout-sec", "--timeout", dest="timeout", type=int, default=DEFAULT_TIMEOUT_SEC)
     parser.add_argument("--report", type=Path, help="Append-only optimizer cache; default OUTPUT/optimizer.jsonl")
+    parser.add_argument(
+        "--policy-file", type=Path, help="Campaign exclusion overlay; patterns are relative to benchmarks/"
+    )
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     parser.add_argument("--dag-timeout", type=float, default=30)
     parser.add_argument("--build-timeout", type=int, default=900)
@@ -237,7 +241,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("rounds, timeouts and jobs must be positive")
     if not math.isfinite(args.dag_timeout) or args.dag_timeout <= 0:
         parser.error("DAG timeout must be finite and positive")
-    for name in ("output_dir", "data", "backend", "report"):
+    for name in ("output_dir", "data", "backend", "report", "policy_file"):
         if getattr(args, name) is not None:
             setattr(args, name, getattr(args, name).resolve())
     return args

@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -163,12 +163,29 @@ def summarize_optimizer(rows: list[ReportRecord], budget: int, requested: int, i
     }
 
 
-def optimizer_inputs(output: Path, rewrite_rounds: int) -> dict[str, FileSpec]:
+def optimizer_inputs(output: Path, rewrite_rounds: int, *, policy_file: Path | None = None) -> dict[str, FileSpec]:
     """Resolve the checked-in inputs through the normal workload harness."""
     from .program import benchmark_input
 
     output.mkdir(parents=True, exist_ok=True)
-    return {mode: resolve_files([str(benchmark_input(mode, output, rewrite_rounds))], ROOT)[0] for mode in MODES}
+    files = {mode: resolve_files([str(benchmark_input(mode, output, rewrite_rounds))], ROOT)[0] for mode in MODES}
+    if policy_file is not None:
+        overlay = resolve_files(
+            [str(file.absolute_path) for file in files.values()],
+            ROOT,
+            ignore_file=policy_file,
+            ignore_root=ROOT / "benchmarks",
+        )
+        for (mode, file), extra in zip(files.items(), overlay, strict=True):
+            exclusions = (*file.exclusions, *extra.exclusions)
+            files[mode] = replace(
+                file,
+                exclusions=exclusions,
+                binary_inputs=tuple(
+                    (name, replace(physical, exclusions=exclusions)) for name, physical in file.binary_inputs
+                ),
+            )
+    return files
 
 
 def optimizer_requests(
@@ -194,10 +211,11 @@ def collect_optimizers(
     *,
     rewrite_rounds: int,
     threads: int = 1,
+    policy_file: Path | None = None,
 ) -> OptimizerCollection:
     """Measure LMFAO rewriting through the shared benchmark collector."""
     request = parse_target(str(ROOT))
-    files = optimizer_inputs(output, rewrite_rounds)
+    files = optimizer_inputs(output, rewrite_rounds, policy_file=policy_file)
     requests = optimizer_requests(files, request, memory_limit_bytes, threads)
     store = ReportStore(report_path or output / "optimizer.jsonl")
     console = Console(stderr=True)
@@ -205,7 +223,16 @@ def collect_optimizers(
     pending = plan_collection(store, requests, targets, samples, timeout, False)
     collect(store, pending, requests, targets, timeout, console)
     return optimizer_report(
-        output, store, targets[request], files, samples, timeout, memory_limit_bytes, rewrite_rounds, threads
+        output,
+        store,
+        targets[request],
+        files,
+        samples,
+        timeout,
+        memory_limit_bytes,
+        rewrite_rounds,
+        threads,
+        policy_file=policy_file,
     )
 
 
@@ -219,6 +246,8 @@ def optimizer_report(
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
     threads: int = 1,
+    *,
+    policy_file: Path | None = None,
 ) -> OptimizerCollection:
     """Read the shared collection and build the extractor for plan generation."""
     subprocess.run(
@@ -240,6 +269,15 @@ def optimizer_report(
         "egraph_workers": threads,
         "dag_workers": 1,
     }
+    if policy_file is not None:
+        report["optimizer_policy"] = {
+            "path": str(policy_file),
+            "sha256": sha256_file(policy_file),
+            "exclusions": {
+                mode: [asdict(rule) | {"treatments": list(rule.treatments)} for rule in file.exclusions]
+                for mode, file in files.items()
+            },
+        }
     successful = {}
     for mode, treatment in MODES.items():
         result = measured_result(

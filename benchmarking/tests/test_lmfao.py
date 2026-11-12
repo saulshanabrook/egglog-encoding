@@ -104,8 +104,9 @@ def test_fixed_workload_is_original_covariance_configuration() -> None:
 
 def test_cli_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     argv = ["--data", str(tmp_path), "--backend", str(tmp_path / "multifaq"), "--output-dir", str(tmp_path / "out")]
-    args = cli.parse_args([*argv, "--rounds", "1", "--dag-timeout", "2"])
+    args = cli.parse_args([*argv, "--rounds", "1", "--dag-timeout", "2", "--policy-file", "campaign.json"])
     assert args.samples == 1 and args.dag_timeout == 2
+    assert args.policy_file == Path("campaign.json").resolve()
     for value in ["0", "-1", "nan", "inf"]:
         with pytest.raises(SystemExit):
             cli.main([*argv, "--dag-timeout", value])
@@ -320,8 +321,9 @@ def test_backend_timeout_stops_optimizer_and_compiler_children(tmp_path: Path, n
                 os.kill(int((tmp_path / "child.pid").read_text()), signal.SIGKILL)
 
 
+@pytest.mark.parametrize("defer_debruijn", [False, True])
 def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnostics(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], defer_debruijn: bool
 ) -> None:
     monkeypatch.delattr(os, "sched_getaffinity", raising=False)
     now = 0.0
@@ -332,13 +334,15 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
 
     monkeypatch.setattr(cli, "time", SimpleNamespace(perf_counter=lambda: now))
     documents: dict[str, Any] = {"slotted": {"treatment": "slotted"}, "debruijn": {"treatment": "off"}}
+    if defer_debruijn:
+        del documents["debruijn"]
 
     def collect(output: Path, *args: Any, **kwargs: Any) -> cli.OptimizerCollection:
         from benchmarking.reports.store import ReportStore
         from benchmarking.tests.report_fixtures import make_target
 
         spend(999)
-        report = {
+        report: dict[str, Any] = {
             "optimizer": {
                 label: {"process_seconds": seconds_summary([999, 999]), "completed_samples": 2} for label in documents
             },
@@ -346,6 +350,8 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
             "optimizer_memory_limit_bytes": 16 * 1024**3,
             "extractor_path": "/lmfao-extract",
         }
+        if defer_debruijn:
+            report["optimizer"]["debruijn"] = {"issue": "excluded (resource): local host-pressure stop"}
         return cli.OptimizerCollection(documents, report, ReportStore(tmp_path / "cache.jsonl"), make_target())
 
     def collect_replays(collection: Any, source: Path, samples: int, timeout: int, *args: Any) -> dict[str, Any]:
@@ -457,17 +463,23 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
     costs = report["accounted_pipeline"]
     assert costs["original"]["one_time_phase_sum_seconds"] == 42
     assert costs["slotted"]["one_time_phase_sum_seconds"] == 67
-    assert costs["debruijn"]["one_time_phase_sum_seconds"] == 69
-    assert costs["debruijn"]["execution_label"] == "slotted"
+    if not defer_debruijn:
+        assert costs["debruijn"]["one_time_phase_sum_seconds"] == 69
+        assert costs["debruijn"]["execution_label"] == "slotted"
     assert costs["original"]["optimization_and_generation_seconds"] == 2
     assert costs["slotted"]["optimization_and_generation_seconds"] == 27
     assert costs["slotted"]["compilation_seconds"] == 40
     assert report["metadata"]["validation_preparation_seconds"] == 2011
-    assert len(report["builds"]) == 4 and len(report["validation"]) == 3
-    assert "compilation_seconds" not in report["builds"]["debruijn"]
+    assert len(report["builds"]) == (3 if defer_debruijn else 4) and len(report["validation"]) == 3
+    if defer_debruijn:
+        assert "debruijn" not in report["accounted_pipeline"] and "debruijn" not in report["builds"]
+    else:
+        assert "compilation_seconds" not in report["builds"]["debruijn"]
     assert "not a measured end-to-end" in report["phase_scope"]
     comparison = (output / "comparison.md").read_text()
     assert "Slotted egglog" in comparison and "Ordinary egglog (de Bruijn)" in comparison
+    if defer_debruijn:
+        assert "Ordinary egglog (de Bruijn) (excluded (resource): local host-pressure stop)" in comparison
     assert "27.000 | 40.000 | 0.524 [" in comparison
     assert "Samples" not in comparison and "Full planning (s)" in comparison
     assert "requests 2 observations" in comparison
@@ -546,6 +558,67 @@ def test_frozen_inputs_match_generator_and_collection_does_not_regenerate(
     files = optimizer_inputs(tmp_path, program.DEFAULT_ROUNDS)
     assert {f.absolute_path.parent for f in files.values()} == {program.INPUTS}
     assert not list(tmp_path.iterdir())
+
+
+def test_campaign_policy_skips_only_debruijn_and_preserves_cache_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarking.collection import plan_collection
+    from benchmarking.lmfao import optimizer, program
+    from benchmarking.models import BenchmarkEndpoint
+    from benchmarking.reports.store import CacheKey, ReportStore
+    from benchmarking.targets import sha256_file
+    from benchmarking.tests.report_fixtures import make_record, make_target
+
+    policy = tmp_path / "campaign.json"
+    rule = {
+        "file": "lmfao/inputs/debruijn.egg",
+        "treatments": ["off"],
+        "kind": "resource",
+        "reason": "local host-pressure stop",
+        "evidence": "local guard packet; no allocator-limit claim",
+    }
+    policy.write_text(json.dumps([rule]))
+    defaults = optimizer.optimizer_inputs(tmp_path, program.DEFAULT_ROUNDS)
+    files = optimizer.optimizer_inputs(tmp_path, program.DEFAULT_ROUNDS, policy_file=policy)
+    target = make_target()
+    store = ReportStore(tmp_path / "cache.jsonl")
+    requests = optimizer.optimizer_requests(files, target.request, 16 * 1024**3, threads=4)
+    pending = plan_collection(store, requests, {target.request: target}, 3, 500, False)
+    assert [(run.treatment, run.missing_observations) for plan in pending for run in plan.runs] == [("slotted", 3)]
+    for mode, treatment in optimizer.MODES.items():
+        endpoint = BenchmarkEndpoint(target.row, target.binary_sha256, treatment, 16 * 1024**3, 4)
+        assert CacheKey.for_endpoint(endpoint, files[mode]) == CacheKey.for_endpoint(endpoint, defaults[mode])
+        assert not defaults[mode].exclusions
+    assert files["slotted"].exclusions == ()
+    assert files["debruijn"].exclusion_for("slotted", memory_limit_bytes=16 * 1024**3) is None
+    for index in range(3):
+        store.append(
+            make_record(
+                index,
+                started_at=f"2026-11-12T00:00:0{index}Z",
+                file_sha256=files["slotted"].sha256,
+                treatment="slotted",
+                threads=4,
+            )
+        )
+    extractor = tmp_path / "extractor"
+    extractor.touch()
+    monkeypatch.setattr(optimizer.subprocess, "run", lambda *a, **kw: None)
+    monkeypatch.setattr(optimizer, "extractor_path", lambda _: extractor)
+    selected = optimizer.optimizer_report(
+        tmp_path, store, target, files, 3, 500, 16 * 1024**3, program.DEFAULT_ROUNDS, 4, policy_file=policy
+    )
+    assert selected.successful == {"slotted": {"treatment": "slotted"}}
+    assert selected.report["optimizer"]["debruijn"]["issue"] == "excluded (resource): local host-pressure stop"
+    assert selected.report["optimizer"]["debruijn"]["completed_samples"] == 0
+    provenance = selected.report["optimizer_policy"]
+    assert provenance["path"] == str(policy) and provenance["sha256"] == sha256_file(policy)
+    assert provenance["exclusions"]["debruijn"][0]["evidence"] == rule["evidence"]
+    assert json.loads((tmp_path / "optimizer-summary.json").read_text()) == selected.report
+    policy.write_text(json.dumps([rule | {"kind": "invalid"}]))
+    with pytest.raises(ValueError, match="invalid benchmark exclusion"):
+        optimizer.optimizer_inputs(tmp_path, program.DEFAULT_ROUNDS, policy_file=policy)
 
 
 def test_lmfao_intervals_use_sample_means_and_fieller_ratios() -> None:

@@ -133,6 +133,19 @@ visible in the table. C++ preparation and execution run afresh and have separate
 records. Correctness checking warms each program; timed executions rotate and
 reverse method order.
 
+The focused command accepts `--policy-file PATH` for campaign-specific resource
+deferrals. This overlays `benchmarks/ignore.json` using the same JSON list and
+exclusion fields; its `file` patterns are relative to `benchmarks/`, regardless
+of the policy file's location. For example, a rule selecting
+`lmfao/inputs/debruijn.egg` with `treatments: ["off"]`, `kind: "resource"`, and
+an evidence-backed reason skips that optimizer while retaining its unavailable
+row. Original LMFAO, the paper root heuristic, and successful Slotted results
+continue through extraction, replay, answer checking and execution. The policy
+path, SHA-256 and effective exclusions are recorded in `optimizer-summary.json`
+and `pipeline.json`; observation cache identities do not change. The overlay
+applies only to that focused invocation. A host-pressure stop should be described
+as such, without claiming an allocator-limit failure or a minimum memory need.
+
 | Column | What is measured |
 |---|---|
 | Egraph process time / peak RSS | Parsing and rewriting in separate processes; replay rows also check the selected plan, with or without proofs. Excludes DAG extraction. RSS is resident memory. |
