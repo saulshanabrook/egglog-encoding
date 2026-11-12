@@ -550,23 +550,25 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         panel.pop("$schema")
         panel.pop("config")
         panel.update(
-            width=205, height=185, title={"text": title, "subtitle": subtitle, "fontSize": 10, "subtitleFontSize": 8.5}
+            width=205, height=185, title={"text": title, "subtitle": subtitle, "fontSize": 14, "subtitleFontSize": 12.5}
         )
         for layer in panel["layer"]:
             for axis in ("x", "y"):
                 axis_spec = layer["encoding"][axis]["axis"]
                 ticks = axis_spec["values"]
                 axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
+                if title == "(b) Program size":
+                    axis_spec["format"] = ".0s"
             if "color" in layer["encoding"]:
                 layer["encoding"]["color"]["legend"] = {
                     "title": None,
                     "orient": "bottom",
                     "columns": 3,
-                    "labelFontSize": 9,
+                    "labelFontSize": 12.5,
                     "symbolSize": 35,
                 }
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=8.5, dy=-5)
+                layer["mark"].update(fontSize=12.5, dy=-7)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 20
     return {
@@ -579,7 +581,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 8.5, "titleFontSize": 9.5, "grid": False},
+            "axis": {"labelFontSize": 12.5, "titleFontSize": 14, "grid": False},
             "view": {"stroke": None},
         },
     }
