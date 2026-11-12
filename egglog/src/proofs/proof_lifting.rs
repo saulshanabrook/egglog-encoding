@@ -1376,6 +1376,7 @@ impl ProofStore {
 mod synthesis_tests {
     use super::*;
     use crate::util::IndexSet;
+    use egglog_numeric_id::NumericId;
 
     #[test]
     fn rule_firing_keys_preserve_structural_sharing() {
