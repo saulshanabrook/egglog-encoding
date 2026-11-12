@@ -577,8 +577,11 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
             "font": "Arial",
             "axis": {
                 "labelFontSize": 12,
-                "titleFontSize": 13.5,
+                "titleFontSize": 14,
                 "titleFontWeight": "normal",
+                "titlePadding": 4,
+                "labelPadding": 2,
+                "tickSize": 4,
                 "grid": False,
             },
             "title": {"fontSize": 12, "fontWeight": "normal", "subtitleFontSize": 10},
@@ -609,23 +612,31 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
                 ticks = axis_spec["values"]
                 axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
             if "color" in layer["encoding"]:
-                layer["encoding"]["color"]["legend"].update(labelFontSize=13.5, symbolSize=35, offset=8)
+                layer["encoding"]["color"]["legend"].update(labelFontSize=14, symbolSize=35, offset=8)
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=13.5)
+                layer["mark"].update(fontSize=14)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
         panels.append(panel)
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "hconcat": panels,
-        "spacing": 24,
+        "spacing": 8,
         "resolve": {
             "scale": {"x": "independent", "y": "independent", "color": "shared"},
             "legend": {"color": "shared"},
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 13.5, "titleFontSize": 13.5, "titleFontWeight": "normal", "grid": False},
+            "axis": {
+                "labelFontSize": 14,
+                "titleFontSize": 14,
+                "titleFontWeight": "normal",
+                "titlePadding": 4,
+                "labelPadding": 2,
+                "tickSize": 4,
+                "grid": False,
+            },
             "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
@@ -669,25 +680,33 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
                     "orient": "bottom",
                     "direction": "horizontal",
                     "columns": 4,
-                    "labelFontSize": 13.5,
+                    "labelFontSize": 14,
                     "symbolSize": 35,
                     "offset": 8,
                 }
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=13.5)
+                layer["mark"].update(fontSize=14)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "hconcat": panels,
-        "spacing": 24,
+        "spacing": 8,
         "resolve": {
             "scale": {"x": "independent", "y": "independent", "color": "shared"},
             "legend": {"color": "shared"},
         },
         "config": {
             "font": "Arial",
-            "axis": {"labelFontSize": 13.5, "titleFontSize": 13.5, "titleFontWeight": "normal", "grid": False},
+            "axis": {
+                "labelFontSize": 14,
+                "titleFontSize": 14,
+                "titleFontWeight": "normal",
+                "titlePadding": 4,
+                "labelPadding": 2,
+                "tickSize": 4,
+                "grid": False,
+            },
             "legend": {"layout": {"bottom": {"anchor": "middle", "direction": "horizontal", "center": True}}},
             "view": {"stroke": None},
         },
