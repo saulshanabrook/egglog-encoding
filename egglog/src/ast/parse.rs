@@ -395,7 +395,7 @@ impl Parser {
     /// Keep the ordinary encoding when a parser hook could observe that change.
     pub(crate) fn can_share_generated_terms(&self) -> bool {
         self.exprs.is_empty()
-            && ["begin", "let", "set"].iter().all(|head| {
+            && ["begin", "let", "set", "function"].iter().all(|head| {
                 !self.commands.contains_key(*head)
                     && !self.actions.contains_key(*head)
                     && !self.user_defined.contains(*head)
@@ -1776,6 +1776,16 @@ mod tests {
     fn generated_function_hooks_preserve_unshared_proof_encoding() {
         use std::sync::Mutex;
 
+        fn copy_sexp<'a>(sexp: &Sexp<'a>) -> Sexp<'a> {
+            match sexp {
+                Sexp::Literal(literal, span) => Sexp::Literal(literal.clone(), span.clone()),
+                Sexp::Atom(atom, span) => Sexp::Atom(atom.clone(), span.clone()),
+                Sexp::List(items, span) => {
+                    Sexp::List(items.iter().map(copy_sexp).collect(), span.clone())
+                }
+            }
+        }
+
         fn lowered(force_legacy: bool) -> (Vec<(String, usize)>, String) {
             let mut graph = EGraph::new_with_proofs();
             graph
@@ -1793,14 +1803,13 @@ mod tests {
             graph.parser.add_command_macro(Arc::new(SimpleMacro::new(
                 "function",
                 move |args, span, parser| {
-                    let (Sexp::Atom(name, _), Sexp::List(inputs, _)) = (&args[0], &args[1])
-                    else {
+                    let (Sexp::Atom(name, _), Sexp::List(inputs, _)) = (&args[0], &args[1]) else {
                         panic!("expected a generated function declaration");
                     };
                     calls.lock().unwrap().push((name.to_string(), inputs.len()));
                     let form = Sexp::List(
                         std::iter::once(Sexp::Atom("function".into(), span.clone()))
-                            .chain(args.iter().cloned())
+                            .chain(args.iter().map(copy_sexp))
                             .collect(),
                         span,
                     );
@@ -1835,7 +1844,10 @@ mod tests {
         let actual = lowered(false);
         let legacy = lowered(true);
         assert_eq!(actual.0, legacy.0, "generated declaration callbacks");
-        assert_eq!(actual.1, legacy.1, "function hooks must retain legacy encoding");
+        assert_eq!(
+            actual.1, legacy.1,
+            "function hooks must retain legacy encoding"
+        );
     }
 
     #[test]
