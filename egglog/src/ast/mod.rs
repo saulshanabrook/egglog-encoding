@@ -1752,13 +1752,15 @@ where
     /// the variable names in the flattened Query.
     /// (Typechecking preserves the original AST this way,
     /// and allows terms and proof instrumentation to do the same).
-    pub(crate) fn to_query(
+    /// With `MAPPED = false`, omit that reconstruction while keeping the same
+    /// atoms, spans, and fresh-name order for subsequent lowering.
+    pub(crate) fn to_query<const MAPPED: bool>(
         facts: &[GenericFact<Head, Leaf>],
         typeinfo: &TypeInfo,
         fresh_gen: &mut impl FreshGen<Head, Leaf>,
     ) -> (Query<HeadOrEq<Head>, Leaf>, Vec<MappedFact<Head, Leaf>>) {
         let mut atoms = vec![];
-        let mut new_body = Vec::with_capacity(facts.len());
+        let mut new_body = Vec::with_capacity(if MAPPED { facts.len() } else { 0 });
 
         for fact in facts {
             match fact {
@@ -1770,44 +1772,50 @@ where
                         let mut atom_args = vec![];
                         let mut mapped_inputs = vec![];
                         for arg in td.func_args {
-                            let mexpr = arg.to_query(typeinfo, fresh_gen, &mut atoms);
+                            let mexpr = arg.to_query::<MAPPED>(typeinfo, fresh_gen, &mut atoms);
                             atom_args.push(mexpr.get_corresponding_var_or_lit(typeinfo));
-                            mapped_inputs.push(mexpr);
+                            if MAPPED {
+                                mapped_inputs.push(mexpr);
+                            }
                         }
                         let mut mapped_values = vec![];
                         for v in td.values_args {
-                            let mexpr = v.to_query(typeinfo, fresh_gen, &mut atoms);
+                            let mexpr = v.to_query::<MAPPED>(typeinfo, fresh_gen, &mut atoms);
                             atom_args.push(mexpr.get_corresponding_var_or_lit(typeinfo));
-                            mapped_values.push(mexpr);
+                            if MAPPED {
+                                mapped_values.push(mexpr);
+                            }
                         }
                         atoms.push(GenericAtom {
                             span: td.func_span.clone(),
                             head: HeadOrEq::Head(td.func_head.clone()),
                             args: atom_args,
                         });
-                        // Reconstruct a mapped `Eq` fact so type annotation can produce the
-                        // resolved form (which is re-lowered the same way during canonicalization).
-                        let values_mapped = GenericExpr::Call(
-                            td.values_span.clone(),
-                            CorrespondingVar::new(
-                                td.values_head.clone(),
-                                fresh_gen.fresh(td.func_head),
-                            ),
-                            mapped_values,
-                        );
-                        let func_mapped = GenericExpr::Call(
-                            td.func_span.clone(),
-                            CorrespondingVar::new(
-                                td.func_head.clone(),
-                                fresh_gen.fresh(td.func_head),
-                            ),
-                            mapped_inputs,
-                        );
-                        new_body.push(GenericFact::Eq(span.clone(), values_mapped, func_mapped));
+                        let values_var = fresh_gen.fresh(td.func_head);
+                        let func_var = fresh_gen.fresh(td.func_head);
+                        if MAPPED {
+                            // Reconstruct a mapped `Eq` fact so type annotation can produce the
+                            // resolved form (which is re-lowered the same way during canonicalization).
+                            let values_mapped = GenericExpr::Call(
+                                td.values_span.clone(),
+                                CorrespondingVar::new(td.values_head.clone(), values_var),
+                                mapped_values,
+                            );
+                            let func_mapped = GenericExpr::Call(
+                                td.func_span.clone(),
+                                CorrespondingVar::new(td.func_head.clone(), func_var),
+                                mapped_inputs,
+                            );
+                            new_body.push(GenericFact::Eq(
+                                span.clone(),
+                                values_mapped,
+                                func_mapped,
+                            ));
+                        }
                     } else {
                         let mut to_equate = vec![];
                         let mut process = |expr: &GenericExpr<Head, Leaf>| {
-                            let expr = expr.to_query(typeinfo, fresh_gen, &mut atoms);
+                            let expr = expr.to_query::<MAPPED>(typeinfo, fresh_gen, &mut atoms);
                             to_equate.push(expr.get_corresponding_var_or_lit(typeinfo));
                             expr
                         };
@@ -1818,12 +1826,16 @@ where
                             head: HeadOrEq::Eq,
                             args: to_equate,
                         });
-                        new_body.push(GenericFact::Eq(span.clone(), e1, e2));
+                        if MAPPED {
+                            new_body.push(GenericFact::Eq(span.clone(), e1, e2));
+                        }
                     }
                 }
                 GenericFact::Fact(expr) => {
-                    let expr = expr.to_query(typeinfo, fresh_gen, &mut atoms);
-                    new_body.push(GenericFact::Fact(expr));
+                    let expr = expr.to_query::<MAPPED>(typeinfo, fresh_gen, &mut atoms);
+                    if MAPPED {
+                        new_body.push(GenericFact::Fact(expr));
+                    }
                 }
             }
         }

@@ -616,8 +616,10 @@ impl<'a, Head, Leaf, FG> CoreActionContext<'a, Head, Leaf, FG> {
 }
 
 pub(crate) trait GenericActionsExt<Head, Leaf> {
+    /// Inference retains correspondence trees; execution only needs flat actions.
+    /// Both modes allocate fresh names in the same order.
     #[allow(clippy::type_complexity)]
-    fn to_core_actions<FG>(
+    fn to_core_actions<const MAPPED: bool, FG>(
         &self,
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
@@ -633,7 +635,7 @@ where
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     #[allow(clippy::type_complexity)]
-    fn to_core_actions<FG>(
+    fn to_core_actions<const MAPPED: bool, FG>(
         &self,
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
@@ -656,23 +658,26 @@ where
                     if ctx.binding.contains(var) {
                         return Err(TypeError::AlreadyDefined(var.to_string(), span.clone()));
                     }
-                    let mapped_expr = expr.to_core_actions(ctx, &mut norm_actions)?;
+                    let mapped_expr = expr.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                     norm_actions.push(GenericCoreAction::LetAtomTerm(
                         span.clone(),
                         var.clone(),
                         mapped_expr.get_corresponding_var_or_lit(typeinfo.type_info()),
                     ));
-                    mapped_actions.0.push(GenericAction::Let(
-                        span.clone(),
-                        var.clone(),
-                        mapped_expr,
-                    ));
+                    if MAPPED {
+                        mapped_actions.0.push(GenericAction::Let(
+                            span.clone(),
+                            var.clone(),
+                            mapped_expr,
+                        ));
+                    }
                     ctx.binding.insert(var.clone());
                 }
                 GenericAction::Set(span, head, args, expr) => {
                     let mut mapped_args = vec![];
                     for arg in args {
-                        let mapped_arg = arg.to_core_actions(ctx, &mut norm_actions)?;
+                        let mapped_arg =
+                            arg.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                         mapped_args.push(mapped_arg);
                     }
                     // The value may be a `(values v...)` tuple (for a tuple-output function), which
@@ -682,9 +687,11 @@ where
                             let mut mapped = vec![];
                             let mut terms = vec![];
                             for v in vargs {
-                                let m = v.to_core_actions(ctx, &mut norm_actions)?;
+                                let m = v.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                                 terms.push(m.get_corresponding_var_or_lit(typeinfo.type_info()));
-                                mapped.push(m);
+                                if MAPPED {
+                                    mapped.push(m);
+                                }
                             }
                             let dummy = ctx.fresh_gen.fresh(vhead);
                             let mapped_call = GenericExpr::Call(
@@ -695,7 +702,7 @@ where
                             (mapped_call, terms)
                         }
                         _ => {
-                            let m = expr.to_core_actions(ctx, &mut norm_actions)?;
+                            let m = expr.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                             let term = m.get_corresponding_var_or_lit(typeinfo.type_info());
                             (m, vec![term])
                         }
@@ -710,17 +717,20 @@ where
                         value_terms,
                     ));
                     let v = ctx.fresh_gen.fresh(head);
-                    mapped_actions.0.push(GenericAction::Set(
-                        span.clone(),
-                        CorrespondingVar::new(head.clone(), v),
-                        mapped_args,
-                        mapped_value,
-                    ));
+                    if MAPPED {
+                        mapped_actions.0.push(GenericAction::Set(
+                            span.clone(),
+                            CorrespondingVar::new(head.clone(), v),
+                            mapped_args,
+                            mapped_value,
+                        ));
+                    }
                 }
                 GenericAction::Change(span, change, head, args) => {
                     let mut mapped_args = vec![];
                     for arg in args {
-                        let mapped_arg = arg.to_core_actions(ctx, &mut norm_actions)?;
+                        let mapped_arg =
+                            arg.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                         mapped_args.push(mapped_arg);
                     }
                     norm_actions.push(GenericCoreAction::Change(
@@ -733,12 +743,14 @@ where
                             .collect(),
                     ));
                     let v = ctx.fresh_gen.fresh(head);
-                    mapped_actions.0.push(GenericAction::Change(
-                        span.clone(),
-                        *change,
-                        CorrespondingVar::new(head.clone(), v),
-                        mapped_args,
-                    ));
+                    if MAPPED {
+                        mapped_actions.0.push(GenericAction::Change(
+                            span.clone(),
+                            *change,
+                            CorrespondingVar::new(head.clone(), v),
+                            mapped_args,
+                        ));
+                    }
                 }
                 GenericAction::Union(span, e1, e2) => {
                     // Optimization: if one side is a constructor call and the other side is a variable,
@@ -756,10 +768,12 @@ where
                             let expr = var;
                             let mut mapped_args = vec![];
                             for arg in args {
-                                let mapped_arg = arg.to_core_actions(ctx, &mut norm_actions)?;
+                                let mapped_arg =
+                                    arg.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                                 mapped_args.push(mapped_arg);
                             }
-                            let mapped_expr = expr.to_core_actions(ctx, &mut norm_actions)?;
+                            let mapped_expr =
+                                expr.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                             norm_actions.push(GenericCoreAction::Set(
                                 span.clone(),
                                 head.clone(),
@@ -773,40 +787,50 @@ where
                                 ],
                             ));
                             let v = ctx.fresh_gen.fresh(head);
-                            mapped_actions.0.push(GenericAction::Set(
-                                span.clone(),
-                                CorrespondingVar::new(head.clone(), v),
-                                mapped_args,
-                                mapped_expr,
-                            ));
+                            if MAPPED {
+                                mapped_actions.0.push(GenericAction::Set(
+                                    span.clone(),
+                                    CorrespondingVar::new(head.clone(), v),
+                                    mapped_args,
+                                    mapped_expr,
+                                ));
+                            }
                         }
                         _ => {
-                            let mapped_e1 = e1.to_core_actions(ctx, &mut norm_actions)?;
-                            let mapped_e2 = e2.to_core_actions(ctx, &mut norm_actions)?;
+                            let mapped_e1 =
+                                e1.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
+                            let mapped_e2 =
+                                e2.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
                             norm_actions.push(GenericCoreAction::Union(
                                 span.clone(),
                                 mapped_e1.get_corresponding_var_or_lit(typeinfo.type_info()),
                                 mapped_e2.get_corresponding_var_or_lit(typeinfo.type_info()),
                             ));
-                            mapped_actions.0.push(GenericAction::Union(
-                                span.clone(),
-                                mapped_e1,
-                                mapped_e2,
-                            ));
+                            if MAPPED {
+                                mapped_actions.0.push(GenericAction::Union(
+                                    span.clone(),
+                                    mapped_e1,
+                                    mapped_e2,
+                                ));
+                            }
                         }
                     };
                 }
                 GenericAction::Panic(span, string) => {
                     norm_actions.push(GenericCoreAction::Panic(span.clone(), string.clone()));
-                    mapped_actions
-                        .0
-                        .push(GenericAction::Panic(span.clone(), string.clone()));
+                    if MAPPED {
+                        mapped_actions
+                            .0
+                            .push(GenericAction::Panic(span.clone(), string.clone()));
+                    }
                 }
                 GenericAction::Expr(span, expr) => {
-                    let mapped_expr = expr.to_core_actions(ctx, &mut norm_actions)?;
-                    mapped_actions
-                        .0
-                        .push(GenericAction::Expr(span.clone(), mapped_expr));
+                    let mapped_expr = expr.to_core_actions::<MAPPED, _>(ctx, &mut norm_actions)?;
+                    if MAPPED {
+                        mapped_actions
+                            .0
+                            .push(GenericAction::Expr(span.clone(), mapped_expr));
+                    }
                 }
             }
         }
@@ -820,14 +844,17 @@ where
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     /// Appends atoms in postorder, assigning each call's fresh variable before its children.
-    fn to_query(
+    /// Without `MAPPED`, the result retains only the root correspondence, not its
+    /// children; callers may use it only to obtain the corresponding atom term.
+    fn to_query<const MAPPED: bool>(
         &self,
         typeinfo: &TypeInfo,
         fresh_gen: &mut impl FreshGen<Head, Leaf>,
         out_atoms: &mut Vec<GenericAtom<HeadOrEq<Head>, Leaf>>,
     ) -> MappedExpr<Head, Leaf>;
 
-    fn to_core_actions<FG: FreshGen<Head, Leaf>>(
+    /// As with `to_query`, unmapped lowering retains only the root correspondence.
+    fn to_core_actions<const MAPPED: bool, FG: FreshGen<Head, Leaf>>(
         &self,
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
         out_actions: &mut Vec<GenericCoreAction<Head, Leaf>>,
@@ -839,7 +866,7 @@ where
     Head: Clone + Display,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
-    fn to_query(
+    fn to_query<const MAPPED: bool>(
         &self,
         typeinfo: &TypeInfo,
         fresh_gen: &mut impl FreshGen<Head, Leaf>,
@@ -855,12 +882,14 @@ where
             GenericExpr::Call(span, f, children) => {
                 let fresh = fresh_gen.fresh(f);
                 let mut new_children = Vec::with_capacity(children.len() + 1);
-                let mut child_exprs = Vec::with_capacity(children.len());
+                let mut child_exprs = Vec::with_capacity(if MAPPED { children.len() } else { 0 });
                 for child in children {
-                    let child_expr = child.to_query(typeinfo, fresh_gen, out_atoms);
+                    let child_expr = child.to_query::<MAPPED>(typeinfo, fresh_gen, out_atoms);
                     let child_atomterm = child_expr.get_corresponding_var_or_lit(typeinfo);
                     new_children.push(child_atomterm);
-                    child_exprs.push(child_expr);
+                    if MAPPED {
+                        child_exprs.push(child_expr);
+                    }
                 }
                 let args = {
                     new_children.push(GenericAtomTerm::Var(span.clone(), fresh.clone()));
@@ -880,7 +909,7 @@ where
         }
     }
 
-    fn to_core_actions<FG: FreshGen<Head, Leaf>>(
+    fn to_core_actions<const MAPPED: bool, FG: FreshGen<Head, Leaf>>(
         &self,
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
         out_actions: &mut Vec<GenericCoreAction<Head, Leaf>>,
@@ -900,9 +929,11 @@ where
                 let mut norm_args = vec![];
                 let mut mapped_args = vec![];
                 for arg in args {
-                    let mapped_arg = arg.to_core_actions(ctx, out_actions)?;
+                    let mapped_arg = arg.to_core_actions::<MAPPED, _>(ctx, out_actions)?;
                     norm_args.push(mapped_arg.get_corresponding_var_or_lit(typeinfo.type_info()));
-                    mapped_args.push(mapped_arg);
+                    if MAPPED {
+                        mapped_args.push(mapped_arg);
+                    }
                 }
                 let var = ctx.fresh_gen.fresh(f);
                 ctx.binding.insert(var.clone());
@@ -1127,11 +1158,11 @@ where
         Head: Clone + Display + IsFunc + HeadOps,
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
     {
-        let (body, _correspondence) = Facts::to_query(&self.body, typeinfo, fresh_gen);
+        let (body, _correspondence) = Facts::to_query::<false>(&self.body, typeinfo, fresh_gen);
         let mut binding = body.vars().collect::<IndexSet<_>>();
         let mut ctx =
             CoreActionContext::new(typeinfo, &mut binding, fresh_gen, union_to_set_optimization);
-        let (head, _correspondence) = self.head.to_core_actions(&mut ctx)?;
+        let (head, _correspondence) = self.head.to_core_actions::<false, _>(&mut ctx)?;
         Ok(GenericCoreRule {
             span: self.span.clone(),
             body,
@@ -1186,18 +1217,19 @@ mod tests {
 
     type TestCoreRule = GenericCoreRule<String, String, String>;
 
+    #[derive(Default)]
+    struct RecordingFresh(Vec<String>);
+
+    impl FreshGen<String, String> for RecordingFresh {
+        fn fresh(&mut self, hint: &String) -> String {
+            let name = format!("@v{}", self.0.len());
+            self.0.push(hint.clone());
+            name
+        }
+    }
+
     #[test]
     fn test_query_lowering_preserves_order_spans_and_mapping() {
-        struct RecordingFresh(Vec<String>);
-
-        impl FreshGen<String, String> for RecordingFresh {
-            fn fresh(&mut self, hint: &String) -> String {
-                let name = format!("@v{}", self.0.len());
-                self.0.push(hint.clone());
-                name
-            }
-        }
-
         let mut typeinfo = TypeInfo::default();
         typeinfo
             .global_sorts
@@ -1213,7 +1245,14 @@ mod tests {
                 .map(|source| Fact::Fact(parser.get_expr_from_string(None, source).unwrap())),
         );
         let mut fresh = RecordingFresh(vec![]);
-        let (query, mapped) = Facts::to_query(&facts, &typeinfo, &mut fresh);
+        let (query, mapped) = Facts::to_query::<true>(&facts, &typeinfo, &mut fresh);
+
+        let mut unmapped_fresh = RecordingFresh::default();
+        let (unmapped, correspondence) =
+            Facts::to_query::<false>(&facts, &typeinfo, &mut unmapped_fresh);
+        assert_eq!(unmapped.atoms, query.atoms);
+        assert_eq!(unmapped_fresh.0, fresh.0);
+        assert!(correspondence.is_empty());
 
         assert_eq!(fresh.0, vec!["outer", "inner", "right", "outer"]);
         assert_eq!(
@@ -1304,6 +1343,106 @@ mod tests {
             correspondence,
             vec!["inner: @v1", "outer: @v0", "right: @v2", "outer: @v3"]
         );
+    }
+
+    #[test]
+    fn unmapped_lowering_preserves_tuples_globals_actions_and_errors() {
+        let mut graph = EGraph::default();
+        graph
+            .parse_and_run_program(
+                None,
+                r#"
+            (datatype E (A) (F E))
+            (function PairValues (i64) (i64 i64) :no-merge)
+            (function Score (E) i64 :no-merge)
+            (relation R (E))
+            (let $g (A))
+            (let $n 7)
+        "#,
+            )
+            .unwrap();
+        let mut parser = Parser::default();
+        let facts: Vec<_> = [
+            "(= (values a b) (PairValues (+ $n 2)))",
+            "(= (PairValues 3) (values c d))",
+            "(= (F x) $g)",
+        ]
+        .map(|fact| parser.get_fact_from_string(None, fact).unwrap())
+        .into();
+        let mut mapped_fresh = RecordingFresh::default();
+        let mut unmapped_fresh = RecordingFresh::default();
+        let (mapped, _) = Facts::to_query::<true>(&facts, &graph.type_info, &mut mapped_fresh);
+        let (unmapped, correspondence) =
+            Facts::to_query::<false>(&facts, &graph.type_info, &mut unmapped_fresh);
+        assert_eq!(unmapped.atoms, mapped.atoms);
+        assert_eq!(unmapped_fresh.0, mapped_fresh.0);
+        assert!(correspondence.is_empty());
+
+        // Keep the actual spans as well as the atom/action identities. The
+        // discarded mapping's dummy names still affect later generated names.
+        assert_eq!(format!("{unmapped:?}"), format!("{mapped:?}"));
+        for union_to_set in [false, true] {
+            for (actions, succeeds) in [
+                (
+                    r#"(let local (F x))
+                    (set (Score local) (+ $n 1))
+                    (set (PairValues 1) (values 2 (+ $n 3)))
+                    (union x (F (F $g)))
+                    (delete (Score local))
+                    (R local)
+                    (panic "sentinel")"#,
+                    true,
+                ),
+                ("(let x (A))", false),
+                ("(F missing)", false),
+            ] {
+                let [command]: [Command; 1] = parser
+                    .get_program_from_string(None, &format!("(rule () ({actions}))"))
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                let Command::Rule { rule } = command else {
+                    panic!("expected a rule")
+                };
+                let lower = |mapped: bool| {
+                    let mut bindings = IndexSet::from_iter(["x".to_owned()]);
+                    let mut fresh = RecordingFresh::default();
+                    let mut ctx = CoreActionContext::new(
+                        &graph.type_info,
+                        &mut bindings,
+                        &mut fresh,
+                        union_to_set,
+                    );
+                    let result = if mapped {
+                        rule.head.to_core_actions::<true, _>(&mut ctx)
+                    } else {
+                        rule.head.to_core_actions::<false, _>(&mut ctx)
+                    };
+                    (result, bindings, fresh.0)
+                };
+                let (mapped, mapped_bindings, mapped_names) = lower(true);
+                let (unmapped, unmapped_bindings, unmapped_names) = lower(false);
+                assert_eq!(mapped.is_ok(), succeeds);
+                assert_eq!(unmapped_bindings, mapped_bindings);
+                assert_eq!(unmapped_names, mapped_names);
+                match (mapped, unmapped) {
+                    (Ok((mapped, _)), Ok((unmapped, correspondence))) => {
+                        assert_eq!(unmapped, mapped);
+                        assert_eq!(format!("{unmapped:?}"), format!("{mapped:?}"));
+                        assert!(correspondence.0.is_empty());
+                        assert_eq!(
+                            mapped.0.iter().any(|action| matches!(action,
+                            GenericCoreAction::Set(_, head, ..) if head == "F")),
+                            union_to_set
+                        );
+                    }
+                    (Err(mapped), Err(unmapped)) => {
+                        assert_eq!(unmapped.to_string(), mapped.to_string())
+                    }
+                    results => panic!("lowering disagreed: {results:?}"),
+                }
+            }
+        }
     }
 
     fn make_var(name: &str) -> GenericAtomTerm<String> {

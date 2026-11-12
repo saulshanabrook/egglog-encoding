@@ -388,7 +388,7 @@ impl<'a> TypeInfoView<'a> {
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
-        let (actions, mapped_action) = actions.to_core_actions(&mut ctx)?;
+        let (actions, mapped_action) = actions.to_core_actions::<true, _>(&mut ctx)?;
         let mut problem = Problem::default();
 
         problem.add_actions(&actions, self, symbol_gen, context)?;
@@ -1544,7 +1544,7 @@ impl TypeInfo {
             (Context::Pure, Context::Write)
         };
 
-        let (query, mapped_query) = Facts::to_query(body, self, symbol_gen);
+        let (query, mapped_query) = Facts::to_query::<true>(body, self, symbol_gen);
         let mut problem = Problem::default();
         problem.add_query(&query, self, query_ctx)?;
 
@@ -1556,7 +1556,7 @@ impl TypeInfo {
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);
-        let (actions, mapped_action) = head.to_core_actions(&mut ctx)?;
+        let (actions, mapped_action) = head.to_core_actions::<true, _>(&mut ctx)?;
         problem.add_actions(&actions, self, symbol_gen, action_ctx)?;
 
         let assignment = problem
@@ -1629,7 +1629,7 @@ impl TypeInfo {
         symbol_gen: &mut SymbolGen,
         facts: &[Fact],
     ) -> Result<Vec<ResolvedFact>, TypeError> {
-        let (query, mapped_facts) = Facts::to_query(facts, self, symbol_gen);
+        let (query, mapped_facts) = Facts::to_query::<true>(facts, self, symbol_gen);
         let mut problem = Problem::default();
         // Top-level query-shaped commands (e.g. `check`) are read-only:
         // primitives may inspect the database but not write to it.
@@ -1707,7 +1707,8 @@ impl TypeInfo {
         let mut binding_set: IndexSet<String> =
             binding.keys().copied().map(str::to_string).collect();
         let mut ctx = CoreActionContext::new(self, &mut binding_set, symbol_gen, false);
-        let (actions, mapped_action) = Actions::singleton(action).to_core_actions(&mut ctx)?;
+        let (actions, mapped_action) =
+            Actions::singleton(action).to_core_actions::<true, _>(&mut ctx)?;
         let mut problem = Problem::default();
 
         problem.add_actions(&actions, self, symbol_gen, context)?;

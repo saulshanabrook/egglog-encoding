@@ -1729,7 +1729,7 @@ impl EGraph {
             &mut self.parser.symbol_gen,
             self.proof_state.original_typechecking.is_none(),
         );
-        let (actions, _) = actions.to_core_actions(&mut ctx)?;
+        let (actions, _) = actions.to_core_actions::<false, _>(&mut ctx)?;
 
         let builder = self.backend.new_rule("eval_actions", false);
         let mut translator = RuleTranslator::new(
@@ -2129,7 +2129,7 @@ impl EGraph {
             &mut self.parser.symbol_gen,
             self.proof_state.original_typechecking.is_none(),
         );
-        let actions = actions.to_core_actions(&mut ctx)?.0;
+        let actions = actions.to_core_actions::<false, _>(&mut ctx)?.0;
         translator.actions(&actions)?;
 
         let arg = translator.entry(&ResolvedAtomTerm::Var(span.clone(), result_var))?;
