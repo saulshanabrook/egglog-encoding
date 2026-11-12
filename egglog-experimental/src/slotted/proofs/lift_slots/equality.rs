@@ -558,7 +558,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                 let grp = self.group(self.sub(subst, "_grp")?)?;
                 let (index, least) = crate::slotted::runtime::group::coset_min_with_index(&m, &grp)
                     .ok_or("coset-min has an empty group")?;
-                if least != *name {
+                if !least.iter().eq(name.iter()) {
                     return Err("recorded coset-min differs from its primitive inputs".into());
                 }
                 let g = &grp[index];

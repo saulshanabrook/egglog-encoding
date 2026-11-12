@@ -1,6 +1,32 @@
 use egglog::{CommandOutput, EGraph, Error};
 
 #[test]
+fn restriction_predicate_checks_recorded_proofs() -> Result<(), Error> {
+    let mut graph = egglog_experimental::slotted::new_egraph_with_proofs();
+    let outputs = graph.parse_and_run_program(
+        None,
+        r#"
+(relation Restricted (Renaming))
+(relation Candidate (Renaming))
+(Candidate (map-of 0 4 1 5))
+(Candidate (map-of 0 4 2 6))
+(rule ((Candidate m)
+       (guard (map-restriction-eq m (map-of 4 4 5 5) (map-of 0 0 1 1))))
+      ((Restricted m)))
+(run 1)
+(prove (Restricted (map-of 0 4 1 5)))
+(fail (check (Restricted (map-of 0 4 2 6))))
+"#,
+    )?;
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
+    );
+    Ok(())
+}
+
+#[test]
 fn runtime_registration_is_isolated_from_ordinary_egglog() -> Result<(), Error> {
     let mut ordinary = EGraph::default();
     ordinary.parse_and_run_program(None, "(sort Frame) (sort Binding) (sort Names)")?;
@@ -85,6 +111,37 @@ fn group_element_indices_are_independent_of_interning_order() -> Result<(), Erro
                 .iter()
                 .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn node_shapes_respect_clones_and_popped_value_registries() -> Result<(), Error> {
+    let base = egglog_experimental::slotted::new_egraph();
+    for slot in [-7, i64::MIN, i64::MAX, 13] {
+        let mut eg = base.clone();
+        // Each clone registers the same sequence of maps with different slot
+        // values. A memo keyed only by container/integer IDs would alias them.
+        for pushed in [true, false] {
+            let (push, pop) = if pushed {
+                ("(push)", "(pop)")
+            } else {
+                ("", "")
+            };
+            let value = if pushed { slot } else { !slot };
+            eg.parse_and_run_program(
+                None,
+                &format!(
+                    r#"
+{push}
+(let $shape (node-shape (vec-of (map-of -3 {value})) (vec-of (set-of (map-of -3 -3)))))
+(check (= (vec-get $shape 0) (map-of -3 0)))
+(check (= (vec-get $shape 1) (map-of 0 {value})))
+{pop}
+"#
+                ),
+            )?;
+        }
     }
     Ok(())
 }

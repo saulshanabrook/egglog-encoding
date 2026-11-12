@@ -119,6 +119,7 @@ impl Default for State {
 #[derive(Clone, Default)]
 pub struct Compiler {
     options: Options,
+    parser: Option<egglog::ast::Parser>,
     state: State,
     scopes: Vec<State>,
     next_rule: usize,
@@ -140,6 +141,16 @@ impl Compiler {
                 ..Default::default()
             },
             ..Default::default()
+        }
+    }
+
+    /// Use an existing slotted e-graph's parsing vocabulary when compiling.
+    /// This avoids initializing a second graph solely to parse generated code.
+    /// The graph must have the runtime and commands required by `options` registered.
+    pub fn for_egraph(options: Options, graph: &egglog::EGraph) -> Self {
+        Self {
+            parser: Some(graph.parser.clone()),
+            ..Self::new(options)
         }
     }
 
@@ -168,10 +179,13 @@ impl Compiler {
     ) -> Result<CompiledProgram, CompileError> {
         let mut next = self.clone();
         let (text, proofs) = next.compile_inner(filename.clone(), source)?;
-        let mut graph = super::new_egraph();
-        super::proofs::pipeline::register(&mut graph);
-        let commands = graph
-            .parse_program(filename, &text)
+        let mut parser = self.parser.clone().unwrap_or_else(|| {
+            let mut graph = super::new_egraph();
+            super::proofs::pipeline::register(&mut graph);
+            graph.parser
+        });
+        let commands = parser
+            .get_program_from_string(filename, &text)
             .map_err(|error| ParseError(egglog::span!(), error.to_string()))?;
         *self = next;
         let extractions = std::mem::take(&mut self.extract_requests);
