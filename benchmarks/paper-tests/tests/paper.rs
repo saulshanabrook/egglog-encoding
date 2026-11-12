@@ -4,7 +4,7 @@
 use egglog::{CommandOutput, Read};
 use egglog_experimental::{EGraph, new_experimental_egraph_with_options};
 use libtest_mimic::Trial;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     io::{Read as _, Seek},
@@ -41,7 +41,7 @@ struct Ignore {
     matched: BTreeSet<PathBuf>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 struct Observations {
     /// Final row counts of source-visible tables, excluding encoding/proof internals.
     tables: BTreeMap<String, usize>,
@@ -57,9 +57,10 @@ struct Observations {
     /// Per extraction, whether the other mode's best term was checked equal to
     /// this run's requested root. None means no alternative needed checking.
     comparison_in_root_class: Vec<Option<bool>>,
+    proof_summary: Option<ProofSummary>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProofSummary {
     schema_version: usize,
@@ -180,6 +181,13 @@ fn observe(
         "proof-testing" => graph.with_proofs_enabled().with_proof_testing(),
         _ => panic!("unsupported egglog correctness mode {mode}"),
     };
+    let proof_summary = (mode == "proof-testing"
+        && std::env::var_os("PAPER_OBSERVATIONS_PATH").is_some())
+    .then(|| {
+        graph
+            .extension_state_or_default::<egglog::proof_summary::ProofSummary>()
+            .clone()
+    });
     let source = std::fs::read_to_string(file).unwrap();
     let commands = graph
         .parse_program(Some(file.display().to_string()), &source)
@@ -197,6 +205,11 @@ fn observe(
         unreachable!()
     };
     let extractions = extraction_comparison::observe(&outputs);
+    let proof_summary = proof_summary.map(|summary| {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        summary.write(file.path(), true).unwrap();
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap()
+    });
     Observations {
         math_eclass_count: file
             .ends_with("math-iteration-12.egg")
@@ -205,7 +218,20 @@ fn observe(
         stable_outputs: CommandOutput::snapshot_non_proof_stable_under_proof_encoding(&outputs),
         extractions,
         comparison_in_root_class: checked.comparison_in_root_class,
+        proof_summary,
     }
+}
+
+/// Publish complete observations before a later correspondence assertion can fail.
+fn write_observations(path: &Path, report: &serde_json::Value) {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).unwrap();
+    let mut file = tempfile::NamedTempFile::new_in(parent).unwrap();
+    serde_json::to_writer_pretty(&mut file, report).unwrap();
+    file.persist(path).unwrap();
 }
 
 fn math_counts(graph: &EGraph) -> (BTreeMap<String, usize>, usize) {
@@ -477,6 +503,52 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_thr
         let reference = if mode == "off" { "term" } else { "off" };
         let observed = observe(file, mode, observations.get(reference), egraph_threads);
         observations.insert(mode, observed);
+    }
+    let report_path = std::env::var_os("PAPER_OBSERVATIONS_PATH").map(PathBuf::from);
+    if let Some(path) = &report_path {
+        let baseline = &observations["off"];
+        let comparisons: BTreeMap<_, _> = observations
+            .iter()
+            .filter(|(mode, _)| **mode != "off")
+            .map(|(mode, observed)| {
+                let equality = if *mode == "term" {
+                    &baseline.comparison_in_root_class
+                } else {
+                    &observed.comparison_in_root_class
+                };
+                let extractions_correspond = extraction_comparison::compare(
+                    &mut observed.extractions.clone(),
+                    &baseline.extractions,
+                    equality,
+                    &format!("{} / {mode}, observation export", file.display()),
+                )
+                .is_ok();
+                let stable_outputs_correspond = observed.stable_outputs == baseline.stable_outputs;
+                let cert_valid = observed.proof_summary.as_ref().map(|summary| {
+                    summary.success
+                        && summary.produced_certificates > 0
+                        && summary.verified_certificates == summary.produced_certificates
+                });
+                (
+                    *mode,
+                    serde_json::json!({
+                        "tables_correspond": observed.tables == baseline.tables,
+                        "stable_outputs_correspond": stable_outputs_correspond,
+                        "extractions_correspond": extractions_correspond,
+                        "outputs_correspond": extractions_correspond && stable_outputs_correspond,
+                        "cert_valid": cert_valid,
+                    }),
+                )
+            })
+            .collect();
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "file": file,
+            "threads": egraph_threads,
+            "observations": observations,
+            "comparisons": comparisons,
+        });
+        write_observations(path, &report);
     }
     for mode in ["term", "proof-testing"] {
         if let Some(mut observed) = observations.remove(mode) {
