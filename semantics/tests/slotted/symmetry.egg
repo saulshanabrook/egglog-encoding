@@ -1,0 +1,21 @@
+;;; A symmetry from a union: C($0, $1) = C($1, $0) makes C commutative. The symmetry lifts
+;;; through I by congruence and through two positions of N independently; the unrelated
+;;; I(C($0, $2), Null) stays apart.
+(sort U)
+(constructor V (Var) U)
+(constructor C (U U) U)
+(constructor I (U U) U)
+(constructor N (U U) U)
+(constructor Null () U)
+(let c01 (C (V $0) (V $1)))
+(union c01 (C (V $1) (V $0)))
+(let i01 (I (C (V $0) (V $1)) (Null)))
+(let i10 (I (C (V $1) (V $0)) (Null)))
+(let i02 (I (C (V $0) (V $2)) (Null)))
+(let n1 (N (C (V $0) (V $1)) (C (V $0) (V $1))))
+(let n2 (N (C (V $0) (V $1)) (C (V $1) (V $0))))
+(run 0)
+(check (= i01 i10))
+(fail (check (= i01 i02)))
+(check (!= i01 i02))
+(check (= n1 n2))

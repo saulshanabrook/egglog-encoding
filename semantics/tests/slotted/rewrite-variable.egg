@@ -1,0 +1,17 @@
+;;; A rewrite whose right-hand side is a bare variable inserts an equation up to renaming,
+;;; and a rule with a repeated pattern variable matches up to the class's symmetries.
+(sort U)
+(constructor V (Var) U)
+(constructor F (U U) U)
+(constructor G (U) U)
+(constructor H (U U) U)
+(let a (F (V $x) (V $y)))
+(let b (F (V $y) (V $x)))
+(let c (G (F (V $p) (V $q))))
+(rewrite (G e) e)
+(rewrite (F s t) (H t s))
+(run 2)
+(check (= c (F (V $p) (V $q))))
+(check (= a (H (V $y) (V $x))))
+(check (renaming-= a b))
+(fail (check (= a b)))

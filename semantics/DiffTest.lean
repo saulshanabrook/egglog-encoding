@@ -9,6 +9,8 @@ import EgglogSemantics.Tests.Render
 import EgglogSemantics.Tests.PaperTex
 import EgglogSemantics.Slotted.Tests.Parse
 import EgglogSemantics.Slotted.Tests.Bounded
+import EgglogSemantics.Slotted.Encode
+import EgglogSemantics.Slotted.Target.Interp
 
 /-!
 # Differential tests
@@ -732,6 +734,87 @@ private def runSlottedBounded (files : List String) : IO UInt32 := do
     {skipped} files skipped"
   return if disagree == 0 && agree > 0 then 0 else 1
 
+/-! ### The slotted pass, executed
+
+`difftest slotted-compile <path>…` compiles every check of every slotted file under the
+paths with the slotted pass (`Slotted.compile`), runs the compiled program with the target
+interpreter (`Slotted.Target.observe`) and compares the outcome with the one the file asserts,
+which `slotted-compile.sh` first confirms against the Rust reference. A program the pass
+rejects is reported with the reason; an exhausted saturation or disagreement fails the
+command. The final program and every asserted check are compiled separately, with the
+clauses of the congruence pass's fragment printed for each. -/
+
+/-- The `.egg` files under the paths, in name order, without the snapshots. -/
+private def slottedFiles (paths : List String) : IO (List System.FilePath) := do
+  let mut files : Array System.FilePath := #[]
+  for p in paths do
+    let fp : System.FilePath := p
+    if ← fp.isDir then
+      let ps ← fp.walkDir
+      files := files ++ ps.filter fun q =>
+        q.extension == some "egg" && !(q.toString.endsWith ".slotted.egg")
+    else files := files.push fp
+  return (files.qsort fun a b => a.toString < b.toString).toList
+
+/-- The outcome of one compiled case: the program, or the rejection. -/
+private def compiledCase (c : Slotted.Parse.Case) : Except String Program :=
+  Slotted.compile c.program.binders c.program.plain
+
+/-- File-level preflight for the shell gate, before invoking the Rust reference. -/
+private def planSlottedCompile (file : String) : IO UInt32 := do
+  match Slotted.parseFile (← IO.FS.readFile file) with
+  | .error e => IO.println s!"SKIP {file}: parser: {e}"; return 2
+  | .ok cs => IO.println s!"ACCEPT {file}: {cs.length} checks"; return 0
+
+private def runSlottedCompile (paths : List String) : IO UInt32 := do
+  let files ← slottedFiles paths
+  let mut agree := 0
+  let mut disagree := 0
+  let mut rejected := 0
+  let mut undecided := 0
+  let mut skipped := 0
+  for f in files do
+    let src ← IO.FS.readFile f
+    match Slotted.parseComplete src with
+    | .error e => skipped := skipped + 1; IO.println s!"SKIP {f}: {e}"
+    | .ok (cases, finalProgram) =>
+      -- Compile the complete file as well: commands after its last check must not escape
+      -- validation, and declaration-only files still have an executable empty program.
+      match Slotted.compile finalProgram.binders finalProgram.plain with
+      | .error e =>
+        rejected := rejected + 1
+        IO.println s!"REJECT {f}: final program: {e}"
+      | .ok P =>
+        IO.println s!"FRAGMENT {f}#final: fails {Slotted.fragmentReport P}"
+        match Slotted.Target.observe P with
+        | none =>
+          undecided := undecided + 1
+          IO.println s!"UNDECIDED {f}#final: fuel exhausted"
+        | some _ => IO.println s!"COMPILED {f}: final program, {cases.length} asserted checks"
+      for c in cases do
+        match compiledCase c with
+        | .error e =>
+          rejected := rejected + 1
+          IO.println s!"REJECT {f}#{c.index}: {e}"
+        | .ok P =>
+          IO.println s!"FRAGMENT {f}#{c.index}: fails {Slotted.fragmentReport P}"
+          let asserted := c.expected == .ok
+          let outcome := Slotted.Target.observe P
+          match outcome with
+          | none =>
+            undecided := undecided + 1
+            IO.println s!"UNDECIDED {f}#{c.index}: fuel exhausted"
+          | some b =>
+            if b == asserted then
+              agree := agree + 1
+              IO.println s!"AGREE {f}#{c.index}: {b}"
+            else
+              disagree := disagree + 1
+              IO.println s!"DISAGREE {f}#{c.index}: compiled {b}, asserted {asserted}"
+  IO.println s!"slotted-compile: {agree} agree, {disagree} disagree, {rejected} rejected, \
+    {undecided} undecided, {skipped} files skipped"
+  return if !files.isEmpty && disagree == 0 && undecided == 0 && skipped == 0 then 0 else 1
+
 /-! ### Entry point -/
 
 
@@ -1104,6 +1187,114 @@ private def runEggChecks (fuel : Nat) (update : Bool) (names : List String) : IO
   IO.println s!"egg: {selected.length} tested, {failed} failures"
   return if failed == 0 && selected.length > 0 then 0 else 1
 
+/-! ### Tracing a compiled slotted program
+
+`difftest slotted-trace <file> <case> [<rule>]` compiles one check of a slotted file, runs
+the compiled schedule command by command reporting the state's size, prints the live rows of
+the analysis tables and the constructors, and then matches the check's query, or the query of
+compiled rule `<rule>`, prefix by prefix against the final state, with sample matches. For
+finding out where a compiled query stops matching. -/
+
+private def showEnv (σ : Env) : String :=
+  String.intercalate ", " ((σ.take 8).reverse.map fun b => s!"{b.1} := {b.2.toEgg}")
+
+private def runSlottedTrace (file : String) (k : Nat) (ruleSel : Option String) : IO UInt32 := do
+  let src ← IO.FS.readFile file
+  let .ok cases := Slotted.parseFile src | IO.eprintln "parse error"; return 1
+  let some c := cases[k]? | IO.eprintln s!"no check {k}"; return 1
+  let P ← match compiledCase c with
+    | .error e => IO.eprintln s!"rejected: {e}"; return 1
+    | .ok P => pure P
+  let cmds := P.schedule.topLevel
+  let mut g := ({} : Slotted.Target.EGraph).rebuild
+  for (cmd, i) in cmds.zipIdx do
+    match Slotted.Target.execSchedule Slotted.Target.saturationFuel g cmd with
+    | none => IO.println s!"command {i}: fuel exhausted"; return 1
+    | some g' =>
+      g := g'
+      IO.println s!"command {i} ({cmd.rules.length} rules): terms {g.terms.size} classes \
+        {g.classes} {g.sizes}"
+  for (f, rows) in g.liveRows.toList do
+    if !(Slotted.Target.isPrimName f) && f != Slotted.Encode.renamesToName && !Slotted.isSlotName f then
+      for (_, r) in rows.toList.take 40 do
+        IO.println s!"  {(g.terms[r]!).toEgg}"
+  -- Every row of a source constructor, subsumed ones marked, with its class representative.
+  for (f, is) in g.rows.toList do
+    if !("@".isPrefixOf f) && !Slotted.isSlotName f then
+      for i in is.toList.take 40 do
+        let key := (g.keyOf i).getD (f, [])
+        let mark := if g.subsumedKeys.contains key then "*" else " "
+        IO.println s!" {mark}{(g.terms[i]!).toEgg}  in class of {(g.repTerm i).toEgg}"
+  -- A rule is selected by its index, or by a substring of its text.
+  let q := match ruleSel with
+    | some sel =>
+      match sel.toNat? with
+      | some r => ((P.rules.drop r).headD ⟨[], []⟩).query
+      | none => ((P.rules.find? fun (r : Rule) => (r.toEgg.splitOn sel).length > 1).getD ⟨[], []⟩).query
+    | none => P.check
+  for n in [1:q.length + 1] do
+    let ms := Slotted.Target.matchQuery g (q.take n)
+    let last := (q.drop (n - 1)).headD (.expr (.lit (.int 0)))
+    IO.println s!"prefix {n} ({last.toEgg}): {ms.length} matches"
+    for σ in ms.take 2 do IO.println s!"   {showEnv σ}"
+    if ms.isEmpty then break
+  return 0
+
+/-! ### Slotted snapshots
+
+`difftest slotted-egg [update]` compiles every case of the hand-written slotted programs
+under `tests/slotted/` and snapshots the compiled programs as `<name>.slotted.egg`, one
+section per check, and runs each case, failing on a disagreement with the asserted outcome. -/
+
+private def slottedEggDir : System.FilePath := "tests" / "slotted"
+
+/-- The compiled programs of a file, rendered, one section per check. -/
+private def slottedSnapshot (cases : List Slotted.Parse.Case) : Except String String := do
+  let sections ← cases.mapM fun c => do
+    let P ← compiledCase c
+    let check := String.intercalate " " (c.program.plain.check.map Pattern.toEgg)
+    let expected := if c.expected == .ok then "holds" else "fails"
+    pure s!";; check {c.index}: ({check}) {expected}\n{P.render}"
+  pure (String.intercalate "\n" sections)
+
+private def runSlottedEgg (update : Bool) : IO UInt32 := do
+  if !(← slottedEggDir.pathExists) then
+    IO.println "slotted-egg: no tests/slotted directory"
+    return 1
+  let files ← slottedFiles [slottedEggDir.toString]
+  let mut failed := 0
+  for f in files do
+    let stem := f.fileStem.getD "case"
+    let src ← IO.FS.readFile f
+    let mut errors : List String := []
+    match Slotted.parseFile src with
+    | .error e => errors := [s!"parse: {e}"]
+    | .ok cases =>
+      match slottedSnapshot cases with
+      | .error e => errors := [s!"compile: {e}"]
+      | .ok text =>
+        let path := slottedEggDir / s!"{stem}.slotted.egg"
+        if update then IO.FS.writeFile path text
+        else if !(← path.pathExists) then errors := errors ++ ["snapshot missing"]
+        else
+          let expected ← IO.FS.readFile path
+          if expected != text then
+            errors := errors ++ [s!"snapshot differs, {firstDifference expected text}"]
+      for c in cases do
+        match compiledCase c with
+        | .error e => errors := errors ++ [s!"#{c.index}: {e}"]
+        | .ok P =>
+          match Slotted.Target.observe P with
+          | none => errors := errors ++ [s!"#{c.index}: fuel exhausted"]
+          | some b =>
+            if b != (c.expected == .ok) then
+              errors := errors ++ [s!"#{c.index}: compiled {b}, asserted {c.expected == .ok}"]
+    unless errors.isEmpty do
+      failed := failed + 1
+      IO.println s!"FAIL {stem}: {String.intercalate "; " errors}"
+  IO.println s!"slotted-egg: {files.length} tested, {failed} failures"
+  return if failed == 0 && files.length > 0 then 0 else 1
+
 /-- Write the curated fixtures and every in-domain case's lifted certificates as one JSON
 array, for `egglog/tests/lean_certificates.rs`. The fixtures alone go to `path` when
 `fixturesOnly` is set. -/
@@ -1149,6 +1340,18 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | "slotted-parse" :: dirs => runSlottedParse dirs
   | "slotted-bounded" :: files => runSlottedBounded files
+  | "slotted-compile" :: paths => runSlottedCompile paths
+  | ["slotted-plan", file] => planSlottedCompile file
+  | ["slotted-egg"] => runSlottedEgg false
+  | ["slotted-egg", "update"] => runSlottedEgg true
+  | ["slotted-trace", file, k] =>
+    match k.toNat? with
+    | some k => runSlottedTrace file k none
+    | none => IO.eprintln "difftest: bad check index"; return 1
+  | ["slotted-trace", file, k, r] =>
+    match k.toNat? with
+    | some k => runSlottedTrace file k (some r)
+    | none => IO.eprintln "difftest: bad check index"; return 1
   | "resugar" :: fuel :: names =>
     match fuel.toNat? with
     | none => IO.eprintln s!"difftest: bad fuel {fuel}"; return 1
@@ -1251,4 +1454,6 @@ def main (args : List String) : IO UInt32 := do
     IO.eprintln "       difftest export-certificates <fuel> <path> [case…]"
     IO.eprintln "       difftest slotted-parse <dir>…"
     IO.eprintln "       difftest slotted-bounded <file>…"
+    IO.eprintln "       difftest slotted-compile <path>…"
+    IO.eprintln "       difftest slotted-egg [update]"
     return 1

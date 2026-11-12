@@ -1,0 +1,12 @@
+;;; A capture excluded by not-free: the factor $i is free under a sum binding $i, so the
+;;; distribution rule must not move it inside; the original, with its bound name changed, is
+;;; still there, and $i stays its one free slot.
+(datatype Expr (V Var) (Num i64) (Mul Expr Expr) (Sum Var Expr :binder 0))
+(let u (Mul (V $i) (Sum $i (Num 5))))
+(rewrite (Mul x (Sum $v b)) (Sum $v (Mul x b)) :when ((not-free $v x)))
+(run 2)
+(fail (check (= u (Sum $k (Mul (V $k) (Num 5))))))
+(check (= u (Mul (V $i) (Sum $k (Num 5)))))
+(let slot_i $i)
+(check (free slot_i u))
+(check (free-names-are u slot_i))

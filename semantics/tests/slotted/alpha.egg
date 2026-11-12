@@ -1,0 +1,12 @@
+;;; Alpha-equivalence of bound names: the identity and the constant function under other
+;;; bound names; the identity is not the constant function, and a bound name does not match
+;;; a distinct pattern slot.
+(datatype E (V Var) (Lam Var E :binder 0) (App E E))
+(let id (Lam $a (V $a)))
+(let k (Lam $a (V $c)))
+(check (= id (Lam $b (V $b))))
+(check (= k (Lam $b (V $c))))
+(fail (check (= id k)))
+(fail (check (= id (Lam $b (V $d)))))
+(check (renaming-= k (Lam $b (V $d))))
+(check (renaming-!= id k))

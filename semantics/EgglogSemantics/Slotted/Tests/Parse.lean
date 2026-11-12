@@ -84,6 +84,15 @@ def sortNames : List Sexp → Except String (List String)
   | .atom s :: rest => do pure (s :: (← sortNames rest))
   | _ => .error "a column is a sort name"
 
+/-- A slot name as the reference spells it: a numeric name such as `$01` or `$+1` is the
+number it denotes, `$1`. -/
+def slotName (s : String) : String :=
+  let digits := s.drop 1
+  let digits := if digits.startsWith "+" then digits.drop 1 else digits
+  match digits.toInt? with
+  | some n => "$" ++ toString n
+  | none => s
+
 /-- A ground expression (`ground`), where a slot is the concrete slot term, or a query or
 action expression, where a slot uses `Expr.var` (fixed in a query, fresh only in actions)
 and a free identifier is a variable. Globals
@@ -93,7 +102,8 @@ partial def expr (globals : List (String × Expr)) (ground : Bool) : Sexp → Ex
     match s.toInt? with
     | some n => .ok (.lit (.int n))
     | none =>
-      if s.startsWith "$" then .ok (if ground then .app s [] else .var s)
+      if s.startsWith "$" then
+        .ok (if ground then .app (slotName s) [] else .var (slotName s))
       else match globals.lookup s with
         | some e => .ok e
         | none => if ground then .error s!"unbound global {s}" else .ok (.var s)
@@ -222,11 +232,17 @@ end Egglog.Slotted.Parse
 
 namespace Egglog.Slotted
 
-/-- Parse a slotted `.egg` file into its cases, or the name of the first unsupported form. -/
-def parseFile (src : String) : Except String (List Parse.Case) := do
+/-- Parse the whole file, retaining the final program even when it has no explicit checks.
+The final program's empty query tests successful execution only. -/
+def parseComplete (src : String) : Except String (List Parse.Case × Slotted.Program) := do
   let forms ← Sexp.parseAll src
   let st ← forms.foldlM Parse.State.step ({} : Parse.State)
-  pure st.cases.toList
+  pure (st.cases.toList,
+    ⟨⟨Schedule.seqAll st.frame.commands.toList, []⟩, st.binders⟩)
+
+/-- Parse a slotted `.egg` file into its cases, or the name of the first unsupported form. -/
+def parseFile (src : String) : Except String (List Parse.Case) :=
+  Prod.fst <$> parseComplete src
 
 end Egglog.Slotted
 

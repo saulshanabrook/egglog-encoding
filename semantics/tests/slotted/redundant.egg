@@ -1,0 +1,15 @@
+;;; A redundant slot: Mul($7, Null) = Null makes $7 redundant, so Mul($9, Null) is Null too
+;;; and the product has no live free slot, while Mul($9, $7) stays apart from Null.
+(sort U)
+(constructor V (Var) U)
+(constructor Mul (U U) U)
+(constructor Null () U)
+(let m7 (Mul (V $7) (Null)))
+(union m7 (Null))
+(let m9 (Mul (V $9) (Null)))
+(let m97 (Mul (V $9) (V $7)))
+(run 0)
+(check (= m9 (Null)))
+(check (free-names-are m7))
+(fail (check (= m97 (Null))))
+(check (!= m97 (Null)))

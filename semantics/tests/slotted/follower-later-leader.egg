@@ -1,0 +1,16 @@
+;;; A later ordinary union reverses which endpoint of a renaming is smaller.
+;;; The H spelling must be available again after migration into the F class.
+(datatype U (V Var) (F U U) (G U U) (H U U))
+(let f12 (F (V $1) (V $2)))
+(let g21 (G (V $2) (V $1)))
+(let g12 (G (V $1) (V $2)))
+(let h12 (H (V $1) (V $2)))
+(let h21 (H (V $2) (V $1)))
+(union g12 h12)
+(run 0)
+(check (= g12 h12))
+(union f12 g21)
+(run 0)
+(check (= f12 h21))
+(check (!= f12 h12))
+(check (renaming-= f12 h12))

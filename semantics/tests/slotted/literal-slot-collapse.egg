@@ -1,0 +1,10 @@
+;;; Distinct literals cannot collapse, even when a matched node reuses one slot.
+(datatype U (V Var) (Sub U U) (Hit))
+(let collapsed (Sub (V $a) (V $a)))
+(rewrite (Sub (V $x) (V $y)) (Hit))
+(run 1)
+(fail (check (= collapsed (Hit))))
+(let distinct (Sub (V $a) (V $b)))
+(run 1)
+(check (= distinct (Hit)))
+(fail (check (= collapsed (Hit))))

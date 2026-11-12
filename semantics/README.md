@@ -53,6 +53,8 @@ Specification and proofs are separate: nothing outside `Proofs/`, `Tests/` and
 | Executable | `Impl/` (finite reference interpreter), `Congruence/Relational.lean` (execution without equality reasoning), `Tests/`, `DiffTest.lean` (comparisons with egglog and the corpus gates), `tests/` (`.egg` programs with snapshots of their encodings and lifted proofs) |
 | Slotted section, slots and binders | `Slotted/Spec/`: `Binders` (`bind(f)`, `B_i`), `Slots` (slot terms, `slots`, renamings and the action `m * t` as `Renames`, α-equivalence), `Congruence` (`SCong` with the `Rename` rule, redundant and live free slots, `reps'`, `live'`), `Match` (`Query'`, `App'`, fixed literal pattern slots, the free-name and renaming guards), `Eval` and `Step` (fresh action slots, `SRunRules`, `SReach`, `SEval`, `Slotted.Program`); see [SLOTTED.md](SLOTTED.md) |
 | Slotted, executable | `Slotted/Tests/Parse.lean` (the slotted `.egg` subset, one program per check), `Slotted/Tests/Bounded.lean` (the specification evaluated over finite slot and term universes, with soundness of the closure), `Slotted/Tests/Examples.lean` (the paper's example and the `tests/slotted/paper` phenomena), `Slotted/Proofs/Conservative.lean` (the slotted closure contains the plain one), `slotted-difftest.sh` (the paper corpus files against the Rust reference) |
+| Slotted pass | `Slotted/Target/{Values,Prim,Spec,Interp}.lean` (primitive values, reduction, target semantics and execution); `Slotted/Encode/{Layout,Maintenance,Query}.lean` (representation, maintenance, unification and actions); `Slotted/Encode.lean` (compilation and congruence-fragment report) |
+| Slotted correctness hand-off and gate | `Slotted/Encode/Premises.lean` and `Slotted.Pass.Correct` (phase 3 proposition, not a proved theorem); `Slotted/Tests/Compile.lean`, `slotted-compile.sh`, `tests/slotted/` (compiled outcomes against Rust, rejection boundaries and snapshots) |
 
 To check the theorems from this directory: `lake build` (the `assert_no_sorry` lines in
 `ExtlogTheorems.lean` fail the build on any incomplete proof), `make lean-holes` (no `sorry`
@@ -82,18 +84,37 @@ encoding, the log, and the rationale; the corpus gates (`difftest congruence`,
 notes live with the [source checker](EgglogSemantics/SourceProof/Checker.lean) and
 [relational checker](EgglogSemantics/Provenance/Checker.lean).
 
+The slotted pass (`Slotted/Encode.lean`, described in [SLOTTED.md](SLOTTED.md)) compiles a
+slotted program, a plain program with its binder signature, to a plain program over a target
+that adds primitive values and primitive functions as reserved `@`-applications evaluated by
+a separate step (`Slotted/Target/`). A term becomes a row whose children carry renamings and
+whose first column is its generation; maintenance rules keep the rows canonical up to
+renaming through the unoriented `@RenamesTo` relation and the intersection analysis `@FS`.
+Self-equations provide symmetries; migration and child update select the smaller endpoint
+at their use sites. Compiled queries keep their unification map, disequality cliques and
+fixed literal slots separate. Finite `@Orbit` witnesses support negative symmetry tests. `difftest slotted-compile` runs
+the compiled corpus on the target interpreter against the outcomes the Rust slotted
+reference asserts, and the compiled programs of `tests/slotted/*.egg` are snapshotted as
+`*.slotted.egg`. The gate reports every file, including explicit rejections, and fails on
+incomplete execution or a disagreement. It compares 250 checks across 45 compiled files;
+the restricted-aliasing fixture is explicitly rejected and 15 files are outside the parser
+subset. [SLOTTED.md](SLOTTED.md) gives the per-file results, rule-to-Lean mapping, deviations,
+primitive catalogue and phase 3 premises. The target is outside the congruence pass's
+proved fragment; `fragmentReport` prints the failed clauses for every compiled program.
+
 ## Validation
 
 From the workspace root:
 
 ```sh
 make check                 # Python and Rust formatting, checks, and tests
-make -C semantics lean-check            # Lean build, proof-hole audit, corpus gates, Rust certificate check, slotted parse report
+make -C semantics lean-check            # Lean build, proof-hole audit, corpus gates, Rust certificate check, slotted parse report and snapshots
 cargo build --release -p egglog
 make -C semantics lean-difftest          # compare Lean and egglog row counts and check outcomes
 make -C semantics lean-compiled-difftest # run the compiled programs in egglog and compare e-node censuses
 cargo build --release -p egglog-experimental
 make -C semantics lean-slotted-difftest  # the slotted paper corpus in the reference and the bounded evaluator
+make -C semantics lean-slotted-compile   # the slotted pass on the slotted corpus, against the reference's outcomes
 make -C semantics paper-sync             # regenerate the semantics section of ../extended-egglog-paper
 ```
 
@@ -105,6 +126,8 @@ lake build difftest
 .lake/build/bin/difftest provenance 64
 .lake/build/bin/difftest resugar 64
 .lake/build/bin/difftest slotted-parse ../egglog-experimental/tests/slotted
+.lake/build/bin/difftest slotted-compile ../egglog-experimental/tests/slotted/paper tests/slotted
+.lake/build/bin/difftest slotted-trace tests/slotted/distribution.egg 0
 ```
 
 The toolchain is pinned in [lean-toolchain](lean-toolchain), and Mathlib in

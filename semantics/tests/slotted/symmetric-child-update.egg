@@ -1,0 +1,12 @@
+;;; Child update chooses a smaller endpoint and carries the child's swap.
+(datatype U (V Var) (A U U) (Z U U) (Wrap U))
+(let z (Z (V $x) (V $y)))
+(union z (Z (V $y) (V $x)))
+(let before (Wrap z))
+(run 0)
+(let a (A (V $y) (V $x)))
+(union z a)
+(run 0)
+(check (= before (Wrap (A (V $x) (V $y)))))
+(check (= before (Wrap (A (V $y) (V $x)))))
+(fail (check (= before (Wrap (A (V $x) (V $x))))))

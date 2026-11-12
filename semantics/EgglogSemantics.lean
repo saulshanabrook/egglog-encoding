@@ -149,6 +149,17 @@ import EgglogSemantics.Slotted.Proofs.Conservative
 import EgglogSemantics.Slotted.Tests.Parse
 import EgglogSemantics.Slotted.Tests.Bounded
 import EgglogSemantics.Slotted.Tests.Examples
+import EgglogSemantics.Slotted.Spec.Divergence
+import EgglogSemantics.Slotted.Target.Values
+import EgglogSemantics.Slotted.Target.Prim
+import EgglogSemantics.Slotted.Target.Spec
+import EgglogSemantics.Slotted.Target.Interp
+import EgglogSemantics.Slotted.Encode.Layout
+import EgglogSemantics.Slotted.Encode.Maintenance
+import EgglogSemantics.Slotted.Encode.Query
+import EgglogSemantics.Slotted.Encode.Premises
+import EgglogSemantics.Slotted.Encode
+import EgglogSemantics.Slotted.Tests.Compile
 
 -- Tests
 import EgglogSemantics.Tests.Checks

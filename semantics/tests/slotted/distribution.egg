@@ -1,0 +1,9 @@
+;;; The paper's distribution example in the reference's syntax: the factor 5 moves under two
+;;; sums whose binders it does not mention; the bound names of the result may differ from the
+;;; original ones.
+(datatype Expr (V Var) (Num i64) (Mul Expr Expr) (Sum Var Expr :binder 0))
+(let t (Mul (Num 5) (Sum $i (Sum $j (Mul (V $i) (V $j))))))
+(rewrite (Mul x (Sum $v b)) (Sum $v (Mul x b)) :when ((not-free $v x)))
+(run 2)
+(check (= t (Sum $k (Sum $l (Mul (Num 5) (Mul (V $k) (V $l)))))))
+(fail (check (= t (Sum $k (Sum $l (Mul (Num 5) (Mul (V $l) (V $l))))))))
