@@ -39,8 +39,9 @@ def resolve_files(
     invocation_cwd: Path,
     *,
     ignore_file: Path = IGNORE_FILE,
+    ignore_root: Path | None = None,
 ) -> tuple[FileSpec, ...]:
-    """Resolve selected or default workloads relative to the invocation directory."""
+    """Resolve workloads, anchoring exclusions beside their file unless a root is given."""
 
     chosen = raw_files or DEFAULT_WORKLOADS
     rules = json.loads(ignore_file.read_text())
@@ -99,7 +100,7 @@ def resolve_files(
             raise ValueError("exclusion patterns must stay inside benchmarks/")
         matched_paths[rule["file"]] = {
             Path(path).resolve()
-            for path in glob.glob(str(ignore_file.parent / rule["file"]), recursive=True)
+            for path in glob.glob(str((ignore_root or ignore_file.parent) / rule["file"]), recursive=True)
             if Path(path).is_file()
         }
         if not matched_paths[rule["file"]]:

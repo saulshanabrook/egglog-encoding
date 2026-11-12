@@ -24,7 +24,12 @@ test-python:
 
 test-rust:
 	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --bins
-	cargo test --locked --workspace --exclude paper-tests -- $(if $(filter --test-threads%,$(RUST_TEST_ARGS)),,--test-threads=$(RUST_TEST_THREADS)) $(RUST_TEST_ARGS)
+	cargo build --locked --release --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
+	cargo test --locked --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs
+	# Keep native graph checks separate from the production explanation-only profile.
+	cargo test --locked --workspace --exclude paper-tests --exclude slotted-reference-proofs -- $(if $(filter --test-threads%,$(RUST_TEST_ARGS)),,--test-threads=$(RUST_TEST_THREADS)) $(RUST_TEST_ARGS)
+	cargo test --locked -p slotted-reference -p slotted-reference-proofs --no-default-features --lib --bins -- $(if $(filter --test-threads%,$(RUST_TEST_ARGS)),,--test-threads=$(RUST_TEST_THREADS)) $(RUST_TEST_ARGS)
+	cargo build --locked -p slotted-reference-proofs --no-default-features
 	RUST_TEST_THREADS=$${RUST_TEST_THREADS:-2} cargo test --locked -p paper-tests -- $(RUST_TEST_ARGS)
 
 test-figures:
@@ -37,6 +42,7 @@ nits:
 	uv run --locked mypy .
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
+	cargo clippy --locked --manifest-path benchmarks/disequality/native/Cargo.toml --target-dir benchmarks/local/parameter-native/target --features proof-driver --bin egg-nee-proofs -- -D warnings
 	RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --document-private-items --workspace
 
 # Keep the existing external nightly contract and its bootstrap behavior.

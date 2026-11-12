@@ -224,24 +224,6 @@ pub struct ProofStore {
     /// these heads over literals is a self-evident value, so the checker accepts a
     /// reflexive `Fiat` over it ([`ProofStore::reflexive_value_term`]).
     pub(super) prim_value_constructors: HashSet<String>,
-    /// Structural sharing for proofs synthesized during lifting.
-    pub(super) synthesized: HashMap<SynthKey, ProofId>,
-}
-
-/// What a synthesized proof is, for sharing one node per distinct value.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) enum SynthKey {
-    /// A rule head's own conclusion: the rule, which of its proofs, and the
-    /// premises that fix the substitution.
-    Rule(String, i64, Vec<ProofId>),
-    Sym(ProofId),
-    Trans(ProofId, ProofId),
-    Congr(ProofId, usize, ProofId),
-    /// A positional projection from an existing proof.
-    Proj(ProofId, usize),
-    /// A premise the encoding stored no row for (see
-    /// [`crate::proofs::proof_encoding_helpers::recomputable_premises`]).
-    Fiat(TermId, TermId),
 }
 
 impl fmt::Debug for ProofStore {
@@ -782,19 +764,6 @@ impl ProofStore {
         self.id_to_proof.iter()
     }
 
-    /// Add a proof, sharing one node per distinct `key`. The e-graph
-    /// hash-conses its own proof rows, so proofs reconstructed during lifting
-    /// must be shared too — otherwise a subproof reached along several paths
-    /// becomes a fresh copy per path, and the proof unfolds into a tree.
-    pub(super) fn push_shared_proof(&mut self, key: SynthKey, proof: Proof) -> ProofId {
-        if let Some(&id) = self.synthesized.get(&key) {
-            return id;
-        }
-        let id = self.id_to_proof.push(proof);
-        self.synthesized.insert(key, id);
-        id
-    }
-
     /// Format a proof as one parenthesized s-expression containing its local
     /// bindings and final proof term.
     pub fn proof_to_string(&self, proof_id: ProofId) -> String {
@@ -817,7 +786,6 @@ impl ProofStore {
             id_to_proof: DenseIdMap::new(),
             container_normalizers,
             prim_value_constructors,
-            synthesized: HashMap::default(),
         }
     }
 
@@ -833,19 +801,6 @@ impl ProofStore {
                 args.len()
             )
         })
-    }
-
-    /// Construct a positional projection, sharing it with every projection
-    /// from the same proof and child index.
-    pub(super) fn push_projection(&mut self, proof: ProofId, child_index: usize) -> ProofId {
-        let child = self.term_child(self.id_to_proof[proof].rhs(), child_index);
-        self.push_shared_proof(
-            SynthKey::Proj(proof, child_index),
-            Proof {
-                proposition: Proposition::new(child, child),
-                justification: Justification::Proj { proof, child_index },
-            },
-        )
     }
 
     pub(super) fn replace_term_child(
@@ -1047,7 +1002,10 @@ impl Proof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proofs::{proof_encoding_rebuild::rebuild_skeleton, proof_lifting::ProofLifter};
+    use crate::proofs::{
+        proof_encoding_rebuild::rebuild_skeleton,
+        proof_lifting::{ProofBuilder, ProofLifter, Synthesis},
+    };
     use crate::util::SymbolGen;
 
     /// One firing of a rebuild rule over a four-child view row, as the proofs
@@ -1129,9 +1087,17 @@ mod tests {
             ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
         let prog = vec![];
         let globals = HashMap::default();
-        let mut lifting = ProofLifter::new(&prog, &globals, raw);
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(&prog, &globals, raw, &mut proof_ids);
+        let mut synthesis = Synthesis::default();
         let mut lift = |id| {
-            let lifted = lifting.proof(&mut store, id);
+            let lifted = lifting.proof(
+                &mut ProofBuilder {
+                    store: &mut store,
+                    synthesis: &mut synthesis,
+                },
+                id,
+            );
             store.simplify(lifted)
         };
         let (packed_proof, chain_proof) = (lift(packed), lift(chain));
@@ -1350,7 +1316,15 @@ mod tests {
             HashMap::default(),
             HashSet::default(),
         );
-        ProofLifter::new(&[], &HashMap::default(), &firing.raw).proof(&mut store, packed);
+        let mut proof_ids = DenseIdMap::new();
+        let mut synthesis = Synthesis::default();
+        ProofLifter::new(&[], &HashMap::default(), &firing.raw, &mut proof_ids).proof(
+            &mut ProofBuilder {
+                store: &mut store,
+                synthesis: &mut synthesis,
+            },
+            packed,
+        );
     }
 
     /// Every column of the row is a proof, including the e-class's past the last

@@ -26,7 +26,7 @@ impl fmt::Debug for ExtractRequest {
 pub(super) type ExtractRequests = BTreeMap<usize, Arc<ExtractRequest>>;
 
 /// Lowered slotted commands with their original checking programs.
-/// Use [`Self::run`] to execute them, including source-level proof checking.
+/// Use [`Self::run`] to execute them with the compiler's selected proof mode.
 /// Display serializes only the lowered commands; proof replay also needs this
 /// compilation of the original source.
 #[derive(Clone, Debug)]
@@ -81,9 +81,35 @@ impl CompiledProgram {
         graph: &mut EGraph,
         commands: Vec<Command>,
     ) -> Result<Vec<CommandOutput>, Error> {
+        let summary = graph
+            .extension_state::<egglog::proof_summary::ProofSummary>()
+            .cloned();
+        let summary_scope = summary
+            .as_ref()
+            .map(egglog::proof_summary::ProofSummary::enter);
         let mut outputs = Vec::new();
         let mut pending = Vec::new();
         for command in commands {
+            if summary_scope.as_ref().is_some_and(|scope| scope.source) {
+                let request = match &command {
+                    Command::UserDefined(_, name, _)
+                        if name == "slotted-prove" || name == "slotted-check" =>
+                    {
+                        Some(false)
+                    }
+                    Command::UserDefined(_, name, _)
+                        if name == "slotted-prove-extract" || name == "slotted-extract" =>
+                    {
+                        Some(true)
+                    }
+                    Command::Check(..) => Some(false),
+                    _ => None,
+                };
+                if let Some(extraction) = request {
+                    outputs.extend(graph.run_program(std::mem::take(&mut pending))?);
+                    summary.as_ref().unwrap().request(extraction);
+                }
+            }
             if let Command::UserDefined(_, name, args) = &command
                 && name == "slotted-substitute"
             {

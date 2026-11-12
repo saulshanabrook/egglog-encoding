@@ -4,6 +4,8 @@ The four files under `authors/` are byte-identical copies from the
 published [`parameter-analysis` bundle](https://zenodo.org/records/23166731).
 They run directly on the complete checked-in [native corpus](../parameter-analysis.in). There is no driver patch,
 input adapter, custom result protocol, or timed conversion.
+The separate `egg-nee-proofs` driver described below adapts NEE to produce proofs;
+it does not replace or modify these author files.
 
 The drivers, native corpus, and generated Egglog translation
 are distributed under [Apache 2.0](../LICENSE-APACHE), as confirmed by George
@@ -84,7 +86,8 @@ preparation is needed.
 
 The integration manifest points directly at the original drivers. Its lockfile
 retains the supplied EE lock's transitive versions and adds the pinned DE
-package. The supplied DE manifest's absolute `/disegg/` path and stale standalone
+package and the optional proof driver's allocator dependencies. The supplied DE
+manifest's absolute `/disegg/` path and stale standalone
 lock metadata are not used. Builds do not use the root workspace's newer Egg.
 
 | Original driver | SHA-256 |
@@ -119,3 +122,54 @@ The same trial retains the native contradiction and consistent canaries from the
 former standalone Python gate, using frozen inputs in `../correctness/`.
 `egglog-experimental/tests/disequality.rs` exercises relation-based Egglog NEE
 with ordinary, term and proof modes. It is the sole Egglog disequality encoding.
+
+## NEE proof-producing reference
+
+[`nee_proofs.rs`](nee_proofs.rs) adds Egg 0.9.5 explanations to the original
+non-saturating NEE algorithm. Label this configuration **NEE + Egg explanations**,
+not an unchanged proof-producing benchmark from the published artifact.
+The driver retains the full input read, the six initial numeral constraints,
+the equality-first assertion order, one rebuild, and the `(ne ?a ?a)` query.
+
+The contradiction certificate consists of one asserted disequality `u != v`
+and an Egg explanation of `u = v` from the input equality assertions and
+congruence. It is an encoding-level certificate; it adds no source-language
+lifting or proof pretty-printing. A consistent query still exits normally with
+`contradiction=N` and no certificate.
+
+Production mode (`--proof-mode extract`) records explanations and materializes
+the certificate's flat equality proof in memory, without verification or
+serialization. Checked mode (`--proof-mode check`) additionally checks the
+witness's input membership, explanation endpoints, and exact input equality
+axioms. Unknown proof reasons are rejected explicitly: Egg's generic
+[`check_proof`](https://github.com/egraphs-good/egg/blob/c590048817a35236ce9910e7c1e0b1fac670822c/src/explain.rs#L387)
+accepts reasons omitted from its rule table.
+Input unions therefore use uniquely named ground `union_instantiations`,
+rather than the author's call-site-labeled `union`.
+Explanation-length optimization is disabled, as in the Math proof reference.
+
+The proof driver alone opts into the shared controlled allocator; the original
+four binaries retain their allocator and default build behavior.
+Build it in a separate invocation:
+
+```sh
+cargo build --release --locked \
+  --manifest-path benchmarks/disequality/native/Cargo.toml \
+  --target-dir benchmarks/local/parameter-native/target \
+  --features proof-driver --bin egg-nee-proofs
+env MIMALLOC_ARENA_RESERVE=0 MIMALLOC_DISALLOW_ARENA_ALLOC=1 \
+  MIMALLOC_RESERVE_OS_MEMORY=0 MIMALLOC_RESERVE_HUGE_OS_PAGES=0 \
+  benchmarks/local/parameter-native/target/release/egg-nee-proofs \
+  benchmarks/disequality/parameter-analysis.in 100000 10000 \
+  --memory-limit-bytes 17179869184 --proof-mode check \
+  --proof-summary /tmp/egg-nee-proof-summary.json
+```
+
+The CSV columns retain the original order, with method `nee-proofs`.
+The optional JSON summary uses schema 1 and reports success, executed check
+requests, produced certificates and verified certificates; extraction requests
+are zero because this workload asks for a contradiction rather than term
+extraction. An early input/setup failure does not fabricate a zero-count summary.
+Production runs and separate checked runs use the same workload and resource
+profile. The full-size reference must be validated under that profile before
+its timings support a proof-production comparison.

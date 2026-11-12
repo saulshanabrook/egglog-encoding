@@ -13,7 +13,7 @@ import pytest
 from benchmarking import collection, models, nightly, processes, targets, workloads
 from benchmarking.reports.store import ReportStore, parse_grouped_report
 
-from .report_fixtures import make_target, make_timing_summary
+from .report_fixtures import make_record, make_target, make_timing_summary
 
 
 @pytest.fixture
@@ -100,6 +100,33 @@ def test_collects_checked_and_off_once_and_renders_cached_reports(
     grouped = parse_grouped_report((output / "index-grouped.json").read_bytes(), "index-grouped.json")
     assert grouped.data["groups"]
     assert grouped.exclusions_by_input == exclusions
+
+
+def test_nightly_keeps_other_worker_counts_out_of_its_serial_report(
+    tmp_path: Path, nightly_case: dict[str, Any]
+) -> None:
+    target = nightly_case["targets"]["branch"]
+    file = nightly_case["file"]
+    store = ReportStore(tmp_path / "index.jsonl")
+    for treatment in nightly.TREATMENTS:
+        store.append(
+            make_record(
+                0,
+                started_at="2026-11-11T12:00:00Z",
+                treatment=treatment,
+                binary_sha256=target.binary_sha256,
+                file_sha256=file.sha256,
+                target_label="branch",
+                threads=4,
+            )
+        )
+    nightly._render(
+        argparse.Namespace(output_dir=tmp_path, rounds=1, timeout_sec=120, memory_limit_bytes=10 * 1024**3),
+        store.grouped_report(),
+        {"branch": target},
+        (file,),
+    )
+    assert "Partial nightly" in (tmp_path / "index.html").read_text()
 
 
 @pytest.mark.parametrize("after_rows", [0, 1, 2])

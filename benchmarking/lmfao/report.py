@@ -7,6 +7,7 @@ from typing import Any
 
 from scipy import stats
 
+from benchmarking.proof_validation import is_semantic_proof_failure
 from benchmarking.reports.analysis import _ratio_estimate, _sample_estimate
 
 from . import model
@@ -94,11 +95,16 @@ def comparison_rows(report: dict[str, Any]) -> list[list[str]]:
                 interval(ratios[executed]),
             ]
         )
-    for mode, title in zip(REPLAY_MODES, ("proofs off", "checked proofs"), strict=True):
+    for mode, title in zip(REPLAY_MODES, ("proofs off", "proof production"), strict=True):
         replay = report.get("proof_replay", {}).get(mode, {})
         timing, memory = replay.get("process_seconds"), replay.get("peak_rss_mib")
         failures = replay.get("failures", [])
         reason = ", ".join(sorted({row["status"] for row in failures})) or replay.get("issue")
+        evidence = report.get("proof_replay_validation") if mode == "slotted-proof-extraction" else None
+        if mode == "slotted-proof-extraction" and (evidence is None or evidence["status"] != "passed"):
+            reason = "unverified: " + ((evidence or {}).get("issue") or "validation pending")
+            if is_semantic_proof_failure(evidence):
+                timing, memory = None, None
         name = f"Slotted replay ({title})"
         rows.append(
             [
@@ -125,7 +131,8 @@ def comparison_caption(report: dict[str, Any]) -> str:
         "of section 3.3's coverage heuristic.",
         "",
         f"Both egraph encodings use the same {report['rewrite_round_budget']}-round search and {bound}, "
-        f"with proofs off for optimization. Each repeated condition requests {samples} observations; "
+        f"with {report.get('egraph_workers', 1)} egraph workers and proofs off for optimization; "
+        f"shared DAG extraction uses one worker. Each repeated condition requests {samples} observations; "
         "resource failures stop repetition and remain visible. Completed and failed counts are retained in JSON.",
         "",
         "Egraph process time and peak RSS are means with 95% Student-t intervals. Optimization rows measure "
@@ -134,8 +141,12 @@ def comparison_caption(report: dict[str, Any]) -> str:
         "",
         "Replay uses the same binary and selected-plan input in both modes, with the same memory cap and "
         f"a {report.get('proof_replay_timeout_seconds', '—')}-second timeout (3x the optimization limit). "
-        "Both modes repeat rewriting and check the selected plan. Checked proofs adds reconstruction, "
-        "proof checking, simplification and formatting. Replay does not select or execute another plan.",
+        "Both modes repeat rewriting and establish the selected plan. Proof production adds reconstruction, "
+        "materialization and simplification without certificate verification or serialization. "
+        "A separate strict replay attempts certificate validation outside the timed production observations; "
+        "it may run on another host and supplies no performance measurements. "
+        "Incomplete or resource-limited verification is marked unverified and does not suppress production timing. "
+        "Replay does not select or execute another plan.",
         "",
         "Query time is warm computation divided by configured-roots LMFAO (lower is better), with independent "
         f"95% Fieller intervals; the baseline is {baseline} s. It excludes loading, sorting and checking. "
@@ -171,6 +182,9 @@ def paper_results(report: dict[str, Any]) -> dict[str, str]:
             or any(row["status"] not in ("timed-out", "memory-limited") for row in failures)
         ):
             raise ValueError("LMFAO proof replay is incomplete or invalid; no paper table replaced")
+    evidence = report.get("proof_replay_validation")
+    if is_semantic_proof_failure(evidence):
+        raise ValueError("LMFAO proof validation is incomplete or invalid; no paper table replaced")
     escapes = {
         "\\": r"\textbackslash{}",
         "&": r"\&",

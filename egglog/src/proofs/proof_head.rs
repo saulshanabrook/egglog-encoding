@@ -25,7 +25,8 @@ use crate::{
     proofs::{
         proof_checker::eval_expr_with_subst,
         proof_encoding::ProofInstrumentor,
-        proof_format::{Justification, Proof, ProofId, ProofStore, Proposition, SynthKey},
+        proof_format::{Justification, Proof, ProofId, Proposition},
+        proof_lifting::{ProofBuilder, RuleFiringId, SynthKey},
     },
     typechecking::FuncType,
     util::{HashMap, HashSet, IndexMap},
@@ -602,6 +603,9 @@ fn plan_construct_into(
 /// there. What it holds is what the whole walk would have produced this far.
 #[derive(Clone, Default)]
 pub(crate) struct HeadWalk {
+    /// Interned lazily at the first own conclusion and retained by continuations.
+    /// Like `proofs`, this identity belongs to the lifting arena the walk replays into.
+    firing: Option<RuleFiringId>,
     /// The action to carry on at.
     next_action: usize,
     /// How many of the layout's positions the walk has reached.
@@ -676,7 +680,7 @@ pub(crate) struct Firing<'a> {
     /// The bridges the requesting rule proof row carries, in the order the head
     /// interned them, each asked for with the proof of the term being interned.
     /// The supply runs dry inside the action the row was minted in.
-    bridges: Box<dyn FnMut(&mut ProofStore, ProofId) -> Option<ProofId> + 'a>,
+    bridges: Box<dyn FnMut(&mut ProofBuilder<'_>, ProofId) -> Option<ProofId> + 'a>,
     walk: HeadWalk,
     /// Where the action being walked began.
     action_start: ActionStart,
@@ -695,7 +699,7 @@ impl<'a> Firing<'a> {
         bindings: HashMap<String, TermId>,
         body_premises: Vec<ProofId>,
         substitution: IndexMap<String, TermId>,
-        bridges: Box<dyn FnMut(&mut ProofStore, ProofId) -> Option<ProofId> + 'a>,
+        bridges: Box<dyn FnMut(&mut ProofBuilder<'_>, ProofId) -> Option<ProofId> + 'a>,
     ) -> Self {
         Firing {
             rule_name,
@@ -730,13 +734,13 @@ impl<'a> Firing<'a> {
     /// Every proof the head's lowering produces, by column. `None` at a column
     /// the walk numbers but the head produces no proof for.
     #[cfg(test)]
-    pub(crate) fn proofs(&mut self, store: &mut ProofStore) -> &[Option<ProofId>] {
+    pub(crate) fn proofs(&mut self, store: &mut ProofBuilder<'_>) -> &[Option<ProofId>] {
         self.fill(store);
         &self.walk.proofs
     }
 
     /// The proof the e-graph stored in the column `raw` names.
-    pub(crate) fn column(&mut self, store: &mut ProofStore, raw: i64) -> ProofId {
+    pub(crate) fn column(&mut self, store: &mut ProofBuilder<'_>, raw: i64) -> ProofId {
         let rule_name = self.rule_name;
         let column = usize::try_from(raw).unwrap_or_else(|_| {
             panic!("rule {rule_name} proof was emitted without a column ({raw})")
@@ -754,7 +758,7 @@ impl<'a> Firing<'a> {
 
     /// Walk the head as far as this row's bridges reach: to the end of the action
     /// that asks for one past them, which is the action the row was minted in.
-    fn fill(&mut self, store: &mut ProofStore) {
+    fn fill(&mut self, store: &mut ProofBuilder<'_>) {
         let plan = self.plan;
         while !self.dry && self.walk.next_action < plan.actions.len() {
             self.action_start = self.walk.mark();
@@ -825,7 +829,7 @@ impl<'a> Firing<'a> {
 
     /// Walk `expr`, and answer with its connector when it holds a term the head
     /// built.
-    fn expr(&mut self, store: &mut ProofStore, expr: &ResolvedExpr) -> Option<ProofId> {
+    fn expr(&mut self, store: &mut ProofBuilder<'_>, expr: &ResolvedExpr) -> Option<ProofId> {
         let ResolvedExpr::Call(_, _, args) = expr else {
             // A variable's value comes from wherever it was bound; a literal
             // holds no built term.
@@ -866,7 +870,7 @@ impl<'a> Firing<'a> {
     /// the guest's view row states that e-class equals the guest's term.
     fn guest(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         expr: &ResolvedExpr,
         target: &str,
     ) -> Option<ProofId> {
@@ -899,7 +903,11 @@ impl<'a> Firing<'a> {
 
     /// Walk a call's arguments, keeping the connector of each one holding a term
     /// the head built, at the position it sits in the call.
-    fn args(&mut self, store: &mut ProofStore, args: &[ResolvedExpr]) -> Vec<(usize, ProofId)> {
+    fn args(
+        &mut self,
+        store: &mut ProofBuilder<'_>,
+        args: &[ResolvedExpr],
+    ) -> Vec<(usize, ProofId)> {
         let mut steps = vec![];
         for (index, arg) in args.iter().enumerate() {
             if let Some(connector) = self.expr(store, arg) {
@@ -913,7 +921,7 @@ impl<'a> Firing<'a> {
     /// both endpoints' proofs end at one shared term.
     fn union_edge(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         own: ProofId,
         operands: (Option<ProofId>, Option<ProofId>),
     ) {
@@ -983,17 +991,17 @@ impl<'a> Firing<'a> {
     /// The head's own conclusion, at the column holding `proof`.
     fn own(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         proof: HeadProof,
         proposition: Proposition,
     ) -> ProofId {
         let column = self.walk.proofs.len() as i64;
+        let firing = *self
+            .walk
+            .firing
+            .get_or_insert_with(|| store.rule_firing(self.rule_name, &self.body_premises));
         let id = store.push_shared_proof(
-            SynthKey::Rule(
-                self.rule_name.to_string(),
-                column,
-                self.body_premises.clone(),
-            ),
+            SynthKey::Rule(firing, column),
             Proof {
                 proposition,
                 justification: Justification::Rule {
@@ -1008,11 +1016,11 @@ impl<'a> Firing<'a> {
     }
 
     /// The term `expr` evaluates to under the bindings in effect.
-    fn eval(&mut self, store: &mut ProofStore, expr: &ResolvedExpr) -> TermId {
+    fn eval(&mut self, store: &mut ProofBuilder<'_>, expr: &ResolvedExpr) -> TermId {
         eval_expr_with_subst(
             self.rule_name,
             expr,
-            &mut store.term_dag,
+            &mut store.store.term_dag,
             &self.walk.bindings,
         )
         .unwrap_or_else(|err| panic!("rule {}'s head did not replay: {err}", self.rule_name))
@@ -1023,7 +1031,7 @@ impl<'a> Firing<'a> {
     /// the term the walk just built, saying which e-class it interned into.
     ///
     /// `None` once the supply has run dry, which ends the walk.
-    fn bridge(&mut self, store: &mut ProofStore, to_canonical: ProofId) -> Option<ProofId> {
+    fn bridge(&mut self, store: &mut ProofBuilder<'_>, to_canonical: ProofId) -> Option<ProofId> {
         let taken = self.walk.bridges_taken;
         self.walk.bridges_taken += 1;
         let Some(bridge) = (self.bridges)(store, to_canonical) else {
@@ -1035,8 +1043,8 @@ impl<'a> Firing<'a> {
         // the canonical term. A bridge that does not is one aligned to the wrong
         // term, which would otherwise compose into a proof of the wrong equality.
         assert_eq!(
-            store.get(bridge).rhs(),
-            store.get(to_canonical).rhs(),
+            store.store.get(bridge).rhs(),
+            store.store.get(to_canonical).rhs(),
             "rule {}'s bridge {taken} does not end at the canonical term",
             self.rule_name
         );
@@ -1142,7 +1150,7 @@ pub(super) trait ProofAlgebra {
 }
 
 /// Applying the algebra builds the proof.
-impl ProofAlgebra for ProofStore {
+impl ProofAlgebra for ProofBuilder<'_> {
     type Proof = ProofId;
 
     fn sym(&mut self, proof: ProofId) -> ProofId {
@@ -1177,8 +1185,8 @@ impl ProofAlgebra for ProofInstrumentor<'_> {
 }
 
 /// `Sym(p)`: `p : a = b` reversed to `b = a`.
-pub(super) fn sym(store: &mut ProofStore, proof: ProofId) -> ProofId {
-    let prop = store.get(proof).proposition().clone();
+pub(super) fn sym(store: &mut ProofBuilder<'_>, proof: ProofId) -> ProofId {
+    let prop = store.store.get(proof).proposition().clone();
     store.push_shared_proof(
         SynthKey::Sym(proof),
         Proof {
@@ -1189,12 +1197,12 @@ pub(super) fn sym(store: &mut ProofStore, proof: ProofId) -> ProofId {
 }
 
 /// `Trans(left, right)`. Panics unless the two meet at the same middle term.
-pub(super) fn trans(store: &mut ProofStore, left: ProofId, right: ProofId) -> ProofId {
-    let lhs = store.get(left).lhs();
-    let rhs = store.get(right).rhs();
+pub(super) fn trans(store: &mut ProofBuilder<'_>, left: ProofId, right: ProofId) -> ProofId {
+    let lhs = store.store.get(left).lhs();
+    let rhs = store.store.get(right).rhs();
     assert_eq!(
-        store.get(left).rhs(),
-        store.get(right).lhs(),
+        store.store.get(left).rhs(),
+        store.store.get(right).lhs(),
         "transitivity requires matching middle terms"
     );
     store.push_shared_proof(
@@ -1209,15 +1217,17 @@ pub(super) fn trans(store: &mut ProofStore, left: ProofId, right: ProofId) -> Pr
 /// `Congr(base, child_index, child_proof)`: `base`'s right-hand side with the
 /// child at `child_index` rewritten by `child_proof`.
 pub(super) fn congr(
-    store: &mut ProofStore,
+    store: &mut ProofBuilder<'_>,
     base: ProofId,
     child_index: usize,
     child_proof: ProofId,
 ) -> ProofId {
-    let lhs = store.get(base).lhs();
-    let base_rhs = store.get(base).rhs();
-    let child_rhs = store.get(child_proof).rhs();
-    let rhs = store.replace_term_child(base_rhs, child_index, child_rhs);
+    let lhs = store.store.get(base).lhs();
+    let base_rhs = store.store.get(base).rhs();
+    let child_rhs = store.store.get(child_proof).rhs();
+    let rhs = store
+        .store
+        .replace_term_child(base_rhs, child_index, child_rhs);
     store.push_shared_proof(
         SynthKey::Congr(base, child_index, child_proof),
         Proof {

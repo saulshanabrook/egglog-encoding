@@ -3,15 +3,16 @@
 //! Lookup finds view and union-find evidence. The ordinary lifter decodes that
 //! evidence before construction, so container witnesses can be identified.
 //! A memoized traversal resolves deferred containers and produces raw proofs;
-//! the ordinary lifter then reconstructs the completed equality proofs.
+//! the ordinary lifter then resumes its decoded arena for the completed proofs.
 
 use std::iter::once;
 
 use super::ground_evidence::{Proofs, RawEquality};
 use super::proof_checker::gather_global_actions;
 use super::proof_container_rebuild::rebuild_container_value_rec;
-use super::proof_format::{ProofId, ProofStore, RawProof, RawProofStore, RecordedProofs};
-use super::proof_lifting::global_bindings;
+use super::proof_format::{
+    ProofId, ProofStore, RawProof, RawProofId, RawProofStore, RecordedProofs,
+};
 use crate::extract::find_canonical;
 use crate::*;
 
@@ -148,6 +149,7 @@ impl EGraph {
 
     /// Prove equality of `input` to each term in `outputs`, in that order.
     /// Root IDs refer to `terms`, and every root must have the supplied `sort`.
+    /// The returned arena may retain imported nodes outside the requested roots.
     /// Globals are zero-argument calls. Proof endpoints use their source definitions
     /// and the evaluated forms of primitive expressions.
     /// Primitives must support read-only evaluation and proof validation.
@@ -206,14 +208,11 @@ impl EGraph {
         {
             return Err(fail("requested terms have different leaders"));
         }
-        let (mut proofs, nodes) = Proofs::import(self, values)?;
-        let globals = global_bindings(&self.proof_check_program, &mut proofs.raw.term_dag)
-            .map_err(|error| fail(error.to_string()))?;
+        let (proofs, nodes) = Proofs::import(self, values)?;
         let mut builder = GroundProofs {
             terms: &typed,
             nodes: &nodes,
             proofs,
-            globals,
             memo: vec![None; typed.size()],
         };
         let input = builder.finish(roots[0], None)?;
@@ -223,10 +222,7 @@ impl EGraph {
             let back = builder.proofs.sym(right);
             raw_proofs.push(builder.proofs.trans(input, back).proof);
         }
-        let (store, mut proof_ids) =
-            builder
-                .proofs
-                .lift(&self.proof_check_program, &raw_proofs, None);
+        let (store, mut proof_ids) = builder.proofs.lift(&raw_proofs, None);
         proof_ids.remove(0);
         self.finish_ground_proofs(store, proof_ids)
     }
@@ -242,8 +238,13 @@ impl EGraph {
         terms: &TermDag,
         roots: &[(TermId, ArcSort)],
     ) -> Result<(ProofStore, Vec<ProofId>), Error> {
-        let recorded = self.record_existing_terms(terms, roots)?;
-        let (store, roots) = recorded.lift(self, None);
+        let (store, roots) = if roots.is_empty() {
+            // Keep the empty-request validation/lifting behavior unchanged.
+            self.record_existing_terms(terms, roots)?.lift(self, None)
+        } else {
+            let (proofs, roots) = self.compose_existing_terms(terms, roots)?;
+            proofs.lift(&roots, None)
+        };
         self.finish_ground_proofs(store, roots)
     }
 
@@ -254,9 +255,6 @@ impl EGraph {
         terms: &TermDag,
         roots: &[(TermId, ArcSort)],
     ) -> Result<RecordedProofs, Error> {
-        for (_, sort) in roots {
-            require_non_container_root(sort)?;
-        }
         if roots.is_empty() {
             return Ok(RecordedProofs {
                 program_len: self.proof_check_program.len(),
@@ -266,6 +264,19 @@ impl EGraph {
                 value_heads: Default::default(),
             });
         }
+        let (proofs, roots) = self.compose_existing_terms(terms, roots)?;
+        Ok(proofs.record(roots))
+    }
+
+    /// Compose raw roots within the same request that decoded their row evidence.
+    fn compose_existing_terms<'program>(
+        &'program self,
+        terms: &TermDag,
+        roots: &[(TermId, ArcSort)],
+    ) -> Result<(Proofs<'program>, Vec<RawProofId>), Error> {
+        for (_, sort) in roots {
+            require_non_container_root(sort)?;
+        }
         let expected: Vec<_> = roots
             .iter()
             .map(|(root, sort)| (*root, Some(sort.clone())))
@@ -274,14 +285,11 @@ impl EGraph {
             .typecheck_term_dag(terms, &expected, Context::Read)
             .map_err(|error| fail(error.to_string()))?;
         let values = lookup(self, &typed)?;
-        let (mut proofs, nodes) = Proofs::import(self, values)?;
-        let globals = global_bindings(&self.proof_check_program, &mut proofs.raw.term_dag)
-            .map_err(|error| fail(error.to_string()))?;
+        let (proofs, nodes) = Proofs::import(self, values)?;
         let mut builder = GroundProofs {
             terms: &typed,
             nodes: &nodes,
             proofs,
-            globals,
             memo: vec![None; typed.size()],
         };
         let mut raw_proofs = Vec::with_capacity(roots.len());
@@ -290,9 +298,7 @@ impl EGraph {
             let back = builder.proofs.sym(exists);
             raw_proofs.push(builder.proofs.trans(exists, back).proof);
         }
-        Ok(builder
-            .proofs
-            .record(raw_proofs, self.proof_check_program.len()))
+        Ok((builder.proofs, raw_proofs))
     }
 
     fn finish_ground_proofs(
@@ -571,15 +577,14 @@ impl GroundProof {
 }
 
 /// Memoized construction over the typed DAG and decoded row evidence.
-struct GroundProofs<'a> {
-    terms: &'a TypedTermDag,
-    nodes: &'a [Node<RawEquality>],
-    proofs: Proofs,
-    globals: HashMap<String, TermId>,
+struct GroundProofs<'terms, 'program> {
+    terms: &'terms TypedTermDag,
+    nodes: &'terms [Node<RawEquality>],
+    proofs: Proofs<'program>,
     memo: Vec<Option<GroundProof>>,
 }
 
-impl GroundProofs<'_> {
+impl GroundProofs<'_, '_> {
     /// Return a node's raw proof or a container recipe awaiting enclosing evidence.
     fn build(&mut self, id: TermId) -> Result<GroundProof, Error> {
         if let Some(proof) = &self.memo[id] {
@@ -588,7 +593,7 @@ impl GroundProofs<'_> {
         let term = self.terms.get(id).clone();
         let mut result = match term {
             TypedTerm::Lit(literal) => {
-                let term = self.proofs.raw.term_dag.lit(literal);
+                let term = self.proofs.term_dag.lit(literal);
                 GroundProof::Proof(self.proofs.add(RawProof::Fiat(term, term), term, term))
             }
             TypedTerm::App(ResolvedCall::Primitive(primitive), children) => {
@@ -605,10 +610,10 @@ impl GroundProofs<'_> {
                     .map(|proof| proof.endpoints().1)
                     .collect::<Vec<_>>();
                 let validate = primitive.validator().expect("lookup requires validators");
-                let lhs = validate(&mut self.proofs.raw.term_dag, &left).ok_or_else(|| {
+                let lhs = validate(&mut self.proofs.term_dag, &left).ok_or_else(|| {
                     fail(format!("primitive {} failed validation", primitive.name()))
                 })?;
-                let rhs = validate(&mut self.proofs.raw.term_dag, &right).ok_or_else(|| {
+                let rhs = validate(&mut self.proofs.term_dag, &right).ok_or_else(|| {
                     fail(format!(
                         "primitive {} failed validation at leaders",
                         primitive.name()
@@ -646,7 +651,7 @@ impl GroundProofs<'_> {
                         }
                         RowKind::Output(column) => self.proofs.project(row.proof, column),
                         RowKind::Global => {
-                            let source = self.globals[global_name(self.terms, &children)?];
+                            let source = self.proofs.globals[global_name(self.terms, &children)?];
                             if row.proof.rhs == source {
                                 self.proofs.sym(row.proof)
                             } else if row.proof.lhs == source {
@@ -661,7 +666,7 @@ impl GroundProofs<'_> {
                         }
                     }
                 } else {
-                    let term = self.globals[global_name(self.terms, &children)?];
+                    let term = self.proofs.globals[global_name(self.terms, &children)?];
                     self.proofs.add(RawProof::Fiat(term, term), term, term)
                 };
                 GroundProof::Proof(proof)

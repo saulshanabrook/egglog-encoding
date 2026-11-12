@@ -11,6 +11,7 @@ mod exec_state;
 pub mod extract;
 pub mod prelude;
 mod process_program;
+pub mod proof_summary;
 mod proofs;
 
 pub mod scheduler;
@@ -126,6 +127,17 @@ pub trait Primitive: Send + Sync + 'static {
 
     /// Constructs a type constraint for this primitive.
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint>;
+
+    /// Optionally infer the single output of a fully known action application.
+    ///
+    /// Returning `Some` opts into forward typing: the result must be the unique
+    /// output implied by `get_type_constraints` for these actual arguments.
+    /// Signature acceptance still runs through the ordinary resolver. This
+    /// method and its constraint/signature callbacks must be pure: an attempted
+    /// block can decline later and revisit this application in the solver.
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        None
+    }
 }
 
 /// A primitive whose body sees a [`PureState`]. Register via
@@ -788,8 +800,9 @@ impl EGraph {
 
     /// Extract unsimplified proofs for translation by an extension.
     ///
-    /// The extension must verify its translated proof: the ordinary checker and
-    /// simplifier are skipped so the original rule premises remain available.
+    /// The ordinary checker and simplifier are skipped so the original rule
+    /// premises remain available. Extensions own translated proof validation;
+    /// production-only executions may defer it to a separate checked run.
     pub fn with_proofs_for_translation(mut self) -> Self {
         self = self.with_proofs_enabled();
         self.proof_state.verify_proofs = false;

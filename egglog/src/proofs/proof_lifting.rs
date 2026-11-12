@@ -1,6 +1,6 @@
 //! Temporary state for replaying recorded proofs into a source proof arena.
-//! Plans, partially replayed rule firings, and raw IDs are discarded when the
-//! requested roots have been lifted; the checker never consults them.
+//! Plans and partially replayed rule firings are temporary. A ground request may
+//! lend its raw-ID memo to successive lifters; the checker never consults it.
 
 use super::{
     proof_checker::{
@@ -9,7 +9,7 @@ use super::{
     proof_encoding_helpers::{EncodingNames, holds_sort, recomputable_premises},
     proof_format::{
         Justification, Proof, ProofId, ProofStore, Proposition, RawProof, RawProofId,
-        RawProofStore, RecordedProofs, SynthKey,
+        RawProofStore, RecordedProofs,
     },
     proof_head::{Firing, HeadPlan, HeadWalk, ProofAlgebra},
 };
@@ -20,7 +20,7 @@ use crate::{
         ResolvedRule,
     },
     typechecking::PrimitiveValidator,
-    util::{HashMap, HashSet, IEntry, IndexMap},
+    util::{HEntry, HashMap, HashSet, IEntry, IndexMap},
 };
 use egglog_numeric_id::DenseIdMap;
 use std::rc::Rc;
@@ -78,18 +78,8 @@ pub(crate) fn lift_proof(
 }
 
 impl RawProofStore {
-    /// Decode raw roots in the supplied order with the ordinary proof lifter.
+    /// Decode raw roots in the supplied order, optionally visiting source origins.
     /// Panics if a root or its proof is invalid for `program`.
-    pub(super) fn lift(
-        &self,
-        program: &[ResolvedNCommand],
-        roots: &[RawProofId],
-        normalizers: HashMap<String, PrimitiveValidator>,
-        value_heads: HashSet<String>,
-    ) -> (ProofStore, Vec<ProofId>) {
-        self.lift_with(program, roots, normalizers, value_heads, None)
-    }
-
     pub(super) fn lift_with(
         &self,
         program: &[ResolvedNCommand],
@@ -210,24 +200,142 @@ pub(in crate::proofs) fn global_bindings(
     program: &[ResolvedNCommand],
     dag: &mut TermDag,
 ) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let definitions: Vec<_> = program
-        .iter()
-        .filter(|command| {
-            matches!(
-                command,
-                ResolvedNCommand::CoreAction(crate::GenericAction::Let(..))
-            )
-        })
-        .cloned()
-        .collect();
-    crate::proofs::proof_checker::gather_globals(&definitions, dag)
+    let mut bindings = HashMap::default();
+    for command in program {
+        if let ResolvedNCommand::CoreAction(crate::GenericAction::Let(_, var, expr)) = command {
+            let (term, _) = eval_expr_with_subst("global_action", expr, dag, &bindings)?;
+            bindings.insert(var.name.clone(), term);
+        }
+    }
+    Ok(bindings)
+}
+
+/// Hash-consing state for one decoded proof arena, discarded after lifting.
+/// The maps travel together: firing IDs occur only in this synthesis memo.
+#[derive(Default)]
+pub(crate) struct Synthesis {
+    synthesized: HashMap<SynthKey, ProofId>,
+    rule_firings: HashMap<(String, Vec<ProofId>), RuleFiringId>,
+}
+
+/// A firing's identity within one lifting arena, like the proof IDs it contains.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RuleFiringId(usize);
+
+/// What a synthesized proof is, for sharing one node per distinct value.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) enum SynthKey {
+    /// A rule head's own conclusion: its interned firing and proof column.
+    Rule(RuleFiringId, i64),
+    Sym(ProofId),
+    Trans(ProofId, ProofId),
+    Congr(ProofId, usize, ProofId),
+    /// A positional projection from an existing proof.
+    Proj(ProofId, usize),
+    /// A premise the encoding stored no row for (see
+    /// [`crate::proofs::proof_encoding_helpers::recomputable_premises`]).
+    Fiat(TermId, TermId),
+}
+
+/// Pair one proof arena with its temporary construction memo. Recursive bridge
+/// lifting receives this same pair; neither memo nor compact IDs enter proofs.
+pub(crate) struct ProofBuilder<'a> {
+    pub(super) store: &'a mut ProofStore,
+    pub(super) synthesis: &'a mut Synthesis,
+}
+
+impl ProofBuilder<'_> {
+    /// Add a proof, sharing one node per distinct `key`. The e-graph
+    /// hash-conses its own proof rows, so proofs reconstructed during lifting
+    /// must be shared too — otherwise a subproof reached along several paths
+    /// becomes a fresh copy per path, and the proof unfolds into a tree.
+    pub(super) fn push_shared_proof(&mut self, key: SynthKey, proof: Proof) -> ProofId {
+        match self.synthesis.synthesized.entry(key) {
+            HEntry::Occupied(entry) => *entry.get(),
+            HEntry::Vacant(entry) => {
+                let id = self.store.id_to_proof.push(proof);
+                entry.insert(id);
+                id
+            }
+        }
+    }
+
+    /// Intern the old structural rule key once for all columns of a firing.
+    /// Names compare by string contents and premises by their order and IDs.
+    pub(super) fn rule_firing(&mut self, name: &str, premises: &[ProofId]) -> RuleFiringId {
+        let next = RuleFiringId(self.synthesis.rule_firings.len());
+        *self
+            .synthesis
+            .rule_firings
+            .entry((name.to_owned(), premises.to_vec()))
+            .or_insert(next)
+    }
+
+    /// Construct a positional projection, sharing it with every projection
+    /// from the same proof and child index.
+    pub(super) fn push_projection(&mut self, proof: ProofId, child_index: usize) -> ProofId {
+        let child = self
+            .store
+            .term_child(self.store.id_to_proof[proof].rhs(), child_index);
+        self.push_shared_proof(
+            SynthKey::Proj(proof, child_index),
+            Proof {
+                proposition: Proposition::new(child, child),
+                justification: Justification::Proj { proof, child_index },
+            },
+        )
+    }
+
+    /// The reflexive fiat a [`recomputable_premises`] fact's premise is, over the
+    /// base value the fact evaluates to under `substitution`. Shared, so the rows
+    /// of one firing name the same premise.
+    fn recomputed_premise(
+        &mut self,
+        rule_name: &str,
+        fact: &ResolvedFact,
+        substitution: &IndexMap<String, TermId>,
+    ) -> ProofId {
+        let bindings: HashMap<String, TermId> = substitution
+            .iter()
+            .map(|(var, term)| (var.clone(), *term))
+            .collect();
+        let eval = |store: &mut Self, expr: &ResolvedExpr| {
+            eval_expr_with_subst(rule_name, expr, &mut store.store.term_dag, &bindings)
+                .ok()
+                .map(|(term, _props)| term)
+        };
+        let (lhs, rhs) = match fact {
+            ResolvedFact::Fact(expr) => {
+                let term = eval(self, expr).unwrap_or_else(|| {
+                    panic!("rule {rule_name}: premise-free fact {fact} does not evaluate")
+                });
+                (term, term)
+            }
+            // Only one side need evaluate: the other is a variable this premise
+            // binds, so it states the same term.
+            ResolvedFact::Eq(_, lhs, rhs) => match (eval(self, lhs), eval(self, rhs)) {
+                (Some(lhs), Some(rhs)) => (lhs, rhs),
+                (Some(term), None) | (None, Some(term)) => (term, term),
+                (None, None) => {
+                    panic!("rule {rule_name}: premise-free fact {fact} has no evaluable side")
+                }
+            },
+        };
+        self.push_shared_proof(
+            SynthKey::Fiat(lhs, rhs),
+            Proof {
+                proposition: Proposition::new(lhs, rhs),
+                justification: Justification::Fiat,
+            },
+        )
+    }
 }
 
 pub(super) struct ProofLifter<'a> {
     program: &'a [ResolvedNCommand],
     globals: &'a HashMap<String, TermId>,
     raw: &'a RawProofStore,
-    proof_id: DenseIdMap<RawProofId, ProofId>,
+    proof_id: &'a mut DenseIdMap<RawProofId, ProofId>,
     rules: HashMap<&'a str, &'a ResolvedRule>,
     actions: Vec<&'a crate::ast::ResolvedAction>,
     head_plans: HashMap<String, Rc<HeadPlan>>,
@@ -241,6 +349,7 @@ impl<'a> ProofLifter<'a> {
         program: &'a [ResolvedNCommand],
         globals: &'a HashMap<String, TermId>,
         raw: &'a RawProofStore,
+        proof_id: &'a mut DenseIdMap<RawProofId, ProofId>,
     ) -> Self {
         let mut rules = HashMap::default();
         for command in program {
@@ -252,7 +361,7 @@ impl<'a> ProofLifter<'a> {
             program,
             globals,
             raw,
-            proof_id: DenseIdMap::new(),
+            proof_id,
             rules,
             actions: crate::proofs::proof_checker::gather_global_actions(program).collect(),
             head_plans: HashMap::default(),
@@ -295,7 +404,7 @@ impl<'a> ProofLifter<'a> {
     /// uses when it re-evaluates a body.
     fn run_body_primitive(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         rule: &str,
         body_index: usize,
         arg_terms: &[TermId],
@@ -322,7 +431,7 @@ impl<'a> ProofLifter<'a> {
                 )
             })
             .clone();
-        let element = validator(&mut store.term_dag, arg_terms).unwrap_or_else(|| {
+        let element = validator(&mut store.store.term_dag, arg_terms).unwrap_or_else(|| {
             panic!(
                 "validator for {} rejected the argument terms of body node {body_index} in rule {rule}",
                 prim.name()
@@ -339,7 +448,7 @@ impl<'a> ProofLifter<'a> {
     /// global bindings, since an operand may name a global.
     fn union_endpoints(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         at: usize,
         swapped: bool,
     ) -> (TermId, TermId) {
@@ -359,7 +468,7 @@ impl<'a> ProofLifter<'a> {
     /// A reflexive fiat names that position instead of the term, so the term is
     /// recovered by evaluating the node — under the global bindings, since it
     /// may name a global.
-    fn action_term(&mut self, store: &mut ProofStore, at: usize, node: usize) -> TermId {
+    fn action_term(&mut self, store: &mut ProofBuilder<'_>, at: usize, node: usize) -> TermId {
         let plan = self.action_plan(at);
         use crate::proofs::proof_encoding_helpers::{ActionNode, action_nodes};
         let nodes: Vec<ActionNode<'_>> = plan.actions.iter().flat_map(action_nodes).collect();
@@ -373,7 +482,7 @@ impl<'a> ProofLifter<'a> {
                     .map(|arg| self.eval_global(store, at, arg))
                     .collect();
                 children.push(self.eval_global(store, at, value));
-                store.term_dag.app(head.name().to_string(), children)
+                store.store.term_dag.app(head.name().to_string(), children)
             }
             Some(ActionNode::Row(other)) => panic!("{other} writes no row"),
             None => panic!(
@@ -387,14 +496,14 @@ impl<'a> ProofLifter<'a> {
     /// bindings — an expression a fiat names may itself name a global.
     fn eval_global(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         at: usize,
         expr: &crate::ast::ResolvedExpr,
     ) -> TermId {
         crate::proofs::proof_checker::eval_expr_with_subst(
             "global_action",
             expr,
-            &mut store.term_dag,
+            &mut store.store.term_dag,
             self.globals,
         )
         .unwrap_or_else(|err| panic!("could not evaluate global action {at}: {err}"))
@@ -410,8 +519,12 @@ impl<'a> ProofLifter<'a> {
     /// view row's proof into a congruence proof `f(orig) = f(canon)`, and
     /// reflexivizing to its RHS lands both premises on the same canonical view row
     /// so the checker's input-match succeeds.
-    fn reflexivize_premise(&mut self, store: &mut ProofStore, premise_id: ProofId) -> ProofId {
-        let prop = &store.id_to_proof[premise_id].proposition;
+    fn reflexivize_premise(
+        &mut self,
+        store: &mut ProofBuilder<'_>,
+        premise_id: ProofId,
+    ) -> ProofId {
+        let prop = &store.store.id_to_proof[premise_id].proposition;
         if prop.lhs == prop.rhs {
             return premise_id;
         }
@@ -426,13 +539,16 @@ impl<'a> ProofLifter<'a> {
     /// and the two output values from the premises' rhs (read before reflexivizing).
     fn merge_premise_view(
         &self,
-        store: &ProofStore,
+        store: &ProofBuilder<'_>,
         old_proof_id: ProofId,
         new_proof_id: ProofId,
     ) -> (String, Vec<TermId>, TermId, TermId) {
-        let old_view = store.id_to_proof[old_proof_id].rhs();
-        let new_view = store.id_to_proof[new_proof_id].rhs();
-        match (store.term_dag.get(old_view), store.term_dag.get(new_view)) {
+        let old_view = store.store.id_to_proof[old_proof_id].rhs();
+        let new_view = store.store.id_to_proof[new_proof_id].rhs();
+        match (
+            store.store.term_dag.get(old_view),
+            store.store.term_dag.get(new_view),
+        ) {
             (Term::App(old_head, old_args), Term::App(_new_head, new_args)) => {
                 let head = old_head.clone();
                 let old_output = *old_args.last().expect("merge view term has no args");
@@ -442,8 +558,8 @@ impl<'a> ProofLifter<'a> {
             }
             _ => panic!(
                 "MergeFn premise proofs should prove function application terms, got {:?} and {:?}",
-                store.term_dag.get(old_view),
-                store.term_dag.get(new_view)
+                store.store.term_dag.get(old_view),
+                store.store.term_dag.get(new_view)
             ),
         }
     }
@@ -452,7 +568,7 @@ impl<'a> ProofLifter<'a> {
     /// reflexivizing each ([`Self::reflexivize_premise`]).
     fn merge_fn_proof(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         function: &str,
         old_proof_id: ProofId,
         new_proof_id: ProofId,
@@ -473,7 +589,11 @@ impl<'a> ProofLifter<'a> {
     /// Lift a recorded proof to source statements with instantiated rule premises.
     ///
     /// Panics if the raw proof is invalid with respect to the program.
-    pub(super) fn proof(&mut self, store: &mut ProofStore, raw_proof_id: RawProofId) -> ProofId {
+    pub(super) fn proof(
+        &mut self,
+        store: &mut ProofBuilder<'_>,
+        raw_proof_id: RawProofId,
+    ) -> ProofId {
         let raw_store = self.raw;
         let prog = self.program;
         let globals = self.globals;
@@ -545,7 +665,7 @@ impl<'a> ProofLifter<'a> {
                     bindings,
                     lifted_premises,
                     recorded,
-                    Box::new(|store: &mut ProofStore, _to_canonical| {
+                    Box::new(|store: &mut ProofBuilder<'_>, _to_canonical| {
                         let raw = *bridge_proofs.get(next)?;
                         next += 1;
                         Some(self.proof(store, raw))
@@ -575,7 +695,7 @@ impl<'a> ProofLifter<'a> {
                 let (_head, _inputs, old_output, new_output) =
                     self.merge_premise_view(store, old_proof_id, new_proof_id);
                 let (to_prove, _props) = run_merge_subexpr(
-                    &mut store.term_dag,
+                    &mut store.store.term_dag,
                     function,
                     prog,
                     globals,
@@ -596,7 +716,7 @@ impl<'a> ProofLifter<'a> {
                 let (view_head, input_args, old_output, new_output) =
                     self.merge_premise_view(store, old_proof_id, new_proof_id);
                 let (merged_child, _props) = run_merge(
-                    &mut store.term_dag,
+                    &mut store.store.term_dag,
                     function,
                     prog,
                     globals,
@@ -606,14 +726,14 @@ impl<'a> ProofLifter<'a> {
                 .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
                 let mut merged_args = input_args;
                 merged_args.push(merged_child);
-                let to_prove = store.term_dag.app(view_head, merged_args);
+                let to_prove = store.store.term_dag.app(view_head, merged_args);
                 self.merge_fn_proof(store, function, old_proof_id, new_proof_id, to_prove)
             }
             RawProof::Trans(left_raw, right_raw) => {
                 let left_id = self.proof(store, *left_raw);
                 let right_id = self.proof(store, *right_raw);
-                let left = &store.id_to_proof[left_id];
-                let right = &store.id_to_proof[right_id];
+                let left = &store.store.id_to_proof[left_id];
+                let right = &store.store.id_to_proof[right_id];
                 assert_eq!(
                     left.rhs(),
                     right.lhs(),
@@ -626,7 +746,7 @@ impl<'a> ProofLifter<'a> {
             }
             RawProof::Sym(inner_raw) => {
                 let inner_id = self.proof(store, *inner_raw);
-                let inner = &store.id_to_proof[inner_id];
+                let inner = &store.store.id_to_proof[inner_id];
                 Proof {
                     proposition: Proposition::new(inner.rhs(), inner.lhs()),
                     justification: Justification::Sym(inner_id),
@@ -635,11 +755,15 @@ impl<'a> ProofLifter<'a> {
             RawProof::Congr(proof_raw, child_index, child_raw) => {
                 let base_id = self.proof(store, *proof_raw);
                 let child_id = self.proof(store, *child_raw);
-                let base_lhs = store.id_to_proof[base_id].lhs();
-                let base_rhs = store.id_to_proof[base_id].rhs();
-                let child_rhs = store.id_to_proof[child_id].rhs();
-                store.assert_congr_starts_at_child(base_rhs, *child_index, child_id);
-                let rhs = store.replace_term_child(base_rhs, *child_index, child_rhs);
+                let base_lhs = store.store.id_to_proof[base_id].lhs();
+                let base_rhs = store.store.id_to_proof[base_id].rhs();
+                let child_rhs = store.store.id_to_proof[child_id].rhs();
+                store
+                    .store
+                    .assert_congr_starts_at_child(base_rhs, *child_index, child_id);
+                let rhs = store
+                    .store
+                    .replace_term_child(base_rhs, *child_index, child_rhs);
 
                 Proof {
                     proposition: Proposition::new(base_lhs, rhs),
@@ -661,7 +785,7 @@ impl<'a> ProofLifter<'a> {
                     arg_raws.iter().map(|arg| self.proof(store, *arg)).collect();
                 let arg_terms: Vec<TermId> = arg_ids
                     .iter()
-                    .map(|id| store.id_to_proof[*id].rhs())
+                    .map(|id| store.store.id_to_proof[*id].rhs())
                     .collect();
                 // The resolved call, not just the primitive's name: egglog
                 // overloads names across sorts, and only the resolved call fixes
@@ -674,12 +798,13 @@ impl<'a> ProofLifter<'a> {
                 let container_id = arg_ids[container_index];
                 let container_term = arg_terms[container_index];
                 let path = store
+                    .store
                     .projection_path_to_descendant(container_term, element)
                     .unwrap_or_else(|| {
                         panic!(
                             "primitive projection: body node {body_index} of rule {rule} read \
                              {} out of no descendant of container argument {container_index}",
-                            store.term_dag.to_string(element)
+                            store.store.term_dag.to_string(element)
                         )
                     });
                 let mut projected = container_id;
@@ -692,15 +817,15 @@ impl<'a> ProofLifter<'a> {
             RawProof::CongrAll(proof_raw, child_raw) => {
                 let base_id = self.proof(store, *proof_raw);
                 let child_id = self.proof(store, *child_raw);
-                let expanded_id = store.expand_congr_all(base_id, child_id);
+                let expanded_id = store.store.expand_congr_all(base_id, child_id);
                 self.proof_id.insert(raw_proof_id, expanded_id);
                 return expanded_id;
             }
             RawProof::ContainerNormalize(inner_raw) => {
                 let inner_id = self.proof(store, *inner_raw);
-                let inner_lhs = store.id_to_proof[inner_id].lhs();
-                let inner_rhs = store.id_to_proof[inner_id].rhs();
-                let normalized = store.normalize_container(inner_rhs);
+                let inner_lhs = store.store.id_to_proof[inner_id].lhs();
+                let inner_rhs = store.store.id_to_proof[inner_id].rhs();
+                let normalized = store.store.normalize_container(inner_rhs);
                 Proof {
                     proposition: Proposition::new(inner_lhs, normalized),
                     justification: Justification::ContainerNormalize { proof: inner_id },
@@ -710,7 +835,10 @@ impl<'a> ProofLifter<'a> {
                 // The marker proves nothing on its own; `check_side_condition`
                 // re-evaluates the side condition against the rule body. Give it
                 // a placeholder proposition (the `Proof` struct requires one).
-                let placeholder = store.term_dag.app("@side-condition".to_string(), vec![]);
+                let placeholder = store
+                    .store
+                    .term_dag
+                    .app("@side-condition".to_string(), vec![]);
                 Proof {
                     proposition: Proposition::new(placeholder, placeholder),
                     justification: Justification::Eval,
@@ -718,12 +846,12 @@ impl<'a> ProofLifter<'a> {
             }
         };
 
-        let proof_id = store.id_to_proof.push(proof);
+        let proof_id = store.store.id_to_proof.push(proof);
         self.proof_id.insert(raw_proof_id, proof_id);
         proof_id
     }
 
-    pub(super) fn visit_origins(&self, store: &ProofStore, visit: &mut ProofVisitor<'_>) {
+    pub(super) fn visit_origins(&self, store: &ProofBuilder<'_>, visit: &mut ProofVisitor<'_>) {
         let mut globals: Vec<_> = self
             .raw
             .proofs()
@@ -763,7 +891,7 @@ impl<'a> ProofLifter<'a> {
                                     path[0] = operand;
                                 }
                                 visit(
-                                    store,
+                                    store.store,
                                     *proof,
                                     ProofOrigin::GlobalTerm {
                                         program: self.program,
@@ -781,7 +909,7 @@ impl<'a> ProofLifter<'a> {
             for &(_, node, swapped, proof) in action {
                 if node.is_none() {
                     visit(
-                        store,
+                        store.store,
                         proof,
                         ProofOrigin::GlobalUnion {
                             program: self.program,
@@ -796,8 +924,12 @@ impl<'a> ProofLifter<'a> {
         // A recursive bridge may have completed a different continuation of a
         // firing. The synthesis memo retains every own conclusion, including
         // columns absent from the single continuation kept for further replay.
-        for (key, &proof) in &store.synthesized {
-            if let SynthKey::Rule(name, column, _) = key {
+        for (key, &proof) in &store.synthesis.synthesized {
+            if let SynthKey::Rule(_, column) = key {
+                let Justification::Rule { name, .. } = store.store.get(proof).justification()
+                else {
+                    unreachable!("an own rule conclusion has a rule justification");
+                };
                 conclusions.push((proof, self.rule_named(name), *column as usize));
             }
         }
@@ -806,7 +938,7 @@ impl<'a> ProofLifter<'a> {
         for (proof, rule, column) in conclusions {
             let (action, path) = self.head_plans[&rule.name].source_position(column, &rule.head.0);
             visit(
-                store,
+                store.store,
                 proof,
                 ProofOrigin::Rule {
                     program: self.program,
@@ -853,7 +985,7 @@ impl<'a> ProofLifter<'a> {
     /// unread.
     fn rule_premises(
         &mut self,
-        store: &mut ProofStore,
+        store: &mut ProofBuilder<'_>,
         name: &str,
         rule: &ResolvedRule,
         premise_proofs: &[RawProofId],
@@ -892,7 +1024,7 @@ impl<'a> ProofLifter<'a> {
             // their bindings are generated by `check_side_condition` at check
             // time, so there is nothing to unify here.
             if !crate::proofs::proof_checker::is_container_side_condition(fact) {
-                store.unify_fact(fact, premise, &mut substitution);
+                store.store.unify_fact(fact, premise, &mut substitution);
             }
             lifted.push(premise);
         }
@@ -918,59 +1050,21 @@ impl ProofStore {
         let globals = global_bindings(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
 
-        let mut lifting = ProofLifter::new(prog, &globals, raw_store);
+        let mut synthesis = Synthesis::default();
+        let mut builder = ProofBuilder {
+            store: &mut store,
+            synthesis: &mut synthesis,
+        };
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(prog, &globals, raw_store, &mut proof_ids);
         let roots = raw_proof_ids
             .iter()
-            .map(|&root| lifting.proof(&mut store, root))
+            .map(|&root| lifting.proof(&mut builder, root))
             .collect();
         if let Some(visit) = visit {
-            lifting.visit_origins(&store, visit);
+            lifting.visit_origins(&builder, visit);
         }
         (store, roots)
-    }
-
-    /// The reflexive fiat a [`recomputable_premises`] fact's premise is, over the
-    /// base value the fact evaluates to under `substitution`. Shared, so the rows
-    /// of one firing name the same premise.
-    fn recomputed_premise(
-        &mut self,
-        rule_name: &str,
-        fact: &ResolvedFact,
-        substitution: &IndexMap<String, TermId>,
-    ) -> ProofId {
-        let bindings: HashMap<String, TermId> = substitution
-            .iter()
-            .map(|(var, term)| (var.clone(), *term))
-            .collect();
-        let eval = |store: &mut Self, expr: &ResolvedExpr| {
-            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings)
-                .ok()
-                .map(|(term, _props)| term)
-        };
-        let (lhs, rhs) = match fact {
-            ResolvedFact::Fact(expr) => {
-                let term = eval(self, expr).unwrap_or_else(|| {
-                    panic!("rule {rule_name}: premise-free fact {fact} does not evaluate")
-                });
-                (term, term)
-            }
-            // Only one side need evaluate: the other is a variable this premise
-            // binds, so it states the same term.
-            ResolvedFact::Eq(_, lhs, rhs) => match (eval(self, lhs), eval(self, rhs)) {
-                (Some(lhs), Some(rhs)) => (lhs, rhs),
-                (Some(term), None) | (None, Some(term)) => (term, term),
-                (None, None) => {
-                    panic!("rule {rule_name}: premise-free fact {fact} has no evaluable side")
-                }
-            },
-        };
-        self.push_shared_proof(
-            SynthKey::Fiat(lhs, rhs),
-            Proof {
-                proposition: Proposition::new(lhs, rhs),
-                justification: Justification::Fiat,
-            },
-        )
     }
 
     /// Bind the fact's variables from the term its premise proof proves. A
@@ -1264,5 +1358,63 @@ impl ProofStore {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod synthesis_tests {
+    use super::*;
+    use crate::util::IndexSet;
+    use egglog_numeric_id::NumericId;
+
+    #[test]
+    fn rule_firing_keys_preserve_structural_sharing() {
+        let mut proofs =
+            ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+        let mut synthesis = Synthesis::default();
+        let mut store = ProofBuilder {
+            store: &mut proofs,
+            synthesis: &mut synthesis,
+        };
+        let term = store.store.term_dag.app("A".into(), vec![]);
+        let premise = Proof {
+            proposition: Proposition::new(term, term),
+            justification: Justification::Fiat,
+        };
+        let left = store.store.id_to_proof.push(premise.clone());
+        let right = store.store.id_to_proof.push(premise);
+        let cases = [
+            ("rule".to_owned(), 0, vec![left, right]),
+            // Equal contents from distinct allocations must still share.
+            (["ru", "le"].concat(), 0, vec![left, right]),
+            ("rule".to_owned(), 1, vec![left, right]),
+            ("rule".to_owned(), 0, vec![right, left]),
+            ("other".to_owned(), 0, vec![left, right]),
+            ("rule".to_owned(), 0, vec![left]),
+            ("rule".to_owned(), 0, vec![left, left]),
+            ("rule".to_owned(), 0, vec![]),
+        ];
+        let mut old_keys = IndexSet::default();
+        for (name, column, premises) in &cases {
+            let (old_index, _) = old_keys.insert_full((name.clone(), *column, premises.clone()));
+            let firing = store.rule_firing(name, premises);
+            let id = store.push_shared_proof(
+                SynthKey::Rule(firing, *column),
+                Proof {
+                    proposition: Proposition::new(term, term),
+                    justification: Justification::Rule {
+                        name: name.clone(),
+                        premise_proofs: premises.clone(),
+                        substitution: IndexMap::default(),
+                    },
+                },
+            );
+            assert_eq!(id.index(), old_index + 2);
+        }
+
+        assert_eq!(store.store.id_to_proof.n_ids(), old_keys.len() + 2);
+        let cloned = store.store.clone();
+        assert_eq!(cloned.id_to_proof, store.store.id_to_proof);
+        assert_eq!(cloned.term_dag, store.store.term_dag);
     }
 }

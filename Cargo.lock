@@ -2013,6 +2013,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slotted-reference-proofs"
+version = "0.1.0"
+dependencies = [
+ "benchmark-memory",
+ "serde_json",
+ "slotted-reference",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

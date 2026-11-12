@@ -112,7 +112,16 @@
     ],
     "observations_per_treatment": 10
   },
-  "source_changes": "None: all four local drivers and the complete native corpus are byte-identical to the public artifact. The existing deterministic Egglog translation is unchanged.",
+  "source_changes": "All four local author drivers and the complete native corpus remain byte-identical to the public artifact. The existing deterministic Egglog translation is unchanged. The separate nee_proofs.rs driver adds the proof-producing reference described below.",
+  "additional_proof_reference": {
+    "label": "NEE + Egg explanations",
+    "local_path": "benchmarks/disequality/native/nee_proofs.rs",
+    "base_driver": "parameter-analysis/nee-no-saturation/main.rs",
+    "egg_version": "0.9.5",
+    "contract": "Encoding-level contradiction certificate: an asserted input disequality u != v and an Egg equality explanation u = v, justified by the exact input equality axioms.",
+    "changes": "Enable explanations, name ground input equality axioms, materialize an equality certificate, and optionally validate the witness, endpoints, and every proof reason. Preserve the original input reading, assertion order, initial numeral constraints, rebuild, and contradiction query.",
+    "published_proof_driver": false
+  },
   "declared_archive_md5": "eb618583cb9495ebc59108a77af13c16",
   "full_archive_checksum_verified": false,
   "de_dependency": {

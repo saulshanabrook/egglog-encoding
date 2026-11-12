@@ -10,6 +10,7 @@ mod tests {
     use crate::proofs::proof_extraction::ProveExistsError;
     use crate::proofs::proof_format::{ProofId, ProofStore, Proposition};
     use crate::proofs::proof_head::{Firing, HeadPlan, HeadProof, ProofAlgebra};
+    use crate::proofs::proof_lifting::{ProofBuilder, Synthesis};
     use crate::util::{HashMap, HashSet, IndexMap, SymbolGen};
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
@@ -149,6 +150,67 @@ mod tests {
         store
             .check_proof(roots[0], &graph.proof_check_program)
             .unwrap();
+    }
+
+    #[test]
+    fn rule_origins_keep_distinct_firings_across_shared_roots() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (Num i64) (F E) (G E))
+                 (Num 1) (Num 2)
+                 (rule ((= x (Num n))) ((let child (F x)) (G child)) :name \"build\")
+                 (run 1)",
+            )
+            .unwrap();
+        let mut terms = TermDag::default();
+        let roots = [1, 2, 1].map(|n| {
+            let n = terms.lit(Literal::Int(n));
+            let num = terms.app("Num".into(), vec![n]);
+            let f = terms.app("F".into(), vec![num]);
+            let g = terms.app("G".into(), vec![f]);
+            (g, graph.get_sort_by_name("E").unwrap().clone())
+        });
+        let recorded = graph.record_existing_terms(&terms, &roots).unwrap();
+        let mut origins = HashMap::default();
+        let (mut store, roots) = recorded.lift_with_visitor(&graph, &mut |store, id, origin| {
+            let crate::proof::ProofOrigin::Rule {
+                rule, action, path, ..
+            } = origin
+            else {
+                return;
+            };
+            if rule.name == "build" {
+                assert!(
+                    origins
+                        .insert(
+                            id,
+                            (
+                                action,
+                                path.to_vec(),
+                                store.term_dag().to_string(store.get(id).lhs()),
+                            )
+                        )
+                        .is_none()
+                );
+            }
+        });
+        assert_eq!(roots[0], roots[2]);
+        assert_ne!(roots[0], roots[1]);
+        for n in [1, 2] {
+            assert!(origins.values().any(|(action, path, term)| *action == 0
+                && path == &[0]
+                && term == &format!("(F (Num {n}))")));
+            assert!(origins.values().any(|(action, path, term)| *action == 1
+                && path == &[0]
+                && term == &format!("(G (F (Num {n})))")));
+        }
+        for root in roots {
+            store
+                .check_proof(root, recorded.checking_program(&graph))
+                .unwrap();
+        }
     }
 
     #[test]
@@ -522,6 +584,84 @@ mod tests {
     }
 
     #[test]
+    fn expression_reflexive_propositions_cover_shared_and_normalized_subterms() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype N (Z) (S N) (Pair N N)) (sort V (Vec N)) (sort SN (Set N))",
+            )
+            .unwrap();
+        for (source, sort) in [
+            ("x", "N"),
+            ("(Pair x (Pair x x))", "N"),
+            ("(vec-get (vec-of x x) 0)", "N"),
+            ("(set-insert (set-of x x) (Z))", "SN"),
+            ("(vec-get (vec-of x) 3)", "N"),
+        ] {
+            let expr = egraph.parser.get_expr_from_string(None, source).unwrap();
+            let n = egraph.get_sort_by_name("N").unwrap().clone();
+            let output = egraph.get_sort_by_name(sort).unwrap().clone();
+            let expr = egraph
+                .typecheck_expr_with_bindings_and_output(
+                    &expr,
+                    &[("x".into(), crate::Span::Panic, n)],
+                    output,
+                    crate::Context::Read,
+                )
+                .unwrap();
+            let mut dag = TermDag::default();
+            dag.app("unrelated".into(), vec![]);
+            let z = dag.app("Z".into(), vec![]);
+            let mut x = z;
+            let mut expected = vec![z];
+            for _ in 0..4 {
+                x = dag.app("S".into(), vec![x]);
+                expected.push(x);
+            }
+            let bindings = [("x".into(), x)].into_iter().collect();
+            let result = eval_expr_with_subst("subterm-closure", &expr, &mut dag, &bindings);
+            if source == "(vec-get (vec-of x) 3)" {
+                assert!(result.is_err());
+                continue;
+            }
+            let (term, propositions) = result.unwrap();
+            let root = match source {
+                "x" => x,
+                "(Pair x (Pair x x))" => {
+                    let inner = dag.app("Pair".into(), vec![x, x]);
+                    let outer = dag.app("Pair".into(), vec![x, inner]);
+                    expected.extend([inner, outer]);
+                    outer
+                }
+                "(vec-get (vec-of x x) 0)" => {
+                    expected.extend([
+                        dag.app("vec-of".into(), vec![x, x]),
+                        dag.lit(Literal::Int(0)),
+                    ]);
+                    x
+                }
+                "(set-insert (set-of x x) (Z))" => {
+                    let input = dag.app("set-of".into(), vec![x]);
+                    let output = dag.app("set-of".into(), vec![x, z]);
+                    expected.extend([input, output]);
+                    output
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(term, root, "{source}");
+            assert_eq!(
+                propositions,
+                expected
+                    .into_iter()
+                    .map(|term| Proposition::new(term, term))
+                    .collect(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn primitive_globals_work_in_actions_queries_and_rule_heads() {
         let source = r#"
             (datatype Math (Num i64))
@@ -693,8 +833,93 @@ mod tests {
     /// A bridge supply for a firing where every term the head builds is new, so
     /// each one interns into itself. It never runs dry, so a walk drawing on it
     /// reaches the end of the head.
-    fn interns_into_itself(store: &mut ProofStore, to_canonical: ProofId) -> Option<ProofId> {
+    fn interns_into_itself(store: &mut ProofBuilder<'_>, to_canonical: ProofId) -> Option<ProofId> {
         Some(store.reflexive(to_canonical))
+    }
+
+    #[test]
+    fn rule_head_continuations_keep_shared_columns_and_proof_ids() {
+        let mut graph = EGraph::new_with_proofs();
+        graph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A) (F E) (G E))
+                 (rule ((= x (A))) ((let first (F x)) (let second (G first))) :name \"build\")",
+            )
+            .unwrap();
+        let rule = graph
+            .proof_check_program
+            .iter()
+            .find_map(|command| match command {
+                GenericNCommand::NormRule { rule } if rule.name == "build" => Some(rule),
+                _ => None,
+            })
+            .unwrap();
+        let mut next = 0;
+        let plan = HeadPlan::new(&rule.head.0, &mut || {
+            next += 1;
+            format!("@test{next}")
+        });
+        let mut dag = TermDag::default();
+        let inputs = head_input_bindings(&rule.head.0, &mut dag);
+        let mut whole = ProofStore::new(dag.clone(), HashMap::default(), HashSet::default());
+        let mut whole_synthesis = Synthesis::default();
+        let mut uninterrupted = Firing::new(
+            &rule.name,
+            &plan,
+            inputs.clone(),
+            vec![],
+            IndexMap::default(),
+            Box::new(interns_into_itself),
+        );
+        let expected = uninterrupted
+            .proofs(&mut ProofBuilder {
+                store: &mut whole,
+                synthesis: &mut whole_synthesis,
+            })
+            .to_vec();
+
+        let mut resumed = ProofStore::new(dag, HashMap::default(), HashSet::default());
+        let mut resumed_synthesis = Synthesis::default();
+        let mut remaining = 1;
+        let mut partial = Firing::new(
+            &rule.name,
+            &plan,
+            inputs,
+            vec![],
+            IndexMap::default(),
+            Box::new(move |store, proof| {
+                if remaining == 0 {
+                    return None;
+                }
+                remaining -= 1;
+                interns_into_itself(store, proof)
+            }),
+        );
+        partial.proofs(&mut ProofBuilder {
+            store: &mut resumed,
+            synthesis: &mut resumed_synthesis,
+        });
+        let walk = partial.into_walk();
+        assert!(walk.reaches() > 0);
+        let mut continuation = Firing::new(
+            &rule.name,
+            &plan,
+            HashMap::default(),
+            vec![],
+            IndexMap::default(),
+            Box::new(interns_into_itself),
+        );
+        continuation.carry_on(walk);
+        assert_eq!(
+            continuation.proofs(&mut ProofBuilder {
+                store: &mut resumed,
+                synthesis: &mut resumed_synthesis
+            }),
+            expected
+        );
+        assert_eq!(resumed.id_to_proof, whole.id_to_proof);
+        assert_eq!(resumed.term_dag, whole.term_dag);
     }
 
     /// Stand a distinct constant in for every variable a rule head reads but
@@ -810,6 +1035,7 @@ mod tests {
             };
             let plan = HeadPlan::new(actions, &mut fresh);
             let mut store = ProofStore::new(term_dag, HashMap::default(), HashSet::default());
+            let mut store_synthesis = Synthesis::default();
             let expected = head_conclusions(&rule.name, actions, inputs.clone(), &mut store);
             // No premises, and every term the head builds interns into itself, so
             // each column states the head's conclusion there rather than one about
@@ -823,7 +1049,10 @@ mod tests {
                 Box::new(interns_into_itself),
             );
             let columns: Vec<_> = firing
-                .proofs(&mut store)
+                .proofs(&mut ProofBuilder {
+                    store: &mut store,
+                    synthesis: &mut store_synthesis,
+                })
                 .iter()
                 .flatten()
                 .copied()
@@ -958,6 +1187,7 @@ mod tests {
             let plan = HeadPlan::new(actions, &mut fresh);
             let layout = &plan.layout;
             let mut store = ProofStore::new(term_dag, HashMap::default(), HashSet::default());
+            let mut store_synthesis = Synthesis::default();
             let mut firing = Firing::new(
                 &walked.name,
                 &plan,
@@ -967,7 +1197,10 @@ mod tests {
                 Box::new(interns_into_itself),
             );
             let filled: Vec<bool> = firing
-                .proofs(&mut store)
+                .proofs(&mut ProofBuilder {
+                    store: &mut store,
+                    synthesis: &mut store_synthesis,
+                })
                 .iter()
                 .map(Option::is_some)
                 .collect();

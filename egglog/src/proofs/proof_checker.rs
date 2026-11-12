@@ -243,51 +243,23 @@ pub(crate) fn eval_expr_with_subst(
 /// Add reflexive equalities for all subterms of a term.
 /// For example, if we have proved `(f (g 1)) = (f (g 1))`, then we have also proved
 // that `(g 1) = (g 1)` and `1 = 1`.
+/// Existing reflexive propositions must already include all their subterms,
+/// as the complete child closures from `eval_expr_with_subst` do.
 fn add_subterm_reflexive_equalities(
     term_id: TermId,
     term_dag: &TermDag,
     propositions: &mut HashSet<Proposition>,
 ) {
-    add_subterm_reflexive_equalities_helper(
-        term_id,
-        term_dag,
-        propositions,
-        &mut Default::default(),
-    );
-}
-
-fn add_subterm_reflexive_equalities_helper(
-    term_id: TermId,
-    term_dag: &TermDag,
-    propositions: &mut HashSet<Proposition>,
-    seen: &mut HashSet<TermId>,
-) {
-    if !seen.insert(term_id) {
+    if !propositions.insert(Proposition::new(term_id, term_id)) {
         return;
     }
-
-    // Add reflexive equality for this term
-    propositions.insert(Proposition::new(term_id, term_id));
 
     // Recursively add for all children
     if let Term::App(_, children) = term_dag.get(term_id) {
         for &child_id in children {
-            add_subterm_reflexive_equalities_helper(child_id, term_dag, propositions, seen);
+            add_subterm_reflexive_equalities(child_id, term_dag, propositions);
         }
     }
-}
-
-/// Gathers all global variables from a program and computes their values as terms
-/// without using globals (i.e., all global references are replaced with their definitions).
-///
-/// This expects the program to be in proof normalized form where globals appear as Let actions.
-pub(crate) fn gather_globals(
-    prog: &[ResolvedNCommand],
-    term_dag: &mut TermDag,
-) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let actions: Vec<_> = gather_global_actions(prog).collect();
-    let ctx = process_actions("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
 }
 
 /// Errors that can occur during proof checking.

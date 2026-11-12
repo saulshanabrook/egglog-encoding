@@ -809,6 +809,20 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     ]
 
 
+def test_multiworker_preflight_requires_worker_interface_without_phase_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    required = []
+
+    def preflight(*args: Any) -> processes.TimingResult:
+        required.append(args[3])
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
+
+    monkeypatch.setattr(collection, "run_preflight", preflight)
+    run = replace(planned_run(required=1), threads=4, requested_threads=4)
+    collection.preflight_collection(collection.CollectionPlan(target, (run,)), 120)
+    assert required == [("--threads", "--memory-limit-bytes")]
+
+
 def test_preflight_checks_each_required_engine_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     egglog_binary = ROOT / "egglog-experimental"
     egg_binary = ROOT / "egg-math-benchmark"
