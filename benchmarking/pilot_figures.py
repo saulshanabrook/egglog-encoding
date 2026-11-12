@@ -147,6 +147,8 @@ def load_experiments(path: Path) -> tuple[dict[str, Any], dict[str, FileSpec]]:
                                             name
                                             for name, original in aliases.items()
                                             if original in rule.treatments
+                                            # Checked replay limits do not bound production-only performance.
+                                            and not (name == "proof-extraction" and rule.kind == "resource")
                                             and not any(name in explicit.treatments for explicit in file.exclusions)
                                         ),
                                     )
@@ -816,7 +818,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             binaries = tuple(
                 BuiltBinary(binary, pointer.binary_sha256, None)
                 for binary, pointer in pointers
-                if pointer is not None and pointer.row == row
+                # Unchanged native executables retain their own source-row provenance.
+                if pointer is not None
             )
             target = ResolvedTarget(
                 target_request,

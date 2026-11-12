@@ -433,6 +433,62 @@ def test_program_size_scope_never_collects_or_builds_runtime_endpoints(
     assert snapshots == [{"status": "complete", "inputs": [], "records": []}]
 
 
+def test_cache_only_export_keeps_native_binary_from_an_independent_source_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "report.jsonl"
+    store = ReportStore(report)
+    for index, (mode, binary, revision, dirty) in enumerate(
+        (
+            ("slotted-ref-nested", "native", "native-source", False),
+            ("off", "core-old", "old-source", False),
+            ("off", "core-new", "new-source", True),
+        )
+    ):
+        row = make_record(
+            index,
+            started_at=f"2026-11-11T00:00:0{index}Z",
+            treatment=cast(Treatment, mode),
+            binary_sha256=f"sha256:{binary}",
+            target_label="claims-eval-pilot",
+        )
+        row["target_git_sha"] = revision
+        row["target_is_dirty"] = dirty
+        store.append(row)
+    before = report.read_bytes()
+    file = models.FileSpec("case.egg", tmp_path / "case.egg", "sha256:case")
+    monkeypatch.setattr(
+        pilot_figures,
+        "load_experiments",
+        lambda _path: ({"experiments": [{"id": "slotted", "files": ["case.egg"]}]}, {"case.egg": file}),
+    )
+    monkeypatch.setattr(pilot_figures, "program_size_snapshot", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(pilot_figures, "translation_program_size_snapshot", lambda *_args, **_kwargs: {})
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("cache-only export attempted to build, measure, or validate")
+
+    monkeypatch.setattr(pilot_figures, "resolve_requests", forbidden)
+    monkeypatch.setattr(pilot_figures, "collect", forbidden)
+    monkeypatch.setattr(pilot_figures, "validate_proof_requests", forbidden)
+    targets = []
+
+    def snapshot(
+        _config: Any, _files: Any, _store: Any, target: models.ResolvedTarget, **_kwargs: Any
+    ) -> dict[str, Any]:
+        targets.append(target)
+        return snapshot_fixture()
+
+    monkeypatch.setattr(pilot_figures, "make_snapshot", snapshot)
+    monkeypatch.setattr(pilot_figures, "export_pilot", lambda *_args: ())
+    assert pilot_figures.main(["program-size", "--no-runs", "--report", str(report)]) == 0
+    assert len(targets) == 1
+    assert targets[0].row.git_sha == "new-source"
+    assert targets[0].binary_sha256_for("off") == "sha256:core-new"
+    assert targets[0].binary_sha256_for("slotted-ref-nested") == "sha256:native"
+    assert report.read_bytes() == before
+
+
 def test_late_export_failure_preserves_all_existing_pilot_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -471,6 +527,9 @@ def test_pilot_catalog_preserves_full_corpus_complete_cases_and_reference_scope(
     assert experiments["disequality-proofs"]["reference"] == "egg-nee-proof-extraction"
     logical = files[experiments["disequality-proofs"]["files"][0]]
     assert logical.for_binary("egg-nee-proofs").absolute_path.suffix == ".in"
+    strict = logical.exclusion_for("proof-testing", memory_limit_bytes=17179869184)
+    assert strict is not None and strict.kind == "resource"
+    assert logical.exclusion_for("proof-extraction", memory_limit_bytes=17179869184) is None
     batax = files["benchmarks/slotted/inputs/sdql/batax_2nd-44rules.egg"]
     checked = batax.exclusion_for("slotted-proof-testing", memory_limit_bytes=17179869184)
     assert checked is not None and checked.reason.startswith("Defer the full BATAX second-phase source proof")
