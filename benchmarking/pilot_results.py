@@ -533,8 +533,18 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         < c["validation"]["summary"]["produced_certificates"]
         == c["validation"]["summary"]["verified_certificates"]
     }
+    project_citations = {
+        "eggcc": "eggcc",
+        "hardboiled": "hardboiled",
+        "misaal": "misaal",
+        "churchroad": "churchroad",
+        "dialegg": "mlir-egg",
+        "luminal": "luminal",
+    }
+    total_inputs = 0
     for project, info in snapshot["projects"].items():
         inputs = [f for f in snapshot["files"] if f["project"] == project]
+        total_inputs += len(inputs)
         locs = [f["input_loc"] for f in inputs]
         times: dict[str, list[float]] = {}
         for treatment in ("off", "proof-extraction"):
@@ -552,6 +562,8 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
         )
         description = "unavailable" if not locs else f"{statistics.median(locs):,g} [{min(locs):,}, {max(locs):,}]"
         project_link = r"\href{" + info["source"] + "}{" + tex_escape(info["label"]) + "}"
+        if citation := project_citations.get(project):
+            project_link = tex_escape(info["label"]) + r"~\cite{" + citation + "}"
         # File-level passed-c-and-cp means every source check and extraction was
         # compared with ordinary egglog under both c and cp. Execution and checked
         # certificates alone do not establish this ordinary-output parity.
@@ -574,14 +586,14 @@ def coverage_tables(snapshot: dict[str, Any]) -> dict[str, str]:
                 if timing_values
                 else "unavailable"
             )
-            label = "Ordinary egglog" if treatment == "off" else "Proof production"
+            label = r"\egglog~\cite{egglog}" if treatment == "off" else r"\toolcp"
             checked_coverage = "N/A" if treatment == "off" else f"{validated}/{len(inputs)}"
             source_runtime.append(
                 f"{project_link} & {label} & {len(timing_values)}/{len(inputs)} & {runtime} & {checked_coverage} "
                 + r"\\"
             )
-    sources.append(r"\end{tabular}")
-    provenance_sources.append(r"\end{tabular}")
+    sources.extend([r"\hline", rf"\textbf{{Total}} & & \textbf{{{total_inputs:,}}} & & \\", r"\end{tabular}"])
+    provenance_sources.extend([r"\hline", rf"\textbf{{Total}} & & \textbf{{{total_inputs:,}}} & \\", r"\end{tabular}"])
     source_runtime.append(r"\end{tabular}")
     return {
         "experiment-coverage.table.tex": "\n".join(headers) + "\n",
