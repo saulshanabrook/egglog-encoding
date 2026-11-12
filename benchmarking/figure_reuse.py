@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from .reports.store import GROUPED_SCHEMA_VERSION, REPORT_SCHEMA_VERSION, GroupedReport, GroupedReportRecord
 
-FIGURE_DATA_VERSION = 2
+FIGURE_DATA_VERSION = 3
 
 
 @dataclass
@@ -36,13 +36,13 @@ def observation_identity(row: dict[str, Any]) -> str:
 
 def grouped_figure(rows: list[dict[str, Any]], label: str) -> GroupedReport:
     """Build a plot-only snapshot without changing the raw timing-cache schema."""
-    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    groups: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     for row in rows:
-        identity = (row["binary_sha256"], row["file_sha256"], row["treatment"])
+        identity = (row["binary_sha256"], row["file_sha256"], row["treatment"], row["threads"])
         group = groups.setdefault(
             identity,
             {
-                "key": dict(zip(("binary_sha256", "file_sha256", "treatment"), identity, strict=True)),
+                "key": dict(zip(("binary_sha256", "file_sha256", "treatment", "threads"), identity, strict=True)),
                 "labels": [label],
                 "samples": [],
             },
@@ -83,13 +83,13 @@ def import_figure(name: str, directory: Path) -> FigureData:
     parameters = {parameter["name"]: parameter["value"] for parameter in spec.get("params", []) if "value" in parameter}
     inputs = deepcopy(parameters["selected_inputs"])
     conditions = {
-        (row["logical_id"], row["treatment"], row["binary_sha256"], row["file_sha256"]): row
+        (row["logical_id"], row["treatment"], row["binary_sha256"], row["file_sha256"], row["threads"]): row
         for row in result["conditions"]
     }
     rows: list[dict[str, Any]] = []
     identifiers: dict[tuple[int, str], int] = {}
     for item in inputs:
-        identity = (item["logical_id"], item["treatment"], item["binary_sha256"], item["file_sha256"])
+        identity = (item["logical_id"], item["treatment"], item["binary_sha256"], item["file_sha256"], item["threads"])
         condition = conditions.get(identity)
         if condition is None:
             raise ValueError(f"{name}: saved condition does not match its bound identity: {identity}")
@@ -101,7 +101,12 @@ def import_figure(name: str, directory: Path) -> FigureData:
             if observation["row_index"] != index:
                 raise ValueError(f"{name}: selected observation {index} is absent or out of order in {path}")
             row = {key: value for key, value in observation.items() if key != "timing_summary"}
-            if (row["binary_sha256"], row["file_sha256"], row["treatment"]) != (*identity[2:], identity[1]):
+            if (row["binary_sha256"], row["file_sha256"], row["treatment"], row["threads"]) != (
+                identity[2],
+                identity[3],
+                identity[1],
+                identity[4],
+            ):
                 raise ValueError(f"{name}: observation does not match its recorded input/engine identity")
             key = (index, observation_identity(row))
             if key not in identifiers:
@@ -176,7 +181,7 @@ def reuse_figure(data: FigureData, report_path: Path, no_runs: bool, overrides: 
             item["memory_limit_bytes"] = (
                 parameters["memory_limit_bytes"] if TREATMENT_SPECS[item["treatment"]].allocator_limit else None
             )
-        key = CacheKey(item["binary_sha256"], item["file_sha256"], item["treatment"])
+        key = CacheKey(item["binary_sha256"], item["file_sha256"], item["treatment"], item["threads"])
         selected = [rows[index] for index in item["selected_row_indices"]]
         if overrides:
             selected = [
@@ -204,8 +209,8 @@ def reuse_figure(data: FigureData, report_path: Path, no_runs: bool, overrides: 
                     tuple(
                         IndexedRecord(row["row_index"], datetime.fromisoformat(row["started_at"]), cast(Any, row))
                         for row in rows
-                        if (row["binary_sha256"], row["file_sha256"], row["treatment"])
-                        == (key.binary_sha256, key.file_sha256, key.treatment)
+                        if (row["binary_sha256"], row["file_sha256"], row["treatment"], row["threads"])
+                        == (key.binary_sha256, key.file_sha256, key.treatment, key.threads)
                     ),
                     parameters["rounds"] if overrides else len(rows),
                     parameters["timeout_sec"],
@@ -307,6 +312,8 @@ def collect_recorded(
         request,
         item["treatment"],
         memory_limit_bytes=item["memory_limit_bytes"],
+        threads=item["threads"],
+        requested_threads=item["requested_threads"],
     )
     run = BenchmarkRunPlan(
         file,
@@ -315,6 +322,8 @@ def collect_recorded(
         cached_statuses,
         missing,
         memory_limit_bytes=item["memory_limit_bytes"],
+        threads=item["threads"],
+        requested_threads=item["requested_threads"],
     )
     collect(
         store,

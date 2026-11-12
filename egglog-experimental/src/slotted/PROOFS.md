@@ -5,6 +5,14 @@ for supported equality checks in [slotted programs](LANGUAGE.md). Each proof use
 source terms, rewrites, and unions. The slotted checker verifies the lifted
 proof against the source program before and after normalization.
 
+`--slotted --proof-extraction` performs the same proof construction and
+simplification without checking proof derivations. It still requires the
+constructed root to match the requested claim, and simplification must preserve
+that root's equality. Use a separate `--slotted --proofs` execution for validation.
+`--mode no-messages` retains in-memory certificates without serializing them.
+The optional `--proof-summary PATH` records executed source requests and completed
+certificates as JSON, counting a verified certificate once even when checked twice.
+
 The compiler emits a variant of the [slotted encoding](ENCODING.md) supported by
 egglog's term/proof encoding. Slot lifting consumes unsimplified egglog proofs;
 egglog's own proof checker and simplifier are skipped in this mode.

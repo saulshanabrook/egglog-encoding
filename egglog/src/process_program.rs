@@ -17,6 +17,8 @@ pub(super) struct ProgramSource<'a> {
     pub(super) source: Option<SexpParser<'a>>,
     pub(super) commands: std::vec::IntoIter<Command>,
     pub(super) expanded: std::vec::IntoIter<Command>,
+    /// User commands read by `include`, rather than an internal lowering query.
+    included_source: bool,
 }
 
 impl<'a> ProgramSource<'a> {
@@ -25,6 +27,7 @@ impl<'a> ProgramSource<'a> {
             source: None,
             commands,
             expanded: Vec::new().into_iter(),
+            included_source: false,
         }
     }
 
@@ -33,6 +36,7 @@ impl<'a> ProgramSource<'a> {
             source: Some(SexpParser::new(filename, input)),
             commands: Vec::new().into_iter(),
             expanded: Vec::new().into_iter(),
+            included_source: false,
         }
     }
 }
@@ -79,6 +83,12 @@ impl EGraph {
         run_commands: bool,
         pending: &mut crate::action_execution::GroundActionBatch,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
+        let summary_scope = if run_commands {
+            self.extension_state::<crate::proof_summary::ProofSummary>()
+                .map(crate::proof_summary::ProofSummary::enter)
+        } else {
+            None
+        };
         let stream_includes = run_commands && program.source.is_some();
         let mut outputs = Vec::new();
         let mut desugared_before_proofs = Vec::new();
@@ -171,15 +181,16 @@ impl EGraph {
                                 .map_err(|e| Error::IoError(file.clone().into(), e, span.clone()));
                             self.overall_report.frontend_other += include_timer.elapsed();
                             let s = s?;
-                            let included_program = if stream_includes && !self.are_proofs_enabled()
-                            {
-                                ProgramSource::from_text(Some(file.clone()), &s)
-                            } else {
-                                ProgramSource::from_commands(
-                                    self.parse_program_timed(Some(file.clone()), &s)?
-                                        .into_iter(),
-                                )
-                            };
+                            let mut included_program =
+                                if stream_includes && !self.are_proofs_enabled() {
+                                    ProgramSource::from_text(Some(file.clone()), &s)
+                                } else {
+                                    ProgramSource::from_commands(
+                                        self.parse_program_timed(Some(file.clone()), &s)?
+                                            .into_iter(),
+                                    )
+                                };
+                            included_program.included_source = true;
                             // run program internal on these include commands
                             self.process_program_internal(included_program, run_commands)
                         }?;
@@ -188,6 +199,22 @@ impl EGraph {
                         desugared_before_proofs.extend(resolved.resolved_before_proofs);
                     } else {
                         self.commit_ground_actions(pending)?;
+                        if summary_scope
+                            .as_ref()
+                            .is_some_and(|scope| scope.source || program.included_source)
+                        {
+                            match &command {
+                                Command::Check(..) | Command::ProveExists(..) => self
+                                    .extension_state::<crate::proof_summary::ProofSummary>()
+                                    .unwrap()
+                                    .request(false),
+                                Command::Extract(..) | Command::ProveExtract(..) => self
+                                    .extension_state::<crate::proof_summary::ProofSummary>()
+                                    .unwrap()
+                                    .request(true),
+                                _ => {}
+                            }
+                        }
                         let resolved = self.resolve_command(command)?;
                         // Execution callers discard resolved trees; retaining them here
                         // duplicates large proof programs. Keep only the checker's history.
@@ -402,7 +429,19 @@ impl EGraph {
                 unreachable!("LetBegin is removed by remove_globals")
             }
             ResolvedNCommand::ProveExtract(_, expr, variants) => {
-                return self.run_prove_extract(&expr, &variants);
+                let outputs = self.run_prove_extract(&expr, &variants)?;
+                if let Some(summary) = self.extension_state::<crate::proof_summary::ProofSummary>()
+                {
+                    let count = outputs
+                        .iter()
+                        .map(|output| match output {
+                            CommandOutput::ProveExtract { proof_ids, .. } => proof_ids.len(),
+                            _ => 0,
+                        })
+                        .sum();
+                    summary.certificates(count, self.proof_state.verify_proofs);
+                }
+                return Ok(outputs);
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 let sort = expr.output_type();
@@ -580,6 +619,10 @@ impl EGraph {
                             span: span.clone(),
                             error,
                         })?;
+                if let Some(summary) = self.extension_state::<crate::proof_summary::ProofSummary>()
+                {
+                    summary.certificates(1, self.proof_state.verify_proofs);
+                }
                 return Ok(vec![CommandOutput::ProveExists {
                     proof_store,
                     proof_id,

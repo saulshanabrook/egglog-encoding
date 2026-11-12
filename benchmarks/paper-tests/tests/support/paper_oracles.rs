@@ -4,6 +4,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Correctness trials default to one egraph worker; native drivers stay serial.
+pub fn egraph_threads(value: Option<&std::ffi::OsStr>) -> Result<usize, &'static str> {
+    match value {
+        None => Ok(1),
+        Some(value) => value
+            .to_str()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|&threads| threads > 0)
+            .ok_or("PAPER_EGRAPH_THREADS must be a positive integer"),
+    }
+}
+
 /// Apply ordered inclusion and `!` exclusion globs before registering trials.
 pub fn figure_files<'a>(
     directory: &Path,
@@ -47,10 +59,31 @@ pub fn correctness_modes<'a>(modes: impl IntoIterator<Item = &'a str>) -> BTreeS
         .map(|mode| match mode {
             "proofs" | "proof-extraction" => "proof-testing",
             "egg-proofs" | "egg-proof-extraction" => "egg-proof-testing",
+            "egg-nee-proof-extraction" => "egg-nee-proof-testing",
+            "slotted-proof-extraction" => "slotted-proof-testing",
+            "slotted-proof-extraction-no-aliasing" => "slotted-proof-testing-no-aliasing",
+            "slotted-ref-multi-proofs" => "slotted-ref-multi-proof-testing",
+            "slotted-ref-nested-proofs" => "slotted-ref-nested-proof-testing",
             other => other,
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// Enabling certificates cannot bypass a base policy's unsupported/resource deferral.
+pub fn exclusion_applies(treatments: &[String], mode: &str) -> bool {
+    let base = match mode {
+        "slotted-proof-testing" => "slotted",
+        "slotted-proof-testing-no-aliasing" => "slotted-no-aliasing",
+        "slotted-ref-multi-proof-testing" => "slotted-ref-multi",
+        "slotted-ref-nested-proof-testing" => "slotted-ref-nested",
+        "egg-nee-proof-testing" => "egg-nee",
+        other => other,
+    };
+    treatments.is_empty()
+        || treatments
+            .iter()
+            .any(|excluded| excluded == mode || excluded == base)
 }
 
 pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<(), String> {
@@ -64,9 +97,12 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
                 &[
                     "slotted",
                     "slotted-proof-testing",
+                    "slotted-proof-testing-no-aliasing",
                     "slotted-no-aliasing",
                     "slotted-ref-multi",
+                    "slotted-ref-multi-proof-testing",
                     "slotted-ref-nested",
+                    "slotted-ref-nested-proof-testing",
                     "slotted-ref-nested-snapshot",
                 ],
                 Some("ref"),
@@ -85,6 +121,7 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
                     "egg-de",
                     "egg-ee",
                     "egg-nee",
+                    "egg-nee-proof-testing",
                     "egg-oee",
                 ],
                 Some("in"),

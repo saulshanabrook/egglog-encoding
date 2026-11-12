@@ -169,8 +169,16 @@ class EndpointRequest:
     target: TargetRequest
     treatment: Treatment
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
+    threads: int = 1
+    requested_threads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.threads < 1 or (self.requested_threads is not None and self.requested_threads < 1):
+            raise ValueError("benchmark worker counts must be positive")
+        if self.requested_threads is None:
+            object.__setattr__(self, "requested_threads", self.threads)
+        if TREATMENT_SPECS[self.treatment].binary_name != "egglog-experimental":
+            object.__setattr__(self, "threads", 1)
         if not TREATMENT_SPECS[self.treatment].allocator_limit:
             object.__setattr__(self, "memory_limit_bytes", None)
         if self.memory_limit_bytes is not None and self.memory_limit_bytes < 1:
@@ -189,8 +197,16 @@ class BenchmarkEndpoint:
     binary_sha256: str
     treatment: Treatment
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
+    threads: int = 1
+    requested_threads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.threads < 1 or (self.requested_threads is not None and self.requested_threads < 1):
+            raise ValueError("benchmark worker counts must be positive")
+        if self.requested_threads is None:
+            object.__setattr__(self, "requested_threads", self.threads)
+        if TREATMENT_SPECS[self.treatment].binary_name != "egglog-experimental":
+            object.__setattr__(self, "threads", 1)
         if not TREATMENT_SPECS[self.treatment].allocator_limit:
             object.__setattr__(self, "memory_limit_bytes", None)
 
@@ -201,10 +217,10 @@ class BenchmarkEndpoint:
         return cls(**{**data, "target": TargetRow(**data["target"])})
 
     @property
-    def cache_identity(self) -> tuple[str, Treatment]:
+    def cache_identity(self) -> tuple[str, Treatment, int]:
         """Return the endpoint coordinates shared by all of its file keys."""
 
-        return self.binary_sha256, self.treatment
+        return self.binary_sha256, self.treatment, self.threads
 
 
 @dataclass(frozen=True)

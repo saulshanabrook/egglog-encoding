@@ -47,10 +47,14 @@ use egraph_isomorphism::{AnnotatedEGraph, Argument, ClassSlots, NodeSlots, Slott
 use num_bigint::BigUint;
 use slotted_egraphs::*;
 use std::cell::RefCell;
+#[cfg(feature = "explanations")]
+mod proofs;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Internal reference invariant checks selected by this library's Cargo features.
 pub const CHECKS_ENABLED: bool = cfg!(feature = "checks");
+/// Whether the native library records explanation provenance in this build.
+pub const EXPLANATIONS_ENABLED: bool = cfg!(feature = "explanations");
 
 define_language! {
     pub enum L {
@@ -635,6 +639,23 @@ pub struct Outcome {
     pub nodes: usize,
     pub partition: String,
     pub graph: Option<AnnotatedEGraph>,
+    pub proof_summary: ProofSummary,
+    pub proof_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProofMode {
+    #[default]
+    Off,
+    Extract,
+    Check,
+}
+
+#[derive(Default)]
+pub struct ProofSummary {
+    pub check_requests: usize,
+    pub produced_certificates: usize,
+    pub verified_certificates: usize,
 }
 
 /// Select one of the frozen representations; unsupported cases are explicit.
@@ -655,11 +676,18 @@ pub fn select_frozen_spec(source: &str, matcher: Matcher) -> Result<String, Stri
 
 /// Run the same reference algorithm from tests and the measured workload driver.
 /// Snapshot state belongs to one run, including after a failed invocation.
-pub fn run_spec(source: &str, substitution: Substitution) -> Result<Outcome, String> {
+pub fn run_spec(
+    source: &str,
+    substitution: Substitution,
+    proofs: ProofMode,
+) -> Result<Outcome, String> {
+    if proofs != ProofMode::Off && !cfg!(feature = "explanations") {
+        return Err("proof mode requires the slotted-reference-proofs executable".into());
+    }
     SNAPSHOT.with(|state| *state.borrow_mut() = None);
     CTORS.with(|state| state.borrow_mut().clear());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        execute(source, substitution)
+        execute(source, substitution, proofs)
     }));
     SNAPSHOT.with(|state| *state.borrow_mut() = None);
     CTORS.with(|state| state.borrow_mut().clear());
@@ -676,7 +704,7 @@ pub fn run_spec(source: &str, substitution: Substitution) -> Result<Outcome, Str
     })?
 }
 
-fn execute(src: &str, policy: Substitution) -> Result<Outcome, String> {
+fn execute(src: &str, policy: Substitution, proofs: ProofMode) -> Result<Outcome, String> {
     let spec = parse_spec(src);
     let mut saturation = None;
     // Substitution: `snapshot` (the default) substitutes into the smallest term of
@@ -880,15 +908,34 @@ fn execute(src: &str, policy: Substitution) -> Result<Outcome, String> {
     // mirrors the paper artifact's `lookup_rec_expr` criterion and prevents the
     // expected result from changing which rewrites match.  Existence alone is not
     // enough: the artifact requires the goal to be equivalent to the initial term.
-    let goals = spec
-        .goals
-        .iter()
-        .map(|goal| {
-            term_ids
-                .first()
-                .is_some_and(|start| goal_reached(&eg, start, goal))
-        })
-        .collect();
+    let mut proof_summary = ProofSummary::default();
+    #[cfg(feature = "explanations")]
+    let mut proof_error = None;
+    #[cfg(not(feature = "explanations"))]
+    let proof_error = None;
+    let mut goals = Vec::new();
+    for goal in &spec.goals {
+        proof_summary.check_requests += 1;
+        let reached = term_ids
+            .first()
+            .is_some_and(|start| goal_reached(&eg, start, goal));
+        goals.push(reached);
+        #[cfg(feature = "explanations")]
+        if reached && proofs != ProofMode::Off {
+            let start = spec.terms.first().ok_or("proof goal has no input term")?;
+            if let Err(error) =
+                proofs::materialize(&mut eg, start, goal, proofs == ProofMode::Check)
+            {
+                proof_error = Some(error);
+                break;
+            }
+            proof_summary.produced_certificates += 1;
+            proof_summary.verified_certificates += usize::from(proofs == ProofMode::Check);
+        }
+    }
+    if proofs != ProofMode::Off && proof_summary.check_requests == 0 {
+        return Err("proof mode requires at least one frozen goal".into());
+    }
     let ids = eg.ids();
     let nodes = ids.iter().map(|id| eg.enodes(*id).len()).sum();
     let graph = if spec.dump {
@@ -903,6 +950,8 @@ fn execute(src: &str, policy: Substitution) -> Result<Outcome, String> {
         nodes,
         partition: partition(&eg, &spec.probes),
         graph,
+        proof_summary,
+        proof_error,
     })
 }
 
@@ -1262,7 +1311,7 @@ mod tests {
             let spec = format!(
                 "{head}{lhs}\nrhs root ?body[(var $x) := ?t]\ngoal ({expected} (null) (null))\n"
             );
-            let outcome = run_spec(&spec, policy).unwrap();
+            let outcome = run_spec(&spec, policy, ProofMode::Off).unwrap();
             assert_eq!(
                 outcome.goals,
                 [true],

@@ -9,6 +9,7 @@ selection, statistics, and rendering belong in :mod:`benchmarking.reports`.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from collections import Counter
@@ -18,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from math import ceil, isfinite
 from pathlib import Path
 from time import perf_counter
+from typing import Any, cast
 
 from rich.console import Console
 from rich.progress import (
@@ -32,7 +34,7 @@ from rich.progress import (
 from rich.table import Column
 from rich.text import Text
 
-from .engines import MATH_WORKLOAD_ARGUMENTS, TREATMENT_SPECS, validate_binary_workload
+from .engines import MATH_WORKLOAD_ARGUMENTS, PROOF_ORACLES, TREATMENT_SPECS, validate_binary_workload
 from .models import (
     BenchmarkEndpoint,
     BuiltBinary,
@@ -47,11 +49,13 @@ from .models import (
 )
 from .native_memory import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES
 from .processes import TimingResult, run_command
+from .proof_validation import qualify_proof_validation
 from .reports.grouped import grouped_report_path, write_grouped_report
 from .reports.store import (
     REPORT_SCHEMA_VERSION,
     CacheKey,
     GroupedReport,
+    ProofSummaryRecord,
     ReportRecord,
     ReportStore,
     SelectedObservations,
@@ -87,6 +91,8 @@ class BenchmarkRunPlan:
     cached_statuses: tuple[Status, ...]
     missing_observations: int
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES
+    threads: int = 1
+    requested_threads: int = 1
 
 
 @dataclass(frozen=True)
@@ -107,6 +113,7 @@ class ProcessObservation:
 
     result: TimingResult
     timing_summary: TimingSummaryRecord | None
+    proof_summary: ProofSummaryRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +214,8 @@ def plan_collection(
             target.binary_sha256_for(request.endpoint.treatment),
             request.endpoint.treatment,
             request.endpoint.memory_limit_bytes,
+            request.endpoint.threads,
+            request.endpoint.requested_threads,
         )
         endpoints = scopes.setdefault((target, request.files), [])
         if endpoint not in endpoints:
@@ -236,6 +245,8 @@ def plan_collection(
                 cached_statuses=cached,
                 missing_observations=missing,
                 memory_limit_bytes=endpoint.memory_limit_bytes,
+                threads=endpoint.threads,
+                requested_threads=endpoint.requested_threads or endpoint.threads,
             )
         )
     return tuple(CollectionPlan(target, tuple(runs)) for target, runs in runs_by_target.items())
@@ -478,6 +489,8 @@ def label_has_enough_rows(
             target.binary_sha256_for(request.treatment),
             request.treatment,
             request.memory_limit_bytes,
+            request.threads,
+            request.requested_threads,
         )
         for file in files_by_endpoint[request] if files_by_endpoint is not None else files:
             selection = select_observations(store, endpoint, file, rounds, timeout_sec)
@@ -495,30 +508,38 @@ def run_process(
     treatment: Treatment,
     timeout_sec: int,
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES,
+    *,
+    threads: int = 1,
+    proof_summary: bool = False,
 ) -> ProcessObservation:
     """Run one measured workload and read the summary it emitted on success."""
 
     file_spec = file_spec.for_binary(TREATMENT_SPECS[treatment].binary_name)
     with tempfile.TemporaryDirectory(prefix="egglog-benchmark-") as directory:
         summary_path = Path(directory) / "timing-summary.json"
-        workload = workload_command(binary_path, file_spec, treatment)
+        proof_path = Path(directory) / "proof-summary.json"
+        workload = workload_command(binary_path, file_spec, treatment, threads)
+        if proof_summary:
+            workload.extend(("--proof-summary", str(proof_path)))
         controlled = TREATMENT_SPECS[treatment].allocator_limit
         allocator_env = NATIVE_ALLOCATOR_ENV if controlled else {}
         if not controlled:
             memory_limit_bytes = None
-        if not TREATMENT_SPECS[treatment].timing_summary:
-            result = run_command(
-                workload, checkout_path, timeout_sec, env_overrides=allocator_env, memory_limit_bytes=memory_limit_bytes
-            )
-            require_workload_unchanged(file_spec)
-            return ProcessObservation(result=result, timing_summary=None)
-        command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
+        timing_summary = TREATMENT_SPECS[treatment].timing_summary and threads == 1
+        command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]] if timing_summary else workload
         result = run_command(
             command, checkout_path, timeout_sec, env_overrides=allocator_env, memory_limit_bytes=memory_limit_bytes
         )
         require_workload_unchanged(file_spec)
+        proofs = None
+        if proof_path.is_file():
+            proofs = cast(ProofSummaryRecord, json.loads(proof_path.read_bytes()))
+            if proofs["schema_version"] != 1:
+                raise ValueError("unsupported proof-summary schema version")
+        if not timing_summary:
+            return ProcessObservation(result=result, timing_summary=None, proof_summary=proofs)
         if result.status != "success":
-            return ProcessObservation(result=result, timing_summary=None)
+            return ProcessObservation(result=result, timing_summary=None, proof_summary=proofs)
         if not summary_path.is_file():
             raise ValueError(
                 "successful benchmark process did not produce --timing-summary output; "
@@ -528,7 +549,7 @@ def run_process(
             summary = parse_timing_summary(summary_path.read_bytes())
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise ValueError(f"invalid timing summary from successful benchmark process: {error}") from error
-        return ProcessObservation(result=result, timing_summary=summary)
+        return ProcessObservation(result=result, timing_summary=summary, proof_summary=proofs)
 
 
 def run_preflight(
@@ -565,15 +586,17 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
         binary_path = target.binary_path_for(binary_runs[0].treatment)
         if binary_path is None:
             raise ValueError(f"target {target.row.display_label} needs a fresh {binary_name} binary")
-        if binary_name not in ("egglog-experimental", "egg-math-benchmark", "slotted-reference"):
+        if not any(TREATMENT_SPECS[run.treatment].allocator_limit for run in binary_runs):
             continue
         required_outputs = []
-        if any(TREATMENT_SPECS[run.treatment].timing_summary for run in binary_runs):
+        if any(TREATMENT_SPECS[run.treatment].timing_summary and run.threads == 1 for run in binary_runs):
             required_outputs.append("--timing-summary")
+        if binary_name == "egglog-experimental" and any(run.threads > 1 for run in binary_runs):
+            required_outputs.append("--threads")
         bound = next((run.memory_limit_bytes for run in binary_runs if run.memory_limit_bytes is not None), None)
         if bound is not None:
             required_outputs.append("--memory-limit-bytes")
-        if binary_name in ("egglog-experimental", "slotted-reference"):
+        if binary_name != "egg-math-benchmark":
             required_outputs.extend(
                 flag for run in binary_runs for flag in TREATMENT_SPECS[run.treatment].flags if flag.startswith("--")
             )
@@ -685,11 +708,14 @@ def flat_report_record(
         "file_path": run.file.display_path,
         "file_sha256": run.file.sha256,
         "treatment": run.treatment,
+        "threads": run.threads,
+        "requested_threads": run.requested_threads,
         "timeout_sec": timeout_sec,
         "wall_sec": result.timing.wall_sec,
         "max_rss_bytes": result.timing.max_rss_bytes,
         "error_message": result.error.message if result.error is not None else None,
         "timing_summary": observation.timing_summary,
+        "proof_summary": observation.proof_summary,
         "memory_limit_bytes": run.memory_limit_bytes if TREATMENT_SPECS[run.treatment].allocator_limit else None,
     }
     return record
@@ -730,6 +756,8 @@ class CollectionETAColumn(ProgressColumn):
                     target.binary_sha256_for(run.treatment),
                     run.treatment,
                     run.memory_limit_bytes,
+                    run.threads,
+                    run.requested_threads,
                 ),
                 run.file,
             )
@@ -821,6 +849,8 @@ def collect_rows(
                         target.binary_sha256_for(run.treatment),
                         run.treatment,
                         run.memory_limit_bytes,
+                        run.threads,
+                        run.requested_threads,
                     ),
                     run.file,
                 )
@@ -851,6 +881,7 @@ def collect_rows(
                     run.treatment,
                     timeout_sec,
                     run.memory_limit_bytes,
+                    **cast(Any, {"threads": run.threads} if run.threads != 1 else {}),
                 )
                 store.append(
                     flat_report_record(
@@ -890,3 +921,89 @@ def collect_rows(
     console.print(
         Text(f"{target_label}: collected {completed_observations} fresh runs · {_status_counts_text(result_counts)}")
     )
+
+
+def validate_proof_requests(
+    store: ReportStore,
+    requests: tuple[BenchmarkRequest, ...],
+    targets: dict[TargetRequest, ResolvedTarget],
+    timeout_sec: int,
+    console: Console,
+    *,
+    validation_timeout_sec: int | None = None,
+) -> None:
+    """Run one separate checked launch per production identity, retaining failure evidence."""
+    from datetime import UTC, datetime
+
+    seen: set[CacheKey] = set()
+    watchdog = validation_timeout_sec if validation_timeout_sec is not None else 3 * timeout_sec
+    for request in requests:
+        oracle = PROOF_ORACLES.get(request.endpoint.treatment)
+        if oracle is None:
+            continue
+        target = targets[request.endpoint.target]
+        strict = replace(request.endpoint, treatment=cast(Treatment, oracle))
+        endpoint = BenchmarkEndpoint(
+            target.row,
+            target.binary_sha256_for(strict.treatment),
+            strict.treatment,
+            strict.memory_limit_bytes,
+            strict.threads,
+            strict.requested_threads,
+        )
+        for file in request.files:
+            key = CacheKey.for_endpoint(endpoint, file)
+            if key in seen:
+                continue
+            seen.add(key)
+            selection = select_observations(store, endpoint, file, 1, watchdog)
+            if selection.exclusion is not None or selection.rows:
+                continue
+            binary = target.binary_path_for(strict.treatment)
+            if binary is None:
+                raise ValueError("proof validation needs the frozen measured executable")
+            physical = file.for_binary(TREATMENT_SPECS[strict.treatment].binary_name)
+            console.print(f"Validating {file.display_path} · {strict.treatment}", markup=False)
+            started = datetime.now(UTC).isoformat(timespec="seconds")
+            observation = run_process(
+                binary,
+                Path(target.row.path),
+                physical,
+                strict.treatment,
+                watchdog,
+                strict.memory_limit_bytes,
+                threads=strict.threads,
+                proof_summary=True,
+            )
+            run = BenchmarkRunPlan(
+                physical,
+                strict.treatment,
+                1,
+                (),
+                1,
+                strict.memory_limit_bytes,
+                strict.threads,
+                strict.requested_threads or strict.threads,
+            )
+            store.append(
+                flat_report_record(
+                    started_at=started, target=target, run=run, timeout_sec=watchdog, observation=observation
+                )
+            )
+            if observation.result.stop_collection:
+                raise ValueError("proof validation hit a safety failure; its observation was retained")
+
+
+def select_proof_validation(
+    store: ReportStore,
+    production: BenchmarkEndpoint,
+    file: FileSpec,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    """Qualify executed proof counters from the matching checked configuration."""
+    strict = replace(production, treatment=PROOF_ORACLES[production.treatment])
+    checked = select_observations(store, strict, file, 1, timeout_sec)
+    row = checked.rows[-1].record if checked.rows else None
+    if checked.exclusion is not None:
+        return {"status": "excluded", "issue": checked.exclusion.reason, "summary": None, "observation": None}
+    return qualify_proof_validation(row)

@@ -23,6 +23,8 @@ struct Args {
     #[arg(long)]
     timing_summary: Option<PathBuf>,
     #[arg(long)]
+    proof_summary: Option<PathBuf>,
+    #[arg(long)]
     math12: bool,
 }
 
@@ -34,6 +36,19 @@ fn main() -> Result<()> {
         (ITERATIONS, CHECK_LEFT, CHECK_RIGHT)
     };
     let (timing, _, check_passed) = run_math(args.proof_mode, iterations, check_left, check_right)?;
+    if let Some(path) = args.proof_summary {
+        let produced =
+            check_passed && matches!(args.proof_mode, ProofMode::Extract | ProofMode::Check);
+        let summary = serde_json::json!({
+            "schema_version": 1,
+            "success": check_passed,
+            "check_requests": 1,
+            "extraction_requests": 0,
+            "produced_certificates": usize::from(produced),
+            "verified_certificates": usize::from(produced && args.proof_mode == ProofMode::Check),
+        });
+        serde_json::to_writer(File::create(path)?, &summary)?;
+    }
     ensure!(
         check_passed,
         "terminal equality is not established after iteration {}",

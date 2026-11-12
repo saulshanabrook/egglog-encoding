@@ -351,3 +351,39 @@ fn cached_shapes_follow_child_equalities_under_binders() {
         1,
     );
 }
+
+#[test]
+fn unchecked_production_materializes_valid_substitution_and_extraction_proofs() {
+    let source = "(datatype E (V Var) (Lam Var E :binder 0) (Let E Var E :binder 1))
+         (let input (Let (V $y) $x (Lam $y (V $x))))
+         (rewrite (Let value $v body) (subst body $v value) :name beta)
+         (run 1) (check (= input (Lam $z (V $y)))) (extract input)";
+    for no_aliasing in [false, true] {
+        let mut compiler = Compiler::new(Options {
+            proof_mode: ProofMode::Extract,
+            no_aliasing,
+        });
+        let program = compiler.compile_program(None, source).unwrap();
+        assert!(program.proofs.values().all(|request| !request.verify));
+        let outputs = program.run(&mut new_egraph_with_proofs()).unwrap();
+        let checking =
+            super::super::resolve_program(&egglog::ast::parse_sexps(None, source).unwrap())
+                .unwrap();
+        let mut count = 0;
+        for output in outputs {
+            if let CommandOutput::UserDefined(output) = output {
+                let proofs = output
+                    .as_ref()
+                    .as_any()
+                    .downcast_ref::<SourceProofs>()
+                    .unwrap();
+                for (store, root, _) in &proofs.0 {
+                    let mut store = store.clone();
+                    super::super::check_proof(&mut store, &checking, *root).unwrap();
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(count, 2);
+    }
+}

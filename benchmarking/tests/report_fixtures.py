@@ -33,6 +33,8 @@ def make_record(
     memory_limit_bytes: int | None = NATIVE_LIMIT_BYTES,
     target_label: str | None = None,
     timing_summary: TimingSummaryRecord | None = None,
+    threads: int = 1,
+    requested_threads: int | None = None,
 ) -> ReportRecord:
     if status == "success" and timing_summary is None:
         timing_summary = make_timing_summary()
@@ -52,12 +54,15 @@ def make_record(
         "file_path": "file.egg",
         "file_sha256": file_sha256,
         "treatment": treatment,
+        "threads": threads,
+        "requested_threads": requested_threads or threads,
         "timeout_sec": timeout_sec,
         "memory_limit_bytes": memory_limit_bytes,
         "wall_sec": None if status == "timed-out" else wall_sec,
         "max_rss_bytes": None if status == "timed-out" else max_rss_bytes,
         "error_message": "timed out" if status == "timed-out" else None,
         "timing_summary": timing_summary if status == "success" else None,
+        "proof_summary": None,
     }
 
 

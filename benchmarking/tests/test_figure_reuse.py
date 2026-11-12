@@ -55,6 +55,8 @@ def saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 "family": "test",
                 "file_sha256": "sha256:file",
                 "treatment": treatment,
+                "threads": 1,
+                "requested_threads": 1,
                 "binary_sha256": "sha256:bin",
                 "memory_limit_bytes": 17179869184,
                 "selected_row_indices": indices,
@@ -489,7 +491,7 @@ def test_missing_fill_preserves_pinned_valid_observations(saved: Path, tmp_path:
     assert [rows[index]["wall_sec"] for index in inputs[0]["selected_row_indices"]] == [1.0, 102.0]
 
 
-@pytest.mark.parametrize("version", [None, 1, 3])
+@pytest.mark.parametrize("version", [None, 1, 4])
 def test_incompatible_export_version_is_rejected_before_reading_bindings(saved: Path, version: int | None) -> None:
     path = saved / "retired-export.results.json"
     result = json.loads(path.read_text())
@@ -617,3 +619,8 @@ def test_portable_unicode_roundtrip_with_non_utf8_defaults(
     for suffix in ("results.json", "bound.vl.json", "numbers.tex", "table.tex"):
         text = (destination / f"{name}.{suffix}").read_bytes().decode("utf-8")
         assert "Σ" in text
+
+
+def test_portable_replay_rejects_silent_worker_count_overrides(saved: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert figures.main(["--reuse-from", str(saved), "--no-runs", "--threads", "4"]) == 2
+    assert "retains recorded worker counts" in capsys.readouterr().err

@@ -139,8 +139,12 @@ fn frozen_semantic_pairs_have_reference_partitions_and_validated_counts() {
             let exported = export::export(&graph).unwrap_or_else(|error| panic!("{name}: {error}"));
             let counts = (exported.counts.classes, exported.counts.nodes);
             drop(exported);
-            let native = run_spec(spec, Substitution::Snapshot)
-                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let native = run_spec(
+                spec,
+                Substitution::Snapshot,
+                slotted_reference::ProofMode::Off,
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
             assert!(
                 native.goals.iter().all(|&goal| goal),
                 "{name}: reference target failed"

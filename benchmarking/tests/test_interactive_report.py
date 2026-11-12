@@ -343,6 +343,8 @@ def test_initial_html_uses_native_provenance_file_order_and_selector_labels(tmp_
             "git_sha": "feedface0001",
             "dirty": True,
             "treatment": "off",
+            "threads": 1,
+            "requested_threads": 1,
         },
         {
             "id": initial_scope["candidate_endpoint_id"],
@@ -351,6 +353,8 @@ def test_initial_html_uses_native_provenance_file_order_and_selector_labels(tmp_
             "git_sha": "feedface0002",
             "dirty": False,
             "treatment": "proofs",
+            "threads": 1,
+            "requested_threads": 1,
         },
     ]
     files = cast(list[dict[str, JsonValue]], selectors["files"])

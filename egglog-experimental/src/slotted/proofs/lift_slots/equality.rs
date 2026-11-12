@@ -55,6 +55,30 @@ impl SlotLifter<'_, NativeProofs<'_>> {
         Ok(self.note(r))
     }
 
+    /// Rewrite one child in the parent's coordinates, proving any required
+    /// alpha conversion before applying literal congruence.
+    pub(super) fn congr_child(
+        &mut self,
+        parent: ViewId,
+        child_index: usize,
+        child: ViewId,
+    ) -> LiftResult<ViewId> {
+        let rhs = self.out.edge(parent).rhs;
+        let actual = self.subterm_at(rhs, &[child_index])?;
+        let child = if self.out.edge(child).lhs == actual {
+            child
+        } else {
+            let reflexive = self
+                .out
+                .project(parent, child_index)
+                .map_err(|e| e.to_string())?;
+            self.trans(reflexive, child)?
+        };
+        self.out
+            .congr(parent, child_index, child)
+            .map_err(|e| e.to_string())
+    }
+
     /// `σ·t1 = (σ∘m)·t2` from `t1 = m·t2`.
     pub(super) fn rename_both(&mut self, p: ViewId, sigma: &Renaming) -> ViewId {
         if sigma.is_identity() {

@@ -295,6 +295,8 @@ class InteractiveRuntime:
                         "git_sha": choice.endpoint.target.git_sha,
                         "dirty": choice.endpoint.target.is_dirty,
                         "treatment": choice.endpoint.treatment,
+                        "threads": choice.endpoint.threads,
+                        "requested_threads": choice.endpoint.requested_threads,
                     }
                     for choice in endpoint_choices
                 ],
@@ -455,6 +457,8 @@ def _endpoint_from_record(record: ReportRecord) -> BenchmarkEndpoint:
         record["binary_sha256"],
         record["treatment"],
         record["memory_limit_bytes"],
+        record["threads"],
+        record["requested_threads"],
     )
 
 
@@ -475,6 +479,7 @@ def _record_endpoint_id(record: ReportRecord) -> str:
         "endpoint",
         record["binary_sha256"],
         record["treatment"],
+        record["threads"],
     )
 
 
@@ -484,7 +489,8 @@ def _endpoint_label(endpoint: BenchmarkEndpoint) -> str:
     target = endpoint.target.display_label
     git = f"{short_git_sha}{dirty}"
     target_and_git = git if target == short_git_sha else f"{target} · {git}"
-    return f"{target_and_git} · {endpoint.treatment}"
+    workers = f" · {endpoint.threads} workers" if endpoint.requested_threads != 1 else ""
+    return f"{target_and_git} · {endpoint.treatment}{workers}"
 
 
 def _file_id(file: FileSpec) -> str:
