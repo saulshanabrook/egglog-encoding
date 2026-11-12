@@ -262,19 +262,6 @@ fn add_subterm_reflexive_equalities(
     }
 }
 
-/// Gathers all global variables from a program and computes their values as terms
-/// without using globals (i.e., all global references are replaced with their definitions).
-///
-/// This expects the program to be in proof normalized form where globals appear as Let actions.
-pub(crate) fn gather_globals(
-    prog: &[ResolvedNCommand],
-    term_dag: &mut TermDag,
-) -> Result<HashMap<String, TermId>, ProofCheckError> {
-    let actions: Vec<_> = gather_global_actions(prog).collect();
-    let ctx = process_actions("global_action", HashMap::default(), &actions, term_dag)?;
-    Ok(ctx.var_bindings)
-}
-
 /// Errors that can occur during proof checking.
 /// This is a boxed wrapper to keep the error type small.
 #[derive(Debug, Clone, Error)]
