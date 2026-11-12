@@ -105,7 +105,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
             let s = self.symmetry(key.classes[k].ok_or("rigid port has no class")?, &g, gproof)?;
             let completion = self.edge_memo[&(row, j)].clone();
             let renamed = self.rename_both(s, &completion);
-            p = self.out.congr(p, j, renamed).map_err(|e| e.to_string())?;
+            p = self.congr_child(p, j, renamed)?;
             p = self.note(p);
         }
         key.edges = canonical.edges;
@@ -275,10 +275,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                         .ok_or("shape key child does not match its recorded node")?;
                     let child = self.eq(*child_proof)?;
                     let child = self.rename_both(child, &mapping);
-                    let updated = self
-                        .out
-                        .congr(entry.proof, column, child)
-                        .map_err(|e| e.to_string())?;
+                    let updated = self.congr_child(entry.proof, column, child)?;
                     let (_, args) = self.app(p.rhs()).ok_or("not a rebuilt shape entry")?;
                     let key = self.shape_key(head, args)?;
                     entry.node = self.shape_node(key, args)?;
