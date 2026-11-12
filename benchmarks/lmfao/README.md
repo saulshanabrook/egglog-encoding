@@ -223,8 +223,16 @@ rows; missing measurements are collected automatically by `./bench.py figures`.
 
 The timed `slotted-proof-extraction` treatment passes `--slotted --proof-extraction`
 to materialize and simplify source certificates without verification or serialization.
-One separate `slotted-proof-testing` launch passes `--slotted --proofs` to check
-the certificates and records executed proof counters outside the timed rows.
+A separate `slotted-proof-testing` replay passes `--slotted --proofs`
+to check certificates and records executed proof counters outside the timed rows.
+Pass `--proof-validation PATH.jsonl` to import delegated validation instead of
+launching it locally. Remote validation rebuilds the frozen source and replays
+the same input; it does not verify an exported local certificate. Its distinct
+host/binary provenance is retained, and it contributes no performance measurements.
+Missing, unknown or resource-limited verification remains explicitly unverified
+without suppressing local production cost. A semantic proof failure is a bug and
+vetoes the affected estimate. `--proof-source-receipt FILE` overrides the frozen
+production source binding receipt.
 Ordinary egglog's `proofs` treatment only records proof
 information. A slotted input without equality checks does not certify a plan.
 

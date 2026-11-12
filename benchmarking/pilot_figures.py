@@ -49,6 +49,7 @@ from .pilot_ast import (
     translation_program_size_spec,
 )
 from .pilot_results import BUNDLE_NAMES, PILOT_DATA_VERSION, coverage_tables, pilot_results, pilot_tex
+from .proof_validation import read_proof_source_bindings, read_proof_validation, select_remote_proof_validation
 from .reports.catalog import report_id
 from .reports.store import ReportStore, select_observations
 from .targets import parse_target, sha256_file, target_row_for_request
@@ -190,6 +191,8 @@ def make_snapshot(
     memory_limit_bytes: int | None,
     ast_snapshot: dict[str, Any] | None = None,
     translation_ast_snapshot: dict[str, Any] | None = None,
+    validation_evidence: Sequence[dict[str, Any]] = (),
+    proof_source_bindings: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Freeze selected timed rows, checked evidence, corpus provenance, and scope."""
     inventory = _figure_inventory(ROOT, tuple(files.values()))
@@ -270,6 +273,11 @@ def make_snapshot(
                     validation = None
                     if treatment in PROOF_ORACLES:
                         validation = select_proof_validation(store, endpoint, file, 3 * timeout_sec)
+                        remote = select_remote_proof_validation(
+                            validation_evidence, endpoint, file, source_bindings=proof_source_bindings
+                        )
+                        if remote is not None:
+                            validation = {**remote, "local_evidence": validation}
                     conditions[identifier] = {
                         "id": identifier,
                         **info,
@@ -326,6 +334,7 @@ def make_snapshot(
             },
             "source_blockers": inventory["unavailable_cases"],
             "proof_timing": "recording, extraction, materialization and simplification; no verifier or serialization",
+            "proof_validation": "best-effort separate strict replay; remote runs supply validity evidence only",
             "disequality_proof_scope": (
                 "encoded/generated-name equality axioms and disequality witness; no source lifting"
             ),
@@ -493,6 +502,8 @@ def bound_spec(results: dict[str, Any]) -> dict[str, Any]:
                             "candidate_threads",
                             "reference_n",
                             "candidate_n",
+                            "proof_validation_status",
+                            "proof_validation_issue",
                         )
                     ],
                 },
@@ -712,6 +723,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--reuse-from", type=Path)
     parser.add_argument("--no-runs", action="store_true")
     parser.add_argument("--validation-only", action="store_true")
+    parser.add_argument(
+        "--proof-validation",
+        type=Path,
+        help="import delegated strict replay evidence; collect production locally without local validation",
+    )
+    parser.add_argument("--proof-source-receipt", type=Path, help="frozen production binary/source binding receipt")
     parser.add_argument("-v", "--verbose", action="store_true")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
@@ -820,7 +837,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not args.validation_only:
                     plans = plan_collection(store, tuple(requests), targets, args.rounds, args.timeout_sec, False)
                     collect(store, plans, tuple(requests), targets, args.timeout_sec, console, verbose=args.verbose)
-                validate_proof_requests(store, tuple(requests), targets, args.timeout_sec, console)
+                if args.proof_validation is None:
+                    validate_proof_requests(store, tuple(requests), targets, args.timeout_sec, console)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 console.print(f"collection stopped: {error}", markup=False)
                 collection_failed = True
@@ -835,6 +853,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             memory_limit_bytes=args.memory_limit_bytes,
             ast_snapshot=ast_snapshot,
             translation_ast_snapshot=translation_snapshot,
+            validation_evidence=read_proof_validation(args.proof_validation) if args.proof_validation else (),
+            proof_source_bindings=read_proof_source_bindings(
+                args.proof_source_receipt or store.path.parent / "proof-base-candidate.json"
+            ),
         )
         export_pilot(snapshot, args.output_dir.expanduser().resolve(), console)
         if not args.no_runs and collection_failed:

@@ -330,7 +330,7 @@ def test_missing_rss_changes_memory_coverage_without_changing_observation_identi
     assert all(row["reference"]["metrics"]["memory"]["mean"] is None for row in memory["comparisons"])
 
 
-@pytest.mark.parametrize("state", ["missing", "failed", "excluded", "unknown-proof"])
+@pytest.mark.parametrize("state", ["missing", "failed", "excluded"])
 def test_incomplete_conditions_remain_in_coverage_without_estimates(state: str) -> None:
     snapshot = snapshot_fixture()
     condition = snapshot["conditions"][2]
@@ -340,19 +340,43 @@ def test_incomplete_conditions_remain_in_coverage_without_estimates(state: str) 
         condition["observations"][0]["status"] = "timed-out"
     elif state == "excluded":
         condition["exclusion"] = {"kind": "resource", "reason": "historical resource failure", "evidence": "saved"}
-    else:
-        condition["validation"] = {
-            "status": "unknown",
-            "issue": "no executed proof counters",
-            "summary": None,
-            "observation": None,
-        }
     result = pilot_results.pilot_results(snapshot, "extensions-runtime")
     assert len(result["coverage"]) == 8
     assert sum(row["planned"] for row in result["coverage"]) == 8
     proof_rows = [row for row in result["comparisons"] if row["candidate"] == "2"]
     assert proof_rows and all(row["ours"]["metrics"]["runtime"]["mean"] is None for row in proof_rows)
     assert len(result["points"]) < 8
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "pending",
+        "unknown",
+        "timed-out",
+        "memory-limited",
+        "resource-limited",
+        "stack-overflow",
+        "infrastructure-unavailable",
+        "semantic-failure",
+    ],
+)
+def test_best_effort_validation_is_separate_from_production_timing(state: str) -> None:
+    snapshot = snapshot_fixture()
+    proof = snapshot["conditions"][2]
+    proof["validation"] = {
+        "status": state if state in ("pending", "unknown") else "failed",
+        "issue": "verification unavailable" if state != "semantic-failure" else "certificate rejected",
+        "summary": None,
+        "observation": {"status": "failure" if state == "semantic-failure" else state},
+    }
+    result = pilot_results.pilot_results(snapshot, "applications-proof-runtime")
+    condition = next(c for c in result["conditions"] if c["treatment"] == "proof-extraction")
+    assert (condition["metrics"]["runtime"]["mean"] is None) == (state == "semantic-failure")
+    assert (condition["state"] == "failed") == (state == "semantic-failure")
+    if state != "semantic-failure":
+        assert result["points"][0]["proof_validation_status"] != "passed"
+    assert proof["validation"]["status"] != "passed"
 
 
 def test_pilot_replay_never_opens_inputs_cache_or_collectors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

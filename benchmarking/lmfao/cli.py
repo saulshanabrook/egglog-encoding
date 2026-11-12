@@ -137,6 +137,8 @@ def run(args: argparse.Namespace, *, collected: OptimizerCollection | None = Non
             args.memory_limit_bytes,
             args.rewrite_rounds,
             args.threads,
+            proof_validation=args.proof_validation,
+            proof_source_receipt=args.proof_source_receipt,
         )
     status("Computing independent decimal answers outside pipeline timing")
     start = time.perf_counter()
@@ -223,6 +225,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout-sec", "--timeout", dest="timeout", type=int, default=DEFAULT_TIMEOUT_SEC)
     parser.add_argument("--report", type=Path, help="Append-only optimizer cache; default OUTPUT/optimizer.jsonl")
     parser.add_argument(
+        "--proof-validation",
+        type=Path,
+        help="import delegated strict replay evidence instead of launching local proof validation",
+    )
+    parser.add_argument("--proof-source-receipt", type=Path, help="frozen production binary/source binding receipt")
+    parser.add_argument(
         "--policy-file", type=Path, help="Campaign exclusion overlay; patterns are relative to benchmarks/"
     )
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
@@ -241,7 +249,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("rounds, timeouts and jobs must be positive")
     if not math.isfinite(args.dag_timeout) or args.dag_timeout <= 0:
         parser.error("DAG timeout must be finite and positive")
-    for name in ("output_dir", "data", "backend", "report", "policy_file"):
+    for name in ("output_dir", "data", "backend", "report", "policy_file", "proof_validation", "proof_source_receipt"):
         if getattr(args, name) is not None:
             setattr(args, name, getattr(args, name).resolve())
     return args

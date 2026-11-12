@@ -354,7 +354,16 @@ def test_pipeline_charges_optimization_once_and_excludes_validation_and_diagnost
             report["optimizer"]["debruijn"] = {"issue": "excluded (resource): local host-pressure stop"}
         return cli.OptimizerCollection(documents, report, ReportStore(tmp_path / "cache.jsonl"), make_target())
 
-    def collect_replays(collection: Any, source: Path, samples: int, timeout: int, *args: Any) -> dict[str, Any]:
+    def collect_replays(
+        collection: Any,
+        source: Path,
+        samples: int,
+        timeout: int,
+        *args: Any,
+        proof_validation: Path | None = None,
+        proof_source_receipt: Path | None = None,
+    ) -> dict[str, Any]:
+        assert proof_validation is proof_source_receipt is None
         assert source.read_text().endswith("(check (= input selected_batch))\n")
         assert samples == 2 and timeout == 3 * cli.DEFAULT_TIMEOUT_SEC
         spend(5000)

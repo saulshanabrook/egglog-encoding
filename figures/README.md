@@ -39,17 +39,45 @@ An explicitly pending reference in the catalog is not launched; its candidate
 can still be collected. Disequality certificates cover the encoded/generated-name
 axioms and disequality witness on both sides, without source-level proof lifting.
 
-Timed proof modes record, extract, materialize and simplify certificates in memory.
-They exclude verification and serialization. After timed collection, the runner
-requests one separate checked launch per distinct proof configuration, matching
-binary, input, worker count and memory cap, with the existing threefold watchdog
-allowance. `--validation-only` performs just this separate validation. Executed
-request/certificate counters come from `--proof-summary`; a missing summary is
-unknown, and prevents a finite proof-performance estimate. A failed configuration
-is retained and is not automatically retried. Safety failures stop further launches.
-Before collection, built executables are copied into a content-addressed
-`executables/` folder beside the report and their SHA-256 hashes are verified.
-Timed production and checked validation use those same frozen executable paths.
+The proofs-on workflow produces certificates and attempts a separate strict
+validation replay. A passed replay supports a checked-proof claim; production
+costs remain reportable when verification is pending or too expensive.
+Local timed processes record, extract, materialize and simplify certificates in
+memory; their production timings exclude verification and certificate text
+serialization. By default the runner then launches the matching checked mode
+locally, using the frozen executable, input, worker count and memory cap and the
+existing threefold validation watchdog.
+
+`--proof-validation PATH.jsonl` delegates that correctness phase. It suppresses
+local validation launches and imports pass/fail replay evidence from the given
+file; a missing file leaves validation pending. This permits validation on Whale
+while every performance observation remains local. The validator rebuilds the
+same frozen Rust source for its own host, replays the same physical input with
+the corresponding strict treatment and writes `--proof-summary` counters. This
+is validation replay, not checking an exported certificate from the local timed
+process: the CLI has no portable certificate export/import protocol.
+
+Imported records identify the production binary, source revision, physical input
+hash, production and checked treatments, and effective/requested worker counts.
+They retain the validator's distinct binary hash, source revision, host, command,
+log and resource limits. The source pin comes from the frozen production receipt,
+so later Python-only commits do not change it. `--proof-source-receipt FILE` selects an explicit
+binary/source receipt; the default is `proof-base-candidate.json` beside the timing
+report when present. Source pins must match. Remote evidence has no
+performance measurements and is never appended to the timing JSONL. Re-export
+with `--no-runs --proof-validation PATH.jsonl` after the evidence arrives.
+Existing local checked evidence remains available; an imported matching replay
+is embedded with that evidence in the portable snapshot.
+
+A missing summary is unknown. A checked claim requires nonempty produced
+certificates and every one verified. Pending, unknown, timed-out and resource-limited
+validation remain explicitly unverified without suppressing local production costs.
+Stack overflows and unavailable validation infrastructure are also resource outcomes.
+An actual semantic checker failure is retained as a bug and vetoes the affected
+proof comparison. A failed configuration is not automatically retried. Safety
+failures stop further launches. Before local collection, built executables are copied into a
+content-addressed `executables/` folder beside the report and their SHA-256 hashes
+are verified. Timed production and local checked validation use those same paths.
 
 The six bundle stems are `extensions-runtime`, `extensions-speedup`,
 `applications-proof-runtime`, `applications-proof-speedup`, `extensions-memory`
@@ -71,8 +99,9 @@ check/extraction request counts, produced/verified certificate counts and their
 known-summary K/N denominator. These counters describe the separate checked launch;
 missing summaries stay unknown and failed runs can retain completed-prefix counters.
 Ordinary-output and table-correspondence statuses remain distinct in the detailed
-artifacts. Only complete, separately validated pairs get
-finite estimates; pending, failed and reviewed excluded cases stay in coverage.
+artifacts. Complete production observations receive finite estimates independently of
+resource-limited or pending verification. Semantic proof failures veto the affected
+estimate; all validation outcomes remain separate coverage evidence.
 There is no overall aggregate speedup. Source statistics include source links,
 acquisition method, original input LOC, per-workload runtime distributions and
 validation counts. Ordinary-output parity and table correspondence remain

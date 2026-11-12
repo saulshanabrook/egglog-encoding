@@ -24,6 +24,11 @@ from benchmarking.collection import (
 )
 from benchmarking.engines import Treatment
 from benchmarking.models import BenchmarkEndpoint, EndpointRequest, FileSpec, ResolvedTarget, TargetRequest
+from benchmarking.proof_validation import (
+    read_proof_source_bindings,
+    read_proof_validation,
+    select_remote_proof_validation,
+)
 from benchmarking.reports.analysis import _sample_estimate
 from benchmarking.reports.store import ReportRecord, ReportStore, select_observations
 from benchmarking.targets import parse_target, sha256_file
@@ -85,6 +90,9 @@ def collect_replays(
     memory_limit_bytes: int | None,
     rewrite_rounds: int,
     threads: int = 1,
+    *,
+    proof_validation: Path | None = None,
+    proof_source_receipt: Path | None = None,
 ) -> dict[str, Any]:
     """Time proof production and validate it separately on the selected-plan input."""
     file = resolve_files([str(source)], ROOT)[0]
@@ -98,19 +106,32 @@ def collect_replays(
     targets = {target.request: target}
     pending = plan_collection(store, requests, targets, samples, timeout, False)
     collect(store, pending, requests, targets, timeout, Console(stderr=True))
-    validate_proof_requests(store, requests, targets, timeout, Console(stderr=True), validation_timeout_sec=timeout)
+    if proof_validation is None:
+        validate_proof_requests(store, requests, targets, timeout, Console(stderr=True), validation_timeout_sec=timeout)
+    endpoint = BenchmarkEndpoint(
+        target.row,
+        target.binary_sha256_for("slotted-proof-extraction"),
+        "slotted-proof-extraction",
+        memory_limit_bytes,
+        threads,
+    )
     evidence = select_proof_validation(
         store,
-        BenchmarkEndpoint(
-            target.row,
-            target.binary_sha256_for("slotted-proof-extraction"),
-            "slotted-proof-extraction",
-            memory_limit_bytes,
-            threads,
-        ),
+        endpoint,
         file,
         timeout,
     )
+    if proof_validation is not None:
+        remote = select_remote_proof_validation(
+            read_proof_validation(proof_validation),
+            endpoint,
+            file,
+            source_bindings=read_proof_source_bindings(
+                proof_source_receipt or store.path.parent / "proof-base-candidate.json"
+            ),
+        )
+        if remote is not None:
+            evidence = {**remote, "local_evidence": evidence}
     collection.report["proof_replay_validation"] = evidence
     return {
         mode: measured_result(store, target, file, mode, samples, timeout, memory_limit_bytes, rewrite_rounds, threads)

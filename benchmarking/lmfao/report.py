@@ -7,6 +7,7 @@ from typing import Any
 
 from scipy import stats
 
+from benchmarking.proof_validation import is_semantic_proof_failure
 from benchmarking.reports.analysis import _ratio_estimate, _sample_estimate
 
 from . import model
@@ -100,9 +101,10 @@ def comparison_rows(report: dict[str, Any]) -> list[list[str]]:
         failures = replay.get("failures", [])
         reason = ", ".join(sorted({row["status"] for row in failures})) or replay.get("issue")
         evidence = report.get("proof_replay_validation") if mode == "slotted-proof-extraction" else None
-        if evidence is not None and evidence["status"] != "passed":
-            reason = evidence["issue"]
-            timing, memory = None, None
+        if mode == "slotted-proof-extraction" and (evidence is None or evidence["status"] != "passed"):
+            reason = "unverified: " + ((evidence or {}).get("issue") or "validation pending")
+            if is_semantic_proof_failure(evidence):
+                timing, memory = None, None
         name = f"Slotted replay ({title})"
         rows.append(
             [
@@ -141,7 +143,9 @@ def comparison_caption(report: dict[str, Any]) -> str:
         f"a {report.get('proof_replay_timeout_seconds', '—')}-second timeout (3x the optimization limit). "
         "Both modes repeat rewriting and establish the selected plan. Proof production adds reconstruction, "
         "materialization and simplification without certificate verification or serialization. "
-        "One separate checked replay validates the certificates outside the timed production observations. "
+        "A separate strict replay attempts certificate validation outside the timed production observations; "
+        "it may run on another host and supplies no performance measurements. "
+        "Incomplete or resource-limited verification is marked unverified and does not suppress production timing. "
         "Replay does not select or execute another plan.",
         "",
         "Query time is warm computation divided by configured-roots LMFAO (lower is better), with independent "
@@ -179,10 +183,7 @@ def paper_results(report: dict[str, Any]) -> dict[str, str]:
         ):
             raise ValueError("LMFAO proof replay is incomplete or invalid; no paper table replaced")
     evidence = report.get("proof_replay_validation")
-    if evidence is None or (
-        evidence["status"] != "passed"
-        and (evidence.get("observation") or {}).get("status") not in ("timed-out", "memory-limited")
-    ):
+    if is_semantic_proof_failure(evidence):
         raise ValueError("LMFAO proof validation is incomplete or invalid; no paper table replaced")
     escapes = {
         "\\": r"\textbackslash{}",

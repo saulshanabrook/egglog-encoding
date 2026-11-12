@@ -266,6 +266,8 @@ def parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, FigureConfig]:
     parser.add_argument("--lmfao-data", type=Path, help="override the catalog's prepared LMFAO dataset")
     parser.add_argument("--lmfao-backend", type=Path, help="override the catalog's prepared LMFAO executable")
     parser.add_argument("--lmfao-cxxflags", help="C++ flags for LMFAO generated programs, including any Boost path")
+    parser.add_argument("--proof-validation", type=Path, help="delegated proof replay evidence for LMFAO")
+    parser.add_argument("--proof-source-receipt", type=Path, help="frozen production binary/source binding receipt")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
     if args.rounds < 1 or args.timeout_sec < 1 or args.threads < 1:
@@ -320,6 +322,10 @@ def prepare_lmfao(args: argparse.Namespace, config: FigureConfig) -> argparse.Na
     selected.report = args.report.expanduser().resolve()
     selected.memory_limit_bytes = config.memory_limit_bytes
     selected.threads = config.threads
+    selected.proof_validation = args.proof_validation.expanduser().resolve() if args.proof_validation else None
+    selected.proof_source_receipt = (
+        args.proof_source_receipt.expanduser().resolve() if args.proof_source_receipt else None
+    )
     if args.lmfao_cxxflags is not None:
         selected.cxxflags = args.lmfao_cxxflags
     if not args.no_runs:

@@ -49,6 +49,7 @@ from .models import (
 )
 from .native_memory import NATIVE_ALLOCATOR_ENV, NATIVE_LIMIT_BYTES
 from .processes import TimingResult, run_command
+from .proof_validation import qualify_proof_validation
 from .reports.grouped import grouped_report_path, write_grouped_report
 from .reports.store import (
     REPORT_SCHEMA_VERSION,
@@ -1003,17 +1004,6 @@ def select_proof_validation(
     strict = replace(production, treatment=PROOF_ORACLES[production.treatment])
     checked = select_observations(store, strict, file, 1, timeout_sec)
     row = checked.rows[-1].record if checked.rows else None
-    summary = row["proof_summary"] if row else None
     if checked.exclusion is not None:
-        status, issue = "excluded", checked.exclusion.reason
-    elif row is None:
-        status, issue = "pending", "separate proof validation pending"
-    elif row["status"] != "success" or (summary is not None and not summary["success"]):
-        status, issue = "failed", row["error_message"] or "proof validation failed"
-    elif summary is None:
-        status, issue = "unknown", "validator did not emit executed proof counters"
-    elif summary["produced_certificates"] < 1 or summary["verified_certificates"] != summary["produced_certificates"]:
-        status, issue = "failed", "not every produced certificate was validated"
-    else:
-        status, issue = "passed", None
-    return {"status": status, "issue": issue, "summary": summary, "observation": dict(row) if row else None}
+        return {"status": "excluded", "issue": checked.exclusion.reason, "summary": None, "observation": None}
+    return qualify_proof_validation(row)

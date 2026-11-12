@@ -1,8 +1,9 @@
 """Estimate the claims-aligned pilot from one portable observation snapshot.
 
 The same selected observations drive both scatter views, coverage, and paper
-numbers. Incomplete or unvalidated conditions remain explicit without receiving
-finite estimates. No calculation here selects a baseline-runtime cohort.
+numbers. Incomplete measurements and semantic proof failures receive no finite
+estimates; pending or resource-limited verification is reported separately.
+No calculation here selects a baseline-runtime cohort.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from scipy import stats
 
 from .engines import PROOF_ORACLES
 from .pilot_ast import LEGACY_PASS_LABELS
+from .proof_validation import is_semantic_proof_failure
 from .reports.analysis import _ratio_estimate, _sample_estimate
 
 PILOT_DATA_VERSION = 1
@@ -37,13 +39,15 @@ def condition_estimates(condition: dict[str, Any], rounds: int, metric_kind: str
     rows = condition["observations"]
     failures = Counter(row["status"] for row in rows if row["status"] != "success")
     validation = condition["validation"]
+    semantic_proof_failure = is_semantic_proof_failure(validation)
     issue = condition["exclusion"]["reason"] if condition["exclusion"] else None
     if issue is None and failures:
         issue = ", ".join(f"{count} {status}" for status, count in sorted(failures.items()))
     if issue is None and len(rows) != rounds:
         issue = f"{len(rows)}/{rounds} observations"
-    if issue is None and validation is not None and validation["status"] != "passed":
-        issue = validation["issue"] or "proof validation pending"
+    if issue is None and semantic_proof_failure:
+        assert validation is not None
+        issue = validation["issue"] or "proof validation failed"
     critical = None if rounds < 2 else float(stats.t.ppf(0.975, rounds - 1))
     estimates = {}
     for field, metric, divisor in (("wall_sec", "runtime", 1), ("max_rss_bytes", "memory", 1048576)):
@@ -64,7 +68,7 @@ def condition_estimates(condition: dict[str, Any], rounds: int, metric_kind: str
     issue = estimates[metric_kind]["issue"]
     if condition["exclusion"]:
         state = "excluded"
-    elif failures or (validation is not None and validation["status"] == "failed"):
+    elif failures or semantic_proof_failure:
         state = "failed"
     elif issue is not None:
         state = "pending"
@@ -188,6 +192,8 @@ def pilot_results(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
                 "candidate_threads": c["threads"],
                 "reference_n": b["sample_n"],
                 "candidate_n": c["sample_n"],
+                "proof_validation_status": c["validation"]["status"] if c["validation"] is not None else "not checked",
+                "proof_validation_issue": c["validation"]["issue"] if c["validation"] is not None else None,
             }
         )
     coverage = []
