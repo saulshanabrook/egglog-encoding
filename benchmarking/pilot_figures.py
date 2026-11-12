@@ -577,7 +577,7 @@ def bound_spec(results: dict[str, Any], *, width: int = 420, height: int = 260) 
             "font": "Arial",
             "axis": {
                 "labelFontSize": 12,
-                "titleFontSize": 14,
+                "titleFontSize": 14.5,
                 "titleFontWeight": "normal",
                 "titlePadding": 4,
                 "labelPadding": 2,
@@ -602,7 +602,7 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
         panel.pop("config")
         panel["title"] = {
             "text": f"{title} · {len(points)}/{len(planned)}",
-            "fontSize": 14,
+            "fontSize": 14.5,
             "fontWeight": "normal",
             "subtitleFontSize": 9.5,
         }
@@ -612,9 +612,9 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
                 ticks = axis_spec["values"]
                 axis_spec["values"] = ticks[:: max(1, (len(ticks) + 3) // 4)]
             if "color" in layer["encoding"]:
-                layer["encoding"]["color"]["legend"].update(labelFontSize=14, symbolSize=35, offset=8)
+                layer["encoding"]["color"]["legend"].update(labelFontSize=14.5, symbolSize=35, offset=8)
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=14)
+                layer["mark"].update(fontSize=14.5)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
         panels.append(panel)
@@ -629,8 +629,8 @@ def proof_cost_spec(results: dict[str, Any]) -> dict[str, Any]:
         "config": {
             "font": "Arial",
             "axis": {
-                "labelFontSize": 14,
-                "titleFontSize": 14,
+                "labelFontSize": 14.5,
+                "titleFontSize": 14.5,
                 "titleFontWeight": "normal",
                 "titlePadding": 4,
                 "labelPadding": 2,
@@ -662,7 +662,7 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
             height=205,
             title={
                 "text": f"{title} · {subtitle.split()[0]}",
-                "fontSize": 14,
+                "fontSize": 14.5,
                 "fontWeight": "normal",
                 "subtitleFontSize": 9.5,
             },
@@ -680,12 +680,12 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
                     "orient": "bottom",
                     "direction": "horizontal",
                     "columns": 4,
-                    "labelFontSize": 14,
+                    "labelFontSize": 14.5,
                     "symbolSize": 35,
                     "offset": 8,
                 }
             if layer["mark"]["type"] == "text":
-                layer["mark"].update(fontSize=14)
+                layer["mark"].update(fontSize=14.5)
             elif layer["mark"]["type"] == "circle":
                 layer["mark"]["size"] = 12
     return {
@@ -699,8 +699,8 @@ def paired_runtime_size_spec(runtime: dict[str, Any], sizes: dict[str, Any]) -> 
         "config": {
             "font": "Arial",
             "axis": {
-                "labelFontSize": 14,
-                "titleFontSize": 14,
+                "labelFontSize": 14.5,
+                "titleFontSize": 14.5,
                 "titleFontWeight": "normal",
                 "titlePadding": 4,
                 "labelPadding": 2,
