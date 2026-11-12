@@ -2873,14 +2873,26 @@ fn run_rules_impl(
     context: ExternalContext<'_>,
 ) -> Result<(Duration, RuleSetReport)> {
     let assembly_timer = Instant::now();
+    // Building the plan validates deferred action callbacks even when the
+    // rule cannot currently match. Preserve those first-invocation errors.
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
             info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
         }
     }
+    // A naive empty query can still commit previously staged updates. Let the
+    // existing core plan/merge path decide that boundary whenever any are pending.
+    let pending = db.has_pending_updates();
+    let active_rules: Vec<_> = rules
+        .iter()
+        .copied()
+        .filter(|rule| pending || !rule_info[*rule].query.has_empty_table(db))
+        .collect();
     let mut rsb = db.new_rule_set();
-    for rule in rules {
+    // Leave skipped rules' timestamps alone. In particular, their first useful
+    // invocation must still join against rows that predate the empty period.
+    for rule in &active_rules {
         let info = &mut rule_info[*rule];
         let cached_plan = info.cached_plan.as_ref().unwrap();
         info.query

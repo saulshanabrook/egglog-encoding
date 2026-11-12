@@ -706,6 +706,13 @@ impl Database {
         }
     }
 
+    /// Whether a table may have staged mutations awaiting a merge. Mutation
+    /// buffers can notify before receiving rows, so this is conservative.
+    /// Inspect it only after mutation producers have finished.
+    pub fn has_pending_updates(&self) -> bool {
+        !self.notification_list.is_empty()
+    }
+
     /// Create a new counter for this database.
     ///
     /// These counters can be used to generate unique ids as part of an action.

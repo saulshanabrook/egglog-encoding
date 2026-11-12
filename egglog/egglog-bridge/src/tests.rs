@@ -1241,6 +1241,140 @@ fn seminaive_query_prim_rechecks_after_preseeded_container_rebuild() {
 }
 
 #[test]
+fn empty_inputs_do_not_hide_invalid_action_keys() {
+    for seminaive in [false, true] {
+        let mut egraph = EGraph::default();
+        let int = egraph.base_values_mut().register_type::<i64>();
+        let [input, output] = ["input", "output"].map(|name| {
+            egraph.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Base(int); 2],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::AssertEq,
+                name: name.into(),
+                can_subsume: false,
+            })
+        });
+        let malformed = {
+            let mut rb = egraph.new_rule("invalid action on empty input", seminaive);
+            let x: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+            let y: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+            rb.query_table(input, &[x, y], None).unwrap();
+            rb.remove(output, &[]); // output requires one key, checked during planning.
+            rb.build()
+        };
+        assert!(egraph.run_rules(&[malformed], None).is_err());
+    }
+}
+
+#[test]
+fn empty_inputs_preserve_pending_update_commit_boundaries() {
+    for seminaive in [false, true] {
+        for cache_before_staging in [false, true] {
+            let mut egraph = EGraph::default();
+            let int = egraph.base_values_mut().register_type::<i64>();
+            let [zero, one] = [0i64, 1].map(|n| egraph.base_values_mut().get(n));
+            let [input, output] = ["input", "output"].map(|name| {
+                egraph.add_table(FunctionConfig {
+                    schema: vec![ColumnTy::Base(int); 2],
+                    n_vals: 1,
+                    n_identity_vals: None,
+                    default: DefaultVal::Fail,
+                    merge: MergeFn::AssertEq,
+                    name: name.into(),
+                    can_subsume: false,
+                })
+            });
+            let copy = {
+                let mut rb = egraph.new_rule("copy pending input", seminaive);
+                let x: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+                let y: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+                let row = [x, y];
+                rb.query_table(input, &row, None).unwrap();
+                rb.set(output, &row);
+                rb.build()
+            };
+            if cache_before_staging {
+                assert!(!egraph.run_rules(&[copy], None).unwrap().changed());
+            }
+            let action = TableAction::new(&egraph, input);
+            egraph.with_execution_state(None, |state| {
+                action.insert(state, [zero, one].into_iter());
+            });
+            assert_eq!(egraph.lookup_id(input, &[zero]), None);
+            let changed = egraph.run_rules(&[copy], None).unwrap().changed();
+            // Naive execution retains an unconstrained plan and commits pending
+            // rows at its end. Seminaive's empty timestamp header already omits
+            // that plan, leaving the explicit flush to the caller.
+            assert_eq!(changed, !seminaive);
+            assert_eq!(egraph.lookup_id(output, &[zero]), None);
+            if seminaive {
+                assert_eq!(egraph.lookup_id(input, &[zero]), None);
+                assert!(egraph.flush_updates());
+            }
+            assert_eq!(egraph.lookup_id(input, &[zero]), Some(one));
+            assert!(egraph.run_rules(&[copy], None).unwrap().changed());
+            assert_eq!(egraph.lookup_id(output, &[zero]), Some(one));
+        }
+    }
+}
+
+#[test]
+fn empty_join_inputs_can_be_populated_in_independent_snapshots() {
+    for seminaive in [false, true] {
+        let mut egraph = EGraph::default();
+        let int = egraph.base_values_mut().register_type::<i64>();
+        let [zero, one, two] = [0i64, 1, 2].map(|n| egraph.base_values_mut().get(n));
+        let [left, right, output] = ["left", "right", "output"].map(|name| {
+            egraph.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Base(int); 2],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::AssertEq,
+                name: name.into(),
+                can_subsume: false,
+            })
+        });
+        let join = {
+            let mut rb = egraph.new_rule("join initially empty input", seminaive);
+            let x: QueryEntry = rb.new_var(ColumnTy::Base(int)).into();
+            let row = [x.clone(), x];
+            rb.query_table(left, &row, Some(false)).unwrap();
+            rb.query_table(right, &row, Some(false)).unwrap();
+            rb.set(output, &row);
+            rb.build()
+        };
+        egraph.add_values([(left, vec![zero, zero]), (left, vec![one, one])]);
+        assert!(!egraph.run_rules(&[join], None).unwrap().changed());
+        assert!(!egraph.run_rules(&[join], None).unwrap().changed());
+        let mut snapshot = egraph.clone();
+        egraph.add_values([(right, vec![zero, zero])]);
+        snapshot.add_values([(right, vec![one, one])]);
+        assert!(egraph.run_rules(&[join], None).unwrap().changed());
+        assert!(snapshot.run_rules(&[join], None).unwrap().changed());
+        assert_eq!(egraph.lookup_id(output, &[zero]), Some(zero));
+        assert_eq!(egraph.lookup_id(output, &[one]), None);
+        assert_eq!(snapshot.lookup_id(output, &[one]), Some(one));
+        assert_eq!(snapshot.lookup_id(output, &[zero]), None);
+
+        // An already-planned rule can become empty too. New left rows must
+        // remain eligible when the right input is eventually populated again.
+        let remove = TableAction::new(&egraph, right);
+        egraph
+            .run_actions(None, |state| remove.remove(state, &[zero]))
+            .unwrap();
+        egraph.add_values([(left, vec![two, two])]);
+        assert!(!egraph.run_rules(&[join], None).unwrap().changed());
+        egraph.add_values([(right, vec![two, two])]);
+        assert!(egraph.run_rules(&[join], None).unwrap().changed());
+        assert_eq!(egraph.lookup_id(output, &[two]), Some(two));
+        assert_eq!(snapshot.lookup_id(output, &[two]), None);
+    }
+}
+
+#[test]
 fn snapshot_query_keeps_rows_rules_and_run_history_independent() {
     for cache_before_clone in [false, true] {
         let mut egraph = EGraph::default();

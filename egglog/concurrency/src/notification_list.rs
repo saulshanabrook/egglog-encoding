@@ -33,6 +33,12 @@ impl<K: NumericId> Default for NotificationList<K> {
 }
 
 impl<K: NumericId> NotificationList<K> {
+    /// Whether no notifications are queued. Inspect this only after concurrent
+    /// producers have finished: a notifier may still be enqueuing its item.
+    pub fn is_empty(&self) -> bool {
+        self.inner.notified.lock().unwrap().is_empty()
+    }
+
     /// Notify a given item.
     ///
     /// It is expected that the space of `item`s is fairly dense: this implementation will use O(n)

@@ -812,6 +812,16 @@ impl RuleBuilder<'_> {
 }
 
 impl Query {
+    /// Every table atom is a positive requirement, including occurrence atoms.
+    /// An empty table therefore makes the whole query empty. Check the live
+    /// database each time: the same rule may become runnable after another
+    /// ruleset populates a table, or after restoring a snapshot.
+    pub(crate) fn has_empty_table(&self, db: &core_relations::Database) -> bool {
+        self.atoms
+            .iter()
+            .any(|atom| db.estimate_size(atom.table, None) == 0)
+    }
+
     fn query_state<'a, 'outer>(
         &self,
         rsb: &'a mut RuleSetBuilder<'outer>,
