@@ -797,7 +797,10 @@ impl<'a> ProofLifter<'a> {
         // firing. The synthesis memo retains every own conclusion, including
         // columns absent from the single continuation kept for further replay.
         for (key, &proof) in &store.synthesized {
-            if let SynthKey::Rule(name, column, _) = key {
+            if let SynthKey::Rule(_, column) = key {
+                let Justification::Rule { name, .. } = store.get(proof).justification() else {
+                    unreachable!("an own rule conclusion has a rule justification");
+                };
                 conclusions.push((proof, self.rule_named(name), *column as usize));
             }
         }
