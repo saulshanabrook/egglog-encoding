@@ -604,8 +604,11 @@ private def probeCasesRaw : List (String × List Src) :=
 private def probeCases : List (String × Program) := probeCasesRaw.map fun c => (c.1, prog c.2)
 
 namespace Egglog
-/-- The source fragment, decided. -/
+/-- The source fragment, decided: the programs the congruence and provenance gates run. -/
 def Program.encodeDomainB (p : Program) : Bool := decide p.Fragment
+
+/-- The checker's fragment, decided: the programs whose proofs lift to source proofs. -/
+def Program.proofDomainB (p : Program) : Bool := decide (SourceProof.Fragment p)
 
 /-! #### Running the compiled program
 
@@ -624,13 +627,19 @@ end Egglog
 /-! ### Entry point -/
 
 
+/-- Write a source program for egglog, with `min` spelled `ordering-min`, egglog's minimum
+on an eq-sort, its final check asserted with the outcome the interpreter predicts for it in
+egglog's check semantics (`FDatabase.holdsWith true`, which sees subsumed rows), and the
+row counts the interpreter predicts for it. -/
 private def writeCase (dir name : String) (p : Program) : IO Unit := do
   unless p.arityConflicts.isEmpty do
     throw <| IO.userError
       s!"difftest: {name} uses {p.arityConflicts} at more than one arity, which egglog \
          rejects with \"Function already bound\""
-  IO.FS.writeFile s!"{dir}/{name}.egg" p.toEgg
-  IO.FS.writeFile s!"{dir}/{name}.expected" p.expectedSizes
+  let result := exec p
+  let check := result.map fun d => d.holdsWith true p.check
+  IO.FS.writeFile s!"{dir}/{name}.egg" ((p.toEgg check).replace "(min " "(ordering-min ")
+  IO.FS.writeFile s!"{dir}/{name}.expected" (p.expectedSizesOf result)
 
 /-- Write a compiled program for egglog, with `min` on ids spelled `ordering-min` and the
 generated `@` namespace, which egglog reserves, spelled `at_`, and the row counts the
@@ -814,7 +823,7 @@ private def congruenceCheck (fuel : Nat) (o : Congruence.Options) (p : Program) 
   | _, none => errors := errors ++ ["congruence target stuck or exhausted fuel"]
   return errors
 
-/-- Leading `--views=naive|indexed` and `--phased` arguments. -/
+/-- Leading encoding options; source subsumption is also detected automatically. -/
 private def parseOptions : List String → Congruence.Options × List String
   | "--views=naive" :: rest =>
       let (o, names) := parseOptions rest
@@ -822,6 +831,9 @@ private def parseOptions : List String → Congruence.Options × List String
   | "--views=indexed" :: rest =>
       let (o, names) := parseOptions rest
       ({ o with views := .indexed }, names)
+  | "--subsumption" :: rest =>
+      let (o, names) := parseOptions rest
+      ({ o with subsumption := true }, names)
   | "--phased" :: rest =>
       let (o, names) := parseOptions rest
       ({ o with phased := true }, names)
@@ -852,8 +864,20 @@ private def runCongruenceChecks (fuel : Nat) (o : Congruence.Options) (names : L
   IO.println s!"congruence: {tested} tested, {failed} failures, {skipped} outside domain"
   return if failed == 0 && tested > 0 then 0 else 1
 
-private def provenanceCheck (fuel : Nat) (p : Program) (liftProofs : Bool) : List String := Id.run do
-  let q := Congruence.encode p
+/-- Exercise lifting with the origins of an explicitly selected compilation. The public
+`Resugar.lift` is also tested below against the default compilation. -/
+private def checkedLiftFor (p : Program) (compiled : Congruence.Compiled)
+    (pf : SourceProof.Proof) : Option SourceProof.Proof := do
+  if !SourceProof.sourceOk p then none else do
+    let fact ← Provenance.check compiled.program pf
+    let wanted ← Resugar.factClaim p fact
+    let result ← Resugar.liftProof p compiled.origins pf
+    if SourceProof.check p result == some wanted then some result else none
+
+private def provenanceCheck (fuel : Nat) (p : Program) (liftProofs : Bool)
+    (forceSubsumption : Bool := false) : List String := Id.run do
+  let compiled := Congruence.compileWith { subsumption := forceSubsumption } p
+  let q := compiled.program
   let some encoded := Provenance.encode q | return ["provenance pass rejected input"]
   let some original := relationalExecAt fuel FDatabase.empty q.schedule |
     return ["congruence program stuck or exhausted fuel"]
@@ -864,10 +888,15 @@ private def provenanceCheck (fuel : Nat) (p : Program) (liftProofs : Bool) : Lis
   -- Without its log, the instrumented state is the original state.
   if (Provenance.eraseLog annotated.terms).toFinset != original.terms.toFinset then
     errors := errors ++ ["states differ without the log"]
+  if annotated.subsumed.toFinset != original.subsumed.toFinset then
+    errors := errors ++ ["subsumed rows differ after instrumentation"]
+  if Relational.holds original q.check != Relational.holds annotated encoded.check then
+    errors := errors ++ ["check outcome differs after instrumentation"]
   let proofs := Provenance.rowProofs q annotated.terms
   let bad := proofs.filter fun tp => match tp.2 with
     | none => true
-    | some pf => liftProofs && (Resugar.lift p pf).isNone
+    | some pf => liftProofs &&
+        (if forceSubsumption then checkedLiftFor p compiled pf else Resugar.lift p pf).isNone
   if !bad.isEmpty then
     errors := errors ++ [s!"{bad.length}/{proofs.length} rows without a proof"]
   return errors
@@ -884,18 +913,25 @@ private def runProvenanceChecks (fuel : Nat) (names : List String)
   let mut tested := 0
   let mut failed := 0
   let mut skipped := 0
+  let mut nodeTested := 0
   for (name, p₀) in cases do
     let p := p₀
-    if !p.encodeDomainB then
+    if !p.encodeDomainB || (liftProofs && !p.proofDomainB) then
       skipped := skipped + 1
       continue
     tested := tested + 1
-    let errors := provenanceCheck fuel p liftProofs
+    let mut errors := provenanceCheck fuel p liftProofs
+    -- The checker excludes source subsumption, so explicitly retain nodes on plain
+    -- sources to exercise both representations in the lifting gate as well.
+    if p.schedule.subsumeFreeB then
+      nodeTested := nodeTested + 1
+      errors := errors ++ (provenanceCheck fuel p liftProofs true).map ("node encoding: " ++ ·)
     unless errors.isEmpty do
       failed := failed + 1
       IO.println s!"FAIL {name}: {String.intercalate "; " errors}"
   let label := if liftProofs then "resugar" else "provenance"
   IO.println s!"{label}: {tested} tested, {failed} failures, {skipped} outside domain"
+  IO.println s!"{label}: {nodeTested} additional node encodings checked"
   return if failed == 0 && tested > 0 then 0 else 1
 
 private def firstDifference (expected actual : String) : String :=
@@ -932,12 +968,15 @@ private def runEggChecks (fuel : Nat) (update : Bool) (names : List String) : IO
     if !p.encodeDomainB then errors := ["outside the correspondence domain"]
     else
       let congruence := Congruence.encode p
+      -- A program outside the checker's fragment has encodings but no lifted proofs.
       let snapshots : List (String × Option String) :=
         [("congruence.egg", some congruence.render),
-         ("provenance.egg", (Provenance.encode congruence).map Program.render),
-         ("proofs.txt", (Resugar.certificates
-           (fun Q => relationalExecAt fuel FDatabase.empty Q.schedule) p).map
-           Resugar.renderProofs)]
+         ("provenance.egg", (Provenance.encode congruence).map Program.render)] ++
+        (if p.proofDomainB then
+          [("proofs.txt", (Resugar.certificates
+            (fun Q => relationalExecAt fuel FDatabase.empty Q.schedule) p).map
+            Resugar.renderProofs)]
+         else [])
       for (suffix, text) in snapshots do
         let path := eggDir / s!"{name}.{suffix}"
         match text with
@@ -950,7 +989,7 @@ private def runEggChecks (fuel : Nat) (update : Bool) (names : List String) : IO
             if expected != text then
               errors := errors ++ [s!"{suffix} differs, {firstDifference expected text}"]
       errors := errors ++ congruenceCheck fuel {} p ++ provenanceCheck fuel p false ++
-        (provenanceCheck fuel p true).map ("lifting: " ++ ·)
+        (if p.proofDomainB then (provenanceCheck fuel p true).map ("lifting: " ++ ·) else [])
     unless errors.isEmpty do
       failed := failed + 1
       IO.println s!"FAIL {name}: {String.intercalate "; " errors}"
@@ -975,7 +1014,7 @@ private def exportCertificates (fuel : Nat) (path : String) (names : List String
     let selected := if names.isEmpty then allCases ++ files else available.filter fun c => names.contains c.1
     for (name, p₀) in selected do
       let p := p₀
-      if !p.encodeDomainB then continue
+      if !p.proofDomainB then continue
       let some cs := Resugar.certificates
           (fun Q => relationalExecAt fuel FDatabase.empty Q.schedule) p |
         IO.eprintln s!"difftest: {name} does not lift"; return 1
@@ -1021,7 +1060,7 @@ def main (args : List String) : IO UInt32 := do
       | "update" :: names => runEggChecks n true names
       | names => runEggChecks n false names
   | "congruence" :: fuel :: rest =>
-    -- `difftest congruence <fuel> [--views=naive|indexed] [--phased] [names]`
+    -- `difftest congruence <fuel> [--views=naive|indexed] [--phased] [--subsumption] [names]`
     match fuel.toNat? with
     | none => IO.eprintln s!"difftest: bad fuel {fuel}"; return 1
     | some n =>
@@ -1075,7 +1114,7 @@ def main (args : List String) : IO UInt32 := do
       writeCase dir s!"rand-{n}" (prog (genProgram (k + 1)))
       return 0
   | dir :: "compiled" :: rest =>
-    -- `difftest <dir> compiled [--views=naive|indexed] [--phased]`
+    -- `difftest <dir> compiled [--views=naive|indexed] [--phased] [--subsumption]`
     let (o, extra) := parseOptions rest
     unless extra.isEmpty do
       IO.eprintln s!"difftest: unknown arguments {extra}"

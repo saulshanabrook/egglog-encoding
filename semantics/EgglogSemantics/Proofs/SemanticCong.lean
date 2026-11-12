@@ -159,11 +159,4 @@ theorem Database.SameMeaning.addSubsumed {d e : Database} (h : d.SameMeaning e)
       ((h.congr a b).trans (Cong.iff_of_eqs_eq (d := e.addSubsumed X) (e := e) rfl).symm)
   · simp only [Database.live_addSubsumed, h.live, Database.SameRow.iff_of_congr h.congr]
 
-theorem Database.SameMeaning.forgetSubsumed {d e : Database} (h : d.SameMeaning e) :
-    d.forgetSubsumed.SameMeaning e.forgetSubsumed :=
-  .of_congr (fun a b =>
-    (Cong.iff_of_eqs_eq (d := d.forgetSubsumed) (e := d) rfl).trans
-      ((h.congr a b).trans
-        (Cong.iff_of_eqs_eq (d := e.forgetSubsumed) (e := e) rfl).symm)) rfl
-
 end Egglog

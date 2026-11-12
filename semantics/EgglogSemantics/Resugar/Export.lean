@@ -84,11 +84,12 @@ def program (P : Program) : Option String := do
   if !SourceProof.sourceOk P then none else
     some (P.renderWith fun k => some (ruleName k))
 
+/-- Export each distinct source certificate once, preserving its first occurrence. -/
 def caseJson (name : String) (P : Program) (cs : List SourceProof.Proof) :
     Option Json := do
   let source ← program P
   some (Json.mkObj [("case", name), ("program", source),
-    ("certificates", .arr (cs.map (certificate P)).toArray)])
+    ("certificates", .arr (cs.eraseDups.map (certificate P)).toArray)])
 
 /-- The curated fixtures, which both checkers must judge alike. -/
 def fixtures (_ : Unit) : Option (List Json) := do

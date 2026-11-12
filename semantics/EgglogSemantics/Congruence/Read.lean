@@ -5,7 +5,8 @@ import EgglogSemantics.Source.Names
 by joining its children's ids with the applications the target holds, through the live
 union-find edges of their children; the id is the parent the application's own live edge
 names. This definition uses only mathematical databases and does not depend on an
-executable interpreter. -/
+executable interpreter. Held applications remain readable here when subsumed: `Repr`
+describes equality, while compiled query atoms enforce liveness. -/
 
 namespace Egglog.Congruence
 

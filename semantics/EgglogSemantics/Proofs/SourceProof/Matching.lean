@@ -17,11 +17,15 @@ theorem premiseMatches_sound {db : Database} {σ : Env} {p : Pattern} {c : Claim
   cases p with
   | expr e =>
       simp only [premisesMatch, Bool.and_true, Bool.and_eq_true_iff, beq_iff_eq] at h
-      exact .atom (Expr.Matches.of_eval hX ho h.1 (hc.trans hc.symm).toCong).2
+      exact .atom (Expr.Matches.of_eval hX (Expr.minOverVars_of_orderingFree e ho) h.1
+        (hc.trans hc.symm).toCong).2
   | eq a b =>
       simp only [premisesMatch, Bool.and_true, Bool.and_eq_true_iff, beq_iff_eq] at h
-      exact .equal (Expr.Matches.of_eval hX ho.1 h.1 (hc.trans hc.symm).toCong).2
-        (Expr.Matches.of_eval hX ho.2 h.2 (hc.symm.trans hc).toCong).2 h.1 h.2 hc.toCong
+      exact .equal
+        (Expr.Matches.of_eval hX (Expr.minOverVars_of_orderingFree a ho.1) h.1
+          (hc.trans hc.symm).toCong).2
+        (Expr.Matches.of_eval hX (Expr.minOverVars_of_orderingFree b ho.2) h.2
+          (hc.symm.trans hc).toCong).2 h.1 h.2 hc.toCong
   | ne _ _ => simp [Pattern.monotoneB] at hm
 
 theorem premisesMatch_sound {db : Database} {σ : Env} {q : Query} {cs : List Claim}

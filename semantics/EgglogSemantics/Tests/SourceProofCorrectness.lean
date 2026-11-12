@@ -22,8 +22,9 @@ def reached : Database := RunRules [derive] registered
 theorem source_reached : Reach Database.empty program.schedule reached :=
   .seq .run .run
 
-theorem source_fragment : program.Fragment := by
-  refine ⟨by decide, by decide, ?_, by decide, by decide, by decide, by decide⟩
+theorem source_fragment : SourceProof.Fragment program := by
+  refine ⟨⟨by decide, ?_, by decide, by decide, by decide, by decide⟩, by decide,
+    by decide⟩
   simp only [String.isPrefixOf, String.startsWith_string_iff]
   decide
 

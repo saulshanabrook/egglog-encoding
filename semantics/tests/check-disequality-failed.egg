@@ -1,0 +1,10 @@
+; A disequality in the final check that a union has falsified: the two sides are one class
+; in the final e-graph, so the program's outcome is the error.
+(sort Math)
+(constructor A () Math)
+(constructor E () Math)
+(constructor F (Math) Math)
+(F (A))
+(E)
+(union (F (A)) (E))
+(check (!= (F (A)) (E)))

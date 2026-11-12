@@ -1,0 +1,11 @@
+; A changing subsume pass is followed by a stable pass. Nullary rows are marked too.
+(sort Math)
+(constructor A () Math)
+(constructor F (Math) Math)
+(constructor Done (Math) Math)
+(constructor Tick () Math)
+(F (A))
+(Tick)
+(rule ((F x) (Tick)) ((subsume (F x)) (subsume (Tick)) (Done x)))
+(run-schedule (saturate (run)))
+(check (Done (A)))
