@@ -2,8 +2,8 @@ use crate::ast::FunctionSubtype;
 use crate::extract::find_canonical;
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
-use crate::{ArcSort, EGraph, Function, Value};
-use std::ops::Range;
+use crate::{ArcSort, EGraph, Value};
+use std::vec::IntoIter;
 
 /// A node of the search: a value together with the sort it is reconstructed at.
 type Key = (Value, String);
@@ -18,9 +18,6 @@ type Key = (Value, String);
 pub(super) struct RootExtractor {
     cache: HashMap<Key, Option<TermId>>,
     active: HashSet<Key>,
-    /// Every function the search has read so far, keyed by its index in
-    /// `EGraph::functions`. Scoped to one extraction run.
-    scanned: HashMap<usize, FunctionRows>,
 }
 
 /// What the frame on top of the stack needs from the driver.
@@ -70,68 +67,10 @@ struct EqStage {
     unscanned: usize,
     /// The function `rows` and `row` come from.
     func: usize,
-    /// Positions in that function's [`FunctionRows`] ordering, holding the rows
-    /// that match the node's value and have not been tried yet.
-    rows: Range<usize>,
+    /// Matching rows of this function in lexicographic order, still to try.
+    rows: IntoIter<Vec<Value>>,
     /// The row being reconstructed, with the child terms resolved so far.
     row: Option<(Vec<Value>, Vec<TermId>)>,
-}
-
-/// The requested non-subsumed row groups of one function, loaded by the value
-/// in its extraction output column.
-///
-/// A group's rows are in lexicographic order, so which row a search picks does
-/// not depend on storage row iteration order — see `prove_exists`.
-#[derive(Default)]
-struct FunctionRows {
-    /// Row width; zero until a nonempty group is loaded.
-    arity: usize,
-    /// The loaded rows, concatenated in storage iteration order within each group.
-    vals: Vec<Value>,
-    /// Row numbers into `vals`, in load order by group and lexicographic order
-    /// within each group. Appending a group preserves earlier ranges.
-    order: Vec<u32>,
-    /// Where each output value's group sits in `order`.
-    groups: HashMap<Value, Range<usize>>,
-}
-
-impl FunctionRows {
-    /// The row at `position` in the ordering.
-    fn row(&self, position: usize) -> &[Value] {
-        let start = self.order[position] as usize * self.arity;
-        &self.vals[start..start + self.arity]
-    }
-
-    /// Load and order the requested output group once. New groups are appended,
-    /// so a suspended frame's range remains valid while resolving its children.
-    fn group(&mut self, egraph: &EGraph, func: &Function, value: Value) -> Range<usize> {
-        if let Some(group) = self.groups.get(&value) {
-            return group.clone();
-        }
-        let start = self.order.len();
-        egraph.backend.for_each_matching_col(
-            func.backend_id,
-            func.extraction_layout().1,
-            value,
-            |row| {
-                if !row.subsumed {
-                    self.arity = row.vals.len();
-                    self.order.push(self.order.len() as u32);
-                    self.vals.extend_from_slice(row.vals);
-                }
-            },
-        );
-        let arity = self.arity;
-        let vals = &self.vals;
-        self.order[start..].sort_unstable_by(|&a, &b| {
-            let a = &vals[a as usize * arity..][..arity];
-            let b = &vals[b as usize * arity..][..arity];
-            a.cmp(b)
-        });
-        let group = start..self.order.len();
-        self.groups.insert(value, group.clone());
-        group
-    }
 }
 
 impl EqStage {
@@ -139,7 +78,7 @@ impl EqStage {
         Self {
             unscanned: 0,
             func: 0,
-            rows: 0..0,
+            rows: Vec::new().into_iter(),
             row: None,
         }
     }
@@ -147,20 +86,11 @@ impl EqStage {
     /// The next row to try for `value` at `sort`, moving on to further functions
     /// once the current one's matching rows run out.
     ///
-    /// Rows come back lexicographically smallest first (see [`FunctionRows`]).
-    fn next_row(
-        &mut self,
-        egraph: &EGraph,
-        scanned: &mut HashMap<usize, FunctionRows>,
-        value: Value,
-        sort: &ArcSort,
-    ) -> Option<Vec<Value>> {
+    /// Rows come back lexicographically smallest first.
+    fn next_row(&mut self, egraph: &EGraph, value: Value, sort: &ArcSort) -> Option<Vec<Value>> {
         loop {
-            if let Some(position) = self.rows.next() {
-                let rows = scanned
-                    .get(&self.func)
-                    .expect("the function whose rows are being tried was scanned");
-                return Some(rows.row(position).to_vec());
+            if let Some(row) = self.rows.next() {
+                return Some(row);
             }
 
             let (_, func) = egraph.functions.get_index(self.unscanned)?;
@@ -177,10 +107,19 @@ impl EqStage {
                 continue;
             }
 
-            self.rows = scanned
-                .entry(self.func)
-                .or_default()
-                .group(egraph, func, value);
+            let mut rows = Vec::new();
+            egraph.backend.for_each_matching_col(
+                func.backend_id,
+                func.extraction_layout().1,
+                value,
+                |row| {
+                    if !row.subsumed {
+                        rows.push(row.vals.to_vec());
+                    }
+                },
+            );
+            rows.sort_unstable();
+            self.rows = rows.into_iter();
         }
     }
 }
@@ -191,7 +130,6 @@ impl Frame {
     fn advance(
         &mut self,
         egraph: &EGraph,
-        scanned: &mut HashMap<usize, FunctionRows>,
         termdag: &mut TermDag,
         resumed: Option<Option<TermId>>,
     ) -> Step {
@@ -262,7 +200,7 @@ impl Frame {
                                 Step::Need(row[index], func.func_type.input[index].clone())
                             };
                         }
-                        None => match eq.next_row(egraph, scanned, self.value, &self.sort) {
+                        None => match eq.next_row(egraph, self.value, &self.sort) {
                             Some(row) => eq.row = Some((row, Vec::new())),
                             None => return self.fall_back(egraph),
                         },
@@ -297,7 +235,6 @@ impl RootExtractor {
         Self {
             cache: Default::default(),
             active: Default::default(),
-            scanned: Default::default(),
         }
     }
 
@@ -337,7 +274,7 @@ impl RootExtractor {
             let step = stack
                 .last_mut()
                 .expect("the loop returns as soon as the stack empties")
-                .advance(egraph, &mut self.scanned, termdag, resumed.take());
+                .advance(egraph, termdag, resumed.take());
             match step {
                 Step::Need(value, sort) => match self.begin(value, sort) {
                     Begin::Push(frame) => stack.push(frame),
