@@ -127,6 +127,17 @@ pub trait Primitive: Send + Sync + 'static {
 
     /// Constructs a type constraint for this primitive.
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint>;
+
+    /// Optionally infer the single output of a fully known action application.
+    ///
+    /// Returning `Some` opts into forward typing: the result must be the unique
+    /// output implied by `get_type_constraints` for these actual arguments.
+    /// Signature acceptance still runs through the ordinary resolver. This
+    /// method and its constraint/signature callbacks must be pure: an attempted
+    /// block can decline later and revisit this application in the solver.
+    fn infer_action_output(&self, _args: &[core::AtomTerm], _types: &TypeInfo) -> Option<ArcSort> {
+        None
+    }
 }
 
 /// A primitive whose body sees a [`PureState`]. Register via

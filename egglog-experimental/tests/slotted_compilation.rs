@@ -148,3 +148,38 @@ fn failed_proof_repl_input_restores_compiler_and_graph() {
     assert_eq!(stdout.matches("(done)").count(), 3, "{stdout}");
     assert!(stdout.contains("(Rule"), "{stdout}");
 }
+
+#[test]
+fn graph_parser_preserves_checked_compilation_and_failed_input_rollback() {
+    let mut graph = new_egraph_with_proofs();
+    let mut compiler = Compiler::for_egraph(
+        Options {
+            proof_mode: ProofMode::Prove,
+            ..Default::default()
+        },
+        &graph,
+    );
+    assert!(
+        compiler
+            .compile_program(None, "(datatype E (A)) (print-size A extra)")
+            .is_err()
+    );
+    let program = compiler
+        .compile_program(
+            None,
+            "(datatype E (V Var) (F E)) (let a (F (V $x)))
+         (rewrite (F x) x) (run 1) (check (= a (V $x))) (extract a)",
+        )
+        .unwrap();
+    let outputs = program.run(&mut graph).unwrap();
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, CommandOutput::UserDefined(_)))
+    );
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, CommandOutput::ExtractBest(..)))
+    );
+}

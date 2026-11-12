@@ -49,6 +49,16 @@ pub(super) fn carrier(s: &Symbols, proofs: bool) -> String {
     } else {
         String::new()
     };
+    // Database-owned memo rows follow push/pop and rebuild their output class.
+    // Proof substitution has its own explicit reconstruction path.
+    let substitution_memo = if proofs {
+        String::new()
+    } else {
+        format!(
+            "(function SubstMemoClass_{} (String) {} :merge old)\n(function SubstMemoFrame_{} (String) Renaming :merge old)",
+            s.free_vars, s.sort, s.free_vars
+        )
+    };
     format!(
         include_str!("templates/carrier.egg"),
         sort = s.sort,
@@ -61,6 +71,7 @@ pub(super) fn carrier(s: &Symbols, proofs: bool) -> String {
         invocation_decl = invocation_decl,
         invocation_register = invocation_register,
         invocation_union = invocation_union,
+        substitution_memo = substitution_memo,
         index = s.index,
         group_replace = format!("GroupReplace_{}", s.index),
         group = s.group,

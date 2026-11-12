@@ -5,7 +5,7 @@ use crate::{
     ast::ResolvedNCommand,
     proofs::proof_encoding_helpers::{EncodingNames, Skeleton},
     typechecking::PrimitiveValidator,
-    util::{HashMap, HashSet, IndexMap, IndexSet, SymbolGen},
+    util::{HEntry, HashMap, HashSet, IndexMap, IndexSet, SymbolGen},
 };
 
 use egglog_ast::generic_ast::Literal;
@@ -226,14 +226,20 @@ pub struct ProofStore {
     pub(super) prim_value_constructors: HashSet<String>,
     /// Structural sharing for proofs synthesized during lifting.
     pub(super) synthesized: HashMap<SynthKey, ProofId>,
+    /// One identity per exact rule name and ordered premise vector. Stored with
+    /// the synthesis memo so cloning a store preserves both namespaces together.
+    rule_firings: HashMap<(String, Vec<ProofId>), RuleFiringId>,
 }
+
+/// A firing's identity within one proof store, like the proof IDs it contains.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RuleFiringId(usize);
 
 /// What a synthesized proof is, for sharing one node per distinct value.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SynthKey {
-    /// A rule head's own conclusion: the rule, which of its proofs, and the
-    /// premises that fix the substitution.
-    Rule(String, i64, Vec<ProofId>),
+    /// A rule head's own conclusion: its interned firing and proof column.
+    Rule(RuleFiringId, i64),
     Sym(ProofId),
     Trans(ProofId, ProofId),
     Congr(ProofId, usize, ProofId),
@@ -787,12 +793,24 @@ impl ProofStore {
     /// must be shared too — otherwise a subproof reached along several paths
     /// becomes a fresh copy per path, and the proof unfolds into a tree.
     pub(super) fn push_shared_proof(&mut self, key: SynthKey, proof: Proof) -> ProofId {
-        if let Some(&id) = self.synthesized.get(&key) {
-            return id;
+        match self.synthesized.entry(key) {
+            HEntry::Occupied(entry) => *entry.get(),
+            HEntry::Vacant(entry) => {
+                let id = self.id_to_proof.push(proof);
+                entry.insert(id);
+                id
+            }
         }
-        let id = self.id_to_proof.push(proof);
-        self.synthesized.insert(key, id);
-        id
+    }
+
+    /// Intern the old structural rule key once for all columns of a firing.
+    /// Names compare by string contents and premises by their order and IDs.
+    pub(super) fn rule_firing(&mut self, name: &str, premises: &[ProofId]) -> RuleFiringId {
+        let next = RuleFiringId(self.rule_firings.len());
+        *self
+            .rule_firings
+            .entry((name.to_owned(), premises.to_vec()))
+            .or_insert(next)
     }
 
     /// Format a proof as one parenthesized s-expression containing its local
@@ -818,6 +836,7 @@ impl ProofStore {
             container_normalizers,
             prim_value_constructors,
             synthesized: HashMap::default(),
+            rule_firings: HashMap::default(),
         }
     }
 
@@ -1050,6 +1069,60 @@ mod tests {
     use crate::proofs::{proof_encoding_rebuild::rebuild_skeleton, proof_lifting::ProofLifter};
     use crate::util::SymbolGen;
 
+    #[test]
+    fn rule_firing_keys_preserve_structural_sharing_and_store_clones() {
+        let mut store = ProofStore::new(TermDag::default(), HashMap::default(), HashSet::default());
+        let term = store.term_dag.app("A".into(), vec![]);
+        let premise = Proof {
+            proposition: Proposition::new(term, term),
+            justification: Justification::Fiat,
+        };
+        let left = store.id_to_proof.push(premise.clone());
+        let right = store.id_to_proof.push(premise);
+        let cases = [
+            ("rule".to_owned(), 0, vec![left, right]),
+            // Equal contents from distinct allocations must still share.
+            (["ru", "le"].concat(), 0, vec![left, right]),
+            ("rule".to_owned(), 1, vec![left, right]),
+            ("rule".to_owned(), 0, vec![right, left]),
+            ("other".to_owned(), 0, vec![left, right]),
+            ("rule".to_owned(), 0, vec![left]),
+            ("rule".to_owned(), 0, vec![left, left]),
+            ("rule".to_owned(), 0, vec![]),
+        ];
+        let mut old_keys = IndexSet::default();
+        for (name, column, premises) in &cases {
+            let (old_index, _) = old_keys.insert_full((name.clone(), *column, premises.clone()));
+            let firing = store.rule_firing(name, premises);
+            let id = store.push_shared_proof(
+                SynthKey::Rule(firing, *column),
+                Proof {
+                    proposition: Proposition::new(term, term),
+                    justification: Justification::Rule {
+                        name: name.clone(),
+                        premise_proofs: premises.clone(),
+                        substitution: IndexMap::default(),
+                    },
+                },
+            );
+            assert_eq!(id.index(), old_index + 2);
+        }
+
+        let mut cloned = store.clone();
+        let firing = cloned.rule_firing("rule", &[left, right]);
+        assert!(firing == store.rule_firing("rule", &[left, right]));
+        let existing = cloned.synthesized[&SynthKey::Rule(firing, 0)];
+        assert_eq!(existing.index(), 2);
+        let new_firing = cloned.rule_firing("new-rule", &[left, right]);
+        assert!(new_firing != firing);
+        assert!(
+            !cloned
+                .synthesized
+                .contains_key(&SynthKey::Rule(new_firing, 0))
+        );
+        assert_eq!(store.id_to_proof.n_ids(), old_keys.len() + 2);
+    }
+
     /// One firing of a rebuild rule over a four-child view row, as the proofs
     /// the rule packs: the row proof `e_old = f(old0 old1 old2 old3)`, a step
     /// per child column (column 3's is reflexive — that column did not move),
@@ -1129,7 +1202,8 @@ mod tests {
             ProofStore::new(raw.term_dag.clone(), HashMap::default(), HashSet::default());
         let prog = vec![];
         let globals = HashMap::default();
-        let mut lifting = ProofLifter::new(&prog, &globals, raw);
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(&prog, &globals, raw, &mut proof_ids);
         let mut lift = |id| {
             let lifted = lifting.proof(&mut store, id);
             store.simplify(lifted)
@@ -1350,7 +1424,9 @@ mod tests {
             HashMap::default(),
             HashSet::default(),
         );
-        ProofLifter::new(&[], &HashMap::default(), &firing.raw).proof(&mut store, packed);
+        let mut proof_ids = DenseIdMap::new();
+        ProofLifter::new(&[], &HashMap::default(), &firing.raw, &mut proof_ids)
+            .proof(&mut store, packed);
     }
 
     /// Every column of the row is a proof, including the e-class's past the last

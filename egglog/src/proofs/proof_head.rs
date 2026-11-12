@@ -25,7 +25,9 @@ use crate::{
     proofs::{
         proof_checker::eval_expr_with_subst,
         proof_encoding::ProofInstrumentor,
-        proof_format::{Justification, Proof, ProofId, ProofStore, Proposition, SynthKey},
+        proof_format::{
+            Justification, Proof, ProofId, ProofStore, Proposition, RuleFiringId, SynthKey,
+        },
     },
     typechecking::FuncType,
     util::{HashMap, HashSet, IndexMap},
@@ -602,6 +604,9 @@ fn plan_construct_into(
 /// there. What it holds is what the whole walk would have produced this far.
 #[derive(Clone, Default)]
 pub(crate) struct HeadWalk {
+    /// Interned lazily at the first own conclusion and retained by continuations.
+    /// Like `proofs`, this identity belongs to the store the walk replays into.
+    firing: Option<RuleFiringId>,
     /// The action to carry on at.
     next_action: usize,
     /// How many of the layout's positions the walk has reached.
@@ -988,12 +993,12 @@ impl<'a> Firing<'a> {
         proposition: Proposition,
     ) -> ProofId {
         let column = self.walk.proofs.len() as i64;
+        let firing = *self
+            .walk
+            .firing
+            .get_or_insert_with(|| store.rule_firing(self.rule_name, &self.body_premises));
         let id = store.push_shared_proof(
-            SynthKey::Rule(
-                self.rule_name.to_string(),
-                column,
-                self.body_premises.clone(),
-            ),
+            SynthKey::Rule(firing, column),
             Proof {
                 proposition,
                 justification: Justification::Rule {
@@ -1009,7 +1014,7 @@ impl<'a> Firing<'a> {
 
     /// The term `expr` evaluates to under the bindings in effect.
     fn eval(&mut self, store: &mut ProofStore, expr: &ResolvedExpr) -> TermId {
-        eval_expr_with_subst::<false>(
+        eval_expr_with_subst(
             self.rule_name,
             expr,
             &mut store.term_dag,

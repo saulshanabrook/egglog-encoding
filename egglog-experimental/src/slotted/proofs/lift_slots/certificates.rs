@@ -755,7 +755,7 @@ impl SlotLifter<'_, NativeProofs<'_>> {
                     let mut removal = None;
                     crate::slotted::runtime::group::slot_closure_with(
                         &grp,
-                        &old.0,
+                        &old,
                         |slot, index, reverse| {
                             if slot == s {
                                 removal = Some((index, reverse));

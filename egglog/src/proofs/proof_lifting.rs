@@ -1,6 +1,6 @@
 //! Temporary state for replaying recorded proofs into a source proof arena.
-//! Plans, partially replayed rule firings, and raw IDs are discarded when the
-//! requested roots have been lifted; the checker never consults them.
+//! Plans and partially replayed rule firings are temporary. A ground request may
+//! lend its raw-ID memo to successive lifters; the checker never consults it.
 
 use super::{
     proof_checker::{
@@ -78,18 +78,8 @@ pub(crate) fn lift_proof(
 }
 
 impl RawProofStore {
-    /// Decode raw roots in the supplied order with the ordinary proof lifter.
+    /// Decode raw roots in the supplied order, optionally visiting source origins.
     /// Panics if a root or its proof is invalid for `program`.
-    pub(super) fn lift(
-        &self,
-        program: &[ResolvedNCommand],
-        roots: &[RawProofId],
-        normalizers: HashMap<String, PrimitiveValidator>,
-        value_heads: HashSet<String>,
-    ) -> (ProofStore, Vec<ProofId>) {
-        self.lift_with(program, roots, normalizers, value_heads, None)
-    }
-
     pub(super) fn lift_with(
         &self,
         program: &[ResolvedNCommand],
@@ -213,7 +203,7 @@ pub(in crate::proofs) fn global_bindings(
     let mut bindings = HashMap::default();
     for command in program {
         if let ResolvedNCommand::CoreAction(crate::GenericAction::Let(_, var, expr)) = command {
-            let (term, _) = eval_expr_with_subst::<false>("global_action", expr, dag, &bindings)?;
+            let (term, _) = eval_expr_with_subst("global_action", expr, dag, &bindings)?;
             bindings.insert(var.name.clone(), term);
         }
     }
@@ -224,7 +214,7 @@ pub(super) struct ProofLifter<'a> {
     program: &'a [ResolvedNCommand],
     globals: &'a HashMap<String, TermId>,
     raw: &'a RawProofStore,
-    proof_id: DenseIdMap<RawProofId, ProofId>,
+    proof_id: &'a mut DenseIdMap<RawProofId, ProofId>,
     rules: HashMap<&'a str, &'a ResolvedRule>,
     actions: Vec<&'a crate::ast::ResolvedAction>,
     head_plans: HashMap<String, Rc<HeadPlan>>,
@@ -238,6 +228,7 @@ impl<'a> ProofLifter<'a> {
         program: &'a [ResolvedNCommand],
         globals: &'a HashMap<String, TermId>,
         raw: &'a RawProofStore,
+        proof_id: &'a mut DenseIdMap<RawProofId, ProofId>,
     ) -> Self {
         let mut rules = HashMap::default();
         for command in program {
@@ -249,7 +240,7 @@ impl<'a> ProofLifter<'a> {
             program,
             globals,
             raw,
-            proof_id: DenseIdMap::new(),
+            proof_id,
             rules,
             actions: crate::proofs::proof_checker::gather_global_actions(program).collect(),
             head_plans: HashMap::default(),
@@ -388,7 +379,7 @@ impl<'a> ProofLifter<'a> {
         at: usize,
         expr: &crate::ast::ResolvedExpr,
     ) -> TermId {
-        crate::proofs::proof_checker::eval_expr_with_subst::<true>(
+        crate::proofs::proof_checker::eval_expr_with_subst(
             "global_action",
             expr,
             &mut store.term_dag,
@@ -794,7 +785,10 @@ impl<'a> ProofLifter<'a> {
         // firing. The synthesis memo retains every own conclusion, including
         // columns absent from the single continuation kept for further replay.
         for (key, &proof) in &store.synthesized {
-            if let SynthKey::Rule(name, column, _) = key {
+            if let SynthKey::Rule(_, column) = key {
+                let Justification::Rule { name, .. } = store.get(proof).justification() else {
+                    unreachable!("an own rule conclusion has a rule justification");
+                };
                 conclusions.push((proof, self.rule_named(name), *column as usize));
             }
         }
@@ -915,7 +909,8 @@ impl ProofStore {
         let globals = global_bindings(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
 
-        let mut lifting = ProofLifter::new(prog, &globals, raw_store);
+        let mut proof_ids = DenseIdMap::new();
+        let mut lifting = ProofLifter::new(prog, &globals, raw_store, &mut proof_ids);
         let roots = raw_proof_ids
             .iter()
             .map(|&root| lifting.proof(&mut store, root))
@@ -940,7 +935,7 @@ impl ProofStore {
             .map(|(var, term)| (var.clone(), *term))
             .collect();
         let eval = |store: &mut Self, expr: &ResolvedExpr| {
-            eval_expr_with_subst::<true>(rule_name, expr, &mut store.term_dag, &bindings)
+            eval_expr_with_subst(rule_name, expr, &mut store.term_dag, &bindings)
                 .ok()
                 .map(|(term, _props)| term)
         };

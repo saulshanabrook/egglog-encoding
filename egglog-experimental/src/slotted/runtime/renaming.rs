@@ -1,8 +1,7 @@
 //! Slot renaming, shape, and total-mapping algorithms.
 
 use super::Renaming;
-use egglog::sort::find_mapping;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// A node's canonical edges, renaming back to its frame, and self-symmetries.
 #[derive(Debug)]
@@ -26,13 +25,17 @@ impl NodeShape {
 /// Records the renumbered edges and the renaming back to the node's own names. Two nodes are equal up to a renaming of their slots exactly when their
 /// shapes agree.
 pub(crate) fn shape(edges: &[Renaming]) -> NodeShape {
-    let mut number: BTreeMap<i64, i64> = BTreeMap::new();
+    let mut number = Renaming::new();
     let mut out: Vec<Renaming> = Vec::with_capacity(edges.len() + 1);
     for edge in edges {
         let mut spelled = Renaming::new();
         for (&child_slot, &node_slot) in edge {
             let next = number.len() as i64;
-            spelled.insert(child_slot, *number.entry(node_slot).or_insert(next));
+            let index = number.get(&node_slot).copied().unwrap_or_else(|| {
+                number.insert(node_slot, next);
+                next
+            });
+            spelled.insert(child_slot, index);
         }
         out.push(spelled);
     }
@@ -77,6 +80,18 @@ fn node_shape_impl<T: Clone + Ord>(
     mut symmetry: impl FnMut(&Renaming, &[T]),
 ) -> NodeShape {
     let own = shape(edges);
+    // The common case has no nonidentity child readings. Preserve the tracing
+    // callback while avoiding identity clones, Cartesian-product setup, and a
+    // second normalization of the same edges.
+    if edges.iter().enumerate().all(|(i, _)| {
+        groups
+            .get(i)
+            .is_none_or(|group| group.iter().all(|g| g.iter().all(|(from, to)| from == to)))
+    }) {
+        let chosen: Vec<T> = edges.iter().map(|edge| selected(edge, None)).collect();
+        minimum(&own, &chosen);
+        return own;
+    }
     let mut best: Option<NodeShape> = None;
     let mut symmetries: Vec<Renaming> = Vec::new();
     for (variant, chosen) in readings(edges, groups, selected) {
@@ -119,12 +134,15 @@ fn readings<T: Clone + Ord>(
         .iter()
         .enumerate()
         .map(|(i, edge)| {
-            let domain: BTreeSet<i64> = edge.keys().copied().collect();
+            let domain: smallvec::SmallVec<[i64; 4]> = edge.keys().copied().collect();
             let mut out = vec![(edge.clone(), selected(edge, None))];
             for g in groups.get(i).map(Vec::as_slice).unwrap_or_default() {
-                if g.keys().copied().collect::<BTreeSet<_>>() == domain
-                    && g.values().copied().collect::<BTreeSet<_>>() == domain
-                {
+                if !g.keys().eq(edge.keys()) {
+                    continue;
+                }
+                let mut image: smallvec::SmallVec<[i64; 4]> = g.values().copied().collect();
+                image.sort_unstable();
+                if image == domain {
                     out.push((
                         g.iter().map(|(&s, &t)| (s, edge[&t])).collect(),
                         selected(edge, Some(g)),
@@ -150,22 +168,41 @@ fn readings<T: Clone + Ord>(
     })
 }
 
-/// [`find_mapping`] extended to be *total* on a domain, minting a
+/// [`egglog::sort::find_mapping`] extended to be *total* on a domain, minting a
 /// fresh slot for every domain key the constraints leave unnamed.
 ///
 /// Arguments come flat as `[avoid, domain, first..., second...]`. The
-/// constraint part is solved exactly as in [`find_mapping`]; each
+/// constraint part is solved exactly as in [`egglog::sort::find_mapping`]; each
 /// remaining key of `domain` is then named with the *smallest* non-negative
 /// value not already spoken for, which keeps the result injective and disjoint
 /// from `avoid`.
 ///
-/// `None` on the same conditions as [`find_mapping`], or on fewer than
+/// `None` on the same conditions as [`egglog::sort::find_mapping`], or on fewer than
 /// two leading maps.
 pub(super) fn find_mapping_total(maps: &[Renaming]) -> Option<Renaming> {
     let (head, pairs) = maps.split_at_checked(2)?;
     let (avoid, domain) = (&head[0], &head[1]);
 
-    let mut mapping = find_mapping(pairs)?;
+    if !pairs.len().is_multiple_of(2) {
+        return None;
+    }
+    let (first, second) = pairs.split_at(pairs.len() / 2);
+    let mut mapping = Renaming::new();
+    let mut inverse = Renaming::new();
+    for (a, b) in first.iter().zip(second) {
+        if !a.keys().eq(b.keys()) {
+            return None;
+        }
+        for (to, from) in a.values().zip(b.values()) {
+            if mapping.get(from).is_some_and(|old| old != to)
+                || inverse.get(to).is_some_and(|old| old != from)
+            {
+                return None;
+            }
+            mapping.insert(*from, *to);
+            inverse.insert(*to, *from);
+        }
+    }
 
     let mut used: BTreeSet<i64> = mapping
         .values()
@@ -185,7 +222,7 @@ pub(super) fn find_mapping_total(maps: &[Renaming]) -> Option<Renaming> {
         used.insert(next);
         mapping.insert(*k, next);
     }
-    Some(Renaming(mapping))
+    Some(mapping)
 }
 
 #[cfg(test)]
@@ -230,6 +267,64 @@ mod shape_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn compact_constraint_solver_matches_generic_partial_maps() {
+        let names = [-3, 0, 7];
+        let mut maps = Vec::new();
+        for code in 0..64 {
+            let mut code = code;
+            let mut map = BTreeMap::new();
+            for key in names {
+                let digit = code % 4;
+                code /= 4;
+                if digit != 0 {
+                    map.insert(key, names[digit - 1]);
+                }
+            }
+            maps.push(map);
+        }
+        for a in &maps {
+            for b in &maps {
+                let expected = egglog::sort::find_mapping(&[a, b]).map(Renaming::from);
+                let actual = find_mapping_total(&[
+                    Renaming::new(),
+                    Renaming::new(),
+                    a.clone().into(),
+                    b.clone().into(),
+                ]);
+                assert_eq!(actual, expected);
+            }
+        }
+        assert!(find_mapping_total(&[]).is_none());
+        assert!(find_mapping_total(&std::array::from_fn::<_, 3, _>(|_| Renaming::new())).is_none());
+    }
+
+    #[test]
+    fn trivial_child_groups_keep_identity_proof_readings() {
+        let edges = [Renaming::from([(-7, 90), (5, -2)]), Renaming::new()];
+        let identity = Renaming::from([(-7, -7), (5, 5)]);
+        let expected: Vec<_> = shape(&edges).into_maps().collect();
+        for groups in [
+            vec![],
+            vec![vec![]],
+            vec![vec![identity.clone()]],
+            // Restricted identity and identity on unrelated slots are invalid
+            // permutations and must be ignored just as in the general path.
+            vec![vec![Renaming::from([(-7, -7)]), Renaming::from([(10, 10)])]],
+        ] {
+            let mut minimums = Vec::new();
+            let result = node_shape_with(
+                &edges,
+                &groups,
+                |_, selected| minimums.push(selected.to_vec()),
+                |_, _| panic!("identity groups cannot create self-symmetries"),
+            );
+            assert_eq!(result.into_maps().collect::<Vec<_>>(), expected);
+            assert_eq!(minimums, vec![vec![identity.clone(), Renaming::new()]]);
+        }
+    }
 
     #[test]
     fn tied_shapes_retain_the_selected_reading_and_back_map() {
