@@ -1,15 +1,316 @@
-"""Bind restricted Slotted compile-only sizes to portable pilot snapshots."""
+"""Bind deterministic compiler sizes and their coverage to portable pilot figures."""
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
 
+from .config import DEFAULT_MEMORY_LIMIT_BYTES, DEFAULT_TIMEOUT_SEC
 from .models import FileSpec
 from .slotted_ast import COLUMNS, PIPELINE, export_slotted_ast, slotted_ast_records
+from .translation_ast import PIPELINE as TRANSLATION_PIPELINE
+from .translation_ast import PROFILES, SAFETY_STATUSES, TranslationRequest, translation_ast_records
+
+PHASE_COLORS = ("#0072b2", "#56b4e9", "#d55e00", "#cc79a7", "#e69f00", "#b59b00")
+TRANSLATION_NOTE = (
+    "Whole-program S-expression nodes: each list, atom, and literal counts once. "
+    "The denominator is self-contained raw source; emitted scaffolding remains in the output. "
+    "Each point is an independently compiled input/configuration, not a consecutive pass intermediate. "
+    "Compilation does not execute programs, extract proofs, or verify them. "
+    "Counts are deterministic; missing and failed cases remain in coverage, not at zero. "
+    "Compiler/input identities are independent of timing endpoints."
+)
+
+
+def translation_program_size_snapshot(
+    config: dict[str, Any],
+    files: dict[str, FileSpec],
+    cache: Path,
+    *,
+    collect: bool,
+    compiler: Path | None = None,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    memory_limit_bytes: int | None = DEFAULT_MEMORY_LIMIT_BYTES,
+) -> dict[str, Any]:
+    """Freeze broad source/configuration coverage separately from legacy Slotted rows."""
+    experiments = {experiment["id"]: experiment for experiment in config["experiments"]}
+    requests = []
+    for name, profiles, family in (
+        ("corpus-congruence", ("c", "cp"), "Applications"),
+        ("math", ("c", "cp"), "Math"),
+        ("disequality", ("d", "dcp"), "Disequality"),
+        ("slotted", ("s", "scp"), "Slotted restricted"),
+    ):
+        for display in experiments.get(name, {}).get("files", []):
+            project = Path(display).parent.name if family == "Applications" else ""
+            for profile in profiles:
+                requests.append(
+                    TranslationRequest(
+                        files[display], profile, family, project, True if profile in ("s", "scp") else None
+                    )
+                )
+    records = translation_ast_records(
+        requests,
+        cache,
+        collect=collect,
+        compiler=compiler,
+        timeout_sec=timeout_sec,
+        memory_limit_bytes=memory_limit_bytes,
+    )
+    planned = [
+        {
+            "file": request.file.display_path,
+            "file_sha256": request.file.sha256,
+            "profile": request.profile,
+            "no_aliasing": request.no_aliasing,
+            "family": request.family,
+            "project": request.project,
+        }
+        for request in requests
+    ]
+    safety = next((record for record in records if record["status"] in SAFETY_STATUSES), None)
+    return {
+        "status": "halted" if safety else "complete" if len(records) == len(planned) else "pending",
+        "pipeline": TRANSLATION_PIPELINE,
+        "inputs": planned,
+        "records": list(records),
+        "issue": f"collection halted after {safety['file']} ({safety['profile']}): {safety['row']['error']}"
+        if safety
+        else None,
+    }
+
+
+def translation_program_size_results(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Retain every planned configuration while plotting successful deterministic counts."""
+    indexed = {
+        (record["file_sha256"], record["profile"], record["no_aliasing"]): record for record in snapshot["records"]
+    }
+    points, rows = [], []
+    for planned in snapshot["inputs"]:
+        record = indexed.get((planned["file_sha256"], planned["profile"], planned["no_aliasing"]))
+        row = {
+            **planned,
+            "status": record["status"] if record else "pending",
+            "source_ast_nodes": None,
+            "normalized_source_ast_nodes": None,
+            "output_ast_nodes": None,
+            "growth": None,
+            "error": None,
+        }
+        if record:
+            row.update(
+                {
+                    key: record["row"].get(key)
+                    for key in (
+                        "source_ast_nodes",
+                        "normalized_source_ast_nodes",
+                        "output_ast_nodes",
+                        "error",
+                        "error_stage",
+                    )
+                }
+            )
+            row["compiler_binary_sha256"] = record["compiler_binary_sha256"]
+        x, y = row["source_ast_nodes"], row["output_ast_nodes"]
+        if row["status"] == "ok" and x is not None and y is not None and x > 0 and y > 0:
+            row["growth"] = y / x
+            points.append({**row, "x": x, "y": y, "configuration": planned["profile"], "workload": planned["file"]})
+        rows.append(row)
+    coverage = [
+        {
+            "profile": profile,
+            "planned": sum(row["profile"] == profile for row in rows),
+            **{
+                status: sum(row["profile"] == profile and row["status"] == status for row in rows)
+                for status in ("ok", "pending", "error", "failure", "timed-out", "memory-limited", "safety-failure")
+            },
+        }
+        for profile in PROFILES
+    ]
+    return {
+        "figure": "program-size",
+        "metric": TRANSLATION_NOTE,
+        "points": points,
+        "rows": rows,
+        "coverage": coverage,
+        "translation_program_size_snapshot": snapshot,
+    }
+
+
+def translation_program_size_spec(results: dict[str, Any]) -> dict[str, Any]:
+    """Compare source and emitted sizes on equal log domains, with no statistical intervals."""
+    values = [point[field] for point in results["points"] for field in ("x", "y")]
+    domain = (
+        [10 ** math.floor(math.log10(min(values))), 10 ** math.ceil(math.log10(max(values)))]
+        if values
+        else [1, 1000000]
+    )
+    if domain[0] == domain[1]:
+        domain[1] *= 10
+    axes = {
+        "x": {
+            "field": "x",
+            "type": "quantitative",
+            "title": "Input AST nodes",
+            "scale": {"type": "log", "domain": domain},
+        },
+        "y": {
+            "field": "y",
+            "type": "quantitative",
+            "title": "Generated AST nodes",
+            "scale": {"type": "log", "domain": domain},
+        },
+    }
+    color = {
+        "field": "configuration",
+        "type": "nominal",
+        "scale": {"domain": list(PROFILES), "range": list(PHASE_COLORS)},
+        "legend": {"title": "Configuration", "orient": "bottom", "columns": 6},
+    }
+    guides: list[dict[str, Any]] = [
+        {"x": domain[0], "x2": domain[1] / factor, "y": domain[0] * factor, "y2": domain[1], "label": f"{factor}×"}
+        for factor in (1, 10, 100)
+        if domain[0] * factor < domain[1]
+    ]
+    complete, total = len(results["points"]), len(results["rows"])
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+        "width": 460,
+        "height": 350,
+        "title": {
+            "text": "Compiler output program size",
+            "subtitle": [
+                f"{complete}/{total} input/configurations available; deterministic compile-only counts",
+                "Whole-program representation, including emitted scaffolding; failed/pending cases remain in coverage.",
+            ],
+        },
+        "layer": [
+            {
+                "data": {"values": guides},
+                "mark": {"type": "rule", "stroke": "#888888", "strokeDash": [4, 3], "strokeWidth": 0.7},
+                "encoding": {**axes, "x2": {"field": "x2"}, "y2": {"field": "y2"}},
+            },
+            {
+                "data": {
+                    "values": [{"x": row["x2"] / 1.25, "y": row["y2"] / 1.25, "label": row["label"]} for row in guides]
+                },
+                "mark": {"type": "text", "align": "right", "dy": -7, "fontSize": 10, "color": "#555555"},
+                "encoding": {**axes, "text": {"field": "label"}},
+            },
+            {
+                "data": {"values": results["points"]},
+                "mark": {
+                    "type": "point",
+                    "filled": True,
+                    "opacity": 0.7,
+                    "size": 35,
+                    "stroke": "#333333",
+                    "strokeWidth": 0.45,
+                },
+                "encoding": {
+                    **axes,
+                    "color": color,
+                    "shape": {
+                        "field": "family",
+                        "type": "nominal",
+                        "scale": {
+                            "domain": ["Applications", "Math", "Disequality", "Slotted restricted"],
+                            "range": ["circle", "diamond", "square", "triangle-up"],
+                        },
+                        "legend": {"title": None, "orient": "bottom", "columns": 2},
+                    },
+                    "tooltip": [
+                        {"field": key}
+                        for key in (
+                            "workload",
+                            "configuration",
+                            "family",
+                            "project",
+                            "x",
+                            "y",
+                            "growth",
+                            "file_sha256",
+                            "compiler_binary_sha256",
+                        )
+                    ],
+                },
+            },
+        ],
+        "config": {
+            "font": "Arial",
+            "axis": {
+                "labelFontSize": 10,
+                "titleFontSize": 11,
+                "tickCount": 6,
+                "gridColor": "#e5e5e5",
+                "gridWidth": 0.5,
+            },
+            "view": {"stroke": None},
+        },
+    }
+
+
+def export_translation_program_size(snapshot: dict[str, Any], destination: Path) -> tuple[Path, ...]:
+    """Export the complete portable AST snapshot, graph specification and exact-value appendix."""
+    results = translation_program_size_results(snapshot)
+    columns = (
+        "file",
+        "profile",
+        "family",
+        "project",
+        "status",
+        "source_ast_nodes",
+        "normalized_source_ast_nodes",
+        "output_ast_nodes",
+        "growth",
+        "error",
+        "file_sha256",
+        "compiler_binary_sha256",
+    )
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(results["rows"])
+    coverage = [
+        r"\begin{tabular}{lrrr}",
+        r"\toprule",
+        r"Configuration & Planned & Available & Pending/failed \\",
+        r"\midrule",
+    ]
+    markdown = [
+        TRANSLATION_NOTE,
+        "",
+        "| Configuration | Planned | Available | Pending/failed |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for row in results["coverage"]:
+        coverage.append(f"{row['profile']} & {row['planned']} & {row['ok']} & {row['planned'] - row['ok']}" + r" \\")
+        markdown.append(f"| {row['profile']} | {row['planned']} | {row['ok']} | {row['planned'] - row['ok']} |")
+    coverage.extend((r"\bottomrule", r"\end{tabular}", ""))
+    if snapshot.get("issue"):
+        markdown.extend(("", snapshot["issue"]))
+    contents = {
+        "results.json": json.dumps(results, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n",
+        "bound.vl.json": json.dumps(translation_program_size_spec(results), ensure_ascii=False, allow_nan=False) + "\n",
+        "csv": output.getvalue(),
+        "table.tex": "\n".join(coverage),
+        "md": "\n".join(markdown) + "\n",
+        "files.txt": "".join(f"{row['file']}\t{row['profile']}\t{row['file_sha256']}\n" for row in results["rows"]),
+        "numbers.tex": (
+            f"\\newcommand{{\\ProgramSizePlanned}}{{{len(results['rows'])}}}\n"
+            f"\\newcommand{{\\ProgramSizeAvailable}}{{{len(results['points'])}}}\n"
+        ),
+    }
+    destination.mkdir(parents=True, exist_ok=True)
+    for suffix, content in contents.items():
+        (destination / f"program-size.{suffix}").write_text(content)
+    return tuple(destination / f"program-size.{suffix}" for suffix in contents)
 
 
 def program_size_snapshot(files: tuple[FileSpec, ...], cache: Path, *, collect: bool) -> dict[str, Any]:

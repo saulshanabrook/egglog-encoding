@@ -38,7 +38,12 @@ from .engines import PROOF_ORACLES, TREATMENT_SPECS, TREATMENTS, Treatment
 from .figures import ROOT, VEGA_PACKAGES, _figure_inventory, renderer_metadata
 from .models import BenchmarkEndpoint, BuiltBinary, EndpointRequest, FileSpec, ResolvedTarget
 from .native_memory import add_memory_limit_options
-from .pilot_ast import export_program_size, program_size_snapshot
+from .pilot_ast import (
+    export_program_size,
+    export_translation_program_size,
+    program_size_snapshot,
+    translation_program_size_snapshot,
+)
 from .pilot_results import BUNDLE_NAMES, PILOT_DATA_VERSION, coverage_tables, pilot_results, pilot_tex
 from .reports.catalog import report_id
 from .reports.store import ReportStore, select_observations
@@ -180,6 +185,7 @@ def make_snapshot(
     timeout_sec: int,
     memory_limit_bytes: int | None,
     ast_snapshot: dict[str, Any] | None = None,
+    translation_ast_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Freeze selected timed rows, checked evidence, corpus provenance, and scope."""
     inventory = _figure_inventory(ROOT, tuple(files.values()))
@@ -306,6 +312,8 @@ def make_snapshot(
         "conditions": list(conditions.values()),
         "comparisons": comparisons,
         "program_size": ast_snapshot or {"status": "pending", "inputs": [], "records": [], "issue": None},
+        "translation_program_size": translation_ast_snapshot
+        or {"status": "pending", "inputs": [], "records": [], "issue": None},
         "provenance": {
             "target": asdict(target.row),
             "binaries": binaries,
@@ -580,6 +588,25 @@ def export_pilot(
                 folder,
             )
         )
+        outputs.extend(
+            path.name
+            for path in export_translation_program_size(
+                snapshot.get(
+                    "translation_program_size", {"status": "pending", "inputs": [], "records": [], "issue": None}
+                ),
+                folder,
+            )
+        )
+        if images:
+            for extension in ("pdf", "svg", "png"):
+                path = folder / f"program-size.{extension}"
+                args = [*command, f"vl2{extension}", str(folder / "program-size.bound.vl.json"), str(path)]
+                if extension == "png":
+                    args.extend(("-s", "3"))
+                subprocess.run(args, cwd=ROOT, check=True, stdout=sys.stderr, stderr=sys.stderr)
+                if not path.is_file() or not path.stat().st_size:
+                    raise ValueError(f"pilot AST renderer produced no {extension}")
+                outputs.append(path.name)
         for name in outputs:
             os.replace(folder / name, destination / name)
     console.print(f"Exported pilot ({snapshot['rounds']} observations requested) to {destination}", markup=False)
@@ -598,14 +625,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--ast-cache", type=Path, help="compile-only size cache; default beside the report")
+    parser.add_argument(
+        "--translation-ast-cache", type=Path, help="broad source/configuration AST cache; default beside the report"
+    )
+    parser.add_argument(
+        "--translation-ast-compiler", type=Path, help="use this compiler executable for explicit AST collection"
+    )
     parser.add_argument("--reuse-from", type=Path)
     parser.add_argument("--no-runs", action="store_true")
     parser.add_argument("--validation-only", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
     add_memory_limit_options(parser, default=DEFAULT_MEMORY_LIMIT_BYTES)
     args = parser.parse_args(argv)
-    if set(args.names) - {*BUNDLE_NAMES, "composition", "program-size"}:
-        parser.error("unknown pilot scope; choose " + ", ".join((*BUNDLE_NAMES, "composition", "program-size")))
+    if set(args.names) - {*BUNDLE_NAMES, "composition", "program-size", "translation-program-size"}:
+        parser.error(
+            "unknown pilot scope; choose "
+            + ", ".join((*BUNDLE_NAMES, "composition", "program-size", "translation-program-size"))
+        )
     if min(args.rounds, args.threads, args.timeout_sec) < 1 or str(args.report) == "-":
         parser.error("rounds, threads and timeout must be positive; --report requires a filesystem path")
     console = Console(stderr=True)
@@ -625,19 +661,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             export_pilot(snapshot, args.output_dir.resolve(), console)
             return 0
         config, files = load_experiments(args.config.resolve())
-        requested = args.names or (*BUNDLE_NAMES, "composition", "program-size")
+        requested = args.names or (*BUNDLE_NAMES, "composition", "program-size", "translation-program-size")
         extensions = any(name.startswith("extensions-") for name in requested)
         applications = any(name.startswith("applications-") for name in requested)
         composition = "composition" in requested
         target_request = parse_target(args.target)
         collect_sizes = "program-size" in requested and not args.no_runs
-        if collect_sizes and Path(target_request.source).expanduser().resolve() != ROOT:
+        collect_translation_sizes = "translation-program-size" in requested and not args.no_runs
+        if (collect_sizes or collect_translation_sizes) and Path(target_request.source).expanduser().resolve() != ROOT:
             raise ValueError("program-size collection uses this checkout; supply --target LABEL=.")
         ast_files = next(experiment["files"] for experiment in config["experiments"] if experiment["id"] == "slotted")
         ast_snapshot = program_size_snapshot(
             tuple(files[path] for path in ast_files),
             (args.ast_cache or args.report.expanduser().resolve().parent / "slotted-program-size.jsonl").resolve(),
             collect=collect_sizes,
+        )
+        translation_snapshot = translation_program_size_snapshot(
+            config,
+            files,
+            (
+                args.translation_ast_cache
+                or args.report.expanduser().resolve().parent / "translation-program-size.jsonl"
+            ).resolve(),
+            collect=collect_translation_sizes,
+            compiler=args.translation_ast_compiler.expanduser().resolve() if args.translation_ast_compiler else None,
+            timeout_sec=args.timeout_sec,
+            memory_limit_bytes=args.memory_limit_bytes,
         )
         requests = []
         for experiment in config["experiments"]:
@@ -660,8 +709,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 )
         store = ReportStore(args.report.expanduser().resolve())
-        collection_failed = False
-        if args.no_runs or not requests:
+        collection_failed = collect_translation_sizes and translation_snapshot["status"] == "halted"
+        if args.no_runs or not requests or collection_failed:
             pointers = [
                 (binary, store.find_label_pointer(target_request.label or "claims-eval-pilot", binary))
                 for binary in dict.fromkeys(spec.binary_name for spec in TREATMENT_SPECS.values())
@@ -707,6 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout_sec=args.timeout_sec,
             memory_limit_bytes=args.memory_limit_bytes,
             ast_snapshot=ast_snapshot,
+            translation_ast_snapshot=translation_snapshot,
         )
         export_pilot(snapshot, args.output_dir.expanduser().resolve(), console)
         if not args.no_runs and collection_failed:
