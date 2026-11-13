@@ -29,8 +29,6 @@ impl SourceMacros {
         let macros = std::mem::take(graph.command_macros_mut());
         graph.parser.ensure_no_reserved_symbols = false;
         egglog::prelude::add_base_sort(&mut graph, VarSort, egglog::span!()).unwrap();
-        guards::register(&mut graph, &Arc::new(ProofContext::default()));
-        substitution::register(&mut graph, &Arc::new(ProofContext::default()));
         graph
             .parse_and_run_program(None, &format!("(function {SLOT} (String) Var :no-merge)"))
             .unwrap();
@@ -99,6 +97,10 @@ impl SourceMacros {
                 )
                 .map_err(|e| e.to_string())?;
         }
+        // As in the source proof resolver, install constructors first. A guard
+        // and a constructor may share a name; operand types disambiguate them.
+        guards::register(&mut graph, &Arc::new(ProofContext::default()));
+        substitution::register(&mut graph, &Arc::new(ProofContext::default()));
         let mut globals = BTreeMap::new();
         for (name, term) in &previous.globals {
             let sort = previous.sort_of(term).ok_or("global has no source sort")?;
@@ -173,10 +175,23 @@ impl SourceMacros {
                     .map_err(|e| e.to_string())?;
             }
             Command::Action(Action::Let(_, name, value)) => {
-                let sort = graph
-                    .type_info()
-                    .infer_expr_sort(&mut self.symbols, value, &[], Context::Full)
-                    .map_err(|e| e.to_string())?;
+                // In an action, a declared constructor keeps its meaning even
+                // when a query guard has the same spelling.
+                let declared = if let Expr::Call(_, head, _) = value {
+                    graph
+                        .type_info()
+                        .get_func_type(head)
+                        .map(|f| f.output().clone())
+                } else {
+                    None
+                };
+                let sort = match declared {
+                    Some(sort) => sort,
+                    None => graph
+                        .type_info()
+                        .infer_expr_sort(&mut self.symbols, value, &[], Context::Full)
+                        .map_err(|e| e.to_string())?,
+                };
                 bind(graph, globals, &mut self.symbols, name, sort.name())?;
             }
             _ => {}

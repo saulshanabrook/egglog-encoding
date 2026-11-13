@@ -106,3 +106,31 @@ fn primitive_payload_guards_are_generic() {
     .run(&mut new_egraph_with_proofs())
     .unwrap();
 }
+
+#[test]
+fn source_macros_preserve_constructor_and_guard_namespaces() {
+    let source = "(datatype E (V Var) (free E E) (Pair E E) (Hit))
+        (separately-injective free)
+        (disequal (V $a) (V $b))
+        (let left (free (V $c) (V $a))) (let right (free (V $c) (V $b)))
+        (check (known-disequal left right))
+        (let input (Pair (V $a) (V $b)))
+        (rewrite (Pair (V $x) (V $y)) (Hit)
+            :when ((free $x (Pair (V $x) (V $y))) (known-disequal (V $x) (V $y))))
+        (run 1) (check (= input (Hit)))";
+    for proof_mode in [ProofMode::Disabled, ProofMode::Prove] {
+        let program = Compiler::new(Options {
+            proof_mode,
+            ..Default::default()
+        })
+        .with_source_macros(disequality_source_macros())
+        .compile_program(None, source)
+        .unwrap_or_else(|e| panic!("{proof_mode:?}: {e}"));
+        let mut graph = if proof_mode == ProofMode::Prove {
+            new_egraph_with_proofs()
+        } else {
+            new_egraph()
+        };
+        program.run(&mut graph).unwrap();
+    }
+}

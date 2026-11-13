@@ -270,7 +270,26 @@ impl Scope {
             .iter_mut()
             .enumerate()
             .map(|(i, fact)| {
-                let Fact::Fact(expr) = fact else { return false };
+                let Fact::Fact(expr) = fact else {
+                    // Equality-bound constructor patterns need the same result
+                    // sort constraint as plain constructor facts. Otherwise a
+                    // guard namesake can leave its children unconstrained.
+                    if let Fact::Eq(span, a, b) = fact {
+                        let binding = match (a, b) {
+                            (Expr::Var(_, name), term @ Expr::Call(..))
+                            | (term @ Expr::Call(..), Expr::Var(_, name)) => Some((name, term)),
+                            _ => None,
+                        };
+                        if let Some((name, term)) = binding
+                            && let Some(sort) = expression_sort(term)
+                        {
+                            bindings.entry(name.clone()).or_insert_with(|| {
+                                (span.clone(), graph.get_sort_by_name(&sort).unwrap().clone())
+                            });
+                        }
+                    }
+                    return false;
+                };
                 let guard = i > 0 && matches!(expr, Expr::Call(_, head, _) if is_guard(head));
                 if guard && let Expr::Call(_, head, _) = expr {
                     *head = validator_name(head).to_owned();
