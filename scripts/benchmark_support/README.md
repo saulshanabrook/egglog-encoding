@@ -60,3 +60,46 @@ Record a new binary SHA-256 and the base revision plus patch identity; the expor
 is a patched source, not a clean instance of the base revision. At four workers,
 omit `--timing-summary`, which the pinned runtime supports only at one worker.
 Keep recording-only Math overhead observations separate from this checked mode.
+
+## Headline speedups
+
+Generate the four headline macros from public selected figure results:
+
+```sh
+python3 scripts/benchmark_support/export_headline_speedups.py \
+  --figures-dir /path/to/paper/figures/eval \
+  --output /tmp/headline-speedups.numbers.tex
+```
+
+Math uses `math-checked-unsimplified.results.json.gz`: proof extraction and
+checking are included, while optional proof simplification is disabled in both
+implementations. Disequality and restricted SDQL use the fixed-suite means in
+`integrated-runtime-means.results.json.gz`. Each speedup is the native mean
+divided by our serial mean; it is neither a mean of per-input speedups nor a
+comparison against four-worker execution. Speedups are formatted to two decimal
+places. The project count comes from the congruence CDF's selected metadata.
+The output provides `headline/math-checked-speedup`,
+`headline/disequality-speedup`, `headline/slotted-restricted-speedup`, and
+`headline/corpus-project-count` through `\EgglogFigureNumber`.
+
+## Appendix CDFs
+
+Both exporters take explicit selected-data and output paths and preserve the
+published points, plot styles, and inverse empirical CDF quantiles:
+
+```sh
+python3 scripts/benchmark_support/export_corpus_congruence_cdf.py \
+  --selected /path/to/corpus-congruence-cdf.selected.json.gz \
+  --output-dir /tmp/congruence-cdf
+python3 scripts/benchmark_support/export_corpus_proof_stages_cdf.py \
+  --selected /path/to/corpus-proof-stages-cdf.selected.json.gz \
+  --output-dir /tmp/proof-stages-cdf
+```
+
+The congruence plot compares term encoding against OFF. The two proof-stage
+panels show recording plus extraction, and recording plus extraction plus
+checking, against OFF. These retained corpus modes preserve their original
+simplification behavior; they are separate from the unsimplified Math
+comparison. The exporters consume only existing selected results and never
+collect observations or launch an engine. Add `--render` for the pinned npm PDF
+renderer; without it, only JSON and TeX artifacts are written.
