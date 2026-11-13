@@ -33,7 +33,7 @@ upper = 3.6
 counts = collections.Counter(ratios)
 cumulative = 0
 ranks = {}
-steps = [{"ratio": 1, "fraction": 0}]
+steps: list[dict[str, float]] = [{"ratio": 1, "fraction": 0}]
 for ratio, count in sorted(counts.items()):
     cumulative += count
     ranks[ratio] = cumulative / len(points)

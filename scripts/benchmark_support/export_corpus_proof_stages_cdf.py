@@ -16,6 +16,7 @@ import statistics
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--selected", type=Path, required=True)
@@ -39,7 +40,7 @@ assert len(files) == 486 and len(groups) == 1458 and all(len(values) == 10 for v
 means = {key: statistics.fmean(values) for key, values in groups.items()}
 
 
-def panel(treatment, label, upper):
+def panel(treatment: str, label: str, upper: float) -> tuple[dict[str, Any], dict[str, Any]]:
     """Bind the main figure's project-dot/step/quantile encoding to one audited mode."""
     points = [
         {
@@ -59,7 +60,7 @@ def panel(treatment, label, upper):
     quantiles = {str(q): ratios[math.ceil(q * len(points)) - 1] for q in (0.5, 0.95)}
     ranks = {}
     cumulative = 0
-    steps = [{"ratio": 1, "fraction": 0}]
+    steps: list[dict[str, float]] = [{"ratio": 1, "fraction": 0}]
     for ratio, count in sorted(collections.Counter(ratios).items()):
         cumulative += count
         ranks[ratio] = cumulative / len(points)
