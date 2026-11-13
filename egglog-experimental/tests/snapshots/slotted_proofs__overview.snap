@@ -83,7 +83,7 @@ Proof:
 (let prf_4
   (Rule
                 (= (_disequality_disequality-ne-Expr-witness) t_11)
-                (name "_slotted_match_5")
+                (name "_disequality_injectivity-Add_3")
                 (premises
                   (Trans
                     (=
@@ -118,7 +118,7 @@ Proof:
   (= t_5 t_6)
   (Rule
     (= t_7 t_6)
-    (name "_slotted_match_6")
+    (name "sum-to-closed-form")
     (premises
       (Equivariance (= t_7 t_7) prf (renaming ($i $v0) ($v1 $i) ($v0 $v1)))
       (Fiat (= () ()))

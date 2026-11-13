@@ -115,13 +115,13 @@ impl SourceMacros {
             }
             for command in parse(&mut graph, form)? {
                 let command = command.visit_exprs(&mut |expr| capture(expr, &lang, &globals));
-                let original = command.to_string();
+                let original = render(&command);
                 let commands = self
                     .macros
                     .apply(command, &mut self.symbols, graph.type_info())
                     .map_err(|e| e.to_string())?;
                 for command in commands {
-                    let unchanged = command.to_string() == original;
+                    let unchanged = render(&command) == original;
                     let before = out.len();
                     self.emit(command, span, &mut graph, &mut globals, &mut out)?;
                     if unchanged {
@@ -141,7 +141,7 @@ impl SourceMacros {
             .macros
             .apply(flush.clone(), &mut self.symbols, graph.type_info())
             .map_err(|e| e.to_string())?;
-        if commands.len() != 1 || commands[0].to_string() != flush.to_string() {
+        if commands.len() != 1 || render(&commands[0]) != render(&flush) {
             for command in commands {
                 self.emit(
                     command,
@@ -183,7 +183,7 @@ impl SourceMacros {
         }
         let command = command.visit_exprs(&mut |expr| restore(expr, globals));
         out.extend(
-            syntax::parse(None, &command.to_string())
+            syntax::parse(None, &render(&command))
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|(f, _)| (f, span.clone())),
@@ -201,7 +201,7 @@ fn bind(
     name: &str,
     sort: &str,
 ) -> Result<(), String> {
-    let alias = symbols.fresh("source-global");
+    let alias = format!("${}", symbols.fresh("source-global"));
     let value = symbols.fresh("source-value");
     graph
         .resolve_program(
@@ -263,6 +263,19 @@ fn restore(expr: Expr, globals: &BTreeMap<String, String>) -> Expr {
         ),
         expr => expr,
     }
+}
+
+// Command's display form omits rewrite names. Preserve this source metadata
+// both when comparing macro output and when handing it to the next pass.
+fn render(command: &Command) -> String {
+    let mut text = command.to_string();
+    if let Command::Rewrite(_, rewrite, _) = command
+        && !rewrite.name.is_empty()
+    {
+        text.pop();
+        text.push_str(&format!(" :name {})", syntax::quote(&rewrite.name)));
+    }
+    text
 }
 
 fn parse(graph: &mut EGraph, form: &Form) -> Result<Vec<Command>, String> {
