@@ -51,6 +51,8 @@ Specification and proofs are separate: nothing outside `Proofs/`, `Tests/` and
 | Section 6, proofs | `SourceProof/Format.lean` and `Checker.lean` (proof terms, the checker, and its fragment `SourceProof.Fragment`), `Provenance/Encode.lean` (instrumentation) and `Log.lean` (proofs read off the log), `Resugar/Claim.lean`, `Query.lean`, `Lift.lean` (lifting), `Resugar/Execute.lean` (`prove`) |
 | The proofs | `Proofs/Congruence/` (the simulations for Section 5: up to meaning for ordering-free rules, and exact for programs without saturation), `Proofs/Provenance/` (instrumentation correctness), `Proofs/SourceProof/` and `Proofs/Resugar/` (checker and lifting soundness); the remaining modules are lemmas about the specification and the reference interpreter |
 | Executable | `Impl/` (finite reference interpreter), `Congruence/Relational.lean` (execution without equality reasoning), `Tests/`, `DiffTest.lean` (comparisons with egglog and the corpus gates), `tests/` (`.egg` programs with snapshots of their encodings and lifted proofs) |
+| Slotted section, slots and binders | `Slotted/Spec/`: `Binders` (`bind(f)`, `B_i`), `Slots` (slot terms, `slots`, renamings and the action `m * t` as `Renames`, α-equivalence), `Congruence` (`SCong` with the `Rename` rule, redundant and live free slots, `reps'`, `live'`), `Match` (`Query'`, `App'`, fixed literal pattern slots, the free-name and renaming guards), `Eval` and `Step` (fresh action slots, `SRunRules`, `SReach`, `SEval`, `Slotted.Program`); see [SLOTTED.md](SLOTTED.md) |
+| Slotted, executable | `Slotted/Tests/Parse.lean` (the slotted `.egg` subset, one program per check), `Slotted/Tests/Bounded.lean` (the specification evaluated over finite slot and term universes, with soundness of the closure), `Slotted/Tests/Examples.lean` (the paper's example and the `tests/slotted/paper` phenomena), `Slotted/Proofs/Conservative.lean` (the slotted closure contains the plain one), `slotted-difftest.sh` (the paper corpus files against the Rust reference) |
 
 To check the theorems from this directory: `lake build` (the `assert_no_sorry` lines in
 `ExtlogTheorems.lean` fail the build on any incomplete proof), `make lean-holes` (no `sorry`
@@ -86,10 +88,12 @@ From the workspace root:
 
 ```sh
 make check                 # Python and Rust formatting, checks, and tests
-make -C semantics lean-check            # Lean build, proof-hole audit, corpus gates, Rust certificate check
+make -C semantics lean-check            # Lean build, proof-hole audit, corpus gates, Rust certificate check, slotted parse report
 cargo build --release -p egglog
 make -C semantics lean-difftest          # compare Lean and egglog row counts and check outcomes
 make -C semantics lean-compiled-difftest # run the compiled programs in egglog and compare e-node censuses
+cargo build --release -p egglog-experimental
+make -C semantics lean-slotted-difftest  # the slotted paper corpus in the reference and the bounded evaluator
 make -C semantics paper-sync             # regenerate the semantics section of ../extended-egglog-paper
 ```
 
@@ -100,6 +104,7 @@ lake build difftest
 .lake/build/bin/difftest congruence 64
 .lake/build/bin/difftest provenance 64
 .lake/build/bin/difftest resugar 64
+.lake/build/bin/difftest slotted-parse ../egglog-experimental/tests/slotted
 ```
 
 The toolchain is pinned in [lean-toolchain](lean-toolchain), and Mathlib in

@@ -18,6 +18,7 @@
 \newcommand{\discussion}[1]{}
 \newcommand{\notready}{\PackageError{semantics}{Unfinished blueprint node}{Complete the Lean declaration before including it.}}
 \newcommand{\kw}[1]{\mathsf{#1}}
+\newcommand{\SumZeroTen}{\ensuremath{\mathtt{Sum}_{0}^{10}}}
 \newcommand{\eval}[1]{\llbracket #1\rrbracket_{\sigma}}
 \newcommand{\ir}[3]{\inferrule[\textsc{#1}]{#2}{#3}}
 \newcommand{\syntaxline}[2]{%
@@ -181,5 +182,24 @@
 
 \begin{semantics}{lifting-rebuild}
   \inputleannode{def:lift-rebuild}
+\end{semantics}
+
+% The slotted semantics: binders, slots, renamings, the extended congruence, matching, and
+% the slotted round; the paper's slotted section inputs these.
+\begin{semantics}{slotted}
+  \inputleannode{def:slotted-binders}
+  \inputleannode{def:slotted-slots}
+  \inputleannode{def:slotted-action}
+  \inputleannode{def:slotted-congruence}
+\end{semantics}
+
+\begin{semanticstext}{slotted-renaming}
+  \inputleannode{def:slotted-renaming}
+\end{semanticstext}
+
+\begin{semantics}{slotted-matching}
+  \inputleannode{def:slotted-reps}
+  \inputleannode{def:slotted-query}
+  \inputleannode{def:slotted-round}
 \end{semantics}
 \end{document}

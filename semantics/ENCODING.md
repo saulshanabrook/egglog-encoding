@@ -371,6 +371,25 @@ lake build difftest
 Executable regressions also check recursive traversal order, origin tags, rebuilding
 necessity, and rejection of a rule firing whose constructor premise never existed.
 
+## Slotted semantics
+
+The slotted layer (`EgglogSemantics/Slotted/`, described in [SLOTTED.md](SLOTTED.md)) is a
+specification beside the plain one, not an encoding: the slotted pass that compiles it to
+plain egglog is phase 2. A slot `$s` is the nullary term `Term.app "$s" []`; a binder
+signature `bind(f)` says which argument positions of `f` hold names bound in which children;
+the congruence `SCong` adds the `Rename` rule, closing every known equation under every
+partial injection of slots defined on both sides, with fresh bound names, so α-equivalent
+spellings of an existing term are congruent and a slot an equation does not mention becomes
+redundant. Matching binds variables to `reps'`, the representatives closed under renaming,
+looks applications up in `live'`, interprets pattern slots as fixed names, and
+interprets the free-name and renaming guards. A round fires every slotted match under every
+choice of fresh names for the slots used only in actions.
+
+`difftest slotted-parse` reports which files of `egglog-experimental/tests/slotted` the
+slotted parser accepts, each as one program per check; `Slotted/Tests/Bounded.lean`
+evaluates the specification over finite slot and term universes, soundly for the equalities
+and redundancies it finds, and `Slotted/Tests/Examples.lean` runs the paper's example on it.
+
 ### Simulation with subsumption
 
 `Rel subsumption src d` records that union-find keys are the stored source terms, every
