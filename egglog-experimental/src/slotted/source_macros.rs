@@ -120,14 +120,14 @@ impl SourceMacros {
                     .macros
                     .apply(command, &mut self.symbols, graph.type_info())
                     .map_err(|e| e.to_string())?;
-                let unchanged = commands.len() == 1 && commands[0].to_string() == original;
-                let before = out.len();
                 for command in commands {
+                    let unchanged = command.to_string() == original;
+                    let before = out.len();
                     self.emit(command, span, &mut graph, &mut globals, &mut out)?;
-                }
-                if unchanged {
-                    out.truncate(before);
-                    out.push((form.clone(), span.clone()));
+                    if unchanged {
+                        out.truncate(before);
+                        out.push((form.clone(), span.clone()));
+                    }
                 }
             }
         }

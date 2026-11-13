@@ -14,7 +14,7 @@ fn disequality_output_runs_directly_and_stacks_on_slotted() {
         (fail (check (contradiction)))
         (union left right)
         (check (= (A) (B)))
-        (check (contradiction))";
+        (check (contradiction)) (extract left)";
     disequality_source_macros()
         .parse_and_run_program(None, source)
         .unwrap();
