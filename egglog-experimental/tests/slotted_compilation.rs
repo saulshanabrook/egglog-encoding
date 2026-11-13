@@ -262,3 +262,23 @@ fn disequality_rejects_unsupported_source_promises() {
         assert!(error.contains(message), "{source}: {error}");
     }
 }
+
+#[test]
+fn disequality_preserves_literal_payloads_and_payload_variable_scope() {
+    let source = r#"
+        (datatype E (Text String) (Pair E E))
+        (separately-injective Pair)
+        (let payload (Text "_slotted_disequality_payload"))
+        (disequal (Text "left") (Text "right"))
+        (let input (Pair (Text "left") payload))
+        (rewrite (Pair a (Text payload)) a
+                 :when ((known-disequal a (Text "right"))))
+        (run 1)
+        (check (= input (Text "left")))
+    "#;
+    compiler()
+        .compile_program(None, source)
+        .unwrap()
+        .run(&mut new_egraph_with_proofs())
+        .unwrap();
+}

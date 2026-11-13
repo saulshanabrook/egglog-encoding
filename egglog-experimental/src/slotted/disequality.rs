@@ -165,8 +165,14 @@ impl SourcePass {
     ) -> Result<Vec<(Form, Span)>, String> {
         fn reserved(form: &Form) -> bool {
             match form {
-                Form::Atom(s) => s.trim_start_matches('"').starts_with(PREFIX),
-                Form::List(parts) => parts.iter().any(reserved),
+                Form::Atom(s) => s.starts_with(PREFIX),
+                Form::List(parts) => {
+                    parts.iter().any(reserved)
+                        || parts.windows(2).any(|pair| {
+                            matches!(pair, [Form::Atom(key), Form::Atom(name)]
+                                if key == ":name" && name.trim_start_matches('"').starts_with(PREFIX))
+                        })
+                }
             }
         }
         if forms.iter().any(|(f, _)| reserved(f)) {
@@ -428,8 +434,12 @@ fn infer(
             if let Ok((head, args)) = form.call()
                 && let Some(op) = lang.constructors.get(head)
             {
-                for (arg, sort) in args.iter().zip(op.input_sorts()) {
-                    infer(arg, Some(sort), lang, vars)?;
+                for ((arg, sort), column) in args.iter().zip(op.input_sorts()).zip(&op.columns) {
+                    // Payload variables have a separate scope from captured
+                    // term globals, just as in the slotted frontend/checker.
+                    if !matches!(column, Column::Payload(_)) {
+                        infer(arg, Some(sort), lang, vars)?;
+                    }
                 }
                 Some(op.sort.clone())
             } else {
