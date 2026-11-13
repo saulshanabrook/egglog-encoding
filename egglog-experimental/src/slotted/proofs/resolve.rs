@@ -539,8 +539,8 @@ impl Reader {
                 }
             }
             (
-                "run" | "check" | "fail" | "print-size" | "print-function" | "print-stats"
-                | "slotted-export" | "set-option",
+                "run" | "run-schedule" | "ruleset" | "check" | "fail" | "print-size"
+                | "print-function" | "print-stats" | "slotted-export" | "set-option",
                 _,
             ) => return Ok(()),
             _ => return Err(SourceError(format!("unsupported source command {head}"))),

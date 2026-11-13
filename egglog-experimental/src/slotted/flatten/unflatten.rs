@@ -274,6 +274,14 @@ impl Replay<'_> {
     }
 
     fn equality(&mut self, a: &ResolvedExpr, b: &ResolvedExpr) -> Result<ProofId> {
+        if !a.output_type().is_eq_sort() {
+            let a = self.instance(a)?;
+            let b = self.instance(b)?;
+            if a != b {
+                return Err("payload equality has different values".into());
+            }
+            return self.exists(a);
+        }
         if self.is_local(a) && !self.is_local(b) {
             return self.pattern(b);
         }

@@ -6,6 +6,8 @@
 //! Each user run is followed by saturation of the private rules; observations
 //! also close pending top-level assertions and unions without disrupting batches.
 
+pub(crate) mod source;
+
 use egglog::{
     ArcSort, AtomTerm, CommandMacro, CommandOutput, Context, EGraph, Error, Primitive, PurePrim,
     PureState, TypeError, TypeInfo, Value,

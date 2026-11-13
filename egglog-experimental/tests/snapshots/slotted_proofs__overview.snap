@@ -67,25 +67,23 @@ Proof:
 (let t_6 (Div (Sub (Pow t (Num 11)) (Pow t_2 (Num 11))) (Sub t t_2)))
 (let t_7 (SumZeroTen $v0 (Mul (Pow t (V $v0)) (Pow t_2 (Sub (Num 10) (V $v0))))))
 (let prf (Fiat (= t_5 t_5)))
-(let t_8 (_slotted_disequality_ne-Expr t t_2))
-(let prop (= (_slotted_disequality_witness) t_8))
+(let t_8 (_disequality_ne-Expr t t_2))
+(let prop (= (_disequality_witness-Expr) t_8))
 (let t_9 (Add (V $v0) (Num 1)))
 (let t_10 (Add (V $v0) (Num 2)))
-(let t_11 (_slotted_disequality_ne-Expr t_9 t_10))
-(let t_12 (_slotted_disequality_ne-Expr (Num 1) (Num 2)))
-(let prf_1 (Fiat (= (_slotted_disequality_witness) t_12)))
-(let prf_2 (Sym (= t_12 (_slotted_disequality_witness)) prf_1))
+(let t_11 (_disequality_ne-Expr t_9 t_10))
+(let t_12 (_disequality_ne-Expr (Num 1) (Num 2)))
+(let prf_1 (Fiat (= (_disequality_witness-Expr) t_12)))
+(let prf_2 (Sym (= t_12 (_disequality_witness-Expr)) prf_1))
 (let prf_3 (Proj (= t_4 t_4) prf 1))
 (let t_13 (renaming ($x $v0) ($v0 $x)))
 (let prf_4
   (Rule
-                (= (_slotted_disequality_witness) t_11)
-                (name "_slotted_disequality_injectivity-Add_3")
+                (= (_disequality_witness-Expr) t_11)
+                (name "_disequality_injectivity-Add_3")
                 (premises
                   (Trans
-                    (=
-                      (_slotted_disequality_witness)
-                      (_slotted_disequality_witness))
+                    (= (_disequality_witness-Expr) (_disequality_witness-Expr))
                     prf_1
                     prf_2)
                   (Equivariance
@@ -98,18 +96,18 @@ Proof:
                     t_13)
                   (Trans (= t_12 t_12) prf_2 prf_1))
                 (substitution
-                  (_slotted_disequality_injectivity-left t_9)
-                  (_slotted_disequality_injectivity-input (V $v0))
-                  (_slotted_disequality_injectivity-input_1 (Num 1))
-                  (_slotted_disequality_injectivity-right t_10)
-                  (_slotted_disequality_injectivity-other (Num 2)))))
+                  (_disequality_injectivity-left t_9)
+                  (_disequality_injectivity-input (V $v0))
+                  (_disequality_injectivity-input_1 (Num 1))
+                  (_disequality_injectivity-right t_10)
+                  (_disequality_injectivity-other (Num 2)))))
 (let prf_5
   (Trans
               prop
               prf_4
               (Trans
                 (= t_11 t_8)
-                (Sym (= t_11 (_slotted_disequality_witness)) prf_4)
+                (Sym (= t_11 (_disequality_witness-Expr)) prf_4)
                 (Equivariance prop prf_4 t_13))))
 (Equivariance
   (= t_5 t_6)
@@ -119,9 +117,6 @@ Proof:
     (premises
       (Equivariance (= t_7 t_7) prf (renaming ($i $v0) ($v1 $i) ($v0 $v1)))
       (Fiat (= () ()))
-      (Trans
-        (= t_8 t_8)
-        (Sym (= t_8 (_slotted_disequality_witness)) prf_5)
-        prf_5))
+      (Trans (= t_8 t_8) (Sym (= t_8 (_disequality_witness-Expr)) prf_5) prf_5))
     (substitution ($v $v0) (r t) (s t_2)))
   (renaming ($i $v1) ($v1 $v0) ($v0 $i)))

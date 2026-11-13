@@ -1,7 +1,6 @@
 use egglog::{CommandOutput, EGraph};
-use egglog_experimental::slotted::{
-    Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs,
-};
+use egglog_experimental::SlottedCompiler as Compiler;
+use egglog_experimental::slotted::{Options, ProofMode, new_egraph, new_egraph_with_proofs};
 
 fn compiler(mode: ProofMode) -> Compiler {
     Compiler::new(Options {

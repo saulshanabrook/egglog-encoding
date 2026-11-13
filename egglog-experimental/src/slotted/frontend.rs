@@ -1,4 +1,7 @@
 //! An explicit slotted-source to ordinary-egglog pass. Evaluation stays in egglog.
+pub(super) use crate::surface::{declarations, expand_includes};
+use crate::surface::{read, unquote};
+
 use super::compiled::{CompiledProgram, ExtractRequest, ExtractRequests, ProofRequests};
 use super::errors::CompileError;
 use super::proofs::pipeline::{EncodingNames, ProofRequest, SlottedClaim};
@@ -77,7 +80,6 @@ struct ProofCompiler {
 #[derive(Clone)]
 struct State {
     lang: Language,
-    disequality: super::disequality::SourcePass,
     proofs: Option<ProofCompiler>,
     initialized: bool,
     dirty: bool,
@@ -92,7 +94,6 @@ impl Default for State {
     fn default() -> Self {
         Self {
             lang: Language::default(),
-            disequality: super::disequality::SourcePass::default(),
             proofs: None,
             initialized: false,
             dirty: false,
@@ -234,8 +235,6 @@ impl Compiler {
     }
 
     fn region(&mut self, forms: &[(Form, Span)]) -> Result<String, ParseError> {
-        let forms = self.state.disequality.lower(forms, &self.state.lang)?;
-        let forms = forms.as_slice();
         let mut sorts = Vec::new();
         let mut ctors = Vec::new();
         for (f, span) in forms {
@@ -323,6 +322,7 @@ impl Compiler {
                     | "union"
                     | "rewrite"
                     | "run"
+                    | "run-schedule"
                     | "extract"
                     | "ruleset"
             ) {
@@ -338,7 +338,7 @@ impl Compiler {
                     .map_err(|e| ParseError(span.clone(), e.to_string()))?;
             }
             match head {
-                "run" | "extract" => self.state.dirty = false,
+                "run" | "run-schedule" | "extract" => self.state.dirty = false,
                 "let" | "union" if !command.is_empty() => self.state.dirty = true,
                 "sort" | "constructor" | "datatype" | "datatype*" | "rewrite" | "let" | "check"
                 | "fail" | "print-size" | "print-function" | "slotted-export" => {}
@@ -364,7 +364,7 @@ impl Compiler {
     }
 
     fn schedule(&self, steps: usize) -> String {
-        self.state.disequality.schedule(steps, self.state.rules > 0)
+        maintenance::schedule(steps, self.state.rules > 0)
     }
 
     fn emit(&mut self, out: &mut Vec<String>, source: String, source_name: Option<&str>) {
@@ -439,8 +439,23 @@ impl Compiler {
                 if self.state.lang.carriers.is_empty() {
                     return Err("no equality sort is declared".into());
                 }
+                if let [ruleset, count] = args {
+                    let ruleset = ruleset.symbol()?;
+                    let n = count
+                        .atom()?
+                        .parse::<usize>()
+                        .map_err(|_| "run expects a nonnegative round count")?;
+                    return self.source_schedule(
+                        &syntax::parse(None, &format!("(repeat {n} (run {ruleset}))"))
+                            .map_err(|e| e.to_string())?
+                            .remove(0)
+                            .0,
+                    );
+                }
                 if args.len() != 1 {
-                    return Err("slotted run expects a nonnegative round count".into());
+                    return Err(
+                        "run expects an optional ruleset and a nonnegative round count".into(),
+                    );
                 }
                 let n = args[0]
                     .atom()?
@@ -547,11 +562,58 @@ impl Compiler {
             "rule" | "birewrite" => Err(format!(
                 "{head} is not supported by the slotted frontend; use rewrite"
             )),
-            "run-schedule" | "run-report" => Err(format!(
+            "run-schedule" => self.source_schedule(&Form::List(
+                std::iter::once(Form::Atom("seq".into()))
+                    .chain(args.iter().cloned())
+                    .collect(),
+            )),
+            "run-report" => Err(format!(
                 "{head} cannot bypass slotted maintenance; use (run N)"
             )),
             _ => Ok(f.render()),
         }
+    }
+
+    /// Every source run completes the same match/refine/apply cycle, whether
+    /// it belongs to a user ruleset or was emitted by an earlier pass.
+    fn source_schedule(&self, schedule: &Form) -> Result<String, String> {
+        if !self.state.substitutions.is_empty() {
+            return Err("source schedules with proof-producing substitution are not yet supported; use (run N)".into());
+        }
+        fn lower(schedule: &Form) -> Result<String, String> {
+            let (head, args) = schedule.call()?;
+            match (head, args) {
+                ("run", [] | [_]) => {
+                    let name = args.first().map(Form::symbol).transpose()?.unwrap_or("");
+                    Ok(format!(
+                        "(seq (run {name}) (saturate (run slotted-refine)) (run slotted-apply) {})",
+                        maintenance::MACHINERY
+                    ))
+                }
+                ("seq", children) => Ok(format!(
+                    "(seq {})",
+                    children
+                        .iter()
+                        .map(lower)
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(" ")
+                )),
+                ("saturate", [child]) => Ok(format!("(saturate {})", lower(child)?)),
+                ("repeat", [count, child]) => {
+                    let count = count
+                        .atom()?
+                        .parse::<usize>()
+                        .map_err(|_| "repeat expects a nonnegative count")?;
+                    Ok(format!("(repeat {count} {})", lower(child)?))
+                }
+                _ => Err(format!("unsupported source schedule {}", schedule.render())),
+            }
+        }
+        Ok(format!(
+            "(run-schedule {} {})",
+            maintenance::MACHINERY,
+            lower(schedule)?
+        ))
     }
 
     fn sort_of(&self, t: &Term) -> Result<String, String> {
@@ -840,6 +902,39 @@ impl Compiler {
     }
 
     fn finish_pattern(&self, p: &mut Pattern) -> Result<(), String> {
+        let payloads = p
+            .atoms
+            .iter()
+            .flat_map(|a| &a.pays)
+            .filter_map(|t| {
+                if let Term::PayloadVariable(name) = t {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>();
+        let payload = |name: &str| {
+            if payloads.contains(name) {
+                Some(Term::PayloadVariable(name.into()))
+            } else if name.starts_with('"') || name.parse::<i64>().is_ok() {
+                Some(Term::Payload(name.into()))
+            } else {
+                None
+            }
+        };
+        let mut comparisons = Vec::new();
+        for (comparison, a, b) in std::mem::take(&mut p.conditions.comparisons) {
+            match (payload(&a), payload(&b)) {
+                (None, None) => comparisons.push((comparison, a, b)),
+                (Some(a), Some(b)) if !comparison.modulo_renaming => p
+                    .conditions
+                    .payload_comparisons
+                    .push((comparison.negated, a, b)),
+                _ => return Err("payload comparisons require two payloads and = or !=".into()),
+            }
+        }
+        p.conditions.comparisons = comparisons;
         let mut sorts = p
             .atoms
             .iter()
@@ -879,13 +974,13 @@ impl Compiler {
 
     fn rewrite(&mut self, args: &[Form]) -> Result<String, String> {
         let mut source = source_rewrite(args)?;
-        self.state.dirty |= self.state.disequality.is_rule(&source.name);
         name_rewrite(
             &mut source,
             self.next_rule,
             (self.options.proof_mode != ProofMode::Disabled).then_some(&mut self.used_rule_names),
         );
-        let (encoded, flattened) = self.lower_rewrite(&source)?;
+        let ruleset = source_ruleset(args)?;
+        let (encoded, flattened) = self.lower_rewrite(&source, &ruleset)?;
         if let Some(proofs) = &mut self.state.proofs {
             proofs
                 .source
@@ -905,6 +1000,7 @@ impl Compiler {
     pub(super) fn lower_rewrite(
         &mut self,
         source: &SourceRewrite,
+        ruleset: &str,
     ) -> Result<(String, flatten::Rewrite), String> {
         let lhs_form = Form::from_expr(&source.lhs);
         let rhs_form = Form::from_expr(&source.rhs);
@@ -965,7 +1061,7 @@ impl Compiler {
                     self.options.proof_mode,
                     ProofMode::Prove | ProofMode::Extract
                 ),
-                maintenance: self.state.disequality.is_rule(&source.name),
+                ruleset,
             },
             flattened.names,
         )?;
@@ -1343,15 +1439,26 @@ pub(super) fn source_rewrite(args: &[Form]) -> Result<SourceRewrite, String> {
         }
         let values = &args[start..i];
         match key {
-            ":ruleset" => return Err("named rulesets are not supported by the slotted schedule; omit :ruleset and use (run N)".into()),
+            ":ruleset" => {
+                let [_] = values else {
+                    return Err(":ruleset expects one name".into());
+                };
+                source_ruleset(args)?;
+            }
             ":name" => {
-                let [value] = values else { return Err(":name expects one argument".into()) };
+                let [value] = values else {
+                    return Err(":name expects one argument".into());
+                };
                 source.name = unquote(value.atom()?)?;
             }
             ":when" => {
-                if when_seen { return Err("several :when clauses; use one list of facts".into()); }
+                if when_seen {
+                    return Err("several :when clauses; use one list of facts".into());
+                }
                 when_seen = true;
-                let [value] = values else { return Err(":when takes one list of facts".into()) };
+                let [value] = values else {
+                    return Err(":when takes one list of facts".into());
+                };
                 let facts = value.list()?;
                 if facts.iter().any(|fact| !matches!(fact, Form::List(_))) {
                     return Err(":when takes a list of facts".into());
@@ -1364,78 +1471,6 @@ pub(super) fn source_rewrite(args: &[Form]) -> Result<SourceRewrite, String> {
     Ok(source)
 }
 
-fn read(
-    filename: Option<String>,
-    source: &str,
-    active: &mut BTreeSet<std::path::PathBuf>,
-) -> Result<Vec<(Form, Span)>, ParseError> {
-    expand_includes(syntax::parse(filename, source)?, active)
-}
-
-pub(super) fn expand_includes(
-    forms: Vec<(Form, Span)>,
-    active: &mut BTreeSet<std::path::PathBuf>,
-) -> Result<Vec<(Form, Span)>, ParseError> {
-    let mut out = Vec::new();
-    for (form, span) in forms {
-        if let Ok(("include", [arg])) = form.call() {
-            let file = unquote(arg.atom().map_err(|e| ParseError(span.clone(), e))?)
-                .map_err(|e| ParseError(span.clone(), e))?;
-            let path = std::fs::canonicalize(&file)
-                .map_err(|e| ParseError(span.clone(), format!("include {file}: {e}")))?;
-            if !active.insert(path.clone()) {
-                return Err(ParseError(span, format!("recursive include {file}")));
-            }
-            let text = std::fs::read_to_string(&path)
-                .map_err(|e| ParseError(span.clone(), format!("include {file}: {e}")))?;
-            out.extend(read(Some(file), &text, active)?);
-            active.remove(&path);
-        } else {
-            out.push((form, span));
-        }
-    }
-    Ok(out)
-}
-
-pub(super) fn declarations(
-    f: &Form,
-    sorts: &mut Vec<String>,
-    ctors: &mut Vec<Form>,
-) -> Result<(), String> {
-    let (head, args) = f.call()?;
-    match head {
-        "sort" if args.len() == 1 => sorts.push(args[0].symbol()?.into()),
-        "constructor" => ctors.push(f.clone()),
-        "datatype" => {
-            let (name, variants) = args.split_first().ok_or("datatype needs a sort name")?;
-            sorts.push(name.symbol()?.into());
-            for v in variants {
-                let (ctor, cols) = v.call()?;
-                let split = cols
-                    .iter()
-                    .position(|f| matches!(f,Form::Atom(s) if s.starts_with(':')))
-                    .unwrap_or(cols.len());
-                let mut parts = vec![
-                    Form::Atom("constructor".into()),
-                    Form::Atom(ctor.into()),
-                    Form::List(cols[..split].to_vec()),
-                    name.clone(),
-                ];
-                parts.extend_from_slice(&cols[split..]);
-                ctors.push(Form::List(parts));
-            }
-        }
-        "datatype*" => {
-            for f in args {
-                let mut parts = vec![Form::Atom("datatype".into())];
-                parts.extend_from_slice(f.list()?);
-                declarations(&Form::List(parts), sorts, ctors)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
 fn declaration_name(form: &Form) -> Option<&str> {
     let (head, args) = form.call().ok()?;
     matches!(
@@ -1446,16 +1481,19 @@ fn declaration_name(form: &Form) -> Option<&str> {
     .flatten()
 }
 
-fn unquote(s: &str) -> Result<String, String> {
-    if !s.starts_with('"') {
-        return Ok(s.into());
+fn source_ruleset(args: &[Form]) -> Result<String, String> {
+    let mut selected = None;
+    for (index, arg) in args.iter().enumerate() {
+        if arg == &Form::Atom(":ruleset".into()) {
+            if selected.is_some() {
+                return Err("several :ruleset clauses".into());
+            }
+            let name = args
+                .get(index + 1)
+                .ok_or(":ruleset expects one name")?
+                .symbol()?;
+            selected = Some(name.to_owned());
+        }
     }
-    let expr = egglog::ast::Parser::default()
-        .get_expr_from_string(None, s)
-        .map_err(|e| e.to_string())?;
-    if let egglog::ast::Expr::Lit(_, egglog::ast::Literal::String(s)) = expr {
-        Ok(s)
-    } else {
-        Err("expected a string".into())
-    }
+    Ok(selected.unwrap_or_default())
 }

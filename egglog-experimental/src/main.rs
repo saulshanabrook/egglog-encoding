@@ -43,7 +43,7 @@ fn main() {
         }
     }
     if slotted {
-        let mut compiler = egglog_experimental::slotted::Compiler::for_egraph(
+        let mut compiler = egglog_experimental::SlottedCompiler::for_egraph(
             egglog_experimental::slotted::Options {
                 no_aliasing,
                 proof_mode: slotted_proofs,
@@ -58,12 +58,11 @@ fn main() {
     } else if let Some(path) = source {
         let program = (|| -> Result<_, Box<dyn std::error::Error>> {
             let source = std::fs::read_to_string(&path)?;
-            let mut compiler = egglog_experimental::slotted::Compiler::new(
-                egglog_experimental::slotted::Options {
+            let mut compiler =
+                egglog_experimental::SlottedCompiler::new(egglog_experimental::slotted::Options {
                     no_aliasing,
                     proof_mode: slotted_proofs,
-                },
-            );
+                });
             Ok(compiler.compile_program(Some(path.to_string_lossy().into_owned()), &source)?)
         })()
         .unwrap_or_else(|error| {

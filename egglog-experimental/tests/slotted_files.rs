@@ -1,6 +1,7 @@
 //! Run every slotted fixture; snapshot a small cross-section of the lowering.
 use egglog::ast::{Literal, Sexp, parse_sexps};
-use egglog_experimental::slotted::{Compiler, Options, new_egraph};
+use egglog_experimental::SlottedCompiler as Compiler;
+use egglog_experimental::slotted::{Options, new_egraph};
 use libtest_mimic::Trial;
 use std::{collections::BTreeSet, path::Path};
 

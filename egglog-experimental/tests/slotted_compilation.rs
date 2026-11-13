@@ -1,5 +1,6 @@
 use egglog::CommandOutput;
-use egglog_experimental::slotted::{Compiler, Options, ProofMode, new_egraph_with_proofs};
+use egglog_experimental::SlottedCompiler as Compiler;
+use egglog_experimental::slotted::{Options, ProofMode, new_egraph_with_proofs};
 use std::process::Command;
 
 fn compiler() -> Compiler {
@@ -231,15 +232,11 @@ fn disequality_rejects_unsupported_source_promises() {
     for (source, message) in [
         (
             "(datatype E (V Var)) (separately-injective V)",
-            "only term children",
-        ),
-        (
-            "(datatype E (N i64)) (separately-injective N)",
-            "only term children",
+            "input sort is not declared",
         ),
         (
             "(datatype E (Lam Var E :binder 0)) (separately-injective Lam)",
-            "only term children",
+            "input sort is not declared",
         ),
         (
             "(datatype E (A)) (datatype F (B)) (disequal (A) (B))",
@@ -247,9 +244,9 @@ fn disequality_rejects_unsupported_source_promises() {
         ),
         (
             "(datatype E (A)) (datatype F (B)) (disequal (A) (A)) (disequal (B) (B))",
-            "one carrier sort",
+            "cross-sort multipatterns",
         ),
-        ("(datatype E (_slotted_disequality_witness))", "reserved"),
+        ("(datatype E (_disequality_witness))", "reserved"),
         (
             "(datatype E (A)) (known-disequal (A) (A))",
             "root query patterns",
@@ -268,7 +265,7 @@ fn disequality_preserves_literal_payloads_and_payload_variable_scope() {
     let source = r#"
         (datatype E (Text String) (Pair E E))
         (separately-injective Pair)
-        (let payload (Text "_slotted_disequality_payload"))
+        (let payload (Text "_disequality_payload"))
         (disequal (Text "left") (Text "right"))
         (let input (Pair (Text "left") payload))
         (rewrite (Pair a (Text payload)) a
