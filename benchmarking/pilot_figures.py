@@ -49,6 +49,7 @@ from .pilot_ast import (
     translation_program_size_snapshot,
     translation_program_size_spec,
 )
+from .pilot_headlines import headline_results, headline_tex
 from .pilot_results import BUNDLE_NAMES, PILOT_DATA_VERSION, coverage_tables, pilot_results, pilot_tex
 from .proof_validation import read_proof_source_bindings, read_proof_validation, select_remote_proof_validation
 from .reports.catalog import report_id
@@ -752,6 +753,13 @@ def export_pilot(
                         raise ValueError(f"pilot renderer produced no {extension}")
                     outputs.append(path.name)
         for name, value in coverage_tables(snapshot).items():
+            (folder / name).write_text(value)
+            outputs.append(name)
+        headlines = headline_results(snapshot)
+        for name, value in (
+            ("headline.results.json", json.dumps(headlines, ensure_ascii=False, allow_nan=False, indent=2) + "\n"),
+            ("headline.numbers.tex", headline_tex(headlines)),
+        ):
             (folder / name).write_text(value)
             outputs.append(name)
         outputs.extend(
