@@ -159,6 +159,7 @@ fn demo_proof_snapshots() {
 (run 1)
 (check (= input (Lam $z (V $y))))"#,
         ),
+        ("overview", include_str!("slotted/overview.egg")),
     ] {
         let proofs = prove(
             &mut compiler(ProofMode::Prove),

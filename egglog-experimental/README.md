@@ -83,7 +83,8 @@ With `--slotted`, a source pass lowers the same constructs to constructors and
 guarded rewrites before slot encoding and proof production. See the
 [slotted restrictions](src/slotted/LANGUAGE.md#disequality-and-separate-injectivity).
 The [paper overview example](tests/slotted/overview.egg) eliminates a summation
-using inferred disequality and binder-independence guards:
+using inferred disequality and binder-independence guards. Its
+[checked source proof](tests/snapshots/slotted_proofs__overview.snap) is snapshot-tested:
 
 ```sh
 cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
