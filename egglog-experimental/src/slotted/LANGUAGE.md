@@ -35,7 +35,8 @@ Pattern variables, `:name`, and `:when` use egglog's existing syntax. The
 `rewrite` and `:when` match slotted terms together.
 
 Slotted mode supports a subset of vanilla egglog. General `rule` and `birewrite`
-commands, named rulesets, `run-schedule`, and `run-report` are unsupported.
+commands and `run-report` are unsupported. Named rewrite rulesets and schedules
+using `run`, `seq`, `repeat`, and `saturate` are supported.
 Constructor payloads are limited to `i64` and `String`; cross-sort term edges,
 containers, and payload computations are unsupported.
 
@@ -172,46 +173,6 @@ Slotted invariants are maintained automatically before queries and extraction,
 between rewrite iterations, and at the end of each input. `run` controls user
 rewrites.
 
-### Disequality and separate injectivity
-
-`(disequal a b)` asserts positive disequality evidence. Use
-`(known-disequal a b)` as a whole fact in a `check` or rewrite's `:when` clause;
-an absent match means unknown. `(contradiction)` detects evidence whose endpoints
-have become equal. This is different from `!=`, which only tests whether the
-graph currently knows two terms to be equal.
-
-`(separately-injective F)` promises cancellation and upward disequality
-propagation in each coordinate, with every other input fixed. It does not imply
-disjointness between constructors or propagate output disequality downward.
-The slotted frontend currently supports these declarations for constructors
-whose arguments are all term children, and disequality evidence in one carrier
-sort per scope. Marking binders, variable constructors, or constructors with
-primitive payloads is rejected. The generated multipatterns require the full
-matcher rather than `--slotted-no-aliasing`.
-
-The injectivity/disequality pass runs **before** slot encoding. It reuses the
-ordinary pass's rules, expressing evidence with private constructors and
-`:when` rewrites. A private nullary witness anchors evidence insertion; these
-rewrites never equate the witness with user expressions. Private rules saturate
-with slotted maintenance before observations and between user iterations, so
-they do not consume the `(run N)` budget. Declarations, assertions, and derived
-evidence follow `push`/`pop` scopes and successive input files.
-
-`--slotted --proofs` checks proofs against those generated source rewrites,
-including the disequality premises used by a user rewrite. The
-[overview fixture](../../tests/slotted/overview.egg) checks the paper's summation
-optimization and rejects equal, unknown, and binder-dependent bases.
-
-```slotted
-(datatype Expr (V Var) (Num i64) (Add Expr Expr))
-(separately-injective Add)
-(disequal (Num 1) (Num 2))
-(let left (Add (V $x) (Num 1)))
-(let right (Add (V $x) (Num 2)))
-(check (known-disequal left right))
-(fail (check (contradiction)))
-```
-
 ### `let`
 
 ```text
@@ -251,9 +212,10 @@ The left side is a constructor pattern, term global, or variable bound by the
 multipattern. The right side is a matched variable, term global, constructed
 term, or [substitution](#substitution). Literal payloads and payload pattern
 variables are supported; payload computations and other primitive calls are
-unsupported. Only the default ruleset is supported.
-`:ruleset`, `rule`, and `birewrite` are rejected. Two `rewrite` commands express
-a bidirectional equation.
+unsupported. `:ruleset name` selects a declared ruleset; omitting it selects the
+default ruleset. `rule` and `birewrite` are rejected. Two `rewrite` commands express
+a bidirectional equation. Payload variables bound by constructor patterns may
+also be compared with literals or other payload variables using `=` and `!=`.
 
 #### Multipatterns
 
@@ -378,10 +340,18 @@ available. Checks use the same aliasing restriction.
 
 ```text
 (run N)
+(run ruleset N)
+(run-schedule (seq (run ruleset) (repeat N (run)) (saturate (run ruleset))))
 ```
 
-Performs `N` rounds of user rewrites. `N` must be a nonnegative integer.
-`run-schedule` and `run-report` are unsupported.
+`run` performs `N` rounds of the selected ruleset, defaulting to the unnamed
+ruleset. `N` must be a nonnegative integer. Within `run-schedule`, `(run)` and
+`(run ruleset)` each perform one round; `seq`, `repeat`, and `saturate` compose
+those rounds. Each round completes matching, refinement, application, and
+invariant maintenance before the next source run.
+
+Source schedules do not yet support `:until` or proof-producing substitution;
+use `(run N)` for the latter. `run-report` is unsupported.
 
 ### `check` and `fail`
 

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Register the source substitution validator for each carrier signature.
-pub(super) fn register(graph: &mut EGraph, context: &Arc<ProofContext>) {
+pub(in crate::slotted) fn register(graph: &mut EGraph, context: &Arc<ProofContext>) {
     let sorts: std::collections::BTreeSet<_> = context
         .constructors
         .values()

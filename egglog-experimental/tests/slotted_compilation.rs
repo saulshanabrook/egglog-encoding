@@ -1,10 +1,10 @@
 use egglog::CommandOutput;
-use egglog_experimental::SlottedCompiler as Compiler;
 use egglog_experimental::slotted::{Options, ProofMode, new_egraph_with_proofs};
+use egglog_experimental::{disequality_source_macros, slotted::Compiler};
 use std::process::Command;
 
 fn compiler() -> Compiler {
-    Compiler::new(Options {
+    source_compiler(Options {
         proof_mode: ProofMode::Prove,
         ..Default::default()
     })
@@ -159,7 +159,8 @@ fn graph_parser_preserves_checked_compilation_and_failed_input_rollback() {
             ..Default::default()
         },
         &graph,
-    );
+    )
+    .with_source_macros(disequality_source_macros());
     assert!(
         compiler
             .compile_program(None, "(datatype E (A)) (print-size A extra)")
@@ -188,7 +189,7 @@ fn graph_parser_preserves_checked_compilation_and_failed_input_rollback() {
 #[test]
 fn disequality_pass_tracks_inputs_scopes_and_declaration_order() {
     for proof_mode in [ProofMode::Disabled, ProofMode::Check, ProofMode::Prove] {
-        let mut compiler = Compiler::new(Options {
+        let mut compiler = source_compiler(Options {
             proof_mode,
             ..Default::default()
         });
@@ -232,27 +233,26 @@ fn disequality_rejects_unsupported_source_promises() {
     for (source, message) in [
         (
             "(datatype E (V Var)) (separately-injective V)",
-            "input sort is not declared",
+            "Var column takes",
         ),
         (
             "(datatype E (Lam Var E :binder 0)) (separately-injective Lam)",
-            "input sort is not declared",
+            "Var column takes",
         ),
         (
             "(datatype E (A)) (datatype F (B)) (disequal (A) (B))",
-            "expected E",
+            "have type E",
         ),
         (
             "(datatype E (A)) (datatype F (B)) (disequal (A) (A)) (disequal (B) (B))",
             "cross-sort multipatterns",
         ),
-        ("(datatype E (_disequality_witness))", "reserved"),
         (
             "(datatype E (A)) (known-disequal (A) (A))",
             "root query patterns",
         ),
     ] {
-        let error = Compiler::default()
+        let error = source_compiler(Options::default())
             .compile(None, source)
             .unwrap_err()
             .to_string();
@@ -278,4 +278,8 @@ fn disequality_preserves_literal_payloads_and_payload_variable_scope() {
         .unwrap()
         .run(&mut new_egraph_with_proofs())
         .unwrap();
+}
+
+fn source_compiler(options: Options) -> Compiler {
+    Compiler::new(options).with_source_macros(disequality_source_macros())
 }

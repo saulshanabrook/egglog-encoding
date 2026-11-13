@@ -43,13 +43,14 @@ fn main() {
         }
     }
     if slotted {
-        let mut compiler = egglog_experimental::SlottedCompiler::for_egraph(
+        let mut compiler = egglog_experimental::slotted::Compiler::for_egraph(
             egglog_experimental::slotted::Options {
                 no_aliasing,
                 proof_mode: slotted_proofs,
             },
             &egraph,
-        );
+        )
+        .with_source_macros(egglog_experimental::disequality_source_macros());
         egglog::cli_with_preprocessor(egraph, args, move |filename, source| {
             compiler
                 .compile_program(filename, source)
@@ -58,11 +59,13 @@ fn main() {
     } else if let Some(path) = source {
         let program = (|| -> Result<_, Box<dyn std::error::Error>> {
             let source = std::fs::read_to_string(&path)?;
-            let mut compiler =
-                egglog_experimental::SlottedCompiler::new(egglog_experimental::slotted::Options {
+            let mut compiler = egglog_experimental::slotted::Compiler::new(
+                egglog_experimental::slotted::Options {
                     no_aliasing,
                     proof_mode: slotted_proofs,
-                });
+                },
+            )
+            .with_source_macros(egglog_experimental::disequality_source_macros());
             Ok(compiler.compile_program(Some(path.to_string_lossy().into_owned()), &source)?)
         })()
         .unwrap_or_else(|error| {

@@ -79,9 +79,20 @@ assertions, constructor rows, and unions before checks, proof requests, schedule
 and observations. User run budgets and pre-step `:until` checks are preserved.
 Generated joins include subsumed rows and create no constructor applications.
 They support ordinary execution, term encoding, and proof testing.
-With `--slotted`, a source pass lowers the same constructs to constructors and
-guarded rewrites before slot encoding and proof production. See the
-[slotted restrictions](src/slotted/LANGUAGE.md#disequality-and-separate-injectivity).
+With `--slotted`, the same injectivity/disequality macros run before slot
+encoding. A small [representation adapter](src/disequality/terms.rs) expresses
+their generated relations and rules as constructors and `rewrite :when`
+commands. Slotted processes the resulting ordinary terms, rewrites, and
+schedules without disequality-specific logic. Private witness constructors
+anchor evidence insertion and are never equated with object-language terms.
+
+From Rust, configure this stack with
+`slotted::Compiler::new(options).with_source_macros(disequality_source_macros())`.
+The compiler supplies source types to the existing egglog parser, typechecker,
+and command macros. The resulting rewrites inherit the downstream encoding's
+restrictions: slotted requires the full multipattern matcher, excludes cross-sort
+term patterns, and cannot express injectivity promises for rigid `Var` arguments.
+Primitive payload arguments use native `!=` guards.
 The [paper overview example](tests/slotted/overview.egg) eliminates a summation
 using inferred disequality and binder-independence guards. Its
 [checked source proof](tests/snapshots/slotted_proofs__overview.snap) is snapshot-tested:

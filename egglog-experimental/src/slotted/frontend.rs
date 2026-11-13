@@ -1,7 +1,4 @@
 //! An explicit slotted-source to ordinary-egglog pass. Evaluation stays in egglog.
-pub(super) use crate::surface::{declarations, expand_includes};
-use crate::surface::{read, unquote};
-
 use super::compiled::{CompiledProgram, ExtractRequest, ExtractRequests, ProofRequests};
 use super::errors::CompileError;
 use super::proofs::pipeline::{EncodingNames, ProofRequest, SlottedClaim};
@@ -124,6 +121,7 @@ impl Default for State {
 #[derive(Clone, Default)]
 pub struct Compiler {
     options: Options,
+    macros: Option<super::source_macros::SourceMacros>,
     parser: Option<egglog::ast::Parser>,
     state: State,
     scopes: Vec<State>,
@@ -158,6 +156,14 @@ impl Compiler {
             parser: Some(graph.parser.clone()),
             ..Self::new(options)
         }
+    }
+
+    /// Apply ordinary command macros to source commands before slot encoding.
+    /// The supplied graph provides their parser, primitive signatures, and macros;
+    /// source declarations supply the operand types. Both stages share scopes.
+    pub fn with_source_macros(mut self, graph: egglog::EGraph) -> Self {
+        self.macros = Some(super::source_macros::SourceMacros::new(graph));
+        self
     }
 
     /// Compile to lowered egglog text. Includes resolve from the working directory.
@@ -235,6 +241,13 @@ impl Compiler {
     }
 
     fn region(&mut self, forms: &[(Form, Span)]) -> Result<String, ParseError> {
+        let expanded;
+        let forms = if let Some(macros) = &mut self.macros {
+            expanded = macros.lower(forms, &self.state.lang)?;
+            &expanded
+        } else {
+            forms
+        };
         let mut sorts = Vec::new();
         let mut ctors = Vec::new();
         for (f, span) in forms {
@@ -585,10 +598,7 @@ impl Compiler {
             match (head, args) {
                 ("run", [] | [_]) => {
                     let name = args.first().map(Form::symbol).transpose()?.unwrap_or("");
-                    Ok(format!(
-                        "(seq (run {name}) (saturate (run slotted-refine)) (run slotted-apply) {})",
-                        maintenance::MACHINERY
-                    ))
+                    Ok(maintenance::iteration(name))
                 }
                 ("seq", children) => Ok(format!(
                     "(seq {})",
@@ -1471,19 +1481,9 @@ pub(super) fn source_rewrite(args: &[Form]) -> Result<SourceRewrite, String> {
     Ok(source)
 }
 
-fn declaration_name(form: &Form) -> Option<&str> {
-    let (head, args) = form.call().ok()?;
-    matches!(
-        head,
-        "sort" | "constructor" | "function" | "relation" | "ruleset"
-    )
-    .then(|| args.first()?.atom().ok())
-    .flatten()
-}
-
-fn source_ruleset(args: &[Form]) -> Result<String, String> {
+pub(super) fn source_ruleset(args: &[Form]) -> Result<String, String> {
     let mut selected = None;
-    for (index, arg) in args.iter().enumerate() {
+    for (index, arg) in args.iter().enumerate().skip(2) {
         if arg == &Form::Atom(":ruleset".into()) {
             if selected.is_some() {
                 return Err("several :ruleset clauses".into());
@@ -1496,4 +1496,101 @@ fn source_ruleset(args: &[Form]) -> Result<String, String> {
         }
     }
     Ok(selected.unwrap_or_default())
+}
+
+fn read(
+    filename: Option<String>,
+    source: &str,
+    active: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<Vec<(Form, Span)>, ParseError> {
+    expand_includes(syntax::parse(filename, source)?, active)
+}
+
+pub(super) fn expand_includes(
+    forms: Vec<(Form, Span)>,
+    active: &mut BTreeSet<std::path::PathBuf>,
+) -> Result<Vec<(Form, Span)>, ParseError> {
+    let mut out = Vec::new();
+    for (form, span) in forms {
+        if let Ok(("include", [arg])) = form.call() {
+            let file = unquote(arg.atom().map_err(|e| ParseError(span.clone(), e))?)
+                .map_err(|e| ParseError(span.clone(), e))?;
+            let path = std::fs::canonicalize(&file)
+                .map_err(|e| ParseError(span.clone(), format!("include {file}: {e}")))?;
+            if !active.insert(path.clone()) {
+                return Err(ParseError(span, format!("recursive include {file}")));
+            }
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| ParseError(span.clone(), format!("include {file}: {e}")))?;
+            out.extend(read(Some(file), &text, active)?);
+            active.remove(&path);
+        } else {
+            out.push((form, span));
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn declarations(
+    f: &Form,
+    sorts: &mut Vec<String>,
+    ctors: &mut Vec<Form>,
+) -> Result<(), String> {
+    let (head, args) = f.call()?;
+    match head {
+        "sort" if args.len() == 1 => sorts.push(args[0].symbol()?.into()),
+        "constructor" => ctors.push(f.clone()),
+        "datatype" => {
+            let (name, variants) = args.split_first().ok_or("datatype needs a sort name")?;
+            sorts.push(name.symbol()?.into());
+            for v in variants {
+                let (ctor, cols) = v.call()?;
+                let split = cols
+                    .iter()
+                    .position(|f| matches!(f,Form::Atom(s) if s.starts_with(':')))
+                    .unwrap_or(cols.len());
+                let mut parts = vec![
+                    Form::Atom("constructor".into()),
+                    Form::Atom(ctor.into()),
+                    Form::List(cols[..split].to_vec()),
+                    name.clone(),
+                ];
+                parts.extend_from_slice(&cols[split..]);
+                ctors.push(Form::List(parts));
+            }
+        }
+        "datatype*" => {
+            for f in args {
+                let mut parts = vec![Form::Atom("datatype".into())];
+                parts.extend_from_slice(f.list()?);
+                declarations(&Form::List(parts), sorts, ctors)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn declaration_name(form: &Form) -> Option<&str> {
+    let (head, args) = form.call().ok()?;
+    matches!(
+        head,
+        "sort" | "constructor" | "function" | "relation" | "ruleset"
+    )
+    .then(|| args.first()?.atom().ok())
+    .flatten()
+}
+
+fn unquote(s: &str) -> Result<String, String> {
+    if !s.starts_with('"') {
+        return Ok(s.into());
+    }
+    let expr = egglog::ast::Parser::default()
+        .get_expr_from_string(None, s)
+        .map_err(|e| e.to_string())?;
+    if let egglog::ast::Expr::Lit(_, egglog::ast::Literal::String(s)) = expr {
+        Ok(s)
+    } else {
+        Err("expected a string".into())
+    }
 }

@@ -48,8 +48,9 @@
 //! observations of pending top-level actions. User run budgets and pre-step until
 //! checks are preserved. Queries are whole facts, rather than nested expressions
 //! or actions. Ordinary execution, term encoding, and proof testing are supported.
-//! The slotted frontend lowers these constructs before slot encoding, with the
-//! restrictions described in the [slotted language](slotted).
+//! [`disequality_source_macros`] presents the same lowering as constructors and
+//! guarded rewrites. The CLI installs these source macros before slot encoding;
+//! the downstream encoding sees ordinary terms and rewrites.
 //!
 //! ## Generic containers and callbacks
 //!
@@ -121,10 +122,7 @@ pub mod scheduling;
 pub use scheduling::*;
 mod dag_print;
 mod disequality;
-mod source;
-mod surface;
-pub use disequality::source::Compiler as DisequalityCompiler;
-pub use source::SlottedCompiler;
+pub use disequality::source_macros as disequality_source_macros;
 mod f64;
 mod fresh_macro;
 mod injectivity;

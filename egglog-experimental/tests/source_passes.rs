@@ -1,6 +1,5 @@
-use egglog::EGraph;
 use egglog_experimental::{
-    DisequalityCompiler,
+    disequality_source_macros,
     slotted::{Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs},
 };
 
@@ -16,22 +15,8 @@ fn disequality_output_runs_directly_and_stacks_on_slotted() {
         (union left right)
         (check (= (A) (B)))
         (check (contradiction))";
-    let lowered = DisequalityCompiler::default()
-        .compile(None, source)
-        .unwrap();
-    for extension in [
-        "separately-injective",
-        "known-disequal",
-        "(disequal ",
-        "(contradiction)",
-        "(relation ",
-        "(rule ",
-        "slotted",
-    ] {
-        assert!(!lowered.contains(extension), "{extension}: {lowered}");
-    }
-    EGraph::default()
-        .parse_and_run_program(None, &lowered)
+    disequality_source_macros()
+        .parse_and_run_program(None, source)
         .unwrap();
     for proof_mode in [ProofMode::Disabled, ProofMode::Check, ProofMode::Prove] {
         let mut graph = if proof_mode == ProofMode::Prove {
@@ -43,7 +28,8 @@ fn disequality_output_runs_directly_and_stacks_on_slotted() {
             proof_mode,
             ..Default::default()
         })
-        .compile_program(None, &lowered)
+        .with_source_macros(disequality_source_macros())
+        .compile_program(None, source)
         .unwrap()
         .run(&mut graph)
         .unwrap();
@@ -57,11 +43,8 @@ fn first_pass_does_not_assume_a_slotted_carrier() {
         (disequal (A0) (A1)) (let b0 (Wrap (A0))) (let b1 (Wrap (A1)))
         (check (known-disequal b0 b1))
         (disequal (B0) (B1)) (union (B0) (B1)) (check (contradiction))";
-    let lowered = DisequalityCompiler::default()
-        .compile(None, source)
-        .unwrap();
-    EGraph::default()
-        .parse_and_run_program(None, &lowered)
+    disequality_source_macros()
+        .parse_and_run_program(None, source)
         .unwrap();
 }
 
@@ -107,22 +90,18 @@ fn primitive_payload_guards_are_generic() {
     .unwrap()
     .run(&mut new_egraph_with_proofs())
     .unwrap();
-    let lowered = DisequalityCompiler::default()
-        .compile(
-            None,
-            "(datatype E (Num i64)) (separately-injective Num)
+    let source = "(datatype E (Num i64)) (separately-injective Num)
         (let a (Num 1)) (let b (Num 2)) (check (known-disequal a b))
-        (fail (check (contradiction))) (union a b) (check (contradiction))",
-        )
-        .unwrap();
-    EGraph::default()
-        .parse_and_run_program(None, &lowered)
+        (fail (check (contradiction))) (union a b) (check (contradiction))";
+    disequality_source_macros()
+        .parse_and_run_program(None, source)
         .unwrap();
     Compiler::new(Options {
         proof_mode: ProofMode::Prove,
         ..Default::default()
     })
-    .compile_program(None, &lowered)
+    .with_source_macros(disequality_source_macros())
+    .compile_program(None, source)
     .unwrap()
     .run(&mut new_egraph_with_proofs())
     .unwrap();

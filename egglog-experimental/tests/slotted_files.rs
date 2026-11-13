@@ -1,7 +1,7 @@
 //! Run every slotted fixture; snapshot a small cross-section of the lowering.
 use egglog::ast::{Literal, Sexp, parse_sexps};
-use egglog_experimental::SlottedCompiler as Compiler;
 use egglog_experimental::slotted::{Options, new_egraph};
+use egglog_experimental::{disequality_source_macros, slotted::Compiler};
 use libtest_mimic::Trial;
 use std::{collections::BTreeSet, path::Path};
 
@@ -61,7 +61,7 @@ fn main() {
                 .unwrap()
                 .to_owned();
             tests.push(Trial::test(name, move || {
-                let mut compiler = Compiler::new(Options {
+                let mut compiler = source_compiler(Options {
                     no_aliasing: path.starts_with("egglog-experimental/tests/slotted/nested"),
                     ..Default::default()
                 });
@@ -119,10 +119,14 @@ fn main() {
     }
     for (i, source) in examples.into_iter().enumerate() {
         tests.push(Trial::test(format!("language-doc/{i}"), move || {
-            let encoded = Compiler::default().compile(None, source)?;
+            let encoded = source_compiler(Options::default()).compile(None, source)?;
             new_egraph().parse_and_run_program(None, &encoded)?;
             Ok(())
         }));
     }
     libtest_mimic::run(&args, tests).exit();
+}
+
+fn source_compiler(options: Options) -> Compiler {
+    Compiler::new(options).with_source_macros(disequality_source_macros())
 }

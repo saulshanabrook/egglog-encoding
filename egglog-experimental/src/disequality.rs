@@ -6,7 +6,7 @@
 //! Each user run is followed by saturation of the private rules; observations
 //! also close pending top-level assertions and unions without disrupting batches.
 
-pub(crate) mod source;
+mod terms;
 
 use egglog::{
     ArcSort, AtomTerm, CommandMacro, CommandOutput, Context, EGraph, Error, Primitive, PurePrim,
@@ -48,6 +48,20 @@ pub(crate) fn add_disequality_support(egraph: &mut EGraph) {
     egraph
         .command_macros_mut()
         .register(Arc::new(LowerDisequality(encoding)));
+}
+
+/// A source macro environment that presents disequality as constructors and
+/// guarded rewrites. It runs the same parser, typechecker, and lowering as the
+/// ordinary extension, followed by a representation adapter.
+pub fn source_macros() -> EGraph {
+    let mut graph = EGraph::default();
+    graph.parser.symbol_gen = SymbolGen::new("_disequality_".into());
+    add_disequality_support(&mut graph);
+    let encoding = graph.extension_state::<Encoding>().unwrap().clone();
+    graph
+        .command_macros_mut()
+        .register(Arc::new(terms::Terms(encoding)));
+    graph
 }
 
 /// Close the extension invariant around interpreter-driven scheduler steps.
