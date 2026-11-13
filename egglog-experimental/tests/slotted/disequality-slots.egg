@@ -1,0 +1,18 @@
+; V $x and V $y share an abstract slotted class but are different invocations.
+; Disequality must therefore be lowered before slotted's class representation.
+(datatype Expr (V Var) (Num i64) (Add Expr Expr))
+(separately-injective Add)
+(let x (V $x))
+(let y (V $y))
+(disequal x y)
+(check (known-disequal x y))
+(check (known-disequal y x))
+(fail (check (known-disequal x x)))
+(fail (check (contradiction)))
+(let left (Add x (Num 0)))
+(let right (Add y (Num 0)))
+(check (known-disequal left right))
+(fail (check (= x y)))
+(union left right)
+(check (= x y))
+(check (contradiction))

@@ -1,7 +1,6 @@
 use egglog::{CommandOutput, Error};
-use egglog_experimental::slotted::{
-    Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs,
-};
+use egglog_experimental::slotted::{Options, ProofMode, new_egraph, new_egraph_with_proofs};
+use egglog_experimental::{disequality_source_macros, slotted::Compiler};
 use libtest_mimic::Trial;
 use std::path::Path;
 
@@ -11,7 +10,7 @@ mod coverage;
 /// Recover positive probe equalities from the ordinary execution, then require
 /// an independently checked source proof for each probe, including reflexivity.
 fn probe_claims(source: &str, probes: &[String], no_aliasing: bool) -> Result<String, Error> {
-    let mut compiler = Compiler::new(Options {
+    let mut compiler = source_compiler(Options {
         no_aliasing,
         ..Default::default()
     });
@@ -80,7 +79,7 @@ fn main() {
             let source = std::fs::read_to_string(&path).unwrap();
             let no_aliasing = path.starts_with("egglog-experimental/tests/slotted/nested")
                 || path.starts_with("benchmarks/slotted/correctness/nested");
-            let mut compiler = Compiler::new(Options {
+            let mut compiler = source_compiler(Options {
                 no_aliasing,
                 proof_mode: ProofMode::Prove,
             });
@@ -119,4 +118,8 @@ fn main() {
     }
     assert!(!tests.is_empty(), "no slotted fixtures found");
     libtest_mimic::run(&args, tests).exit();
+}
+
+fn source_compiler(options: Options) -> Compiler {
+    Compiler::new(options).with_source_macros(disequality_source_macros())
 }

@@ -296,6 +296,7 @@ pub(super) struct Rewrite<'a> {
     pub ordinal: usize,
     pub nested: bool,
     pub proofs: bool,
+    pub ruleset: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -422,7 +423,13 @@ pub(super) fn compile(
         return Ok((
             format!(
                 "{declaration}{}",
-                rule(&q.body, &actions, naive, None, r.name)
+                rule(
+                    &q.body,
+                    &actions,
+                    naive,
+                    (!r.ruleset.is_empty()).then_some(r.ruleset),
+                    r.name
+                )
             ),
             names,
             substitution,
@@ -455,7 +462,7 @@ pub(super) fn compile(
             &q.body[..split],
             &[row.clone(), format!("(Idx {} 0)", q.length)],
             naive,
-            None,
+            (!r.ruleset.is_empty()).then_some(r.ruleset),
             r.name,
         ),
         rule(

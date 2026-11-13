@@ -1,0 +1,52 @@
+; The summation example from egglog-encoding-paper's overview, in our syntax.
+; Run with --slotted, or --slotted --proofs to check its source proof.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (Add Expr Expr)
+  (Sub Expr Expr)
+  (Mul Expr Expr)
+  (Pow Expr Expr)
+  (Div Expr Expr)
+  (SumZeroTen Var Expr :binder 0))
+(separately-injective Add)
+
+(rewrite
+  (SumZeroTen $v (Mul (Pow r (V $v)) (Pow s (Sub (Num 10) (V $v)))))
+  (Div (Sub (Pow r (Num 11)) (Pow s (Num 11))) (Sub r s))
+  :when ((not-free $v r s) (known-disequal r s))
+  :name "sum-to-closed-form")
+
+; Assert only the leaf disequality. Separate injectivity must infer x+1 != x+2.
+(disequal (Num 1) (Num 2))
+(let input
+  (SumZeroTen $i
+    (Mul (Pow (Add (V $x) (Num 1)) (V $i))
+         (Pow (Add (V $x) (Num 2)) (Sub (Num 10) (V $i))))))
+(let output
+  (Div (Sub (Pow (Add (V $x) (Num 1)) (Num 11))
+            (Pow (Add (V $x) (Num 2)) (Num 11)))
+       (Sub (Add (V $x) (Num 1)) (Add (V $x) (Num 2)))))
+
+; These sums must not be eliminated: unknown/equal bases, or binder dependence.
+(let unknown
+  (SumZeroTen $i (Mul (Pow (Num 3) (V $i))
+                     (Pow (Num 4) (Sub (Num 10) (V $i))))))
+(let equal
+  (SumZeroTen $i (Mul (Pow (Num 1) (V $i))
+                     (Pow (Num 1) (Sub (Num 10) (V $i))))))
+(let dependent
+  (SumZeroTen $i (Mul (Pow (Add (V $i) (Num 1)) (V $i))
+                     (Pow (Add (V $i) (Num 2)) (Sub (Num 10) (V $i))))))
+
+; One user iteration is enough: the private closure runs before the rewrite.
+(run 1)
+(check (= input output))
+(fail (check (= unknown (Div (Sub (Pow (Num 3) (Num 11)) (Pow (Num 4) (Num 11)))
+                            (Sub (Num 3) (Num 4))))))
+(fail (check (= equal (Div (Sub (Pow (Num 1) (Num 11)) (Pow (Num 1) (Num 11)))
+                          (Sub (Num 1) (Num 1))))))
+(fail (check (= dependent (Div (Sub (Pow (Add (V $i) (Num 1)) (Num 11))
+                                   (Pow (Add (V $i) (Num 2)) (Num 11)))
+                              (Sub (Add (V $i) (Num 1)) (Add (V $i) (Num 2)))))))
+(fail (check (contradiction)))

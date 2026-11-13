@@ -49,7 +49,8 @@ fn main() {
                 proof_mode: slotted_proofs,
             },
             &egraph,
-        );
+        )
+        .with_source_macros(egglog_experimental::disequality_source_macros());
         egglog::cli_with_preprocessor(egraph, args, move |filename, source| {
             compiler
                 .compile_program(filename, source)
@@ -63,7 +64,8 @@ fn main() {
                     no_aliasing,
                     proof_mode: slotted_proofs,
                 },
-            );
+            )
+            .with_source_macros(egglog_experimental::disequality_source_macros());
             Ok(compiler.compile_program(Some(path.to_string_lossy().into_owned()), &source)?)
         })()
         .unwrap_or_else(|error| {

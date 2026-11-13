@@ -1,10 +1,9 @@
 use egglog::{CommandOutput, EGraph};
-use egglog_experimental::slotted::{
-    Compiler, Options, ProofMode, new_egraph, new_egraph_with_proofs,
-};
+use egglog_experimental::slotted::{Options, ProofMode, new_egraph, new_egraph_with_proofs};
+use egglog_experimental::{disequality_source_macros, slotted::Compiler};
 
 fn compiler(mode: ProofMode) -> Compiler {
-    Compiler::new(Options {
+    source_compiler(Options {
         proof_mode: mode,
         ..Default::default()
     })
@@ -159,6 +158,7 @@ fn demo_proof_snapshots() {
 (run 1)
 (check (= input (Lam $z (V $y))))"#,
         ),
+        ("overview", include_str!("slotted/overview.egg")),
     ] {
         let proofs = prove(
             &mut compiler(ProofMode::Prove),
@@ -739,4 +739,8 @@ fn reconstruction_replays_source_order_before_join_reordering() {
         &mut new_egraph_with_proofs(),
         source,
     );
+}
+
+fn source_compiler(options: Options) -> Compiler {
+    Compiler::new(options).with_source_macros(disequality_source_macros())
 }

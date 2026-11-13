@@ -17,6 +17,7 @@ pub mod proofs;
 mod query;
 mod rewrite;
 mod slots;
+mod source_macros;
 mod syntax;
 pub(crate) mod var_sort;
 pub use compiled::CompiledProgram;

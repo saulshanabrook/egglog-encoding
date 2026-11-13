@@ -9,8 +9,18 @@ pub(super) fn schedule(steps: usize, has_rules: bool) -> String {
         return format!("(run-schedule {MACHINERY})");
     }
     format!(
-        "(run-schedule {MACHINERY} (repeat {steps} (seq (run) (saturate (run slotted-refine)) (run slotted-apply) {MACHINERY})))"
+        "(run-schedule {MACHINERY} (repeat {steps} {}))",
+        iteration("")
     )
+}
+
+pub(super) fn iteration(ruleset: &str) -> String {
+    let run = if ruleset.is_empty() {
+        "(run)".into()
+    } else {
+        format!("(run {ruleset})")
+    };
+    format!("(seq {run} (saturate (run slotted-refine)) (run slotted-apply) {MACHINERY})")
 }
 
 pub(super) fn shared() -> String {

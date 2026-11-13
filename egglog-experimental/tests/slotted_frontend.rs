@@ -100,7 +100,7 @@ fn accepted_source_forms() {
             "(datatype M (VM Var) (N i64) (Add M M) (Mul M M) (Lam Var M :binder 0) (App M M) (Nil))\n(rewrite (Add x y) (Nil) :name \"r\")\n",
         ),
         (
-            false,
+            true,
             ":ruleset",
             "(ruleset rs)\n(datatype M (VM Var) (N i64) (Add M M) (Mul M M) (Lam Var M :binder 0) (App M M) (Nil))\n(rewrite (Add x y) (Nil) :ruleset rs :name \"r\")\n",
         ),
@@ -176,7 +176,7 @@ fn accepted_source_forms() {
         ),
         (
             false,
-            "run-schedule, which would skip the phasing",
+            "a schedule with a numeric ruleset name",
             "(datatype M (VM Var) (N i64) (Add M M) (Mul M M) (Lam Var M :binder 0) (App M M) (Nil))\n(let a (Nil))\n(run-schedule (run 1))\n",
         ),
         (
@@ -460,9 +460,9 @@ fn refused_source_forms_have_diagnostics() {
             "no equality sort is declared",
         ),
         (
-            "a named ruleset that the slotted schedule cannot select",
-            "(datatype M (VM Var) (Null) (IConst) (Succ M) (Mul M M) (Lam Var M :binder 0))\n(ruleset custom)\n(rewrite (Succ a) a :name \"custom-rule\" :ruleset custom)\n",
-            "named rulesets are not supported",
+            "a ruleset option with too many arguments",
+            "(datatype M (VM Var) (Null) (IConst) (Succ M) (Mul M M) (Lam Var M :binder 0))\n(ruleset custom)\n(rewrite (Succ a) a :name \"custom-rule\" :ruleset custom extra)\n",
+            ":ruleset expects one name",
         ),
         (
             "a pattern variable in a binder column",
