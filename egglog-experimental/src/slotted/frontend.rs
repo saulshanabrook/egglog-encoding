@@ -587,8 +587,7 @@ impl Compiler {
         }
     }
 
-    /// Every source run completes the same match/refine/apply cycle, whether
-    /// it belongs to a user ruleset or was emitted by an earlier pass.
+    /// Complete matching, refinement, application, and maintenance for each source run.
     fn source_schedule(&self, schedule: &Form) -> Result<String, String> {
         if !self.state.substitutions.is_empty() {
             return Err("source schedules with proof-producing substitution are not yet supported; use (run N)".into());

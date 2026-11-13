@@ -50,9 +50,8 @@ pub(crate) fn add_disequality_support(egraph: &mut EGraph) {
         .register(Arc::new(LowerDisequality(encoding)));
 }
 
-/// A source macro environment that presents disequality as constructors and
-/// guarded rewrites. It runs the same parser, typechecker, and lowering as the
-/// ordinary extension, followed by a representation adapter.
+/// Return macros that lower injectivity and disequality to constructors and
+/// guarded rewrites, for [`crate::slotted::Compiler::with_source_macros`].
 pub fn source_macros() -> EGraph {
     let mut graph = EGraph::default();
     graph.parser.symbol_gen = SymbolGen::new("_disequality_".into());

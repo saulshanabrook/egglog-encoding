@@ -49,8 +49,7 @@
 //! checks are preserved. Queries are whole facts, rather than nested expressions
 //! or actions. Ordinary execution, term encoding, and proof testing are supported.
 //! [`disequality_source_macros`] presents the same lowering as constructors and
-//! guarded rewrites. The CLI installs these source macros before slot encoding;
-//! the downstream encoding sees ordinary terms and rewrites.
+//! guarded rewrites. The CLI installs these source macros before slot encoding.
 //!
 //! ## Generic containers and callbacks
 //!

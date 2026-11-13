@@ -1,6 +1,4 @@
 //! Run ordinary command macros against source types before slot encoding.
-//! Parsing, constructor layouts, and scopes belong to the existing frontend;
-//! macros receive egglog's TypeInfo and need no knowledge of slot encoding.
 use super::{
     frontend::{declarations, source_constructor, source_rewrite, source_ruleset},
     model::{Column, Language},

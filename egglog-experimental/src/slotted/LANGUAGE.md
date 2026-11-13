@@ -350,7 +350,7 @@ ruleset. `N` must be a nonnegative integer. Within `run-schedule`, `(run)` and
 those rounds. Each round completes matching, refinement, application, and
 invariant maintenance before the next source run.
 
-Source schedules do not yet support `:until` or proof-producing substitution;
+Source schedules do not support `:until` or proof-producing substitution;
 use `(run N)` for the latter. `run-report` is unsupported.
 
 ### `check` and `fail`

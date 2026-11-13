@@ -1,5 +1,4 @@
-//! Present the existing extension's relations and rules as constructors and
-//! guarded rewrites. This adapter does not parse source or infer operand sorts.
+//! Represent disequality evidence with constructors and guarded rewrites.
 use super::Encoding;
 use egglog::{
     CommandMacro, Error, TypeInfo,
