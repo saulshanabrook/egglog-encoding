@@ -1,0 +1,146 @@
+--- a/benchmarking/engines.py
++++ b/benchmarking/engines.py
+@@ -14,6 +14,7 @@
+     "proofs",
+     "proof-extraction",
+     "proof-testing",
++    "proof-testing-unsimplified",
+     "egg",
+     "egg-proofs",
+     "egg-proof-extraction",
+@@ -99,6 +100,7 @@
+     "proofs": replace(_EGGLOG, flags=("--proofs",)),
+     "proof-extraction": replace(_EGGLOG, flags=("--proof-extraction",)),
+     "proof-testing": replace(_EGGLOG, flags=("--proof-testing",)),
++    "proof-testing-unsimplified": replace(_EGGLOG, flags=("--proof-testing-unsimplified",)),
+     "egg": replace(_MATH, flags=("--proof-mode", "off")),
+     "egg-proofs": replace(_MATH, flags=("--proof-mode", "enabled")),
+     "egg-proof-extraction": replace(_MATH, flags=("--proof-mode", "extract")),
+--- a/egglog-experimental/src/main.rs
++++ b/egglog-experimental/src/main.rs
+@@ -26,7 +26,13 @@
+     let proof_mode = options.iter().any(|arg| {
+         matches!(
+             arg.to_str(),
+-            Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
++            Some(
++                "--proofs"
++                    | "--proof-testing"
++                    | "--proof-testing-unsimplified"
++                    | "--proof-extraction"
++                    | "--term-encoding"
++            )
+         )
+     });
+     if (slotted || encoded) && proof_mode {
+--- a/egglog/src/cli.rs
++++ b/egglog/src/cli.rs
+@@ -89,6 +89,9 @@
+     /// Commands inside `fail` retain their ordinary behavior.
+     #[clap(long)]
+     proof_testing: bool,
++    /// Prove every `check` and certify every `extract`, checking without simplification.
++    #[clap(long, conflicts_with_all = ["proofs", "proof_testing", "proof_extraction"])]
++    proof_testing_unsimplified: bool,
+     /// Extract proofs for every `check` and `extract` outside `fail` without verifying them.
+     /// Commands inside `fail` retain their ordinary behavior.
+     #[clap(long, conflicts_with_all = ["proofs", "proof_testing"])]
+@@ -206,6 +209,10 @@
+ 
+     if args.proof_extraction {
+         egraph = egraph.with_proof_extraction();
++    }
++
++    if args.proof_testing_unsimplified {
++        egraph = egraph.with_unsimplified_proof_testing();
+     }
+ 
+     egraph.set_num_threads(args.threads);
+--- a/egglog/src/lib.rs
++++ b/egglog/src/lib.rs
+@@ -814,6 +814,14 @@
+     /// Commands inside `fail` retain their ordinary behavior.
+     pub fn with_proof_testing(mut self) -> Self {
+         self.proof_state.proof_testing = true;
++        self
++    }
++
++    /// Prove source checks and extracts, checking each proof without simplifying it.
++    pub fn with_unsimplified_proof_testing(mut self) -> Self {
++        self = self.with_proofs_enabled().with_proof_testing();
++        self.proof_state.verify_proofs = true;
++        self.proof_state.simplify_proofs = false;
+         self
+     }
+ 
+--- a/egglog/src/proofs/ground.rs
++++ b/egglog/src/proofs/ground.rs
+@@ -323,7 +323,7 @@
+             if store.get(proof).proposition() != &expected {
+                 return Err(fail("proof simplification changed the requested equality"));
+             }
+-            if self.proof_state.verify_proofs {
++            if self.proof_state.verify_proofs && self.proof_state.simplify_proofs {
+                 store
+                     .check_proof(proof, &self.proof_check_program)
+                     .map_err(|error| {
+--- a/egglog/src/proofs/proof_extraction.rs
++++ b/egglog/src/proofs/proof_extraction.rs
+@@ -194,8 +194,8 @@
+             proof_store.simplify(extra_rule_removed)
+         };
+ 
+-        // Check the proof after simplification
+-        if self.egraph.proof_state.verify_proofs {
++        // Without simplification, the proof was already checked above.
++        if self.egraph.proof_state.verify_proofs && self.egraph.proof_state.simplify_proofs {
+             proof_store
+                 .check_proof(simplified_proof, &self.egraph.proof_check_program)
+                 .expect("simplified existence proof should still be valid");
+--- a/egglog/src/proofs/proof_tests.rs
++++ b/egglog/src/proofs/proof_tests.rs
+@@ -239,6 +239,44 @@
+             .with_proof_testing()
+             .parse_and_run_program(None, &source)
+             .unwrap();
++    }
++
++    #[test]
++    fn checked_unsimplified_mode_preserves_validation_and_extracts() {
++        let source = r#"
++            (datatype E (Num i64) (Pair E E))
++            (rewrite (Pair x x) x)
++            (let p (Pair (Num 1) (Num 1)))
++            (run 2)
++            (check (= p (Num 1)))
++            (extract p)
++        "#;
++        for simplify in [false, true] {
++            let mut graph = if simplify {
++                EGraph::new_with_proofs().with_proof_testing()
++            } else {
++                EGraph::default().with_unsimplified_proof_testing()
++            };
++            assert!(graph.proof_state.proofs_enabled);
++            assert!(graph.proof_state.proof_testing);
++            assert!(graph.proof_state.verify_proofs);
++            assert_eq!(graph.proof_state.simplify_proofs, simplify);
++            let outputs = graph.parse_and_run_program(None, source).unwrap();
++            assert_eq!(
++                outputs
++                    .iter()
++                    .filter(|output| matches!(output, CommandOutput::ProveExists { .. }))
++                    .count(),
++                1
++            );
++            assert_eq!(
++                outputs
++                    .iter()
++                    .filter(|output| matches!(output, CommandOutput::ProveExtract { .. }))
++                    .count(),
++                1
++            );
++        }
+     }
+ 
+     #[test]
