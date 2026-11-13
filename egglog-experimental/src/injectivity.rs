@@ -56,7 +56,7 @@ impl Macro<Vec<Command>> for SeparatelyInjective {
     }
 }
 
-struct LowerInjectivity(Encoding);
+pub(crate) struct LowerInjectivity(pub(crate) Encoding);
 
 impl CommandMacro for LowerInjectivity {
     fn preserves_closed_constructor_action(&self, _expression_head: Option<&str>) -> bool {

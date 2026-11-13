@@ -77,6 +77,7 @@ struct ProofCompiler {
 #[derive(Clone)]
 struct State {
     lang: Language,
+    disequality: super::disequality::SourcePass,
     proofs: Option<ProofCompiler>,
     initialized: bool,
     dirty: bool,
@@ -91,6 +92,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             lang: Language::default(),
+            disequality: super::disequality::SourcePass::default(),
             proofs: None,
             initialized: false,
             dirty: false,
@@ -232,6 +234,8 @@ impl Compiler {
     }
 
     fn region(&mut self, forms: &[(Form, Span)]) -> Result<String, ParseError> {
+        let forms = self.state.disequality.lower(forms, &self.state.lang)?;
+        let forms = forms.as_slice();
         let mut sorts = Vec::new();
         let mut ctors = Vec::new();
         for (f, span) in forms {
@@ -320,6 +324,7 @@ impl Compiler {
                     | "rewrite"
                     | "run"
                     | "extract"
+                    | "ruleset"
             ) {
                 self.maintain(&mut out);
             }
@@ -353,9 +358,13 @@ impl Compiler {
     /// or returning a compiled input to the caller.
     fn maintain(&mut self, out: &mut Vec<String>) {
         if self.state.dirty {
-            out.push(maintenance::schedule(0, false));
+            out.push(self.schedule(0));
             self.state.dirty = false;
         }
+    }
+
+    fn schedule(&self, steps: usize) -> String {
+        self.state.disequality.schedule(steps, self.state.rules > 0)
     }
 
     fn emit(&mut self, out: &mut Vec<String>, source: String, source_name: Option<&str>) {
@@ -446,16 +455,16 @@ impl Compiler {
                             substitutions: self.state.substitutions.clone(),
                         }),
                     );
-                    let mut commands = vec![maintenance::schedule(0, false)];
+                    let mut commands = vec![self.schedule(0)];
                     for _ in 0..n {
                         commands
                             .push("(run-schedule (run) (saturate (run slotted-refine)))".into());
                         commands.push(format!("(slotted-substitute {id})"));
-                        commands.push(maintenance::schedule(0, false));
+                        commands.push(self.schedule(0));
                     }
                     return Ok(commands.join("\n"));
                 }
-                Ok(maintenance::schedule(n, self.state.rules > 0))
+                Ok(self.schedule(n))
             }
             "push" => {
                 if !args.is_empty() {
@@ -531,7 +540,7 @@ impl Compiler {
                 Ok(format!(
                     "(let $$slotted_extract{i} {})\n{}\n({command} $$slotted_extract{i} {} {names})",
                     self.state.lang.encode(&t),
-                    maintenance::schedule(0, false),
+                    self.schedule(0),
                     self.state.lang.edge(&t),
                 ))
             }
@@ -870,6 +879,7 @@ impl Compiler {
 
     fn rewrite(&mut self, args: &[Form]) -> Result<String, String> {
         let mut source = source_rewrite(args)?;
+        self.state.dirty |= self.state.disequality.is_rule(&source.name);
         name_rewrite(
             &mut source,
             self.next_rule,
@@ -955,6 +965,7 @@ impl Compiler {
                     self.options.proof_mode,
                     ProofMode::Prove | ProofMode::Extract
                 ),
+                maintenance: self.state.disequality.is_rule(&source.name),
             },
             flattened.names,
         )?;

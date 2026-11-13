@@ -47,8 +47,9 @@
 //! The pass saturates private supporting rules after each user run and before
 //! observations of pending top-level actions. User run budgets and pre-step until
 //! checks are preserved. Queries are whole facts, rather than nested expressions
-//! or actions. Ordinary execution, term encoding, and proof testing are supported;
-//! the separate slotted source frontend does not yet accept these constructs.
+//! or actions. Ordinary execution, term encoding, and proof testing are supported.
+//! The slotted frontend lowers these constructs before slot encoding, with the
+//! restrictions described in the [slotted language](slotted).
 //!
 //! ## Generic containers and callbacks
 //!

@@ -296,6 +296,7 @@ pub(super) struct Rewrite<'a> {
     pub ordinal: usize,
     pub nested: bool,
     pub proofs: bool,
+    pub maintenance: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -422,7 +423,13 @@ pub(super) fn compile(
         return Ok((
             format!(
                 "{declaration}{}",
-                rule(&q.body, &actions, naive, None, r.name)
+                rule(
+                    &q.body,
+                    &actions,
+                    naive,
+                    r.maintenance.then_some(super::disequality::MATCH),
+                    r.name
+                )
             ),
             names,
             substitution,
@@ -444,7 +451,9 @@ pub(super) fn compile(
     let row = call(&relation, columns);
     let mut apply_body = vec![row.clone()];
     apply_body.extend_from_slice(&q.body[split..]);
-    let apply_ruleset = if substitution.is_some() {
+    let apply_ruleset = if r.maintenance {
+        super::disequality::APPLY
+    } else if substitution.is_some() {
         "slotted-subst-apply"
     } else {
         "slotted-apply"
@@ -455,7 +464,7 @@ pub(super) fn compile(
             &q.body[..split],
             &[row.clone(), format!("(Idx {} 0)", q.length)],
             naive,
-            None,
+            r.maintenance.then_some(super::disequality::MATCH),
             r.name,
         ),
         rule(

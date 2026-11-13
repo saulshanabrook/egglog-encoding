@@ -93,6 +93,7 @@ pub fn expected_proofs(source: &str) -> Result<usize> {
             Some(("check", facts)) if !facts.is_empty() => {
                 if facts.iter().all(|fact| match call(fact) {
                     Some(("=" | "renaming-=", [_, _])) => true,
+                    Some(("known-disequal", [_, _]) | ("contradiction", [])) => true,
                     Some(("__internal-holds", [_, Sexp::Atom(ctor, _)])) => {
                         scope.constructors.contains(ctor.as_ref())
                     }

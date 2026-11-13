@@ -78,8 +78,16 @@ in sequences, repetitions, and saturations. It also closes pending top-level
 assertions, constructor rows, and unions before checks, proof requests, schedules,
 and observations. User run budgets and pre-step `:until` checks are preserved.
 Generated joins include subsumed rows and create no constructor applications.
-They support ordinary execution, term encoding, and proof testing. The separate slotted source frontend does not currently accept
-these constructs.
+They support ordinary execution, term encoding, and proof testing.
+With `--slotted`, a source pass lowers the same constructs to constructors and
+guarded rewrites before slot encoding and proof production. See the
+[slotted restrictions](src/slotted/LANGUAGE.md#disequality-and-separate-injectivity).
+The [paper overview example](tests/slotted/overview.egg) eliminates a summation
+using inferred disequality and binder-independence guards:
+
+```sh
+cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
+```
 
 The two query patterns are supported only as whole facts in checks, rule bodies,
 rewrite conditions, and run-until conditions. They expose ordinary relation

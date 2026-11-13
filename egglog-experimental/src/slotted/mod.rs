@@ -5,6 +5,7 @@ use egglog::EGraph;
 
 mod check;
 mod compiled;
+mod disequality;
 mod errors;
 pub mod export;
 mod extract;
