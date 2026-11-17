@@ -78,8 +78,21 @@ in sequences, repetitions, and saturations. It also closes pending top-level
 assertions, constructor rows, and unions before checks, proof requests, schedules,
 and observations. User run budgets and pre-step `:until` checks are preserved.
 Generated joins include subsumed rows and create no constructor applications.
-They support ordinary execution, term encoding, and proof testing. The separate slotted source frontend does not currently accept
-these constructs.
+They support ordinary execution, term encoding, and proof testing.
+With `--slotted`, injectivity/disequality lowers to constructors and
+`rewrite :when` before slot encoding. From Rust, configure this composition with
+`slotted::Compiler::new(options).with_source_macros(disequality_source_macros())`.
+Slotted requires the full multipattern matcher, excludes cross-sort term patterns,
+and cannot express injectivity promises for rigid `Var` arguments. Its
+[schedule restrictions](src/slotted/LANGUAGE.md#run) also apply.
+
+The [paper overview example](tests/slotted/overview.egg) eliminates a summation
+using inferred disequality and binder-independence guards. Its
+[checked source proof](tests/snapshots/slotted_proofs__overview.snap) is snapshot-tested:
+
+```sh
+cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
+```
 
 The two query patterns are supported only as whole facts in checks, rule bodies,
 rewrite conditions, and run-until conditions. They expose ordinary relation

@@ -47,8 +47,9 @@
 //! The pass saturates private supporting rules after each user run and before
 //! observations of pending top-level actions. User run budgets and pre-step until
 //! checks are preserved. Queries are whole facts, rather than nested expressions
-//! or actions. Ordinary execution, term encoding, and proof testing are supported;
-//! the separate slotted source frontend does not yet accept these constructs.
+//! or actions. Ordinary execution, term encoding, and proof testing are supported.
+//! [`disequality_source_macros`] presents the same lowering as constructors and
+//! guarded rewrites. The CLI installs these source macros before slot encoding.
 //!
 //! ## Generic containers and callbacks
 //!
@@ -120,6 +121,7 @@ pub mod scheduling;
 pub use scheduling::*;
 mod dag_print;
 mod disequality;
+pub use disequality::source_macros as disequality_source_macros;
 mod f64;
 mod fresh_macro;
 mod injectivity;

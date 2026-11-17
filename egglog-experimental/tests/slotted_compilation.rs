@@ -1,9 +1,10 @@
 use egglog::CommandOutput;
-use egglog_experimental::slotted::{Compiler, Options, ProofMode, new_egraph_with_proofs};
+use egglog_experimental::slotted::{Options, ProofMode, new_egraph_with_proofs};
+use egglog_experimental::{disequality_source_macros, slotted::Compiler};
 use std::process::Command;
 
 fn compiler() -> Compiler {
-    Compiler::new(Options {
+    source_compiler(Options {
         proof_mode: ProofMode::Prove,
         ..Default::default()
     })
@@ -158,7 +159,8 @@ fn graph_parser_preserves_checked_compilation_and_failed_input_rollback() {
             ..Default::default()
         },
         &graph,
-    );
+    )
+    .with_source_macros(disequality_source_macros());
     assert!(
         compiler
             .compile_program(None, "(datatype E (A)) (print-size A extra)")
@@ -182,4 +184,102 @@ fn graph_parser_preserves_checked_compilation_and_failed_input_rollback() {
             .iter()
             .any(|output| matches!(output, CommandOutput::ExtractBest(..)))
     );
+}
+
+#[test]
+fn disequality_pass_tracks_inputs_scopes_and_declaration_order() {
+    for proof_mode in [ProofMode::Disabled, ProofMode::Check, ProofMode::Prove] {
+        let mut compiler = source_compiler(Options {
+            proof_mode,
+            ..Default::default()
+        });
+        let mut graph = if proof_mode == ProofMode::Prove {
+            new_egraph_with_proofs()
+        } else {
+            egglog_experimental::slotted::new_egraph()
+        };
+        for source in [
+            "(datatype E (A) (B) (F E))
+             (let a (A)) (let b (B)) (union (F a) (F b))
+             (fail (check (= a b)))
+             (push)
+             (fail (check (= a b)))
+             (separately-injective F)
+             (check (= a b))
+             (pop)
+             (fail (check (= a b)))",
+            "(push) (disequal a b) (check (known-disequal a b)) (pop)
+             (fail (check (known-disequal a b)))",
+            "(disequal a b) (check (known-disequal b a))",
+            "(separately-injective F) (check (= a b)) (check (contradiction))",
+        ] {
+            compiler
+                .compile_program(None, source)
+                .unwrap()
+                .run(&mut graph)
+                .unwrap();
+        }
+        assert!(compiler.compile_program(None, "(disequal a 1)").is_err());
+        compiler
+            .compile_program(None, "(check (contradiction))")
+            .unwrap()
+            .run(&mut graph)
+            .unwrap();
+    }
+}
+
+#[test]
+fn disequality_rejects_unsupported_source_promises() {
+    for (source, message) in [
+        (
+            "(datatype E (V Var)) (separately-injective V)",
+            "Var column takes",
+        ),
+        (
+            "(datatype E (Lam Var E :binder 0)) (separately-injective Lam)",
+            "Var column takes",
+        ),
+        (
+            "(datatype E (A)) (datatype F (B)) (disequal (A) (B))",
+            "have type E",
+        ),
+        (
+            "(datatype E (A)) (datatype F (B)) (disequal (A) (A)) (disequal (B) (B))",
+            "cross-sort multipatterns",
+        ),
+        (
+            "(datatype E (A)) (known-disequal (A) (A))",
+            "root query patterns",
+        ),
+    ] {
+        let error = source_compiler(Options::default())
+            .compile(None, source)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn disequality_preserves_literal_payloads_and_payload_variable_scope() {
+    let source = r#"
+        (datatype E (Text String) (Pair E E))
+        (separately-injective Pair)
+        (let payload (Text "_disequality_payload"))
+        (disequal (Text "left") (Text "right"))
+        (let input (Pair (Text "left") payload))
+        (rewrite (Pair a (Text payload)) a
+                 :when ((known-disequal a (Text "right"))))
+        (run 1)
+        (check (= input (Text "left")))
+    "#;
+    compiler()
+        .compile_program(None, source)
+        .unwrap()
+        .run(&mut new_egraph_with_proofs())
+        .unwrap();
+}
+
+fn source_compiler(options: Options) -> Compiler {
+    Compiler::new(options).with_source_macros(disequality_source_macros())
 }

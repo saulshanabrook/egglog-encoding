@@ -1,0 +1,130 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+; The summation example from egglog-encoding-paper's overview, in our syntax.
+; Run with --slotted, or --slotted --proofs to check its source proof.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (Add Expr Expr)
+  (Sub Expr Expr)
+  (Mul Expr Expr)
+  (Pow Expr Expr)
+  (Div Expr Expr)
+  (SumZeroTen Var Expr :binder 0))
+(separately-injective Add)
+
+(rewrite
+  (SumZeroTen $v (Mul (Pow r (V $v)) (Pow s (Sub (Num 10) (V $v)))))
+  (Div (Sub (Pow r (Num 11)) (Pow s (Num 11))) (Sub r s))
+  :when ((not-free $v r s) (known-disequal r s))
+  :name "sum-to-closed-form")
+
+; Assert only the leaf disequality. Separate injectivity must infer x+1 != x+2.
+(disequal (Num 1) (Num 2))
+(let input
+  (SumZeroTen $i
+    (Mul (Pow (Add (V $x) (Num 1)) (V $i))
+         (Pow (Add (V $x) (Num 2)) (Sub (Num 10) (V $i))))))
+(let output
+  (Div (Sub (Pow (Add (V $x) (Num 1)) (Num 11))
+            (Pow (Add (V $x) (Num 2)) (Num 11)))
+       (Sub (Add (V $x) (Num 1)) (Add (V $x) (Num 2)))))
+
+; These sums must not be eliminated: unknown/equal bases, or binder dependence.
+(let unknown
+  (SumZeroTen $i (Mul (Pow (Num 3) (V $i))
+                     (Pow (Num 4) (Sub (Num 10) (V $i))))))
+(let equal
+  (SumZeroTen $i (Mul (Pow (Num 1) (V $i))
+                     (Pow (Num 1) (Sub (Num 10) (V $i))))))
+(let dependent
+  (SumZeroTen $i (Mul (Pow (Add (V $i) (Num 1)) (V $i))
+                     (Pow (Add (V $i) (Num 2)) (Sub (Num 10) (V $i))))))
+
+; One user iteration is enough: the private closure runs before the rewrite.
+(run 1)
+(check (= input output))
+(fail (check (= unknown (Div (Sub (Pow (Num 3) (Num 11)) (Pow (Num 4) (Num 11)))
+                            (Sub (Num 3) (Num 4))))))
+(fail (check (= equal (Div (Sub (Pow (Num 1) (Num 11)) (Pow (Num 1) (Num 11)))
+                          (Sub (Num 1) (Num 1))))))
+(fail (check (= dependent (Div (Sub (Pow (Add (V $i) (Num 1)) (Num 11))
+                                   (Pow (Add (V $i) (Num 2)) (Num 11)))
+                              (Sub (Add (V $i) (Num 1)) (Add (V $i) (Num 2)))))))
+(fail (check (contradiction)))
+
+
+Proof:
+(let t (Add (V $x) (Num 1)))
+(let t_1 (Pow t (V $i)))
+(let t_2 (Add (V $x) (Num 2)))
+(let t_3 (Pow t_2 (Sub (Num 10) (V $i))))
+(let t_4 (Mul t_1 t_3))
+(let t_5 (SumZeroTen $i t_4))
+(let t_6 (Div (Sub (Pow t (Num 11)) (Pow t_2 (Num 11))) (Sub t t_2)))
+(let t_7 (SumZeroTen $v0 (Mul (Pow t (V $v0)) (Pow t_2 (Sub (Num 10) (V $v0))))))
+(let prf (Fiat (= t_5 t_5)))
+(let t_8 (_disequality_disequality-ne-Expr t t_2))
+(let prop (= (_disequality_disequality-ne-Expr-witness) t_8))
+(let t_9 (Add (V $v0) (Num 1)))
+(let t_10 (Add (V $v0) (Num 2)))
+(let t_11 (_disequality_disequality-ne-Expr t_9 t_10))
+(let t_12 (_disequality_disequality-ne-Expr (Num 1) (Num 2)))
+(let prf_1 (Fiat (= (_disequality_disequality-ne-Expr-witness) t_12)))
+(let prf_2
+  (Sym
+                      (= t_12 (_disequality_disequality-ne-Expr-witness))
+                      prf_1))
+(let prf_3 (Proj (= t_4 t_4) prf 1))
+(let t_13 (renaming ($x $v0) ($v0 $x)))
+(let prf_4
+  (Rule
+                (= (_disequality_disequality-ne-Expr-witness) t_11)
+                (name "_disequality_injectivity-Add_3")
+                (premises
+                  (Trans
+                    (=
+                      (_disequality_disequality-ne-Expr-witness)
+                      (_disequality_disequality-ne-Expr-witness))
+                    prf_1
+                    prf_2)
+                  (Equivariance
+                    (= t_9 t_9)
+                    (Proj (= t t) (Proj (= t_1 t_1) prf_3 0) 0)
+                    t_13)
+                  (Equivariance
+                    (= t_10 t_10)
+                    (Proj (= t_2 t_2) (Proj (= t_3 t_3) prf_3 1) 0)
+                    t_13)
+                  (Trans (= t_12 t_12) prf_2 prf_1))
+                (substitution
+                  (_disequality_injectivity-left t_9)
+                  (_disequality_injectivity-input (V $v0))
+                  (_disequality_injectivity-input_1 (Num 1))
+                  (_disequality_injectivity-right t_10)
+                  (_disequality_injectivity-other (Num 2)))))
+(let prf_5
+  (Trans
+              prop
+              prf_4
+              (Trans
+                (= t_11 t_8)
+                (Sym (= t_11 (_disequality_disequality-ne-Expr-witness)) prf_4)
+                (Equivariance prop prf_4 t_13))))
+(Equivariance
+  (= t_5 t_6)
+  (Rule
+    (= t_7 t_6)
+    (name "sum-to-closed-form")
+    (premises
+      (Equivariance (= t_7 t_7) prf (renaming ($i $v0) ($v1 $i) ($v0 $v1)))
+      (Fiat (= () ()))
+      (Trans
+        (= t_8 t_8)
+        (Sym (= t_8 (_disequality_disequality-ne-Expr-witness)) prf_5)
+        prf_5))
+    (substitution ($v $v0) (r t) (s t_2)))
+  (renaming ($i $v1) ($v1 $v0) ($v0 $i)))

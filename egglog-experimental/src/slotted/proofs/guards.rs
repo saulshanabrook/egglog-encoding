@@ -28,7 +28,7 @@ pub(super) fn validator_name(name: &str) -> &str {
 }
 
 /// Register source guards with validators for the constructors visible at the query.
-pub(super) fn register(graph: &mut EGraph, program: &Arc<ProofContext>) {
+pub(in crate::slotted) fn register(graph: &mut EGraph, program: &Arc<ProofContext>) {
     for name in GUARDS {
         let program = program.clone();
         graph.add_pure_primitive(

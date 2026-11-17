@@ -51,7 +51,9 @@ impl SourceFact for ResolvedFact {
 
     fn binding(&self) -> Option<(&String, &ResolvedExpr)> {
         match self {
-            Self::Eq(_, ResolvedExpr::Var(_, var), rhs) => Some((&var.name, rhs)),
+            Self::Eq(_, ResolvedExpr::Var(_, var), rhs) if var.sort.is_eq_sort() => {
+                Some((&var.name, rhs))
+            }
             _ => None,
         }
     }

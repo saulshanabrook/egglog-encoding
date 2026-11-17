@@ -35,7 +35,8 @@ Pattern variables, `:name`, and `:when` use egglog's existing syntax. The
 `rewrite` and `:when` match slotted terms together.
 
 Slotted mode supports a subset of vanilla egglog. General `rule` and `birewrite`
-commands, named rulesets, `run-schedule`, and `run-report` are unsupported.
+commands and `run-report` are unsupported. Named rewrite rulesets and schedules
+using `run`, `seq`, `repeat`, and `saturate` are supported.
 Constructor payloads are limited to `i64` and `String`; cross-sort term edges,
 containers, and payload computations are unsupported.
 
@@ -211,9 +212,10 @@ The left side is a constructor pattern, term global, or variable bound by the
 multipattern. The right side is a matched variable, term global, constructed
 term, or [substitution](#substitution). Literal payloads and payload pattern
 variables are supported; payload computations and other primitive calls are
-unsupported. Only the default ruleset is supported.
-`:ruleset`, `rule`, and `birewrite` are rejected. Two `rewrite` commands express
-a bidirectional equation.
+unsupported. `:ruleset name` selects a declared ruleset; omitting it selects the
+default ruleset. `rule` and `birewrite` are rejected. Two `rewrite` commands express
+a bidirectional equation. Payload variables bound by constructor patterns may
+also be compared with literals or other payload variables using `=` and `!=`.
 
 #### Multipatterns
 
@@ -338,10 +340,18 @@ available. Checks use the same aliasing restriction.
 
 ```text
 (run N)
+(run ruleset N)
+(run-schedule (seq (run ruleset) (repeat N (run)) (saturate (run ruleset))))
 ```
 
-Performs `N` rounds of user rewrites. `N` must be a nonnegative integer.
-`run-schedule` and `run-report` are unsupported.
+`run` performs `N` rounds of the selected ruleset, defaulting to the unnamed
+ruleset. `N` must be a nonnegative integer. Within `run-schedule`, `(run)` and
+`(run ruleset)` each perform one round; `seq`, `repeat`, and `saturate` compose
+those rounds. Each round completes matching, refinement, application, and
+invariant maintenance before the next source run.
+
+Source schedules do not support `:until` or proof-producing substitution;
+use `(run N)` for the latter. `run-report` is unsupported.
 
 ### `check` and `fail`
 

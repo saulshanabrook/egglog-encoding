@@ -120,6 +120,7 @@ pub(super) struct Conditions {
     pub free: Vec<(bool, String, Vec<String>)>,
     pub free_names: Vec<(String, Vec<String>)>,
     pub comparisons: Vec<(Comparison, String, String)>,
+    pub payload_comparisons: Vec<(bool, Term, Term)>,
     pub fresh: BTreeSet<String>,
     pub values: Vec<(String, Term, String)>,
     pub concrete_slots: BTreeMap<String, i64>,
@@ -452,6 +453,11 @@ pub(super) fn compile(
             bindings.join(" ")
         ));
         avs.push(av);
+    }
+    for (negated, a, b) in &conditions.payload_comparisons {
+        let op = if *negated { "!=" } else { "=" };
+        q.body
+            .push(format!("({op} {} {})", q.payload(a)?, q.payload(b)?));
     }
     for (comparison, a, b) in &conditions.comparisons {
         let (ca, cb) = (q.class(a)?, q.class(b)?);

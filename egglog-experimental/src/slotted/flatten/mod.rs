@@ -195,6 +195,18 @@ pub(super) fn rewrite(
             (true, true) => predicate("renaming-!=", vars(&[a.clone(), b.clone()])),
         }
     }));
+    facts.extend(
+        conditions
+            .payload_comparisons
+            .iter()
+            .map(|(negated, a, b)| {
+                if *negated {
+                    predicate("!=", vec![source_expr(a), source_expr(b)])
+                } else {
+                    Fact::Eq(egglog::span!(), source_expr(a), source_expr(b))
+                }
+            }),
+    );
     facts.extend(conditions.free_names.iter().map(|(var, slots)| {
         predicate(
             "free-names-are",
