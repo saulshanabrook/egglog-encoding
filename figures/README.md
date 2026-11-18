@@ -102,10 +102,53 @@ Ordinary-output and table-correspondence statuses remain distinct in the detaile
 artifacts. Complete production observations receive finite estimates independently of
 resource-limited or pending verification. Semantic proof failures veto the affected
 estimate; all validation outcomes remain separate coverage evidence.
-There is no overall aggregate speedup. Source statistics include source links,
+There is no overall aggregate speedup across experiments. Source statistics include source links,
 acquisition method, original input LOC, per-workload runtime distributions and
 validation counts. Ordinary-output parity and table correspondence remain
 separate metadata; they are not inferred from proof validation or timing success.
+
+### Abstract and introduction numbers
+
+Every pilot export also writes `headline.numbers.tex` and `headline.results.json`.
+Copy the numbers file into the paper's `figures/eval/` directory and input it
+before the abstract. Unavailable claims expand to `\todo{...}`; the manuscript
+must define `\todo`. JSON retains full precision, selected workload identities,
+coverage, and source provenance; displayed speedups use three significant digits.
+No new measurements are needed to generate headlines from a saved snapshot:
+
+```bash
+./bench.py figures --pilot --reuse-from PATH/TO/SAVED/EVAL --no-runs \
+  --output-dir PATH/TO/NEW/EVAL
+```
+
+For each matched workload, let `B_i` and `O_i` be the arithmetic means of its
+requested repeated runs for the reference and our implementation, respectively.
+Two separately named aggregations are exported for Math with proofs, restricted
+Slotted, complete Slotted, and disequality:
+
+| Macro suffix | Formula | Meaning |
+| --- | --- | --- |
+| `SpeedupRatioOfMeanRuntimes` | `mean(B_i)/mean(O_i) = sum(B_i)/sum(O_i)` | Speedup in mean runtime, equivalently total suite runtime; longer workloads contribute more. |
+| `SpeedupGeometricMean` | `exp(mean(log(B_i)-log(O_i)))` | Geometric mean of per-workload speedups; equal weight on the log scale. |
+
+Both use reference/ours, so values above 1 indicate a speedup. Prefixes are
+`EvalMathProofs`, `EvalSlottedRestricted`, `EvalSlottedComplete`, and
+`EvalDisequality`; for example, `\EvalSlottedRestrictedSpeedupGeometricMean`.
+The corresponding `MatchedWorkloadCount` macros give cohort sizes.
+`\EvalExtensionSpeedupRatioOfMeanRuntimesMin` and `...Max` give the range across
+the four comparison-level ratios, not one pooled speedup. The corresponding
+`GeometricMeanMin` and `GeometricMeanMax` macros give the other range.
+These are descriptive point estimates, not aggregate confidence intervals.
+Both aggregations use identical matched inputs. Explicit exclusions remain in
+JSON; any pending or failed timing suppresses its comparison's headline and
+the four-comparison range. Timing eligibility and proof validation remain separate.
+
+`\EvalCorpusProgramCount` and `\EvalCorpusProjectCount` count distinct captured
+programs and their projects. `\EvalCorpusCheckedProgramCount` and
+`\EvalCorpusCheckedProjectCount` count only programs with a passed separate
+validation replay, nonempty certificates, and all produced certificates verified.
+They do not count users or establish ordinary-output parity. JSON retains zero
+counts; the corresponding TeX macros show TODOs when no evidence is available.
 
 The `program-size` scope compiles all ten restricted-matching SDQL inputs with the
 current compiler before any timed collection. It reuses the existing compile-only
