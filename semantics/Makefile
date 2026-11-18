@@ -1,6 +1,6 @@
 # Semantics/proof development is independent of paper experiment validation.
 .DEFAULT_GOAL := lean-check
-.PHONY: lean-check lean-build lean-holes difftest lean-difftest lean-compiled-difftest lean-congruence-test lean-provenance-test lean-resugar-test lean-certificate-test lean-update-fixtures lean-egg-test lean-update-egg-snapshots paper paper-check paper-extract paper-sync
+.PHONY: lean-check lean-build lean-holes difftest lean-slotted-parse lean-slotted-difftest lean-difftest lean-compiled-difftest lean-congruence-test lean-provenance-test lean-resugar-test lean-certificate-test lean-update-fixtures lean-egg-test lean-update-egg-snapshots paper paper-check paper-extract paper-sync
 
 LEAN_BIN_DIR ?= $(HOME)/.elan/bin
 LEAN_CERTIFICATES ?= /tmp/egglog-lean-certificates.json
@@ -33,9 +33,14 @@ PAPER_MODULES := \
   EgglogSemantics.Provenance.Log \
   EgglogSemantics.Resugar.Claim \
   EgglogSemantics.Resugar.Query \
-  EgglogSemantics.Resugar.Lift
+  EgglogSemantics.Resugar.Lift \
+  EgglogSemantics.Slotted.Spec.Binders \
+  EgglogSemantics.Slotted.Spec.Slots \
+  EgglogSemantics.Slotted.Spec.Congruence \
+  EgglogSemantics.Slotted.Spec.Match \
+  EgglogSemantics.Slotted.Spec.Step
 
-lean-check: lean-build lean-holes lean-congruence-test lean-provenance-test lean-resugar-test lean-egg-test lean-certificate-test
+lean-check: lean-build lean-holes lean-congruence-test lean-provenance-test lean-resugar-test lean-egg-test lean-certificate-test lean-slotted-parse
 
 lean-build:
 	$(LAKE) build
@@ -61,6 +66,14 @@ lean-update-fixtures: difftest
 
 lean-update-egg-snapshots: difftest
 	.lake/build/bin/difftest egg 64 update
+
+# The slotted corpus files the slotted parser accepts, with their check counts.
+lean-slotted-parse: difftest
+	.lake/build/bin/difftest slotted-parse ../egglog-experimental/tests/slotted
+
+# The paper's slotted corpus files, in the Rust reference and the bounded evaluator.
+lean-slotted-difftest:
+	./slotted-difftest.sh
 
 lean-difftest:
 	./difftest.sh

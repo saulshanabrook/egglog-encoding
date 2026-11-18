@@ -138,6 +138,18 @@ import EgglogSemantics.Proofs.Syntax
 import EgglogSemantics.Proofs.Term
 import EgglogSemantics.Proofs.Writes
 
+-- Slotted semantics
+import EgglogSemantics.Slotted.Spec.Binders
+import EgglogSemantics.Slotted.Spec.Slots
+import EgglogSemantics.Slotted.Spec.Congruence
+import EgglogSemantics.Slotted.Spec.Match
+import EgglogSemantics.Slotted.Spec.Eval
+import EgglogSemantics.Slotted.Spec.Step
+import EgglogSemantics.Slotted.Proofs.Conservative
+import EgglogSemantics.Slotted.Tests.Parse
+import EgglogSemantics.Slotted.Tests.Bounded
+import EgglogSemantics.Slotted.Tests.Examples
+
 -- Tests
 import EgglogSemantics.Tests.Checks
 import EgglogSemantics.Tests.Congruence
