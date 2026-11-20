@@ -7,6 +7,7 @@ pub(crate) mod base_values;
 pub(crate) mod common;
 pub(crate) mod containers;
 pub(crate) mod dependency_graph;
+mod explained_uf;
 mod flat_table;
 pub(crate) mod free_join;
 pub(crate) mod hash_index;
@@ -28,6 +29,9 @@ pub use action::{ExecutionState, ExternalContext, MergeVal, QueryEntry, WriteVal
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
+pub use explained_uf::{
+    EqualityCursor, EqualityMerged, ExplainedUfTable, ReasonComposer, ReasonStep,
+};
 pub use flat_table::FlatTable;
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionBatch, ExternalFunctionId,
