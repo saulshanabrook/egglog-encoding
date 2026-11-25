@@ -281,6 +281,61 @@ impl Database {
         report_level: ReportLevel,
         context: ExternalContext<'_>,
     ) -> RuleSetReport {
+        self.try_run_rule_set(rule_set, report_level, context)
+            .expect("rule execution failed")
+    }
+
+    /// Execute a ruleset, reporting replacement backend capacity/device errors.
+    pub fn try_run_rule_set(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+        context: ExternalContext<'_>,
+    ) -> Result<RuleSetReport, String> {
+        if let Some(backend) = self.relational_backend.clone() {
+            assert!(
+                rule_set.plans.is_empty(),
+                "replacement backend received native plans"
+            );
+            self.with_execution_state(context, |state| backend.check_tables(state))?;
+            let rules: Vec<_> = rule_set.relational.values().cloned().collect();
+            if rules.is_empty() {
+                return Ok(RuleSetReport::default());
+            }
+            let start = Instant::now();
+            let counts =
+                self.with_execution_state(context, |state| backend.execute(&rules, state))?;
+            assert_eq!(counts.len(), rules.len());
+            let elapsed = start.elapsed();
+            let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>> = Default::default();
+            for (rule, num_matches) in rules.iter().zip(counts) {
+                rule_reports
+                    .entry(rule.description.clone())
+                    .or_default()
+                    .push(RuleReport {
+                        num_matches,
+                        ..Default::default()
+                    });
+            }
+            let merge_start = Instant::now();
+            let changed = self.merge_all();
+            self.with_execution_state(context, |state| backend.check_tables(state))?;
+            return Ok(RuleSetReport {
+                changed,
+                rule_reports,
+                pre_merge: PreMergeTiming::Combined { elapsed },
+                merge_time: merge_start.elapsed(),
+            });
+        }
+        Ok(self.run_native_rule_set(rule_set, report_level, context))
+    }
+
+    fn run_native_rule_set(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+        context: ExternalContext<'_>,
+    ) -> RuleSetReport {
         if rule_set.plans.is_empty() {
             return RuleSetReport {
                 pre_merge: PreMergeTiming::Split {
@@ -318,7 +373,8 @@ impl Database {
 
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
-        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let run_in_parallel =
+            self.match_backend.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut split_time = None;
         let exec_state = ExecutionState::new(self.read_only_view_with(context), Default::default());
         if run_in_parallel {
@@ -535,6 +591,34 @@ impl Database {
                 {
                     let mut binding_info = BindingInfo::default();
                     'eval: {
+                        if let Some(backend) = &self.match_backend {
+                            match join_state.bulk_matches(plan, backend.as_ref()) {
+                                Ok(matches) => {
+                                    // Validate before passing bindings to the action buffer's
+                                    // unchecked column lookup. A backend cannot omit a variable.
+                                    let used = &rule_set.actions[plan.actions()].used_vars;
+                                    assert!(used.iter().all(|v| matches.variables.contains(v)));
+                                    let mut bindings = DenseIdMap::default();
+                                    for row in matches.rows {
+                                        assert_eq!(row.len(), matches.variables.len());
+                                        if exec_state.seed().should_stop() {
+                                            break;
+                                        }
+                                        for (&var, value) in matches.variables.iter().zip(row) {
+                                            bindings.insert(var, value);
+                                        }
+                                        action_buf.push_bindings(plan.actions(), &bindings, || {
+                                            exec_state.clone()
+                                        });
+                                    }
+                                    break 'eval;
+                                }
+                                Err(reason) => {
+                                    backend.on_fallback(&reason);
+                                    log::warn!("bulk matcher declined {desc}: {reason}");
+                                }
+                            }
+                        }
                         for (id, info) in plan.atoms().iter() {
                             let headers: SmallVec<[&JoinHeader; 2]> =
                                 plan.header().iter().filter(|h| h.atom == id).collect();
@@ -731,6 +815,120 @@ struct JoinState<'db, 'state, 'exec> {
 }
 
 impl<'a, 'state, 'exec> JoinState<'a, 'state, 'exec> {
+    /// Materialize exactly the atom snapshots the native plan would read.
+    /// Headers carry per-rule deltas; slow constraints include repeated-variable
+    /// equalities. Occurrence atoms expand to one row per distinct occurring key.
+    fn bulk_matches(
+        &self,
+        plan: &Plan,
+        backend: &dyn crate::MatchBackend,
+    ) -> Result<crate::MatchRelation, String> {
+        use crate::query::OccurrenceKey;
+        // Native plans can existentially project variables and factorize bags.
+        // A full natural join need not preserve their action multiplicity (which
+        // matters for effectful primitives). Only drop local variables when the
+        // resulting row projection is injective. This commonly removes internal
+        // timestamps, while retaining native matching for lossy projections.
+        let Plan::SinglePlan(single) = plan else {
+            return Err("decomposed plan retains native action multiplicity".into());
+        };
+        let mut bound = std::collections::BTreeSet::new();
+        for stage in &single.stages.instrs {
+            match stage {
+                JoinStage::Intersect { var, .. } => {
+                    bound.insert(*var);
+                }
+                JoinStage::FusedIntersect { bind, .. } => {
+                    bound.extend(bind.iter().map(|&(_, var)| var));
+                }
+                JoinStage::FusedIntersectMat { .. } => {
+                    return Err("materialized plan retains native action multiplicity".into());
+                }
+            }
+        }
+        for (id, atom) in single.atoms.iter() {
+            for var in atom.vars().chain(atom.occurrence_var()) {
+                if !bound.contains(&var)
+                    && single
+                        .atoms
+                        .iter()
+                        .any(|(other, a)| other != id && a.binds(var))
+                {
+                    return Err("projected join variables retain native action multiplicity".into());
+                }
+            }
+        }
+        let mut inputs = Vec::new();
+        for (id, atom) in plan.atoms().iter() {
+            let mut variables: Vec<_> = atom.vars().filter(|v| bound.contains(v)).collect();
+            variables.sort_unstable();
+            variables.dedup();
+            let base_variables = variables.clone();
+            if let Some(var) = atom.occurrence_var()
+                && !variables.contains(&var)
+            {
+                variables.push(var);
+            }
+            let mut input = crate::MatchRelation {
+                variables,
+                rows: Vec::new(),
+            };
+            let headers: Vec<_> = plan.header().iter().filter(|h| h.atom == id).collect();
+            if let Some(root) = self.root_node(atom, &headers) {
+                let table = &self.db.tables[atom.table];
+                let columns: Vec<_> = (0..table.spec.arity()).map(ColumnId::from_usize).collect();
+                let mut rows = TaggedRowBuffer::new(columns.len());
+                table.table.scan_project(
+                    root.subset.as_ref(),
+                    &columns,
+                    Offset::new(0),
+                    usize::MAX,
+                    &atom.constraints.slow,
+                    &mut rows,
+                );
+                for (_, row) in rows.iter() {
+                    let values: Vec<_> = base_variables
+                        .iter()
+                        .map(|&var| row[atom.get_col(var).unwrap().index()])
+                        .collect();
+                    if let Some(occ) = &atom.occurrence {
+                        let mut keys: Vec<_> = occ.cols.iter().map(|c| row[c.index()]).collect();
+                        keys.sort_unstable();
+                        keys.dedup();
+                        match occ.key {
+                            OccurrenceKey::Const(key) => {
+                                if keys.contains(&key) {
+                                    input.rows.push(values);
+                                }
+                            }
+                            OccurrenceKey::Var(var) => {
+                                if let Some(i) = base_variables.iter().position(|&v| v == var) {
+                                    if keys.contains(&values[i]) {
+                                        input.rows.push(values);
+                                    }
+                                } else {
+                                    for key in keys {
+                                        let mut expanded = values.clone();
+                                        expanded.push(key);
+                                        input.rows.push(expanded);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        input.rows.push(values);
+                    }
+                }
+            }
+            input.rows.sort_unstable();
+            if input.rows.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err("projected rows retain native action multiplicity".into());
+            }
+            inputs.push(input);
+        }
+        backend.evaluate(inputs)
+    }
+
     fn new(
         db: &'a Database,
         exec_state: ExecutionStateSeed<'a, 'state>,

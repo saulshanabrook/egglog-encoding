@@ -468,6 +468,20 @@ impl Clone for Counters {
 }
 
 impl Counters {
+    pub(crate) fn reserve_exact(
+        &self,
+        ctr: CounterId,
+        count: usize,
+    ) -> Result<std::ops::Range<usize>, String> {
+        let start = self.0[ctr]
+            .next
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| {
+                next.checked_add(count)
+                    .filter(|&end| end <= u32::MAX as usize)
+            })
+            .map_err(|_| "fresh value space exhausted".to_owned())?;
+        Ok(start..start + count)
+    }
     pub(crate) fn read(&self, ctr: CounterId) -> usize {
         self.0[ctr].next.load(Ordering::Acquire)
     }
@@ -486,6 +500,8 @@ impl Counters {
 /// A database also owns the memory pools used by its tables.
 #[derive(Clone, Default)]
 pub struct Database {
+    pub(crate) relational_backend: Option<Arc<dyn crate::RelationalBackend>>,
+    pub(crate) match_backend: Option<Arc<dyn crate::MatchBackend>>,
     // NB: some fields are pub(crate) to allow some internal modules to avoid
     // borrowing the whole table.
     pub(crate) tables: DenseIdMap<TableId, TableInfo>,
@@ -508,6 +524,47 @@ pub struct Database {
 }
 
 impl Database {
+    /// Install a replacement before declaring rules or function tables.
+    pub fn set_relational_backend(&mut self, backend: Arc<dyn crate::RelationalBackend>) {
+        assert!(
+            self.match_backend.is_none(),
+            "cannot combine replacement and matcher backends"
+        );
+        self.relational_backend = Some(backend);
+    }
+
+    /// Backend used for newly declared function tables, if any.
+    pub fn relational_backend(&self) -> Option<&Arc<dyn crate::RelationalBackend>> {
+        self.relational_backend.as_ref()
+    }
+
+    /// Replace an empty bootstrap table while preserving its identity and id.
+    pub fn replace_empty_table(&mut self, id: TableId, table: crate::WrappedTable) {
+        assert!(self.tables[id].table.is_empty());
+        assert!(table.is_empty());
+        self.tables[id].spec = table.spec();
+        self.tables[id].table = table;
+    }
+
+    /// Register storage supplied by a replacement backend.
+    pub fn add_wrapped_table_named(
+        &mut self,
+        table: crate::WrappedTable,
+        name: Arc<str>,
+        read_deps: impl IntoIterator<Item = TableId>,
+        write_deps: impl IntoIterator<Item = TableId>,
+    ) -> TableId {
+        self.add_wrapped_table_impl(table, Some(name), read_deps, write_deps)
+    }
+    /// Select an experimental bulk matcher, or restore native matching.
+    pub fn set_match_backend(&mut self, backend: Option<Arc<dyn crate::MatchBackend>>) {
+        assert!(
+            backend.is_none() || self.relational_backend.is_none(),
+            "cannot combine replacement and matcher backends"
+        );
+        self.match_backend = backend;
+    }
+
     /// Create an empty Database.
     ///
     /// Queries use the currently installed egglog thread pool. If no pool is
@@ -961,6 +1018,18 @@ impl Database {
     ) -> TableId {
         let spec = table.spec();
         let table = WrappedTable::new(table);
+        debug_assert_eq!(spec.schema, table.spec().schema);
+        self.add_wrapped_table_impl(table, name, read_deps, write_deps)
+    }
+
+    fn add_wrapped_table_impl(
+        &mut self,
+        table: WrappedTable,
+        name: Option<Arc<str>>,
+        read_deps: impl IntoIterator<Item = TableId>,
+        write_deps: impl IntoIterator<Item = TableId>,
+    ) -> TableId {
+        let spec = table.spec();
         let res = self.tables.push(TableInfo {
             identity: TableIdentity::fresh(),
             name,

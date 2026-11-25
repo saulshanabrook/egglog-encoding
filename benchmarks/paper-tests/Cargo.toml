@@ -7,6 +7,7 @@ publish = false
 [dev-dependencies]
 egglog = { path = "../../egglog", default-features = false }
 egglog-experimental = { path = "../../egglog-experimental" }
+egglog-gpu = { path = "../../egglog-gpu" }
 benchmark-memory = { path = "../../benchmark-memory" }
 slotted-reference = { path = "../../slotted-reference", default-features = false }
 egg-math-benchmark = { path = "../../egg-math-benchmark" }

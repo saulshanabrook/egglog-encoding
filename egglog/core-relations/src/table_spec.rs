@@ -604,7 +604,7 @@ pub struct WrappedTable {
 }
 
 impl WrappedTable {
-    pub(crate) fn new<T: Table>(inner: T) -> Self {
+    pub fn new<T: Table>(inner: T) -> Self {
         let wrapper = wrapper::<T>();
         let inner = Box::new(inner);
         Self { inner, wrapper }

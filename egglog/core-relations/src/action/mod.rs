@@ -659,6 +659,16 @@ impl<'a> ExecutionState<'a> {
         self.db.counters.read(ctr)
     }
 
+    /// Reserve one checked contiguous range for a device action batch. The
+    /// range cannot overlap scalar reservations or the reserved stale value.
+    pub fn reserve_counter(
+        &self,
+        ctr: CounterId,
+        count: usize,
+    ) -> Result<std::ops::Range<usize>, String> {
+        self.db.counters.reserve_exact(ctr, count)
+    }
+
     /// Iterate over the identifiers of all tables visible to this execution state.
     pub fn table_ids(&self) -> impl Iterator<Item = TableId> + '_ {
         self.db.table_info.iter().map(|(id, _)| id)
@@ -827,6 +837,50 @@ impl<'a> ExecutionState<'a> {
             self.changed = true;
         }
         row[col.index()]
+    }
+
+    /// Read a committed or staged constructor row without allocating an id.
+    pub fn predicted_row(&self, table: TableId, key: &[Value]) -> Option<Vec<Value>> {
+        if let Some(row) = self.db.table_info[table].table.get_row(key) {
+            return Some(row.vals.to_vec());
+        }
+        let hash = PredictedVals::hash(table, key);
+        let entry = self
+            .predicted
+            .index
+            .find(hash, |e| self.predicted.matches(e, hash, table, key))?;
+        Some(
+            self.predicted
+                .row(*entry, self.db.table_info[table].spec.arity())
+                .to_vec(),
+        )
+    }
+
+    /// Publish one already allocated constructor row to the primitive ABI's
+    /// prediction cache. Device backends reserve ids only after checking misses.
+    pub fn publish_prediction(
+        &mut self,
+        table: TableId,
+        key: &[Value],
+        candidate: &[Value],
+    ) -> Vec<Value> {
+        assert_eq!(candidate.len(), self.db.table_info[table].spec.arity());
+        assert_eq!(&candidate[..key.len()], key);
+        if let Some(row) = self.predicted_row(table, key) {
+            return row;
+        }
+        let (row, inserted) =
+            self.predicted
+                .get_or_insert_with(table, key, candidate.len(), |values, _| {
+                    values.extend_from_slice(&candidate[key.len()..]);
+                });
+        if inserted {
+            self.buffers
+                .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+            self.buffers.stage_insert(table, row);
+            self.changed = true;
+        }
+        row.to_vec()
     }
 
     /// Trigger early stopping by setting the stop_match flag.
@@ -1230,7 +1284,7 @@ impl ExecutionState<'_> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Instr {
+pub enum Instr {
     /// Look up the value of the given table, inserting a new entry with a
     /// default value if it is not there.
     LookupOrInsertDefault {

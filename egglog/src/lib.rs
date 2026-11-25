@@ -549,6 +549,23 @@ fn literal_order(termdag: &TermDag, a: TermId, b: TermId) -> Option<Ordering> {
 }
 
 impl EGraph {
+    /// Install relational storage and execution for a term-encoded e-graph,
+    /// before any functions or rules are declared.
+    pub fn set_relational_backend(&mut self, backend: Arc<dyn core_relations::RelationalBackend>) {
+        assert!(
+            self.proof_state.original_typechecking.is_some(),
+            "replacement backends require term encoding"
+        );
+        self.backend.set_relational_backend(backend);
+    }
+
+    /// Select an experimental bulk matcher. Schedules and action semantics are
+    /// unchanged; use term encoding when the accelerator should not implement
+    /// native equality maintenance.
+    pub fn set_match_backend(&mut self, backend: Option<Arc<dyn core_relations::MatchBackend>>) {
+        self.backend.set_match_backend(backend);
+    }
+
     fn new_inner(num_threads: usize) -> Self {
         let mut parser = Parser::default();
         let proof_state = EncodingState::new(&mut parser.symbol_gen);

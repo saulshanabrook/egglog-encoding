@@ -173,14 +173,27 @@ fn observe(
     expected: Option<&Observations>,
     egraph_threads: usize,
 ) -> Observations {
-    let mut graph = new_experimental_egraph_with_options(mode == "off");
-    graph.set_num_threads(egraph_threads);
-    graph = match mode {
-        "off" => graph,
-        "term" => graph.with_term_encoding_enabled(),
-        "proof-testing" => graph.with_proofs_enabled().with_proof_testing(),
+    let mut graph = match mode {
+        "off" => new_experimental_egraph_with_options(true),
+        "term" => new_experimental_egraph_with_options(false).with_term_encoding_enabled(),
+        "proof-testing" => new_experimental_egraph_with_options(false)
+            .with_proofs_enabled()
+            .with_proof_testing(),
+        "gpu-simulate" | "gpu-software" => {
+            let backend = std::sync::Arc::new(if mode == "gpu-simulate" {
+                egglog_gpu::Backend::simulated(egglog_gpu::MAX_ROW_COUNT)
+            } else {
+                egglog_gpu::Backend::vulkan(
+                    egglog_gpu::AdapterMode::Software,
+                    egglog_gpu::MAX_ROW_COUNT,
+                )
+                .unwrap()
+            });
+            backend.egraph()
+        }
         _ => panic!("unsupported egglog correctness mode {mode}"),
     };
+    graph.set_num_threads(egraph_threads);
     let proof_summary = (mode == "proof-testing"
         && std::env::var_os("PAPER_OBSERVATIONS_PATH").is_some())
     .then(|| {
@@ -475,7 +488,7 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_thr
     let mut modes = BTreeSet::new();
     for mode in &requested {
         match mode.as_str() {
-            "off" | "term" => {
+            "off" | "term" | "gpu-simulate" | "gpu-software" => {
                 modes.insert(mode.as_str());
             }
             "proofs" | "proof-extraction" | "proof-testing" => {
@@ -504,6 +517,22 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_thr
         let observed = observe(file, mode, observations.get(reference), egraph_threads);
         observations.insert(mode, observed);
     }
+    // Each replacement backend can choose a different equal-cost extraction.
+    // Check its choices independently in ordinary pre-command graph clones.
+    let mut gpu_root_checks = BTreeMap::new();
+    for mode in ["gpu-simulate", "gpu-software"] {
+        if modes.contains(mode) {
+            assert!(
+                modes.contains("off"),
+                "GPU comparisons require enabled off mode"
+            );
+            eprintln!("Validating {mode}");
+            let observed = observe(file, mode, None, egraph_threads);
+            let reference = observe(file, "off", Some(&observed), egraph_threads);
+            gpu_root_checks.insert(mode, reference.comparison_in_root_class);
+            observations.insert(mode, observed);
+        }
+    }
     let report_path = std::env::var_os("PAPER_OBSERVATIONS_PATH").map(PathBuf::from);
     if let Some(path) = &report_path {
         let baseline = &observations["off"];
@@ -513,6 +542,8 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_thr
             .map(|(mode, observed)| {
                 let equality = if *mode == "term" {
                     &baseline.comparison_in_root_class
+                } else if let Some(checks) = gpu_root_checks.get(mode) {
+                    checks
                 } else {
                     &observed.comparison_in_root_class
                 };
@@ -550,13 +581,15 @@ fn check_case(root: &Path, file: &Path, requested: &BTreeSet<String>, egraph_thr
         });
         write_observations(path, &report);
     }
-    for mode in ["term", "proof-testing"] {
+    for mode in ["term", "proof-testing", "gpu-simulate", "gpu-software"] {
         if let Some(mut observed) = observations.remove(mode) {
             let expected = observations
                 .get("off")
                 .expect("comparisons require enabled off mode");
             let (equality, evidence) = if mode == "term" {
                 (&expected.comparison_in_root_class, "ordinary root check")
+            } else if let Some(checks) = gpu_root_checks.get(mode) {
+                (checks, "ordinary root check")
             } else {
                 (&observed.comparison_in_root_class, "checked source proof")
             };
@@ -867,6 +900,8 @@ fn main() {
         "proofs",
         "proof-extraction",
         "proof-testing",
+        "gpu-simulate",
+        "gpu-software",
         "egg",
         "egg-proofs",
         "egg-proof-extraction",
@@ -969,6 +1004,48 @@ fn main() {
         ),
     };
     let mut trials = Vec::new();
+    for mode in ["gpu-simulate", "gpu-software"] {
+        let math_root = root.clone();
+        trials.push(
+            Trial::test(format!("paper/gpu-math/{mode}"), move || {
+                run_child(
+                    &math_root.join("egglog-experimental/tests/math-microbenchmark-rational.egg"),
+                    &["off", "term", mode]
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
+                    Duration::from_secs(timeout_sec).saturating_mul(CORRECTNESS_TIMEOUT_FACTOR * 3),
+                    memory_limit_bytes,
+                )?;
+                Ok(())
+            })
+            .with_ignored_flag(mode == "gpu-software"),
+        );
+        trials.push(
+            Trial::test(format!("paper/gpu-dispatch/{mode}"), move || {
+                let directory = tempfile::tempdir()?;
+                std::fs::create_dir_all(directory.path().join("benchmarks"))?;
+                std::fs::write(directory.path().join("benchmarks/ignore.json"), "[]")?;
+                let file = directory.path().join("scheduled.egg");
+                let source = concat!(
+                    include_str!("../../../egglog-gpu/examples/scheduled-terms.egg"),
+                    "\n(extract (Pair (Node 1) (Node 3)))\n",
+                );
+                std::fs::write(&file, source)?;
+                check_case(
+                    directory.path(),
+                    &file,
+                    &["off", "term", mode]
+                        .map(str::to_owned)
+                        .into_iter()
+                        .collect(),
+                    egraph_threads,
+                );
+                Ok(())
+            })
+            .with_ignored_flag(mode == "gpu-software"),
+        );
+    }
     trials.push(Trial::test("paper/proof-dispatch/slotted", move || {
         let directory = tempfile::tempdir()?;
         let file = directory.path().join("benchmarks/slotted/inputs/smoke.egg");

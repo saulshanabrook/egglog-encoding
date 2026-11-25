@@ -66,6 +66,11 @@ The root workspace includes both `egglog` and `egglog-experimental`.
 `egglog-experimental` depends on the workspace `egglog` crate, keeping proof
 changes and downstream behavior in one reviewable unit.
 
+The [GPU backend](egglog-gpu/README.md) replaces relational storage, query
+planning, and action execution for term-encoded programs. It supports Vulkan,
+software Vulkan, and Rust simulation, preserving frontend schedules and
+seminaive timestamps. Opaque primitives and merge callbacks use a host ABI.
+
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
 proof-testing mode. Proof testing turns checks outside `fail` into proof queries

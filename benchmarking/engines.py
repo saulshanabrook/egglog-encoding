@@ -11,6 +11,8 @@ from typing import Literal, Protocol, cast
 type Treatment = Literal[
     "off",
     "term",
+    "gpu-simulate",
+    "gpu-software",
     "proofs",
     "proof-extraction",
     "proof-testing",
@@ -75,6 +77,12 @@ _EGGLOG = TreatmentSpec(
     ),
 )
 _MATH = TreatmentSpec("egg-math-benchmark", ("-p", "egg-math-benchmark"))
+_GPU = TreatmentSpec(
+    "egglog-gpu",
+    ("--locked", "-p", "egglog-gpu", "--bin", "egglog-gpu"),
+    timing_summary=False,
+    allocator_limit=False,
+)
 _SLOTTED = TreatmentSpec(
     "slotted-reference",
     ("--locked", "-p", "slotted-reference", "--no-default-features", "--bin", "slotted-reference"),
@@ -96,6 +104,8 @@ _SLOTTED_PROOFS = replace(
 TREATMENT_SPECS: dict[Treatment, TreatmentSpec] = {
     "off": _EGGLOG,
     "term": replace(_EGGLOG, flags=("--term-encoding",)),
+    "gpu-simulate": replace(_GPU, flags=("--backend", "simulate")),
+    "gpu-software": replace(_GPU, flags=("--backend", "software")),
     "proofs": replace(_EGGLOG, flags=("--proofs",)),
     "proof-extraction": replace(_EGGLOG, flags=("--proof-extraction",)),
     "proof-testing": replace(_EGGLOG, flags=("--proof-testing",)),
@@ -216,6 +226,10 @@ def validate_binary_workload(file_spec: WorkloadFile, treatment: Treatment) -> N
     """Reject workload features unsupported by the selected treatment engine."""
 
     binary_name = TREATMENT_SPECS[treatment].binary_name
+    if binary_name == "egglog-gpu":
+        if file_spec.absolute_path.suffix != ".egg":
+            raise ValueError(f"treatment {treatment} requires an .egg workload")
+        return
     if binary_name == "egglog-experimental":
         if treatment in (
             "slotted-no-aliasing",

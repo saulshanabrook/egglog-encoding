@@ -90,7 +90,13 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
     let relative = file
         .strip_prefix(root)
         .map_err(|_| format!("paper input is outside the repository: {}", file.display()))?;
-    let ordinary = ["off", "term", "proof-testing"];
+    let ordinary = [
+        "off",
+        "term",
+        "proof-testing",
+        "gpu-simulate",
+        "gpu-software",
+    ];
     let (allowed, companion): (&[&str], Option<&str>) =
         if relative.starts_with("benchmarks/slotted/inputs") {
             (
@@ -109,7 +115,15 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
             )
         } else if relative == Path::new("benchmarks/corpus/math/math-iteration-12.egg") {
             (
-                &["off", "term", "proof-testing", "egg", "egg-proof-testing"],
+                &[
+                    "off",
+                    "term",
+                    "proof-testing",
+                    "gpu-simulate",
+                    "gpu-software",
+                    "egg",
+                    "egg-proof-testing",
+                ],
                 None,
             )
         } else if relative == Path::new("benchmarks/disequality/parameter-analysis.egg") {
@@ -118,6 +132,8 @@ pub fn validate(root: &Path, file: &Path, modes: &BTreeSet<String>) -> Result<()
                     "off",
                     "term",
                     "proof-testing",
+                    "gpu-simulate",
+                    "gpu-software",
                     "egg-de",
                     "egg-ee",
                     "egg-nee",

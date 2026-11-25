@@ -17,6 +17,7 @@ members = [
   "benchmarks/lmfao",
   "egraph-isomorphism",
   "egglog-experimental",
+  "egglog-gpu",
   "slotted-reference",
   "slotted-reference-proofs",
 ]

@@ -10,11 +10,13 @@ pub(crate) mod dependency_graph;
 mod flat_table;
 pub(crate) mod free_join;
 pub(crate) mod hash_index;
+mod match_backend;
 pub(crate) mod offsets;
 pub(crate) mod parallel;
 pub(crate) mod parallel_heuristics;
 pub(crate) mod pool;
 pub(crate) mod query;
+mod relational_backend;
 pub(crate) mod row_buffer;
 pub(crate) mod table;
 
@@ -24,6 +26,7 @@ pub(crate) mod uf;
 #[cfg(test)]
 mod tests;
 
+pub use action::Instr as ActionInstruction;
 pub use action::{ExecutionState, ExternalContext, MergeVal, QueryEntry, WriteVal};
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
@@ -36,16 +39,18 @@ pub use free_join::{
 pub use hash_index::TupleIndex;
 #[doc(hidden)]
 pub use hash_index::bench_support;
+pub use match_backend::{MatchBackend, MatchRelation};
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use query::{
     CachedPlan, QueryBuilder, QueryError, RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
 };
+pub use relational_backend::{BackendTable, RelationalAtom, RelationalBackend, RelationalRule};
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};
 pub use table_spec::{
-    ColumnId, Constraint, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange, TableSchema,
-    TableSpec, TableVersion, ValueRebuilder, WrappedTable,
+    ColumnId, Constraint, Generation, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange,
+    TableSchema, TableSpec, TableVersion, ValueRebuilder, WrappedTable,
 };
 pub use uf::DisplacedTable;
 

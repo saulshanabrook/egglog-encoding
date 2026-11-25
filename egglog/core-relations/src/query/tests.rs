@@ -7,6 +7,55 @@ use crate::{
 use egglog_reports::ReportLevel;
 use std::iter;
 
+#[test]
+fn replacement_planning_does_not_build_native_indexes() {
+    // Only compilation is under test: the backend must receive logical atoms
+    // without consulting the native column or occurrence index catalogs.
+    struct LogicalOnly;
+    impl crate::RelationalBackend for LogicalOnly {
+        fn create_table(&self, _: crate::BackendTable) -> crate::WrappedTable {
+            unreachable!()
+        }
+        fn execute(
+            &self,
+            _: &[crate::RelationalRule],
+            _: &mut crate::ExecutionState,
+        ) -> Result<Vec<usize>, String> {
+            unreachable!()
+        }
+        fn check_tables(&self, _: &crate::ExecutionState) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let mut db = Database::new();
+    let table = add_table(&mut db, 2);
+    db.set_relational_backend(Arc::new(LogicalOnly));
+    let mut builder = db.new_rule_set();
+    let mut query = builder.new_rule();
+    let x = query.new_var();
+    let y = query.new_var();
+    let z = query.new_var();
+    query
+        .add_atom(table, &[x.into(), v(1).into(), z.into()], [])
+        .unwrap();
+    query
+        .add_occurrence_atom(
+            table,
+            &[x.into(), y.into(), z.into()],
+            v(3).into(),
+            &[ColumnId::new(0), ColumnId::new(2)],
+            [],
+        )
+        .unwrap();
+    let rule = query.build().build();
+    let rules = builder.build();
+    assert!(rules.plans.is_empty());
+    assert_eq!(rules.relational[rule].atoms[0].constraints, vec![eq(1, 1)]);
+    assert!(rules.relational[rule].atoms[1].occurrence.is_some());
+    assert_eq!(db.tables[table].column_indexes.get_or_insert_calls(), 0);
+    assert_eq!(db.tables[table].occurrence_indexes.get_or_insert_calls(), 0);
+}
+
 fn add_table(db: &mut Database, modulo: usize) -> TableId {
     let table = db.add_table(
         SortedWritesTable::new(1, 3, ColumnId::new(2), vec![], Box::new(|_, _, _, _| false)),
@@ -229,7 +278,7 @@ fn cached_seminaive_variants_share_base_headers_and_produce_correct_rows() {
         let cached = rules.build_cached_plan(id);
         assert!(Arc::ptr_eq(
             sparse(&rules.plans[id].0.header()[0]),
-            sparse(&cached.plan.header()[0])
+            sparse(&cached.plan.as_ref().unwrap().header()[0])
         ));
         (cached, first, second)
     };
@@ -343,7 +392,7 @@ fn cached_decomposed_plans_share_headers_without_changing_results() {
         let id = rule.build_with_description("header-cache-decomposed");
         let rules = builder.build();
         let cached = rules.build_cached_plan(id);
-        assert!(matches!(cached.plan, Plan::DecomposedPlan(_)));
+        assert!(matches!(cached.plan, Some(Plan::DecomposedPlan(_))));
         (cached, first.unwrap())
     };
     let mut builder = db.new_rule_set();
@@ -409,6 +458,8 @@ fn initial_atom_clones_headers_and_cached_plan_share_processed_rows() {
     let cached = rules.build_cached_plan(rule);
     let cached_header = cached
         .plan
+        .as_ref()
+        .unwrap()
         .header()
         .iter()
         .find(|header| header.atom == atom)

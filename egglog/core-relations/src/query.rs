@@ -38,7 +38,8 @@ pub struct SymbolMap {
 
 /// A cached plan for a given rule.
 pub struct CachedPlan {
-    plan: Plan,
+    plan: Option<Plan>,
+    relational: Option<crate::RelationalRule>,
     desc: Arc<str>,
     symbol_map: SymbolMap,
     actions: ActionInfo,
@@ -55,6 +56,7 @@ pub(crate) struct ActionInfo {
 /// See [`Database::new_rule_set`] for more information.
 #[derive(Default)]
 pub struct RuleSet {
+    pub(crate) relational: IdVec<RuleId, crate::RelationalRule>,
     /// The contents of the queries (i.e. the LHS of the rules) for each rule in the set, along
     /// with a description of the rule.
     ///
@@ -68,6 +70,21 @@ pub struct RuleSet {
 
 impl RuleSet {
     pub fn build_cached_plan(&self, rule_id: RuleId) -> CachedPlan {
+        if let Some(rule) = self.relational.get(rule_id) {
+            return CachedPlan {
+                plan: None,
+                relational: Some(rule.clone()),
+                desc: rule.description.clone(),
+                symbol_map: SymbolMap {
+                    atoms: Default::default(),
+                    vars: Default::default(),
+                },
+                actions: ActionInfo {
+                    used_vars: rule.inputs.iter().copied().collect(),
+                    instrs: Arc::new(Pooled::new(rule.instructions.clone())),
+                },
+            };
+        }
         let (plan, desc, symbol_map) = self.plans.get(rule_id).expect("rule must exist");
         let actions = self
             .actions
@@ -75,7 +92,8 @@ impl RuleSet {
             .expect("action must exist")
             .clone();
         CachedPlan {
-            plan: plan.clone(),
+            plan: Some(plan.clone()),
+            relational: None,
             desc: desc.clone(),
             symbol_map: symbol_map.clone(),
             actions,
@@ -243,7 +261,7 @@ impl<'outer> RuleSetBuilder<'outer> {
         action_id: ActionId,
         extra_constraints: &[(AtomId, Constraint)],
     ) -> Option<Plan> {
-        match &cached.plan {
+        match cached.plan.as_ref().expect("native cached plan") {
             Plan::SinglePlan(cached_plan) => {
                 let mut headers = vec![];
                 let stages = cached_plan.stages.clone();
@@ -302,6 +320,16 @@ impl<'outer> RuleSetBuilder<'outer> {
         cached: &CachedPlan,
         extra_constraints: &[(AtomId, Constraint)],
     ) -> Option<RuleId> {
+        if let Some(rule) = &cached.relational {
+            assert!(self.db.relational_backend.is_some());
+            let mut rule = rule.clone();
+            for (atom, constraint) in extra_constraints {
+                rule.atoms[atom.index()]
+                    .constraints
+                    .push(constraint.clone());
+            }
+            return Some(self.rule_set.relational.push(rule));
+        }
         // Peek at the action_id without allocating it yet, so we don't break
         // the rules<->actions bijection if the query turns out to be empty.
         let action_id = self.rule_set.actions.next_id();
@@ -447,7 +475,17 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
                 })),
         );
         cs.iter().try_fold((), |_, c| check_constraint(c))?;
-        let processed = self.rsb.db.process_constraints(table_id, &cs);
+        let processed = if self.rsb.db.relational_backend.is_some() {
+            // Replacement backends receive logical constraints. Do not build
+            // native indexes or data-dependent headers that they will discard.
+            ProcessedConstraints {
+                subset: info.table.all().into(),
+                fast: Pooled::default(),
+                slow: Pooled::new(cs),
+            }
+        } else {
+            self.rsb.db.process_constraints(table_id, &cs)
+        };
         let mut atom = Atom {
             table: table_id,
             var_columns: Default::default(),
@@ -621,6 +659,7 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
             cols: cols.clone(),
         });
         match key {
+            OccurrenceKey::Const(_) if self.rsb.db.relational_backend.is_some() => {}
             // The rows holding the value are the atom's subset from the start.
             // Cached plans recompute it per run, since which rows those are
             // changes as the table grows.
@@ -823,6 +862,38 @@ impl RuleBuilder<'_, '_> {
                 None
             }
         }));
+        if self.qb.rsb.db.relational_backend.is_some() {
+            let atoms = self
+                .qb
+                .query
+                .atoms
+                .iter()
+                .map(|(_, atom)| crate::RelationalAtom {
+                    table: atom.table,
+                    columns: atom.vars().map(|v| (atom.get_col(v).unwrap(), v)).collect(),
+                    constraints: atom
+                        .constraints
+                        .fast
+                        .iter()
+                        .chain(atom.constraints.slow.iter())
+                        .cloned()
+                        .collect(),
+                    occurrence: atom.occurrence.as_ref().map(|occ| {
+                        let key = match occ.key {
+                            OccurrenceKey::Var(v) => QueryEntry::Var(v),
+                            OccurrenceKey::Const(v) => QueryEntry::Const(v),
+                        };
+                        (key, occ.cols.to_vec())
+                    }),
+                })
+                .collect();
+            return self.qb.rsb.rule_set.relational.push(crate::RelationalRule {
+                description: desc.into().into(),
+                atoms,
+                inputs: used_vars.into_vec(),
+                instructions: self.qb.instrs.to_vec(),
+            });
+        }
         let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {
             instrs: Arc::new(self.qb.instrs),
             used_vars,

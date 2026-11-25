@@ -13,6 +13,26 @@ import pytest
 from rich.console import Console
 
 from benchmarking import models, targets
+from benchmarking.engines import TREATMENT_SPECS
+from benchmarking.workloads import resolve_files
+
+
+@pytest.mark.parametrize("treatment,mode", [("gpu-simulate", "simulate"), ("gpu-software", "software")])
+def test_gpu_workload_command_and_endpoint(treatment: models.Treatment, mode: str, tmp_path: Path) -> None:
+    source = tmp_path / "input.egg"
+    source.write_text("(relation ready ())\n(ready)\n(check (ready))\n")
+    file = resolve_files([str(source)], tmp_path)[0]
+    executable = tmp_path / "egglog-gpu"
+    assert targets.workload_command(executable, file, treatment, threads=8) == [
+        str(executable),
+        "--backend",
+        mode,
+        str(source),
+    ]
+    endpoint = models.EndpointRequest(targets.parse_target("."), treatment, threads=8)
+    assert endpoint.threads == 1
+    assert endpoint.memory_limit_bytes is None
+    assert not TREATMENT_SPECS[treatment].timing_summary
 
 
 def make_dirty_git_repo(path: Path) -> tuple[str, Path]:

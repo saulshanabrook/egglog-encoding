@@ -22,15 +22,24 @@ from .report_fixtures import ROOT, make_record, make_target, write_report
 FILE_SPEC = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
 
 
-def test_public_cli_collects_real_observations(tmp_path: Path) -> None:
+@pytest.mark.parametrize("candidate", ["proof-testing", "gpu-simulate"])
+def test_public_cli_collects_real_observations(tmp_path: Path, candidate: str) -> None:
     report = tmp_path / "report.jsonl"
     # Use the public build path without extra features or a separate target directory.
     result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "bench.py"),
-            "egglog-experimental/tests/math-microbenchmark-rational.egg",
-            "egglog-experimental/tests/disequality/congruence.egg",
+            *(
+                ["egglog-experimental/tests/math-microbenchmark-rational.egg", "egglog-gpu/examples/containers.egg"]
+                if candidate == "gpu-simulate"
+                else [
+                    "egglog-experimental/tests/math-microbenchmark-rational.egg",
+                    "egglog-experimental/tests/disequality/congruence.egg",
+                ]
+            ),
+            "--treatment",
+            candidate,
             "--rounds",
             "1",
             "--report",
@@ -46,12 +55,17 @@ def test_public_cli_collects_real_observations(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     rows = ReportStore(report).records
     assert len(rows) == 4 and all(row["status"] == "success" for row in rows)
-    assert {row["treatment"] for row in rows} == {"off", "proof-testing"}
+    assert {row["treatment"] for row in rows} == {"off", candidate}
     assert len({row["file_sha256"] for row in rows}) == 2
     assert len({(row["file_sha256"], row["treatment"]) for row in rows}) == 4
+    if candidate == "gpu-simulate":
+        assert len({row["binary_sha256"] for row in rows}) == 2
     for row in rows:
         for value in (row["wall_sec"], row["max_rss_bytes"]):
             assert value is not None and math.isfinite(value) and value > 0
+        if row["treatment"] == "gpu-simulate":
+            assert row["memory_limit_bytes"] is None
+            assert row["timing_summary"] is None
 
 
 def test_public_entrypoint_dispatches_benchmark_and_profile(monkeypatch: pytest.MonkeyPatch) -> None:

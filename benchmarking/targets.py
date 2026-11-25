@@ -293,7 +293,7 @@ def workload_command(
     file_spec = file_spec.for_binary(specification.binary_name)
     if specification.binary_name != "egglog-experimental":
         validate_binary_workload(file_spec, treatment)
-        if specification.binary_name.startswith("slotted-reference"):
+        if specification.binary_name == "egglog-gpu" or specification.binary_name.startswith("slotted-reference"):
             return [str(binary_path), *specification.flags, str(file_spec.absolute_path)]
         if specification.binary_name != "egg-math-benchmark":
             return [str(binary_path), str(file_spec.absolute_path), *NATIVE_PARAMETER_ARGUMENTS, *specification.flags]

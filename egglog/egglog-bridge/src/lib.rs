@@ -246,6 +246,28 @@ enum TableStorage {
 }
 
 impl EGraph {
+    /// Replace relational execution and function storage before declaring any
+    /// functions. Intended for term encoding: native union-find writes are not
+    /// part of this backend contract.
+    pub fn set_relational_backend(&mut self, backend: Arc<dyn core_relations::RelationalBackend>) {
+        assert!(
+            self.funcs.is_empty(),
+            "install a relational backend before declaring functions"
+        );
+        let schema = self.db.get_table(self.uf_table).spec().schema;
+        let bootstrap = backend.create_table(core_relations::BackendTable {
+            read_only: true,
+            schema,
+            timestamp: None,
+            rebuild_columns: Vec::new(),
+            merge: Some(Box::new(|_, _, _, _| {
+                panic!("native union-find is unavailable; use term encoding")
+            })),
+        });
+        self.db.replace_empty_table(self.uf_table, bootstrap);
+        self.db.set_relational_backend(backend);
+    }
+
     /// Create an e-graph configured to use `threads` worker threads.
     ///
     /// Passing `1` keeps execution serial and does not allocate a thread pool.
@@ -829,15 +851,16 @@ impl EGraph {
     #[doc(hidden)]
     pub fn table_is_flat(&self, table: FunctionId) -> bool {
         let table = self.db.get_table(self.funcs[table].table);
-        if table.as_any().is::<FlatTable>() {
-            true
-        } else {
+        if self.db.relational_backend().is_none() {
             assert!(
-                table.as_any().is::<SortedWritesTable>(),
+                table.as_any().is::<FlatTable>() || table.as_any().is::<SortedWritesTable>(),
                 "function table uses an unknown storage implementation"
             );
-            false
         }
+        matches!(
+            table.spec().schema,
+            core_relations::TableSchema::Flat { .. }
+        )
     }
 
     /// Remove every row from the given function's backing table.
@@ -1107,8 +1130,9 @@ impl EGraph {
         // up front, then build the merge and the backing table. Non-self-referential merges resolve
         // the same either way.
         let table_id = self.db.next_table_id();
-        let insertion_merge =
-            storage == TableStorage::SortedWrites && matches!(merge, MergeFn::UnionId);
+        let insertion_merge = self.db.relational_backend().is_none()
+            && storage == TableStorage::SortedWrites
+            && matches!(merge, MergeFn::UnionId);
         let res = self.funcs.push(FunctionInfo {
             table: table_id,
             schema: schema.clone(),
@@ -1139,33 +1163,57 @@ impl EGraph {
             !read_deps.contains(&table_id),
             "self-referential merge for `{name}` may only write to its own table, not read it"
         );
-        let assigned_table_id = match storage {
-            TableStorage::SortedWrites => {
-                let merge_fn = merge.to_callback(schema_math, &name, self);
-                let table = install_thread_pool(self.thread_pool(), || {
-                    SortedWritesTable::new(
-                        n_args,
-                        n_cols,
-                        ColumnId::from_usize(schema.len()),
-                        to_rebuild,
-                        merge_fn,
+        let assigned_table_id = if let Some(backend) = self.db.relational_backend().cloned() {
+            let schema = match storage {
+                TableStorage::Flat => core_relations::TableSchema::Flat { n_cols },
+                TableStorage::SortedWrites => core_relations::TableSchema::Fd {
+                    n_keys: n_args,
+                    n_vals: n_cols - n_args,
+                },
+            };
+            let definition = core_relations::BackendTable {
+                read_only: false,
+                schema,
+                timestamp: Some(ColumnId::from_usize(schema_math.ts_col())),
+                rebuild_columns: to_rebuild,
+                merge: (storage == TableStorage::SortedWrites)
+                    .then(|| merge.to_callback(schema_math, &name, self)),
+            };
+            self.db.add_wrapped_table_named(
+                backend.create_table(definition),
+                name.clone(),
+                read_deps.iter().copied(),
+                write_deps.iter().copied(),
+            )
+        } else {
+            match storage {
+                TableStorage::SortedWrites => {
+                    let merge_fn = merge.to_callback(schema_math, &name, self);
+                    let table = install_thread_pool(self.thread_pool(), || {
+                        SortedWritesTable::new(
+                            n_args,
+                            n_cols,
+                            ColumnId::from_usize(schema.len()),
+                            to_rebuild,
+                            merge_fn,
+                        )
+                    });
+                    self.db.add_table_named(
+                        table,
+                        name.clone(),
+                        read_deps.iter().copied(),
+                        write_deps.iter().copied(),
                     )
-                });
-                self.db.add_table_named(
-                    table,
-                    name.clone(),
-                    read_deps.iter().copied(),
-                    write_deps.iter().copied(),
-                )
-            }
-            TableStorage::Flat => {
-                let table = install_thread_pool(self.thread_pool(), || FlatTable::new(n_cols));
-                self.db.add_table_named(
-                    table,
-                    name.clone(),
-                    read_deps.iter().copied(),
-                    write_deps.iter().copied(),
-                )
+                }
+                TableStorage::Flat => {
+                    let table = install_thread_pool(self.thread_pool(), || FlatTable::new(n_cols));
+                    self.db.add_table_named(
+                        table,
+                        name.clone(),
+                        read_deps.iter().copied(),
+                        write_deps.iter().copied(),
+                    )
+                }
             }
         };
         assert_eq!(
@@ -1221,6 +1269,12 @@ impl EGraph {
     ) -> Result<IterationReport> {
         let thread_pool = self.thread_pool();
         install_thread_pool(thread_pool, || self.run_rules_inner(rules, context))
+    }
+
+    /// Select a bulk matcher while retaining this bridge's seminaive evaluation
+    /// and action execution.
+    pub fn set_match_backend(&mut self, backend: Option<Arc<dyn core_relations::MatchBackend>>) {
+        self.db.set_match_backend(backend);
     }
 
     /// Run `rules` for one iteration like [`EGraph::run_rules`], but without
@@ -2913,7 +2967,8 @@ fn run_rules_impl(
     let assembly_time = assembly_timer.elapsed();
     Ok((
         assembly_time,
-        db.run_rule_set(&ruleset, report_level, context),
+        db.try_run_rule_set(&ruleset, report_level, context)
+            .map_err(anyhow::Error::msg)?,
     ))
 }
 

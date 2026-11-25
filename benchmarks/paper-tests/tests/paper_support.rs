@@ -169,6 +169,23 @@ fn paper_registration_rejects_unmapped_oracles_and_missing_companions() {
         (&slotted, "slotted-ref-multi-proof-testing", true),
         (&slotted, "slotted-ref-nested-proof-testing", true),
         (&slotted, "off", false),
+        (&slotted, "gpu-simulate", false),
+        (&slotted, "gpu-software", false),
+        (
+            &root.join("egglog-gpu/examples/scheduled-terms.egg"),
+            "gpu-simulate",
+            true,
+        ),
+        (
+            &root.join("benchmarks/corpus/math/math-iteration-12.egg"),
+            "gpu-software",
+            true,
+        ),
+        (
+            &root.join("benchmarks/disequality/parameter-analysis.egg"),
+            "gpu-simulate",
+            true,
+        ),
         (
             &root.join("benchmarks/corpus/math/math-iteration-12.egg"),
             "egg-proof-testing",

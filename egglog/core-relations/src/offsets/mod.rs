@@ -312,12 +312,7 @@ impl SubsetRef<'_> {
             SubsetRef::Sparse(slc) => slc.inner(),
         }
     }
-    pub(crate) fn iter_bounded(
-        self,
-        start: usize,
-        end: usize,
-        mut f: impl FnMut(RowId),
-    ) -> Option<usize> {
+    pub fn iter_bounded(self, start: usize, end: usize, mut f: impl FnMut(RowId)) -> Option<usize> {
         match self {
             SubsetRef::Dense(r) => {
                 let mut cur = start;
@@ -396,7 +391,7 @@ impl Subset {
         }
     }
 
-    pub(crate) fn retain(&mut self, mut filter: impl FnMut(RowId) -> bool) {
+    pub fn retain(&mut self, mut filter: impl FnMut(RowId) -> bool) {
         match self {
             Subset::Dense(offs) => {
                 let mut res = Subset::empty();
