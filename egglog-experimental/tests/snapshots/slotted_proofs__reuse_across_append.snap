@@ -1,0 +1,276 @@
+---
+source: egglog-experimental/tests/slotted_proofs.rs
+expression: "format!(\"Source:\\n{source}\\n\\nProof:\\n{}\", proofs[0])"
+---
+Source:
+; An effectful program with lambdas, optimized by a rewrite that needs an alias
+; fact. Run with --slotted, or --slotted --proofs to check its source proof.
+;
+;   def norm(a, history):
+;       history.append(sum(map(lambda x: x * x, a)))
+;       return sum(map(lambda y: y * y, a))
+;
+;   ==>
+;
+;   def norm(a, history):
+;       n = sum(map(lambda x: x * x, a))
+;       history.append(n)
+;       return n
+;
+; The second sum reads the memory left by the append. It skips the append because
+; `history` and `a` are distinct lists, and then equals the first sum because the
+; two lambdas are alpha-equivalent.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (List String)             ; a named list
+  (Mem0)                    ; the initial memory
+  (Append Expr Expr Expr)   ; memory, list, value -> memory
+  (SumMap Expr Expr Expr)   ; memory, list, function -> sum(map(function, list))
+  (Lam Var Expr :binder 0)
+  (Mul Expr Expr)
+  (Ret Expr Expr))          ; returned value, final memory
+
+; Reading one list skips an append to another.
+(rewrite (SumMap (Append m q v) p f) (SumMap m p f)
+  :when ((known-disequal p q))
+  :name "read-past-append")
+
+; The alias fact, as a pointer analysis would supply it.
+(disequal (List "a") (List "history"))
+
+(let n (SumMap (Mem0) (List "a") (Lam $x (Mul (V $x) (V $x)))))
+(let appended (Append (Mem0) (List "history") n))
+(let input (Ret (SumMap appended (List "a") (Lam $y (Mul (V $y) (V $y)))) appended))
+(let output (Ret n appended))
+
+; These second sums must run again: appending to the summed list itself, and
+; appending to a list with no alias fact.
+(let self_append
+  (SumMap (Append (Mem0) (List "a") n) (List "a") (Lam $y (Mul (V $y) (V $y)))))
+(let unknown
+  (SumMap (Append (Mem0) (List "b") n) (List "a") (Lam $y (Mul (V $y) (V $y)))))
+
+(run 1)
+(check (= input output))
+(fail (check (= self_append n)))
+(fail (check (= unknown n)))
+(fail (check (contradiction)))
+
+
+Proof:
+(let t (SumMap (Mem0) (List "a") (Lam $v8 (Mul (V $v8) (V $v8)))))
+(let t_1 (Lam $y (Mul (V $y) (V $y))))
+(let t_2 (SumMap (Append (Mem0) (List "history") t) (List "a") t_1))
+(let t_3
+  (Append
+          (Mem0)
+          (List "history")
+          (SumMap (Mem0) (List "a") (Lam $v9 (Mul (V $v9) (V $v9))))))
+(let t_4 (Ret t_2 t_3))
+(let t_5 (SumMap (Mem0) (List "a") (Lam $v12 (Mul (V $v12) (V $v12)))))
+(let t_6
+  (SumMap
+              (Append
+                (Mem0)
+                (List "history")
+                (SumMap (Mem0) (List "a") (Lam $v13 (Mul (V $v13) (V $v13)))))
+              (List "a")
+              (Lam $v14 (Mul (V $v14) (V $v14)))))
+(let t_7
+  (Append
+              (Mem0)
+              (List "history")
+              (SumMap (Mem0) (List "a") (Lam $v16 (Mul (V $v16) (V $v16))))))
+(let t_8 (Ret t_6 t_7))
+(let t_9 (Ret t_5 t_7))
+(let prop (= t_8 t_9))
+(let prop_1 (= t_9 t_8))
+(let t_10
+  (Append
+                  (Mem0)
+                  (List "history")
+                  (SumMap (Mem0) (List "a") (Lam $v15 (Mul (V $v15) (V $v15))))))
+(let t_11 (Ret t_5 t_10))
+(let t_12 (Ret t_6 t_10))
+(let prop_2 (= t_11 t_12))
+(let prop_3 (= t_12 t_11))
+(let t_13 (Lam $x (Mul (V $x) (V $x))))
+(let t_14 (SumMap (Mem0) (List "a") t_13))
+(let t_15 (Append (Mem0) (List "history") t_14))
+(let t_16 (Ret (SumMap t_15 (List "a") t_1) t_15))
+(let prf (Alpha (= t_16 t_4) (Fiat (= t_16 t_16))))
+(let prf_1 (Trans (= t_4 t_4) (Sym (= t_4 t_16) prf) prf))
+(let t_17
+  (Append
+                                (Mem0)
+                                (List "history")
+                                (SumMap
+                                  (Mem0)
+                                  (List "a")
+                                  (Lam $v10 (Mul (V $v10) (V $v10))))))
+(let t_18 (Lam $v6 (Mul (V $v6) (V $v6))))
+(let t_19 (SumMap t_17 (List "a") t_18))
+(let t_20 (Lam $v5 (Mul (V $v5) (V $v5))))
+(let t_21 (SumMap (Mem0) (List "a") t_20))
+(let t_22 (SumMap t_17 (List "a") t_20))
+(let t_23 (Lam $v3 (Mul (V $v3) (V $v3))))
+(let t_24 (Append (Mem0) (List "b") t_14))
+(let t_25 (SumMap t_24 (List "a") t_1))
+(let prf_2
+  (Congr
+                            (= t_19 t_22)
+                            (Equivariance
+                              (= t_19 t_19)
+                              (Proj (= t_2 t_2) prf_1 0)
+                              (renaming ($y $v6) ($v6 $y) ($v10 $v8) ($v8 $v10)))
+                            (Equivariance
+                              (= t_18 t_20)
+                              (Alpha
+                                (= t_23 (Lam $v4 (Mul (V $v4) (V $v4))))
+                                (Equivariance
+                                  (= t_23 t_23)
+                                  (Proj
+                                    (= t_13 t_13)
+                                    (Proj
+                                      (= t_14 t_14)
+                                      (Proj (= t_24 t_24) (Fiat (= t_25 t_25)) 0)
+                                      2)
+                                    2)
+                                  (renaming ($x $v3) ($v3 $x))))
+                              (renaming
+                                ($v5 $v3)
+                                ($v4 $v5)
+                                ($v6 $v7)
+                                ($v7 $v4)
+                                ($v3 $v6)))
+                            2))
+(let t_26
+  (Append
+                                    (Mem0)
+                                    (List "history")
+                                    (SumMap
+                                      (Mem0)
+                                      (List "a")
+                                      (Lam $v0 (Mul (V $v0) (V $v0))))))
+(let t_27 (Lam $v11 (Mul (V $v11) (V $v11))))
+(let t_28 (SumMap t_26 (List "a") t_27))
+(let t_29 (SumMap (Mem0) (List "a") t_27))
+(let t_30
+  (SumMap
+                                        (Mem0)
+                                        (List "a")
+                                        (Lam $v2 (Mul (V $v2) (V $v2)))))
+(let t_31 (Append (Mem0) (List "history") t_30))
+(let t_32 (SumMap t_31 (List "a") t_27))
+(let t_33 (SumMap t_26 (List "a") t_18))
+(let t_34
+  (renaming
+                                        ($v11 $v5)
+                                        ($v0 $v10)
+                                        ($v5 $v11)
+                                        ($v10 $v0)))
+(let prf_3 (Equivariance (= t_33 t_28) prf_2 t_34))
+(let prf_4
+  (Congr
+                                (= t_28 t_32)
+                                (Trans
+                                  (= t_28 t_28)
+                                  (Sym (= t_28 t_33) prf_3)
+                                  prf_3)
+                                (Alpha
+                                  (= t_26 t_31)
+                                  (Equivariance
+                                    (= t_26 t_26)
+                                    (Fiat (= t_15 t_15))
+                                    (renaming ($x $v0) ($v0 $v1) ($v1 $x))))
+                                0))
+(let t_35
+  (_disequality_disequality-ne-Expr
+                                        (List "a")
+                                        (List "history")))
+(let prf_5
+  (Fiat
+                                        (=
+                                          (_disequality_disequality-ne-Expr-witness)
+                                          t_35)))
+(let t_36 (renaming ($v16 $v15) ($v15 $v16)))
+(Claim
+  (= t_4 (rename (renaming ($v12 $v8) ($v8 $v12)) (Ret t t_3)))
+  (Equivariance
+    (= t_4 (Ret t_5 t_3))
+    (Sym
+      prop
+      (Equivariance
+        prop_1
+        (Sym
+          prop_2
+          (Equivariance
+            prop_3
+            (Sym
+              prop
+              (Equivariance
+                prop_1
+                (Sym
+                  prop_2
+                  (Congr
+                    prop_3
+                    (Equivariance
+                      (= t_12 t_12)
+                      prf_1
+                      (renaming
+                        ($y $v14)
+                        ($v15 $v9)
+                        ($v13 $v8)
+                        ($v14 $y)
+                        ($v9 $v15)
+                        ($v8 $v13)))
+                    (Equivariance
+                      (= t_6 t_5)
+                      (Trans
+                        (= t_19 t_21)
+                        prf_2
+                        (Equivariance
+                          (= t_22 t_21)
+                          (Trans
+                            (= t_28 t_29)
+                            prf_4
+                            (Rule
+                              (= t_32 t_29)
+                              (name "read-past-append")
+                              (premises
+                                prf_4
+                                (Trans
+                                  (= t_35 t_35)
+                                  (Sym
+                                    (=
+                                      t_35
+                                      (_disequality_disequality-ne-Expr-witness))
+                                    prf_5)
+                                  prf_5))
+                              (substitution
+                                (p (List "a"))
+                                (f t_27)
+                                (m (Mem0))
+                                (q (List "history"))
+                                (v t_30))))
+                          t_34))
+                      (renaming
+                        ($v5 $v12)
+                        ($v12 $v5)
+                        ($v13 $v10)
+                        ($v14 $v6)
+                        ($v6 $v14)
+                        ($v10 $v13)))
+                    0))
+                t_36))
+            t_36))
+        t_36))
+    (renaming
+      ($y $v14)
+      ($v16 $v9)
+      ($v15 $v16)
+      ($v13 $v8)
+      ($v14 $y)
+      ($v9 $v15)
+      ($v8 $v13))))

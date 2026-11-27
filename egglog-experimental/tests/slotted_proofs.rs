@@ -159,6 +159,10 @@ fn demo_proof_snapshots() {
 (check (= input (Lam $z (V $y))))"#,
         ),
         ("overview", include_str!("slotted/overview.egg")),
+        (
+            "reuse_across_append",
+            include_str!("slotted/reuse-across-append.egg"),
+        ),
     ] {
         let proofs = prove(
             &mut compiler(ProofMode::Prove),

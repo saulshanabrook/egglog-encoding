@@ -94,6 +94,16 @@ using inferred disequality and binder-independence guards. Its
 cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
 ```
 
+Further examples add effects. [reuse-across-append.egg](tests/slotted/reuse-across-append.egg)
+appends a sum of mapped values to one list and then recomputes it under another
+lambda. The second read skips the append given an asserted alias fact, and the two
+lambdas are alpha-equivalent. Its
+[checked source proof](tests/snapshots/slotted_proofs__reuse_across_append.snap)
+is snapshot-tested as well.
+[normalize-loop.egg](tests/slotted/normalize-loop.egg) hoists a sum out of a loop
+that stores: skipping the loop's stores removes the sum's dependence on the loop
+index, and only then does a `not-free` guard allow the hoist.
+
 The two query patterns are supported only as whole facts in checks, rule bodies,
 rewrite conditions, and run-until conditions. They expose ordinary relation
 dependencies to seminaive rules. Nested expressions and action uses are rejected.

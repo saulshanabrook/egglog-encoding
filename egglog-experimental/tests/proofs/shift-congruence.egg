@@ -1,0 +1,29 @@
+; ((a * 2) / 2) * 2  ==>  a << 1
+;
+; Both rules hold over the natural numbers. The division matches only modulo
+; a * 2 = a << 1, and the last equality comes from congruence: once the middle
+; is a, the outer multiplication has the same children as the inner one.
+(datatype Math
+  (Num i64)
+  (Var String)
+  (Mul Math Math)
+  (Div Math Math)
+  (Shl Math Math))
+
+(rewrite (Mul x (Num 2)) (Shl x (Num 1)) :name "mul-two-is-shift")
+(rewrite (Div (Shl x (Num 1)) (Num 2)) x :name "shift-then-halve")
+
+(let $inner (Mul (Var "a") (Num 2)))
+(let $middle (Div $inner (Num 2)))
+(let $program (Mul $middle (Num 2)))
+
+; Round 1: each multiplication gains a shifted twin. The division does not match
+; yet, because matching precedes this round's unions.
+(run 1)
+(fail (check (= $middle (Var "a"))))
+(fail (check (= $program $inner)))
+
+; Round 2: the division matches, so the middle is a. Congruence then merges the
+; outer multiplication with the inner one; no rule fires for that equality.
+(run 1)
+(prove (= $program (Shl (Var "a") (Num 1))))
