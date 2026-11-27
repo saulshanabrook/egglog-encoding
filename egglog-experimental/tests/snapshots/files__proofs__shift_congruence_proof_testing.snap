@@ -1,0 +1,28 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(
+(let t (Mul (Var "a") (Num 2)))
+(let t_1 (Div t (Num 2)))
+(let t_2 (Mul t_1 (Num 2)))
+(let t_3 (Shl (Var "a") (Num 1)))
+(let prf
+  (Rule
+              (= t t_3)
+              (name "mul-two-is-shift")
+              (premises (Fiat (= t t)))
+              (substitution (@rewrite_var__ t) (x (Var "a")))))
+(Trans
+  (= t_2 t_3)
+  (Congr
+    (= t_2 t)
+    (Fiat (= t_2 t_2))
+    (Rule
+      (= t_1 (Var "a"))
+      (name "shift-then-halve")
+      (premises (Congr (= t_1 (Div t_3 (Num 2))) (Fiat (= t_1 t_1)) prf 0))
+      (substitution (@rewrite_var___1 t_1) (x (Var "a"))))
+    0)
+  prf)
+)
