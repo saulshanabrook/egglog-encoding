@@ -94,10 +94,13 @@ using inferred disequality and binder-independence guards. Its
 cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
 ```
 
-[sum-across-store.egg](tests/slotted/sum-across-store.egg) adds effects: a program
-stores a sum and then recomputes it under another bound name. Loads skip the store
-given an asserted alias fact, and the two sums meet by congruence under the binder.
-Its [checked source proof](tests/snapshots/slotted_proofs__sum_across_store.snap)
+Two further examples add effects. [normalize-loop.egg](tests/slotted/normalize-loop.egg)
+hoists a sum out of a loop that stores. Its loads skip the loop's stores given an
+asserted alias fact; that removes the sum's dependence on the loop index, and only
+then does a `not-free` guard allow the hoist.
+[sum-across-store.egg](tests/slotted/sum-across-store.egg) reuses a sum across a
+single store, where the two sums meet by congruence under the binder. Its
+[checked source proof](tests/snapshots/slotted_proofs__sum_across_store.snap)
 is snapshot-tested as well.
 
 The two query patterns are supported only as whole facts in checks, rule bodies,

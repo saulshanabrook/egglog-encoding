@@ -1,0 +1,62 @@
+; Hoisting a sum out of a loop that stores: effects, binders, and two guards.
+; Run with --slotted, or --slotted --proofs to check its source proof.
+;
+;   for i in 0..n:                        total = sum(j) a[j]
+;     out[i] = a[i] / sum(j) a[j]   ==>   for i in 0..n:
+;                                           out[i] = a[i] / total
+;
+; The loop's own stores could change the sum, so it is only loop-invariant when
+; `out` and `a` are distinct arrays. (LoopMem m q i) is the memory at the start of
+; iteration i of a loop that began in memory m and stores only into array q.
+; Rewriting the loads away from it removes the sum's dependence on `i`, and only
+; then does the `not-free` guard allow hoisting.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (Arr String)                     ; a named array
+  (Mem0)                           ; the initial memory
+  (LoopMem Expr Expr Expr)         ; start memory, stored array, iteration -> memory
+  (Load Expr Expr Expr)            ; memory, array, index -> value
+  (Div Expr Expr)
+  (Sum Var Expr :binder 0)         ; the body summed over the bound index
+  (Let Expr Var Expr :binder 1)    ; value, name, body
+  (ForStore Expr Expr Var Expr :binder 2)) ; memory, array, index, value -> memory
+
+; A load from another array does not see the loop's stores.
+(rewrite (Load (LoopMem m q k) p i) (Load m p i)
+  :when ((known-disequal p q))
+  :name "load-past-loop-stores")
+
+; A divisor that does not depend on the iteration is computed once.
+(rewrite (ForStore m q $i (Div x s)) (Let s $t (ForStore m q $i (Div x (V $t))))
+  :when ((not-free $i s))
+  :name "hoist-divisor")
+
+; The alias fact, as a pointer analysis would supply it.
+(disequal (Arr "a") (Arr "out"))
+
+(let input
+  (ForStore (Mem0) (Arr "out") $i
+    (Div (Load (LoopMem (Mem0) (Arr "out") (V $i)) (Arr "a") (V $i))
+         (Sum $j (Load (LoopMem (Mem0) (Arr "out") (V $i)) (Arr "a") (V $j))))))
+(let output
+  (Let (Sum $j (Load (Mem0) (Arr "a") (V $j))) $total
+    (ForStore (Mem0) (Arr "out") $i
+      (Div (Load (Mem0) (Arr "a") (V $i)) (V $total)))))
+
+; These loops must keep their sums: normalizing in place, where the stores change
+; the sum, and storing into an array with no alias fact.
+(let in_place
+  (ForStore (Mem0) (Arr "a") $i
+    (Div (Load (LoopMem (Mem0) (Arr "a") (V $i)) (Arr "a") (V $i))
+         (Sum $j (Load (LoopMem (Mem0) (Arr "a") (V $i)) (Arr "a") (V $j))))))
+(let unknown
+  (ForStore (Mem0) (Arr "b") $i
+    (Div (Load (LoopMem (Mem0) (Arr "b") (V $i)) (Arr "a") (V $i))
+         (Sum $j (Load (LoopMem (Mem0) (Arr "b") (V $i)) (Arr "a") (V $j))))))
+
+(run 2)
+(check (= input output))
+(fail (check (= in_place (Let s $t body))))
+(fail (check (= unknown (Let s $t body))))
+(fail (check (contradiction)))
