@@ -94,6 +94,12 @@ using inferred disequality and binder-independence guards. Its
 cargo run -p egglog-experimental -- --slotted --proofs egglog-experimental/tests/slotted/overview.egg
 ```
 
+[sum-across-store.egg](tests/slotted/sum-across-store.egg) adds effects: a program
+stores a sum and then recomputes it under another bound name. Loads skip the store
+given an asserted alias fact, and the two sums meet by congruence under the binder.
+Its [checked source proof](tests/snapshots/slotted_proofs__sum_across_store.snap)
+is snapshot-tested as well.
+
 The two query patterns are supported only as whole facts in checks, rule bodies,
 rewrite conditions, and run-until conditions. They expose ordinary relation
 dependencies to seminaive rules. Nested expressions and action uses are rejected.

@@ -159,6 +159,10 @@ fn demo_proof_snapshots() {
 (check (= input (Lam $z (V $y))))"#,
         ),
         ("overview", include_str!("slotted/overview.egg")),
+        (
+            "sum_across_store",
+            include_str!("slotted/sum-across-store.egg"),
+        ),
     ] {
         let proofs = prove(
             &mut compiler(ProofMode::Prove),

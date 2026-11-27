@@ -1,0 +1,42 @@
+; An effectful program with a binder, optimized by a rewrite that needs an alias
+; fact. Run with --slotted, or --slotted --proofs to check its source proof.
+;
+;   total = sum(i) a[i]
+;   out[0] = total
+;   return sum(j) a[j]      ==>      return total
+;
+; The second sum reads the memory left by the store. Its loads skip that store
+; because the arrays are distinct. The sum then equals `total` by congruence
+; under the binder and alpha-equivalence of the bound index.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (Arr String)                 ; a named array
+  (Mem0)                       ; the initial memory
+  (Store Expr Expr Expr Expr)  ; memory, array, index, value -> memory
+  (Load Expr Expr Expr)        ; memory, array, index -> value
+  (Sum Var Expr :binder 0)     ; the body summed over the bound index
+  (Ret Expr Expr))             ; returned value, final memory
+
+(rewrite (Load (Store m q k v) p i) (Load m p i)
+  :when ((known-disequal p q))
+  :name "load-past-store")
+
+; The alias fact, as a pointer analysis would supply it.
+(disequal (Arr "a") (Arr "out"))
+
+(let total (Sum $i (Load (Mem0) (Arr "a") (V $i))))
+(let stored (Store (Mem0) (Arr "out") (Num 0) total))
+(let input (Ret (Sum $j (Load stored (Arr "a") (V $j))) stored))
+(let output (Ret total stored))
+
+; These sums must not be reused: a store into the summed array, and a store into
+; an array with no alias fact.
+(let clobbered (Sum $j (Load (Store (Mem0) (Arr "a") (Num 0) total) (Arr "a") (V $j))))
+(let unknown (Sum $j (Load (Store (Mem0) (Arr "b") (Num 0) total) (Arr "a") (V $j))))
+
+(run 1)
+(check (= input output))
+(fail (check (= clobbered total)))
+(fail (check (= unknown total)))
+(fail (check (contradiction)))

@@ -1,0 +1,44 @@
+; A larger version of sum-across-store.egg: the second loop also scales by a
+; loop-invariant load.
+;
+;   total = sum(i) a[i]
+;   out[0] = total
+;   return sum(j) k[0] * a[j]      ==>      return k[0] * total
+;
+; Both loads skip the store (out aliases neither a nor k), the factor k[0] leaves
+; the sum because it does not mention the bound index, and the remaining sum is
+; alpha-equivalent to `total`.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (Arr String)
+  (Mem0)
+  (Store Expr Expr Expr Expr)
+  (Load Expr Expr Expr)
+  (Mul Expr Expr)
+  (Sum Var Expr :binder 0)
+  (Ret Expr Expr))
+
+(rewrite (Load (Store m q k v) p i) (Load m p i)
+  :when ((known-disequal p q))
+  :name "load-past-store")
+(rewrite (Sum $v (Mul x b)) (Mul x (Sum $v b))
+  :when ((not-free $v x))
+  :name "factor-out-of-sum")
+
+(disequal (Arr "a") (Arr "out"))
+(disequal (Arr "k") (Arr "out"))
+
+(let total (Sum $i (Load (Mem0) (Arr "a") (V $i))))
+(let stored (Store (Mem0) (Arr "out") (Num 0) total))
+(let input
+  (Ret (Sum $j (Mul (Load stored (Arr "k") (Num 0)) (Load stored (Arr "a") (V $j)))) stored))
+(let output (Ret (Mul (Load (Mem0) (Arr "k") (Num 0)) total) stored))
+
+; A factor that reads at the bound index must stay inside the sum.
+(let dependent (Sum $j (Mul (Load stored (Arr "k") (V $j)) (Load stored (Arr "a") (V $j)))))
+
+(run 3)
+(check (= input output))
+(fail (check (= dependent (Mul x total))))
+(fail (check (contradiction)))
