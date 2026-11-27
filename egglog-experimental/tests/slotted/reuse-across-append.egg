@@ -1,0 +1,53 @@
+; An effectful program with lambdas, optimized by a rewrite that needs an alias
+; fact. Run with --slotted, or --slotted --proofs to check its source proof.
+;
+;   def norm(a, history):
+;       history.append(sum(map(lambda x: x * x, a)))
+;       return sum(map(lambda y: y * y, a))
+;
+;   ==>
+;
+;   def norm(a, history):
+;       n = sum(map(lambda x: x * x, a))
+;       history.append(n)
+;       return n
+;
+; The second sum reads the memory left by the append. It skips the append because
+; `history` and `a` are distinct lists, and then equals the first sum because the
+; two lambdas are alpha-equivalent.
+(datatype Expr
+  (V Var)
+  (Num i64)
+  (List String)             ; a named list
+  (Mem0)                    ; the initial memory
+  (Append Expr Expr Expr)   ; memory, list, value -> memory
+  (SumMap Expr Expr Expr)   ; memory, list, function -> sum(map(function, list))
+  (Lam Var Expr :binder 0)
+  (Mul Expr Expr)
+  (Ret Expr Expr))          ; returned value, final memory
+
+; Reading one list skips an append to another.
+(rewrite (SumMap (Append m q v) p f) (SumMap m p f)
+  :when ((known-disequal p q))
+  :name "read-past-append")
+
+; The alias fact, as a pointer analysis would supply it.
+(disequal (List "a") (List "history"))
+
+(let n (SumMap (Mem0) (List "a") (Lam $x (Mul (V $x) (V $x)))))
+(let appended (Append (Mem0) (List "history") n))
+(let input (Ret (SumMap appended (List "a") (Lam $y (Mul (V $y) (V $y)))) appended))
+(let output (Ret n appended))
+
+; These second sums must run again: appending to the summed list itself, and
+; appending to a list with no alias fact.
+(let self_append
+  (SumMap (Append (Mem0) (List "a") n) (List "a") (Lam $y (Mul (V $y) (V $y)))))
+(let unknown
+  (SumMap (Append (Mem0) (List "b") n) (List "a") (Lam $y (Mul (V $y) (V $y)))))
+
+(run 1)
+(check (= input output))
+(fail (check (= self_append n)))
+(fail (check (= unknown n)))
+(fail (check (contradiction)))

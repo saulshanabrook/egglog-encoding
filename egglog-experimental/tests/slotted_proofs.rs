@@ -160,8 +160,8 @@ fn demo_proof_snapshots() {
         ),
         ("overview", include_str!("slotted/overview.egg")),
         (
-            "sum_across_store",
-            include_str!("slotted/sum-across-store.egg"),
+            "reuse_across_append",
+            include_str!("slotted/reuse-across-append.egg"),
         ),
     ] {
         let proofs = prove(
